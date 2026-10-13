@@ -24,5 +24,5 @@ func (s *server) getLatestAppDeployment(w http.ResponseWriter, r *http.Request, 
 		api.WriteProblem(w, api.ErrCapacity("could not read latest deployment"))
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(deployment, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), deployment, app))
 }

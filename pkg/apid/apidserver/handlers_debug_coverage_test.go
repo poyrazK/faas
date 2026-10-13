@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -7,16 +7,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDebugCoverageSignal_WeightsRatesByRepresentedRequests(t *testing.T) {
 	t.Parallel()
-	got := debugCoverageSignal(3, 7, 10)
+	got := apidserver.DebugCoverageSignal(3, 7, 10)
 	if got != (api.DebugCoverageSignal{Rows: 3, Requests: 7, RatePct: 70}) {
 		t.Fatalf("signal = %+v, want rows=3 requests=7 rate=70", got)
 	}
-	if got := debugCoverageSignal(0, 0, 0); got.RatePct != 0 {
+	if got := apidserver.DebugCoverageSignal(0, 0, 0); got.RatePct != 0 {
 		t.Fatalf("empty signal rate = %v, want 0", got.RatePct)
 	}
 }
@@ -24,13 +25,13 @@ func TestDebugCoverageSignal_WeightsRatesByRepresentedRequests(t *testing.T) {
 func TestDebugCoverageTimestamp_HandlesNullableAggregate(t *testing.T) {
 	t.Parallel()
 	want := time.Date(2026, 9, 11, 12, 34, 56, 789000000, time.UTC)
-	if got := debugCoverageTimestamp(want); got != "2026-09-11T12:34:56.789Z" {
+	if got := apidserver.DebugCoverageTimestamp(want); got != "2026-09-11T12:34:56.789Z" {
 		t.Fatalf("timestamp = %q, want RFC3339Nano value", got)
 	}
-	if got := debugCoverageTimestamp(nil); got != "" {
+	if got := apidserver.DebugCoverageTimestamp(nil); got != "" {
 		t.Fatalf("nil timestamp = %q, want empty", got)
 	}
-	if got := debugCoverageTimestamp("not-a-time"); got != "" {
+	if got := apidserver.DebugCoverageTimestamp("not-a-time"); got != "" {
 		t.Fatalf("unexpected timestamp type = %q, want empty", got)
 	}
 }
@@ -54,7 +55,7 @@ func TestParseDebugSinceStrict(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseDebugSinceStrict(tt.raw, 24*time.Hour)
+			got, err := apidserver.ParseDebugSinceStrict(tt.raw, 24*time.Hour)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("parseDebugSinceStrict(%q) error = %v, wantErr=%v", tt.raw, err, tt.wantErr)
 			}
@@ -66,9 +67,9 @@ func TestParseDebugSinceStrict(t *testing.T) {
 }
 
 func TestDebugCoverage_RejectsInvalidSince(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	if _, err := e.store.CreateApp(t.Context(), state.App{
-		AccountID: e.acct.ID,
+	e := apidserver.Setup(t, api.PlanPro)
+	if _, err := (*e.Store()).CreateApp(t.Context(), state.App{
+		AccountID: (*e.Acct()).ID,
 		Slug:      "debug-coverage-validation",
 		Status:    state.AppActive,
 	}); err != nil {
@@ -77,8 +78,8 @@ func TestDebugCoverage_RejectsInvalidSince(t *testing.T) {
 
 	for _, raw := range []string{"nonsense", "0h", "-1h", "-1d"} {
 		t.Run(raw, func(t *testing.T) {
-			rec := e.do(t, http.MethodGet, "/v1/apps/debug-coverage-validation/debug/coverage?since="+raw, nil, nil)
-			assertProblem(t, rec, http.StatusBadRequest, "validation_failed")
+			rec := e.Do(t, http.MethodGet, "/v1/apps/debug-coverage-validation/debug/coverage?since="+raw, nil, nil)
+			apidserver.AssertProblem(t, rec, http.StatusBadRequest, "validation_failed")
 			if !strings.Contains(rec.Body.String(), "positive duration") {
 				t.Fatalf("problem detail = %s, want positive-duration guidance", rec.Body)
 			}

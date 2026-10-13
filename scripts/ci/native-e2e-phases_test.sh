@@ -62,6 +62,13 @@ native_e2e_phase_tests wake "${repo_root}" | grep -qx TestWakePlatformBenchMetal
 native_e2e_phase_tests deploy "${repo_root}" | grep -qx TestDevLoopMetal ||
   fail "developer loop is missing from the deploy phase"
 
+# Binary functions exercise the source/builder/runner pipeline.
+native_e2e_phase_tests build "${repo_root}" | grep -qx TestBinaryFunctionMetal ||
+  fail "binary function pipeline is missing from the build phase"
+
+native_e2e_phase_tests streaming "${repo_root}" | grep -qx TestFunctionStreamingMetal ||
+  fail "function streaming is missing from the streaming phase"
+
 # 5. The partition assert must actually FAIL on an unassigned metal test.
 #    A guard that cannot fail is not a guard — this gate has shipped one before.
 probe="$(mktemp -d)"

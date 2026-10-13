@@ -1,16 +1,17 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
 // ADR-075: apid binds only Unix/high loopback listeners behind Caddy. Keep its
 // runtime declaration aligned with the production unit's empty capability sets.
 func TestCapsDeclMatchesProductionUnit(t *testing.T) {
-	if len(capsDecl.Allow) != 0 {
-		t.Fatalf("capsDecl.Allow = %v, want no capabilities", capsDecl.Allow)
+	if len((*apidserver.CapsDecl).Allow) != 0 {
+		t.Fatalf("capsDecl.Allow = %v, want no capabilities", (*apidserver.CapsDecl).Allow)
 	}
 	unit := daemonunitspec.UnitApid()
 	if len(unit.CapabilityBoundingSet) != 0 {

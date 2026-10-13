@@ -31,11 +31,12 @@ type serviceTCPChaosGroup struct {
 // Policy polling is shared by all pooled connections on one workload route.
 // No database lookups happen on production sessions or for each payload chunk.
 type serviceTCPChaosController struct {
-	mu      sync.Mutex
-	groups  map[serviceTCPChaosKey]*serviceTCPChaosGroup
-	resolve ServiceTCPChaosResolver
-	observe ServiceProxyChaosObserver
-	ordinal atomic.Uint64
+	mu             sync.Mutex
+	groups         map[serviceTCPChaosKey]*serviceTCPChaosGroup
+	resolve        ServiceTCPChaosResolver
+	observe        ServiceProxyChaosObserver
+	observeAttempt ServiceProxyChaosObserver
+	ordinal        atomic.Uint64
 }
 
 func (p *ServiceTCPProxy) chaosConn(ctx context.Context, conn net.Conn, caller string, target ServiceTCPTarget, port int) (net.Conn, func(), error) {
@@ -76,6 +77,15 @@ func (p *ServiceTCPProxy) chaosConn(ctx context.Context, conn net.Conn, caller s
 	if err := impaired.Update(lease); err != nil {
 		_ = impaired.Close()
 		return nil, nil, err
+	}
+	// Count before forwarding, independently of payload I/O or selected faults.
+	// Updates on pooled sockets never emit another connection attempt.
+	if p.chaos.observeAttempt != nil && lease.Generation != "" && lease.ExpiresAt.After(time.Now()) {
+		for _, rule := range lease.Rules {
+			if rule.IsTCP() && rule.Port == port {
+				p.chaos.observeAttempt(target.ScenarioTestRunID, caller, lease.Generation, rule)
+			}
+		}
 	}
 	c := &p.chaos
 	c.mu.Lock()

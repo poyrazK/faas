@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardHandler_AppEdgeRules(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -43,13 +44,13 @@ func TestDashboardHandler_AppEdgeRules(t *testing.T) {
 			t.Errorf("body missing %q\n%s", want, rec.Body.String())
 		}
 	}
-	if got := rec.Header().Get("Set-Cookie"); !strings.Contains(got, dashboardEdgeRulesCSRFCookie) {
-		t.Fatalf("GET edge rules missing %s cookie: %q", dashboardEdgeRulesCSRFCookie, got)
+	if got := rec.Header().Get("Set-Cookie"); !strings.Contains(got, apidserver.DashboardEdgeRulesCSRFCookie) {
+		t.Fatalf("GET edge rules missing %s cookie: %q", apidserver.DashboardEdgeRulesCSRFCookie, got)
 	}
 }
 
 func TestDashboardEdgeRuleTraceShowsThrottlePolicy(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -69,14 +70,14 @@ func TestDashboardEdgeRuleTraceShowsThrottlePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-throttle-trace/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-throttle-trace/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/api/orders", "trace_method": "POST",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -92,7 +93,7 @@ func TestDashboardEdgeRuleTraceShowsThrottlePolicy(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceShowsRetryPolicy(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -111,15 +112,15 @@ func TestDashboardEdgeRuleTraceShowsRetryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-retry-trace/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-retry-trace/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/orders/42", "trace_method": "POST",
 		"trace_headers": "Idempotency-Key: opaque-key",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -139,7 +140,7 @@ func TestDashboardEdgeRuleTraceShowsRetryPolicy(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceShowsJWTPolicyWithoutValues(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -160,15 +161,15 @@ func TestDashboardEdgeRuleTraceShowsJWTPolicyWithoutValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-jwt-trace/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-jwt-trace/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/private/report", "trace_method": "GET",
 		"trace_headers": "Authorization: Bearer secret-token-value",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -196,7 +197,7 @@ func TestDashboardEdgeRuleTraceShowsJWTPolicyWithoutValues(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceShowsEffectiveBudget(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -213,14 +214,14 @@ func TestDashboardEdgeRuleTraceShowsEffectiveBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-budget-trace/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-budget-trace/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/payments", "trace_method": "POST",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -232,7 +233,7 @@ func TestDashboardEdgeRuleTraceShowsEffectiveBudget(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceValidatesBodyWithoutEchoingIt(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -253,16 +254,16 @@ func TestDashboardEdgeRuleTraceValidatesBodyWithoutEchoingIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
 	secretBody := `{"count":"private-value"}`
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-body/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-body/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/submit", "trace_method": "POST",
 		"trace_headers": "Content-Type: application/json", "trace_body_provided": "on", "trace_body": secretBody,
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -287,7 +288,7 @@ func TestDashboardEdgeRuleTraceValidatesBodyWithoutEchoingIt(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -310,18 +311,18 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 		"trace_host": "edge.example.com", "trace_path": "/old", "trace_method": "GET",
 		"trace_headers": "Authorization: Bearer " + dashboardHeaderSecret,
 	}
-	bad := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields)
+	bad := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields)
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", bad.Code, bad.Body.String())
 	}
 
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
 	fields[middleware.FormFieldName] = token
-	good := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields,
-		&http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	good := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields,
+		&http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if good.Code != http.StatusOK {
 		t.Fatalf("valid trace status = %d, want 200\nbody = %s", good.Code, good.Body.String())
 	}
@@ -334,8 +335,8 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 		}
 	}
 	fields["trace_headers"] += "\nmalformed " + dashboardHeaderSecret
-	invalid := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields,
-		&http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	invalid := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace/edge-rules/trace", fields,
+		&http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if invalid.Code != http.StatusOK {
 		t.Fatalf("invalid trace status = %d, want 200\nbody = %s", invalid.Code, invalid.Body.String())
 	}
@@ -352,7 +353,7 @@ func TestDashboardEdgeRuleTraceIsReadOnlyAndRequiresNamedCSRF(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceSimulatesAppMaintenance(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -372,14 +373,14 @@ func TestDashboardEdgeRuleTraceSimulatesAppMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-maintenance/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-maintenance/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/", "trace_method": "GET",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -394,7 +395,7 @@ func TestDashboardEdgeRuleTraceSimulatesAppMaintenance(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceSimulatesDeclaredRoutePolicy(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -414,14 +415,14 @@ func TestDashboardEdgeRuleTraceSimulatesDeclaredRoutePolicy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateApp declared-route policy: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-declared-route/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-declared-route/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/admin", "trace_method": "GET",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -436,7 +437,7 @@ func TestDashboardEdgeRuleTraceSimulatesDeclaredRoutePolicy(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceResolvesCORSPreset(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -462,15 +463,15 @@ func TestDashboardEdgeRuleTraceResolvesCORSPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateEdgeRule: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-cors-preset/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-cors-preset/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/", "trace_method": "GET",
 		"trace_headers": "Origin: https://app.example.com",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -482,7 +483,7 @@ func TestDashboardEdgeRuleTraceResolvesCORSPreset(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceUsesAppCORSDefault(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -499,15 +500,15 @@ func TestDashboardEdgeRuleTraceUsesAppCORSDefault(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateApp default CORS: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-app-cors/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-app-cors/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token,
 		"trace_host":             "edge.example.com", "trace_path": "/", "trace_method": "OPTIONS",
 		"trace_headers": "Origin: https://app.example.com\nAccess-Control-Request-Method: GET",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -519,7 +520,7 @@ func TestDashboardEdgeRuleTraceUsesAppCORSDefault(t *testing.T) {
 }
 
 func TestDashboardEdgeRuleTraceRendersValidationErrorWithoutMutation(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -528,13 +529,13 @@ func TestDashboardEdgeRuleTraceRendersValidationErrorWithoutMutation(t *testing.
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-invalid/edge-rules/trace", map[string]string{
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-trace-invalid/edge-rules/trace", map[string]string{
 		middleware.FormFieldName: token, "trace_host": "example.com:443", "trace_path": "/", "trace_method": "GET",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("invalid trace status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -551,7 +552,7 @@ func TestDashboardEdgeRuleTraceRendersValidationErrorWithoutMutation(t *testing.
 }
 
 func TestDashboardEdgeRuleCreateRequiresNamedCSRF(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -559,20 +560,20 @@ func TestDashboardEdgeRuleCreateRequiresNamedCSRF(t *testing.T) {
 	if _, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "edge-create", Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive}); err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	bad := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-create/edge-rules", map[string]string{
+	bad := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-create/edge-rules", map[string]string{
 		"match_host": "edge.example.com", "match_path": "/", "kind": "route", "action": `{"target_app_slug":"edge-create"}`, "enabled": "on",
 	})
 	if bad.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", bad.Code, bad.Body.String())
 	}
 
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	good := dashboardPOST(t, h, cookie, "/dashboard/apps/edge-create/edge-rules", map[string]string{
+	good := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/edge-create/edge-rules", map[string]string{
 		middleware.FormFieldName: token, "match_host": "edge.example.com", "match_path": "/", "kind": "route", "action": `{"target_app_slug":"edge-create"}`, "enabled": "on",
-	}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if good.Code != http.StatusSeeOther {
 		t.Fatalf("valid csrf status = %d, want 303\nbody = %s", good.Code, good.Body.String())
 	}
@@ -590,7 +591,7 @@ func TestDashboardEdgeRuleCreateRequiresNamedCSRF(t *testing.T) {
 }
 
 func TestDashboardSecurityHeadersCreatesStandardRule(t *testing.T) {
-	h, cookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -599,11 +600,11 @@ func TestDashboardSecurityHeadersCreatesStandardRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardEdgeRulesAction, acct.ID, apidserver.DashboardEdgeRulesCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	rec := dashboardPOST(t, h, cookie, "/dashboard/apps/security-app/edge-rules/security-headers", map[string]string{middleware.FormFieldName: token}, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token})
+	rec := apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/security-app/edge-rules/security-headers", map[string]string{middleware.FormFieldName: token}, &http.Cookie{Name: apidserver.DashboardEdgeRulesCSRFCookie, Value: token})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303\nbody = %s", rec.Code, rec.Body.String())
 	}
@@ -611,7 +612,7 @@ func TestDashboardSecurityHeadersCreatesStandardRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListEdgeRulesForApp: %v", err)
 	}
-	if len(rules) != 1 || !isSecurityHeadersRule(rules[0]) {
+	if len(rules) != 1 || !apidserver.IsSecurityHeadersRule(rules[0]) {
 		encoded, _ := json.Marshal(rules)
 		t.Fatalf("rules = %s, want standard security headers rule", encoded)
 	}

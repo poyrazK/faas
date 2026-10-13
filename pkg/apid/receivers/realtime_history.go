@@ -7,13 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	apidpb "github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // History reads and channel route reports are available only on apid's private
@@ -75,7 +74,12 @@ func (r *realtimeHistoryReceiver) ReadChannelHistory(ctx context.Context, req *a
 	for _, message := range history.Messages {
 		metadata, _ := json.Marshal(message.Metadata)
 		response.Messages = append(response.Messages, &apidpb.RetainedChannelMessage{
-			MetadataJson: metadata, Sequence: message.Sequence,
+			ExpiresAtUnixNano: func() int64 {
+				if message.ExpiresAt != nil {
+					return message.ExpiresAt.UnixNano()
+				}
+				return 0
+			}(), MetadataJson: metadata, Sequence: message.Sequence,
 			Data:              append([]byte(nil), message.Data...),
 			Binary:            message.Binary,
 			CreatedAtUnixNano: message.CreatedAt.UnixNano(),

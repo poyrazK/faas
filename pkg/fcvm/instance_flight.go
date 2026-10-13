@@ -86,7 +86,19 @@ func (m *Manager) beginInstanceBoot(ctx context.Context, instance string) (conte
 // beginLiveInstanceFlight atomically pins the live identity and registers a
 // resumable operation before checking admission or calling the VMM. It shares
 // the boot registry so Destroy cannot overlook a request between lookup and RPC.
+// Every live operation expects a running guest, so a quiet-paused instance
+// (ADR-1151) is resumed once the flight is registered; from then on the quiet
+// pause pass leaves it alone.
 func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
+	operationCtx, inst, flight, err := m.registerLiveInstanceFlight(ctx, instance)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	m.quietResumeBestEffort(operationCtx, instance)
+	return operationCtx, inst, flight, nil
+}
+
+func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
 	if v := m.nativeVMM(); v != nil {
 		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
 			return nil, nil, nil, err

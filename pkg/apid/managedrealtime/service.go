@@ -11,8 +11,10 @@ package managedrealtime
 import (
 	"bytes"
 	"context"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,7 +47,12 @@ type Host interface {
 // the history preview at boot (see its With* setters); DrainWake is a
 // 1-buffered channel created by newServer.
 type Service struct {
-	Host Host
+	AccessPreviewEnabled  bool
+	TicketsPreviewEnabled bool
+	ClaimWaitOnce         sync.Once
+	ClaimWaitSlots        chan struct{}
+	AuthLimiter           *middleware.Limiter
+	Host                  Host
 
 	// Owner routes customer-facing connection operations to the node that
 	// owns a live socket; the local Unix client is the same-box fast path.

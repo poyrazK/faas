@@ -1,5 +1,5 @@
 // adr: 590
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -24,7 +25,7 @@ func TestCloneCoordinatorRejectsIncompleteConfigurationBeforePreparation(t *test
 		{Kind: "variables", Name: "api", SourceID: "app", TargetID: "app", SourceVersion: hash, Status: "captured"},
 		{Kind: "secrets", Name: "api", SourceID: "app", TargetID: "app", SourceVersion: hash, Status: "captured"},
 	}
-	if err := validateCloneCoordinatorInventory(op, capture, []state.ProjectEnvironmentCloneWorkload{view}); err != nil {
+	if err := apidserver.ValidateCloneCoordinatorInventory(op, capture, []state.ProjectEnvironmentCloneWorkload{view}); err != nil {
 		t.Fatal(err)
 	}
 	for _, fault := range []string{"legacy_capture", "wrong_root", "wrong_count", "missing_root", "missing_values", "duplicate", "unknown_kind", "wrong_artifact", "wrong_values", "wrong_target", "failed_resource", "operation_error", "wrong_owner"} {
@@ -59,7 +60,7 @@ func TestCloneCoordinatorRejectsIncompleteConfigurationBeforePreparation(t *test
 			case "wrong_owner":
 				workload.OperationID = "another-operation"
 			}
-			if err := validateCloneCoordinatorInventory(bad, root, []state.ProjectEnvironmentCloneWorkload{workload}); !errors.Is(err, state.ErrConflict) {
+			if err := apidserver.ValidateCloneCoordinatorInventory(bad, root, []state.ProjectEnvironmentCloneWorkload{workload}); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("incomplete configuration accepted: %v", err)
 			}
 		})

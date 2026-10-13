@@ -1117,6 +1117,10 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppRestart(slug, args[2:])
 		case subExec:
 			return cmdAppExec(slug, args[2:])
+		case "cp":
+			return cmdAppCopy(slug, args[2:])
+		case "port-forward":
+			return cmdAppPortForward(slug, args[2:])
 		case subSecurity:
 			return cmdAppSecurity(slug, args[2:])
 		case subEgressAllowlist:
@@ -2209,4 +2213,41 @@ func isLongPollTimeout(err error) bool {
 		return ae.Problem.Code == "long_poll_timeout"
 	}
 	return false
+}
+
+// openCustomerDirectoryForSync opens only a directory whose final component
+// retains its identity across the open. Recovery journals use the descriptor
+// solely for directory fsync after creating a durable file entry.
+func openCustomerDirectoryForSync(path string) (*os.File, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve recovery directory: %w", err)
+	}
+	before, err := os.Lstat(absolute)
+	if err != nil {
+		return nil, err
+	}
+	if !before.IsDir() {
+		return nil, fmt.Errorf("refusing non-directory %q", path)
+	}
+	//nolint:forbidigo // Guarded directory fsync boundary: Lstat before/after and descriptor identity checks; no customer bytes are read.
+	directory, err := os.Open(absolute)
+	if err != nil {
+		return nil, err
+	}
+	after, err := os.Lstat(absolute)
+	if err != nil {
+		_ = directory.Close()
+		return nil, err
+	}
+	opened, err := directory.Stat()
+	if err != nil {
+		_ = directory.Close()
+		return nil, err
+	}
+	if !after.IsDir() || !opened.IsDir() || !os.SameFile(before, after) || !os.SameFile(after, opened) {
+		_ = directory.Close()
+		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
+	}
+	return directory, nil
 }

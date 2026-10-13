@@ -771,9 +771,12 @@ func cmdApp(args []string) int {
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
 		}
-		// An unset idle timeout is stored as NULL and the plan default
-		// applies (600 s on Scale); printing "0s" read as "parks at once".
-		if a.IdleTimeoutS == 0 {
+		// An unset idle timeout is stored as NULL and the type default
+		// applies (600 s for apps on Scale, 30 s for functions — ADR-974);
+		// printing "0s" read as "parks at once".
+		if a.IdleTimeoutS == 0 && a.Type == "function" {
+			fmt.Printf("%-30s %s\n", "idle timeout:", fmt.Sprintf("function default (%ds)", api.FunctionIdleTimeoutDefaultSeconds))
+		} else if a.IdleTimeoutS == 0 {
 			fmt.Printf("%-30s %s\n", "idle timeout:", "plan default")
 		} else {
 			fmt.Printf("%-30s %ds\n", "idle timeout:", a.IdleTimeoutS)
@@ -1137,7 +1140,7 @@ func validateRepoDeployFlags(explicit map[string]bool) error {
 func validateSourceRefPreviewFlags(explicit map[string]bool, sourceBranch string) error {
 	var unsupported []string
 	for _, name := range []string{
-		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost",
+		"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
 		"reason", "tag", "deployed-by", "pr-number", "idempotency-key",
 		"wait", "no-wait", "timeout", "app-protocol",
 	} {
@@ -1539,7 +1542,8 @@ func workerReplicasEqual(a, b *api.WorkerScaling) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
 	}
-	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Target == b.Target
+	return a.Min == b.Min && a.Max == b.Max && a.Metric == b.Metric && a.Name == b.Name &&
+		a.Target == b.Target && a.ObserverAppSlug == b.ObserverAppSlug
 }
 
 func lifecyclePatchNeeded(current api.AppResponse, desired api.UpdateAppRequest) bool {
@@ -1956,6 +1960,14 @@ func deployManifestTriggersWithRollback(ctx context.Context, client manifestCron
 	if err := m.Validate(); err != nil {
 		return txn, err
 	}
+	return reconcileManifestCronsWithRollback(ctx, client, slug, m)
+}
+
+// reconcileManifestCronsWithRollback is deployManifestTriggersWithRollback
+// for an already loaded and validated manifest. The functions fan-out
+// (ADR-985) passes each function's crons through it.
+func reconcileManifestCronsWithRollback(ctx context.Context, client manifestCronClient, slug string, m *gregalemanifest.Manifest) (*manifestCronTransaction, error) {
+	txn := &manifestCronTransaction{}
 	manage := m.Triggers != nil && len(m.Triggers) == 0
 	var matching []gregalemanifest.Trigger
 	for _, t := range m.Triggers {
@@ -2181,6 +2193,10 @@ func templateFunctionConfig(name string) (runtime, handler string, ok bool) {
 		// The Go handler is a static binary; the wire handler value is
 		// vestigial, but the deploy API still requires it to be non-empty.
 		return runtimeGo124, "handler.go", true
+	case "function-rust":
+		// ADR-987: built from the template's Dockerfile; the handler value
+		// is vestigial, but the deploy API requires it to be non-empty.
+		return runtimeBinary, "handler", true
 	case "cron-worker", "event-worker", "queue-worker":
 		return runtimeNode22, defaultTemplateHandler, true
 	default:
@@ -2208,17 +2224,20 @@ func cmdDeployTarball(args []string) int {
 // `gregale deploy` calls leave both fields unset and retain the signal-driven
 // behavior below.
 type deployExecution struct {
-	onQueued            func(api.DeploymentResponse)
-	onSourceSync        func(time.Duration, error)
-	onStage             func(string, string, int64, string)
-	onTerminal          func(api.DeploymentResponse) int
-	onWaitEnd           func()
-	onFailure           func(api.DeploymentResponse, string, string)
-	onError             func(error)
-	prefixBuildLogs     bool
-	compactProgress     bool // Guided sessions own their review and progress display.
-	streamLogsOnJSON    bool
-	developerSource     *devSourceSyncState
+	onQueued         func(api.DeploymentResponse)
+	onSourceSync     func(time.Duration, error)
+	onStage          func(string, string, int64, string)
+	onTerminal       func(api.DeploymentResponse) int
+	onWaitEnd        func()
+	onFailure        func(api.DeploymentResponse, string, string)
+	onError          func(error)
+	prefixBuildLogs  bool
+	compactProgress  bool // Guided sessions own their review and progress display.
+	streamLogsOnJSON bool
+	developerSource  *devSourceSyncState
+	// overrideEnv carries non-secret values that belong only to the new
+	// deployment revision. MCP hosting uses it to pin a candidate catalog.
+	overrideEnv         map[string]string
 	extraSourceExcludes []string
 	// Long-lived sessions can finish the same source doctor checks before
 	// presenting their review. Reuse that result instead of repeating prose
@@ -2275,7 +2294,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	pinGithubAction := fs.Bool("pin-action", false, "with --github only, resolve the current v0 Action tag to its commit SHA")
 	templateName := fs.String("template", "", "start from an embedded template (run with a bad value to see available names)")
 	dockerfile := fs.Bool("dockerfile", false, "build with the supplied Dockerfile inside --tarball")
-	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313)")
+	runtime := fs.String("runtime", "", "function runtime (node22|python312|go124|go124-alpine|node24|python313|binary)")
 	handler := fs.String("handler", "", "function handler (e.g. handler.handler)")
 	name := fs.String("name", "", "app name (default: selected source directory, or current directory)")
 	profile := fs.String("profile", "", "named app resource profile: micro|small|medium|large|xlarge")
@@ -2377,6 +2396,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// pointer through.
 	trafficPercent := fs.Int("traffic-percent", -1, "split weight for this deployment (0-100; -1 = server default 100)")
 	noTraffic := fs.Bool("no-traffic", false, "stage the deployment with 0% production traffic and print its preview URL")
+	mcpTaskMigrationOverride := fs.Bool("mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	rollbackOn5xx := fs.Bool("rollback-on-5xx", false, "automatically roll back after repeated first-wake 5xx responses")
 	disableStartupCPUBoost := fs.Bool("disable-startup-cpu-boost", false, "disable the temporary CPU boost during VM startup")
 	// Issue #791 PR-C / ADR-090: skip the `gregale.yaml` triggers fan-out.
@@ -2553,6 +2573,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// implementation while making `gregale deploy --dry-run` safe by
 	// construction.
 	*diff = preview
+	if *mcpTaskMigrationOverride && (*diff || *simplePlan || *githubSnippet) {
+		return printErr("Invalid flags", errors.New("--mcp-task-migration-override requires a single-app deployment and cannot be used with preview, --plan, or --github"))
+	}
 	// A linked environment is meaningful for real deployments and project
 	// previews. The single-app diff engine has no environment input, so keep
 	// its existing read-only behavior when the scope was not explicit.
@@ -2633,7 +2656,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *secretsFile != "" {
 			return printErr("Invalid flags", errors.New("--plan cannot be combined with --secrets-file"))
 		}
-		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
+		for _, name := range []string{"runtime", "handler", "execution-mode", "restart-policy", "startup-deadline-s", "max-retries", "vcpu", "safe", "traffic-percent", "no-traffic", "canary-preset", "canary-stages", "rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override", "require-authn", "no-require-authn", "platform-tenant-required", "no-platform-tenant-required", "app-protocol"} {
 			if explicit[name] {
 				return printErr("Invalid flags", fmt.Errorf("--plan cannot be combined with --%s", name))
 			}
@@ -2774,7 +2797,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var unsupported []string
 		for _, name := range []string{
 			"traffic-percent", "no-traffic", "canary-preset", "canary-stages", "safe",
-			"rollback-on-5xx", "disable-startup-cpu-boost",
+			"rollback-on-5xx", "disable-startup-cpu-boost", "mcp-task-migration-override",
 			"reason", "tag", "deployed-by", "pr-number",
 			// Project plans currently infer each workload's execution
 			// configuration from the scanned source. Reject single-app
@@ -2979,7 +3002,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Slug: slug, Repo: *repo, Ref: *ref, SourceBranch: *sourceBranch, Reason: *reason, Tag: *tag, AppProtocol: *appProtocol,
 			DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 			TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck,
 		}
 		refKey, keyErr := deployIdempotencyKey(*idempotencyKey, refIntent)
 		if keyErr != nil {
@@ -3003,16 +3027,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			})
 		}
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, *repo, *ref, api.DeployAnnotations{
-			SourceBranch:           *sourceBranch,
-			Reason:                 *reason,
-			Tag:                    *tag,
-			Environment:            *environment,
-			DeployedBy:             resolveDeployedBy(*deployedBy),
-			PRNumber:               *prNumber,
-			TrafficPercent:         optTrafficPercent(*trafficPercent),
-			Canary:                 canarySpec,
-			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			SourceBranch:             *sourceBranch,
+			Reason:                   *reason,
+			Tag:                      *tag,
+			Environment:              *environment,
+			DeployedBy:               resolveDeployedBy(*deployedBy),
+			PRNumber:                 *prNumber,
+			TrafficPercent:           optTrafficPercent(*trafficPercent),
+			Canary:                   canarySpec,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+			RollbackOn5xx:            rollbackOn5xxPtr,
+			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
 		}, waitForDeploy, jsonWait, refKey, time.Duration(*waitTimeoutSeconds)*time.Second, *noTriggers, *safeDeploy, *noTraffic,
 			sourceRefAppPolicy{PlatformTenantRequired: platformTenantRequiredPtr, RequireAuthn: requireAuthnPtr, PublicAuth: publicAuthPtr, AppProtocol: appProtocolPtr})
 		return code
@@ -3170,6 +3195,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		problem := api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
 		return printErr("Invalid --name", &api.APIError{Problem: *problem})
+	}
+	// ADR-985: a manifest listing several functions fans out into one
+	// single-function deploy per entry, before any app or upload exists.
+	if !existingApp && developerSync == nil && !projectRequested && !deployFunction && !deployApp &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" {
+		fnManifest, isFunctionSet, fnErr := functionSetManifest(sourceDir)
+		if fnErr != nil {
+			return printErr("Invalid deploy manifest", fnErr)
+		}
+		if isFunctionSet {
+			return deployFunctionSet(ctx, functionSetDeploy{
+				args: args, cwd: cwd, projectDir: sourceDir, projectSlug: slug, manifest: fnManifest,
+				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
+				noTriggers: *noTriggers,
+			})
+		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
 	// existing single-app slug rules for --name and --path, while making
@@ -3333,6 +3374,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// selected source. Only when that source is unreachable (cwdErr != nil for
 	// zero-config) does the gate skip — in that case the server-side validators
 	// on upload are the catch.
+	// A declared durable-entity project must have its source artifacts prepared
+	// before upload, even when advisory doctor checks are disabled. This does not
+	// execute handlers or enable platform preview gates.
+	if sourceDir != "" {
+		if check, present := doctorCheckDurableEntities(sourceDir); present && check.Status == "error" {
+			return printErr("Durable entity project is not ready", errors.New(check.Hint))
+		}
+	}
 	doctorEnabled := *doctorStrict || (!*noDoctor && localZeroConfig)
 	if doctorEnabled && sourceDir != "" && (!execution.sourcePreflightChecked || *doctorStrict) {
 		doctorShape := resolvedShape
@@ -3668,7 +3717,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		StartupDeadlineS: *startupDeadlineS, MaxRetries: *maxRetries, Reason: *reason, Tag: *tag,
 		DeployedBy: resolveDeployedBy(*deployedBy), PRNumber: *prNumber,
 		TrafficPercent: *trafficPercent, CanaryPreset: *canaryPreset,
-		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck, NoTriggers: *noTriggers,
+		CanaryStages: *canaryStages, Environment: *environment, RollbackOn5xx: rollbackOn5xxPtr, DisableStartupCPUBoost: disableStartupCPUBoostPtr,
+		MCPTaskMigrationOverride: *mcpTaskMigrationOverride, Healthcheck: healthcheck, NoTriggers: *noTriggers,
 		ProjectSlug: *projectSlug, DeployOnly: *deployOnly, DeployExclude: *deployExclude,
 	}
 	deployKey, keyErr := deployIdempotencyKey(*idempotencyKey, deployIntent)
@@ -3909,6 +3959,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
+		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
+			return printErr("Template needs secrets", err)
+		}
 		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp); err != nil {
 			return printErr("Could not create or fetch app", err)
 		}
@@ -4019,21 +4072,23 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *tarball != "" {
 		sourceURL, commitSHA := zeroConfigSourceProvenance(prov)
 		ann := api.DeployAnnotations{
-			Scope:                  manifestScope,
-			SourceURL:              sourceURL,
-			CommitSHA:              commitSHA,
-			Environment:            *environment,
-			Reason:                 *reason,
-			Tag:                    *tag,
-			DeployedBy:             resolveDeployedBy(*deployedBy),
-			PRNumber:               *prNumber,
-			Workflows:              workflowDefs,
-			TrafficPercent:         optTrafficPercent(*trafficPercent),
-			Canary:                 canarySpec,
-			RollbackOn5xx:          rollbackOn5xxPtr,
-			DisableStartupCPUBoost: disableStartupCPUBoostPtr, Healthcheck: healthcheck,
-			NoTriggers: *noTriggers,
-			Companions: sidecarDefs,
+			Scope:                    manifestScope,
+			SourceURL:                sourceURL,
+			CommitSHA:                commitSHA,
+			Environment:              *environment,
+			Reason:                   *reason,
+			Tag:                      *tag,
+			DeployedBy:               resolveDeployedBy(*deployedBy),
+			PRNumber:                 *prNumber,
+			Workflows:                workflowDefs,
+			TrafficPercent:           optTrafficPercent(*trafficPercent),
+			Canary:                   canarySpec,
+			MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+			RollbackOn5xx:            rollbackOn5xxPtr,
+			DisableStartupCPUBoost:   disableStartupCPUBoostPtr, Healthcheck: healthcheck,
+			NoTriggers:  *noTriggers,
+			Companions:  sidecarDefs,
+			OverrideEnv: execution.overrideEnv,
 		}
 		var (
 			dep           api.DeploymentResponse
@@ -4177,20 +4232,21 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	deployCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "json"))
 	dep, err := client.Deploy(deployCtx, slug, api.CreateDeploymentRequest{
-		Image:                  *image,
-		Scope:                  manifestScope,
-		Environment:            *environment,
-		RollbackOn5xx:          rollbackOn5xxPtr,
-		DisableStartupCPUBoost: disableStartupCPUBoostPtr,
-		Overrides:              deployHealthcheckOverrides(healthcheck),
-		Workflows:              workflowDefs,
-		Companions:             sidecarDefs,
-		TrafficPercent:         optTrafficPercent(*trafficPercent),
-		Reason:                 annPtr(*reason),
-		Tag:                    annPtr(*tag),
-		DeployedBy:             annPtr(resolveDeployedBy(*deployedBy)),
-		PRNumber:               annIntPtr(*prNumber),
-		Canary:                 canarySpec,
+		Image:                    *image,
+		Scope:                    manifestScope,
+		Environment:              *environment,
+		RollbackOn5xx:            rollbackOn5xxPtr,
+		DisableStartupCPUBoost:   disableStartupCPUBoostPtr,
+		MCPTaskMigrationOverride: *mcpTaskMigrationOverride,
+		Overrides:                deployHealthcheckOverrides(healthcheck),
+		Workflows:                workflowDefs,
+		Companions:               sidecarDefs,
+		TrafficPercent:           optTrafficPercent(*trafficPercent),
+		Reason:                   annPtr(*reason),
+		Tag:                      annPtr(*tag),
+		DeployedBy:               annPtr(resolveDeployedBy(*deployedBy)),
+		PRNumber:                 annIntPtr(*prNumber),
+		Canary:                   canarySpec,
 	})
 	if err != nil {
 		code := printDeploySubmissionError("Deploy submission failed", err, slug, deployKey, "submission", dep.ID)
@@ -7283,6 +7339,10 @@ func streamDeployLogsContextWithOptions(ctx context.Context, c *Client, dep api.
 		return terminalExitForDeploymentWithFailureContext(ctx, c, d, appSlug, nil)
 	}
 	terminalDeployment := func(d api.DeploymentResponse) int {
+		if d.PromotionHold != nil {
+			warnWaitStopped("promotion held: %s; inspect with gregale deployment %s", d.PromotionHold.Detail, d.ID)
+			return 3
+		}
 		return terminalDeploymentWithFailure(d, "", d.Error)
 	}
 	terminalBuild := func(b api.BuildResponse) int {
@@ -7516,7 +7576,7 @@ func pollDeploymentFinalContext(ctx context.Context, c *Client, dep api.Deployme
 	if err != nil {
 		return api.DeploymentResponse{}, false
 	}
-	if isCompletedDeployment(got) {
+	if got.PromotionHold != nil || isCompletedDeployment(got) {
 		return got, true
 	}
 	return api.DeploymentResponse{}, false
@@ -7802,12 +7862,31 @@ func mapFailureMessage(err string) string {
 // detection sites (commits 7-13) emit typed *api.Problem and the
 // CLI renderer calls mapFailureProblem to lift the hint/why/fix
 // without re-classifying the failure.
+//
+// Production-us hunt #9 (H9-92): this returned only the hint, so a deploy
+// whose app listened on the wrong port printed "your app isn't accepting
+// traffic on the port we expect" with neither the cause nor the fix the
+// catalog carries.
 func mapFailureProblem(p *api.Problem) string {
 	if p == nil || p.Code == "" {
 		return ""
 	}
 	_ = whycopy.Decorate(p, p.Code, nil)
-	return p.Hint
+	if p.Hint == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(p.Hint)
+	if why := strings.TrimSpace(p.Why); why != "" {
+		b.WriteString("\n  why: " + why)
+	}
+	if fix := strings.TrimSpace(p.Fix); fix != "" {
+		b.WriteString("\n  fix:")
+		for _, line := range strings.Split(fix, "\n") {
+			b.WriteString("\n    " + strings.TrimSpace(line))
+		}
+	}
+	return b.String()
 }
 
 // cmdUsageDaily: GET /v1/usage/daily?day=YYYY-MM-DD. Per-(app, day)

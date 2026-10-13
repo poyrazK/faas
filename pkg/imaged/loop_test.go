@@ -427,6 +427,46 @@ func TestFCSweep_ExpiredStaleSnapshotRemovesArtifacts(t *testing.T) {
 	}
 }
 
+// production-us hunt #9: stale snapshots past their retention were reclaimed
+// only by the one-shot startup FC sweep, so a long-running imaged kept every
+// re-captured init snapshot (one app: 103 stale rows, 52 GB). The periodic GC
+// tick now evicts them while a fresh stale row stays inside its window.
+func TestGCTick_EvictsExpiredStaleSnapshotsWithoutAnFCSweep(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := context.Background()
+	acct, _ := store.CreateAccount(ctx, "stale-tick@x.com", "pro")
+	app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "stale-tick", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2})
+	dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:tick", Status: state.DeployLive})
+	expired, _ := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true, FCVersion: "1.7.0",
+		StorageKey: "snap/expired/mem", CreatedAt: time.Now().Add(-api.SnapshotStaleRetention - time.Hour),
+	})
+	recent, _ := store.CreateSnapshot(ctx, state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, Stale: true, FCVersion: "1.7.0",
+		StorageKey: "snap/recent/mem", CreatedAt: time.Now().Add(-time.Hour),
+	})
+	be, _ := storage.NewLocalStorageBackend(t.TempDir())
+	loop := &Loop{
+		store:     store,
+		log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		lvUsedPct: func(context.Context) (float64, error) { return 10, nil },
+		handler:   &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), storage: be},
+	}
+	loop.runGCTick(ctx, time.Now())
+
+	rows, err := store.ListSnapshotsStaleOlderThan(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, row := range rows {
+		ids[row.ID] = true
+	}
+	if ids[expired.ID] || !ids[recent.ID] {
+		t.Fatalf("stale rows after GC tick = %v, want only the in-window row %s", ids, recent.ID)
+	}
+}
+
 func TestGC_NaNLvUsedPct_IsSafeNoOp(t *testing.T) {
 	store := state.NewMemStore()
 	appsRoot := t.TempDir()

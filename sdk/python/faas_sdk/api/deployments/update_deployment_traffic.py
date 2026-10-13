@@ -117,6 +117,9 @@ def sync_detailed(
     An in-flight managed canary owns the app's traffic weights; direct
     traffic changes during `pending` or `rolling_out` return 409
     `traffic_change_during_canary` without changing traffic.
+    Promoting a candidate to 100% also returns 409
+    `mcp_task_compatibility_gate_blocked` when it lacks a live worker for
+    an outstanding MCP task handler version.
 
     Args:
         id (str):
@@ -167,6 +170,9 @@ def sync(
     An in-flight managed canary owns the app's traffic weights; direct
     traffic changes during `pending` or `rolling_out` return 409
     `traffic_change_during_canary` without changing traffic.
+    Promoting a candidate to 100% also returns 409
+    `mcp_task_compatibility_gate_blocked` when it lacks a live worker for
+    an outstanding MCP task handler version.
 
     Args:
         id (str):
@@ -212,6 +218,9 @@ async def asyncio_detailed(
     An in-flight managed canary owns the app's traffic weights; direct
     traffic changes during `pending` or `rolling_out` return 409
     `traffic_change_during_canary` without changing traffic.
+    Promoting a candidate to 100% also returns 409
+    `mcp_task_compatibility_gate_blocked` when it lacks a live worker for
+    an outstanding MCP task handler version.
 
     Args:
         id (str):
@@ -260,6 +269,9 @@ async def asyncio(
     An in-flight managed canary owns the app's traffic weights; direct
     traffic changes during `pending` or `rolling_out` return 409
     `traffic_change_during_canary` without changing traffic.
+    Promoting a candidate to 100% also returns 409
+    `mcp_task_compatibility_gate_blocked` when it lacks a live worker for
+    an outstanding MCP task handler version.
 
     Args:
         id (str):

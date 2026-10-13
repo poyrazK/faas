@@ -91,6 +91,10 @@ func (s *stubVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context
 	return nil, status.Error(codes.Unimplemented, "gateway stub cannot retire qualification artifacts")
 }
 
+func (s *stubVmmdClient) RetireManagedPostgresDrain(context.Context, *vmmdpb.RetireManagedPostgresDrainRequest, ...grpc.CallOption) (*vmmdpb.RetireManagedPostgresDrainResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub cannot retire PostgreSQL cutover workloads")
+}
+
 func (s *stubVmmdClient) ForwardHTTPStream(ctx context.Context, _ ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse], error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -159,6 +163,9 @@ func (s *stubVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskR
 }
 func (s *stubVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed in handler integration test")
+}
+func (s *stubVmmdClient) AttachAppTask(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.AttachAppTaskRequest, vmmdpb.AttachAppTaskEvent], error) {
+	panic("AttachAppTask: not stubbed in handler integration test")
 }
 func (s *stubVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed in handler integration test")

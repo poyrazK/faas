@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -6,27 +6,28 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // adr: 628
 func TestMultipartPartURLUsesPartLimitRatherThanSinglePutLimit(t *testing.T) {
-	_, teardown := withTestIdentities(t)
+	_, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
-	e := setup(t, api.PlanHobby)
-	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	e := apidserver.Setup(t, api.PlanHobby)
+	if err := (*(*e.S()).RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	createApp(t, e, "part-limit")
-	registry := objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external")
+	apidserver.CreateApp(t, e, "part-limit")
+	registry := apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external")
 	registry.MaxUploadBytes = 16 << 20
 	registry.MaxSinglePutBytes, registry.MaxPartBytes = 1<<20, api.MinMultipartPartBytes
-	e.s.WithObjectStorage(registry)
-	b := bucketResponse(t, e.do(t, "POST", "/v1/apps/part-limit/buckets", map[string]any{"name": "assets"}, nil), http.StatusCreated)
-	qualifyObjectAccounting(t, e, b.ID)
+	(*e.S()).WithObjectStorage(registry)
+	b := apidserver.BucketResponse(t, e.Do(t, "POST", "/v1/apps/part-limit/buckets", map[string]any{"name": "assets"}, nil), http.StatusCreated)
+	apidserver.QualifyObjectAccounting(t, e, b.ID)
 	registry.Accounting.MaxAccountBytes, registry.Accounting.MaxBucketBytes = 64<<20, 32<<20
 	registry.Accounting.MaxMonthlyEgressBytes = 32 << 20
 	base := "/v1/apps/part-limit/buckets/" + b.ID
-	response := e.do(t, "POST", base+"/multipart-uploads", api.CreateObjectMultipartUploadRequest{Key: "large", SizeBytes: api.MinMultipartPartBytes + 3}, nil)
+	response := e.Do(t, "POST", base+"/multipart-uploads", api.CreateObjectMultipartUploadRequest{Key: "large", SizeBytes: api.MinMultipartPartBytes + 3}, nil)
 	var upload api.ObjectMultipartUpload
 	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &upload) != nil || upload.PartCount != 2 {
 		t.Fatal("multipart admission failed", response.Code, response.Body.String())
@@ -41,7 +42,7 @@ func TestMultipartPartURLUsesPartLimitRatherThanSinglePutLimit(t *testing.T) {
 		{"oversized ordinary PUT", base + "/signed-url", api.ObjectSignRequest{Method: "PUT", Key: "other", SizeBytes: &upload.PartSizeBytes}, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := e.do(t, "POST", tc.path, tc.body, nil)
+			out := e.Do(t, "POST", tc.path, tc.body, nil)
 			if out.Code != tc.status {
 				t.Fatal(out.Code, out.Body.String())
 			}

@@ -235,6 +235,9 @@ func frameworkForRuntime(runtime string) framework {
 		return fwPython
 	case runtimeGo124, "go124-alpine":
 		return fwGo
+	case runtimeBinary:
+		// ADR-987: built from the function's Dockerfile.
+		return fwDocker
 	default:
 		return fwUnknown
 	}

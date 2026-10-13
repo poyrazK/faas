@@ -75,6 +75,7 @@ var errorDocsURL = map[string]string{
 	api.CodeAppRuntimeOOM:               cliDocsURL,
 	api.CodeDepInstallFailed:            cliDocsURL,
 	api.CodeAppStartupTimeout:           cliDocsURL,
+	api.CodeAppStartupCrash:             cliDocsURL,
 }
 
 // docsURLForCode returns a valid docs route for a stable code, falling back to

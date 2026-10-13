@@ -346,6 +346,7 @@ func (m *MemStore) DeleteAppWebhook(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.appWebhooks, id)
+	delete(m.realtimeChannelWebhookFilters, id)
 	delete(m.appWebhookReceiverCooldowns, id)
 	delete(m.appWebhookRecoveryProbes, id)
 	return nil

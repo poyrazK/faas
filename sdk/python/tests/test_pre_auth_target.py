@@ -60,6 +60,7 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "_rewrite_init_py", lambda _: None)
     monkeypatch.setattr(module, "_patch_generator_bugs", lambda _: None)
     monkeypatch.setattr(module, "_canonicalise_to_head", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_preserve_routing_replay_guard_precision", lambda _: None)
 
     def generate(command, **kwargs):
         if "openapi_python_client" in command:

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,17 +8,18 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestAppPreAuthObservationsFreePlanAndPolicyScope(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	config := &api.PreAuthRateLimitConfig{
 		Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 1, Burst: 2,
 		Routes: []api.PreAuthRouteLimit{{Method: "POST", Path: "/login", RequestsPerSecond: 1, Burst: 2,
 			Coordination: api.PreAuthCoordinationCentral, ObserveTargets: true,
 			FailedResponses: &api.PreAuthFailedResponseLimit{FailuresPerMinute: 5, Burst: 1}}},
 	}
-	created := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil)
+	created := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", created.Code, created.Body.String())
 	}
@@ -35,7 +36,7 @@ func TestAppPreAuthObservationsFreePlanAndPolicyScope(t *testing.T) {
 		{"metric":{"policy":"targets_%s","outcome":"target_threshold"},"value":[0,"2"]},
 		{"metric":{"policy":"foreign","outcome":"would_block"},"value":[0,"999"]}
 	]}}`, key, key, key, key)
-	installPromFixture(t, &e, func(query string) string {
+	apidserver.InstallPromFixture(t, &e, func(query string) string {
 		if !strings.Contains(query, `[5m]`) || !strings.Contains(query, fmt.Sprintf("app=%q", createdApp.ID)) {
 			t.Errorf("unexpected PromQL query: %s", query)
 		}
@@ -47,7 +48,7 @@ func TestAppPreAuthObservationsFreePlanAndPolicyScope(t *testing.T) {
 		}
 		return fixture
 	})
-	rec := e.do(t, "GET", "/v1/apps/protected-app/pre-auth-observations", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/protected-app/pre-auth-observations", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("observations = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -70,21 +71,21 @@ func TestAppPreAuthObservationsFreePlanAndPolicyScope(t *testing.T) {
 		s.Requests != 50 || s.WouldBlock != 4 || s.WouldBlockSucceeded != 2 {
 		t.Fatalf("suggestion = %+v", out.Suggestion)
 	}
-	if rec := e.do(t, "GET", "/v1/apps/protected-app/pre-auth-observations?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
+	if rec := e.Do(t, "GET", "/v1/apps/protected-app/pre-auth-observations?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)
 	}
-	if rec := e.do(t, "GET", "/v1/apps/other-app/pre-auth-observations", nil, nil); rec.Code != http.StatusNotFound {
+	if rec := e.Do(t, "GET", "/v1/apps/other-app/pre-auth-observations", nil, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown app = %d", rec.Code)
 	}
 }
 
 func TestAppPreAuthObservationsDegraded(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	config := &api.PreAuthRateLimitConfig{Mode: api.PreAuthRateLimitObserve, RequestsPerSecond: 1, Burst: 1}
-	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil); rec.Code != http.StatusCreated {
+	if rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "protected-app", PreAuthRateLimit: config}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
-	rec := e.do(t, "GET", "/v1/apps/protected-app/pre-auth-observations", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/protected-app/pre-auth-observations", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("degraded observations = %d: %s", rec.Code, rec.Body.String())
 	}

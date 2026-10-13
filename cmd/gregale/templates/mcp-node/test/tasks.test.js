@@ -387,11 +387,29 @@ test('queue metrics count only unexpired queued and running rows in the task nam
     return { rows: [{ outstanding_tasks: '4', oldest_age_seconds: '18.25', running_tasks: '2', capacity_waiting_tasks: '1', failed_tasks: '2', retry_waiting_tasks: '1', active_workers: '2', draining_workers: '0', unsupported_handler_tasks: '1' }] };
   } };
   const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
-  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1, failedTasks: 2, retryWaitingTasks: 1, activeWorkers: 2, drainingWorkers: 0, unsupportedHandlerTasks: 1 });
+  assert.deepEqual(await store.queueMetrics(), { outstandingTasks: 4, oldestAgeSeconds: 18.25, runningTasks: 2, capacityWaitingTasks: 1, failedTasks: 2, retryWaitingTasks: 1, activeWorkers: 2, drainingWorkers: 0, unsupportedHandlerTasks: 1, withoutCompatibleWorkerTasks: 1 });
   assert.deepEqual(captured.params, ['mcp-worker-prod', 16, 4]);
   assert.match(captured.sql, /status IN \('queued', 'running', 'failed'\)/);
   assert.match(captured.sql, /expires_at > instant.now/);
   assert.match(captured.sql, /MIN\(created_at\)/);
+  assert.match(captured.sql, /gregale_mcp_task_workers/);
+  assert.match(captured.sql, /handler_version/);
+});
+
+test('worker capability heartbeats publish exact handler versions and remove on shutdown', async () => {
+  const calls = [];
+  const pool = { async query(sql, params) { calls.push({ sql, params }); return { rows: [] }; } };
+  const store = createPostgresMcpTaskStore({ pool, namespace: 'mcp-worker-prod', ownerKey: 'x'.repeat(48), ttlMs: 60_000 });
+  const workerID = '11111111-1111-4111-8111-111111111111';
+  await store.heartbeatWorkerCapabilities(workerID, [
+    { name: 'build_report', version: '1' },
+    { name: 'build_report', version: '2' },
+  ]);
+  assert.match(calls[0].sql, /INSERT INTO gregale_mcp_task_worker_handlers/);
+  assert.deepEqual(calls[0].params, ['mcp-worker-prod', workerID, ['build_report', 'build_report'], ['1', '2'], '']);
+  await store.removeWorkerCapabilities(workerID);
+  assert.match(calls[1].sql, /DELETE FROM gregale_mcp_task_worker_handlers/);
+  assert.deepEqual(calls[1].params, ['mcp-worker-prod', workerID]);
 });
 
 test('MCP Tasks are advertised and the modern wire methods round-trip through the starter SDK', { timeout: 10_000 }, async t => {

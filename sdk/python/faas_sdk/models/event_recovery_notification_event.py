@@ -3,6 +3,7 @@ from typing import Literal
 EventRecoveryNotificationEvent = Literal[
     "event_recovery.cancelled",
     "event_recovery.completed",
+    "event_recovery.execution_attention",
     "event_recovery.execution_finished",
     "event_recovery.expired",
 ]
@@ -10,6 +11,7 @@ EventRecoveryNotificationEvent = Literal[
 EVENT_RECOVERY_NOTIFICATION_EVENT_VALUES: set[EventRecoveryNotificationEvent] = {
     "event_recovery.cancelled",
     "event_recovery.completed",
+    "event_recovery.execution_attention",
     "event_recovery.execution_finished",
     "event_recovery.expired",
 }

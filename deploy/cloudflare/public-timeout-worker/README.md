@@ -14,6 +14,13 @@ gateway therefore transports an origin 504 as HTTP 409 with the private
 `X-Faas-Edge-Original-Status: 504` marker. The Worker restores the original 504
 and removes the marker before returning the response to the customer.
 
+Cloudflare does the same to origin 502s, so an app that crashed mid-request
+(for example OOM-killed) reached API clients as Cloudflare HTML with no
+request id. The Worker now sends `X-Faas-Edge-Restorable: 502,504`, and the
+gateway transports a 502 (the platform's `bad_gateway` problem or an app's own
+502) only for a Worker that advertises it. Deploy order does not matter: an
+older Worker never receives a transported 502.
+
 ## Deploy
 
 1. Create a DNS-only `origin.gregale.dev` record pointing at the Caddy origin.

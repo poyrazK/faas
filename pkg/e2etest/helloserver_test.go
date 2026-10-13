@@ -79,6 +79,24 @@ func TestHelloServer_ServesBodyAndHealth(t *testing.T) {
 	}
 }
 
+func TestHelloServer_QueueAckFixture(t *testing.T) {
+	_, addr := startHelloServer(t, "-queue-ack")
+	if code, _ := get(t, "http://"+addr+"/healthz"); code != http.StatusOK {
+		t.Fatalf("queue worker health: %d", code)
+	}
+	response, err := http.Post("http://"+addr+"/_triggers/esm/fixture", "application/json", strings.NewReader(`{"id":"accepted"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if body, err := io.ReadAll(response.Body); err != nil || response.StatusCode != http.StatusNoContent || len(body) != 0 {
+		t.Fatalf("queue acknowledgement: status=%d body=%q err=%v", response.StatusCode, body, err)
+	}
+	if code, _ := get(t, "http://"+addr+"/_triggers/esm/fixture"); code != http.StatusMethodNotAllowed {
+		t.Fatalf("queue trigger GET: %d", code)
+	}
+}
+
 // The wedged variant must stay alive without ever binding the port: vmmd's
 // liveness classifies it as conn_refused, which is the case that test wants.
 func TestHelloServer_NoListenNeverBinds(t *testing.T) {

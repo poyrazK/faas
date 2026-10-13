@@ -73,6 +73,82 @@ func HelloImage(repo, helloBody string) (fakeImage, string) {
 	return layeredHelloImageOnPort(repo, helloBody, false, 8080)
 }
 
+// HelloQueueWorkerImage accepts private push-queue deliveries with a 204 and
+// otherwise behaves like HelloImage. It is used to prove real queue delivery
+// after a GitOps graph release, without sending a synthetic smoke through the
+// customer queue.
+func HelloQueueWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack"})
+}
+
+// ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
+// full-rootfs OCI images and never launch a source builder. imaged still stages
+// and validates its builder base before subscribing, so this image carries the
+// required paths. The tool files are inert; source-build tests must use a real
+// builder base instead.
+func ImageOnlyBuilderBaseImage(repo string) (fakeImage, string) {
+	img, _ := HelloImage(repo, "")
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	for _, name := range []string{
+		"usr/local/bin/faas-guest-init",
+		"usr/local/bin/railpack",
+		"usr/local/bin/buildctl",
+		"usr/local/bin/runc",
+		"bin/bash",
+	} {
+		body := []byte("#!/bin/sh\nexit 1\n")
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			panic(fmt.Sprintf("fakeregistry: builder path %s: %v", name, err))
+		}
+		if _, err := tw.Write(body); err != nil {
+			panic(fmt.Sprintf("fakeregistry: builder body %s: %v", name, err))
+		}
+	}
+	if err := tw.Close(); err != nil {
+		panic(fmt.Sprintf("fakeregistry: close builder tar: %v", err))
+	}
+	var blob bytes.Buffer
+	zw := gzip.NewWriter(&blob)
+	if _, err := zw.Write(tarBuf.Bytes()); err != nil {
+		panic(fmt.Sprintf("fakeregistry: compress builder layer: %v", err))
+	}
+	if err := zw.Close(); err != nil {
+		panic(fmt.Sprintf("fakeregistry: close builder layer: %v", err))
+	}
+	layerSum := sha256.Sum256(blob.Bytes())
+	layerDigest := "sha256:" + hex.EncodeToString(layerSum[:])
+	diffSum := sha256.Sum256(tarBuf.Bytes())
+	img.layerBlobs = append(img.layerBlobs, blobEntry{digest: layerDigest, bytes: blob.Bytes()})
+
+	var cfg map[string]any
+	if err := json.Unmarshal(img.configBytes, &cfg); err != nil {
+		panic(err)
+	}
+	root := cfg["rootfs"].(map[string]any)
+	root["diff_ids"] = append(root["diff_ids"].([]any), "sha256:"+hex.EncodeToString(diffSum[:]))
+	img.configBytes, _ = json.Marshal(cfg)
+	cfgSum := sha256.Sum256(img.configBytes)
+	img.configDigest = "sha256:" + hex.EncodeToString(cfgSum[:])
+
+	var manifest map[string]any
+	if err := json.Unmarshal(img.manifestBytes, &manifest); err != nil {
+		panic(err)
+	}
+	descriptor := manifest["config"].(map[string]any)
+	descriptor["digest"] = img.configDigest
+	descriptor["size"] = len(img.configBytes)
+	manifest["layers"] = append(manifest["layers"].([]any), map[string]any{
+		"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+		"digest":    layerDigest,
+		"size":      len(blob.Bytes()),
+	})
+	img.manifestBytes, _ = json.Marshal(manifest)
+	manifestSum := sha256.Sum256(img.manifestBytes)
+	img.manifestDigest = "sha256:" + hex.EncodeToString(manifestSum[:])
+	return img, fmt.Sprintf("%s@%s", repo, img.manifestDigest)
+}
+
 // DurableCounterImageAboveBase runs a pure entity counter in a real guest.
 // Its optimized base prefix matches BaseLayerImage, as in HelloImageAboveBase.
 func DurableCounterImageAboveBase(repo string) (fakeImage, string) {

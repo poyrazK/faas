@@ -8,7 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.operation_workflow_performance_summary import OperationWorkflowPerformanceSummary
 from ...models.problem import Problem
-from ...types import UNSET, Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -16,6 +16,7 @@ def _get_kwargs(
     app_id: UUID,
     scope: str,
     workflow: str,
+    baseline_token: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -26,6 +27,8 @@ def _get_kwargs(
     params["scope"] = scope
 
     params["workflow"] = workflow
+
+    params["baseline_token"] = baseline_token
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -94,6 +97,7 @@ def sync_detailed(
     app_id: UUID,
     scope: str,
     workflow: str,
+    baseline_token: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceSummary | Problem]:
     """Summarize retained business workflow performance for the authenticated customer.
 
@@ -110,6 +114,7 @@ def sync_detailed(
         app_id (UUID):
         scope (str):
         workflow (str):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -123,6 +128,7 @@ def sync_detailed(
         app_id=app_id,
         scope=scope,
         workflow=workflow,
+        baseline_token=baseline_token,
     )
 
     response = client.get_httpx_client().request(
@@ -138,6 +144,7 @@ def sync(
     app_id: UUID,
     scope: str,
     workflow: str,
+    baseline_token: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceSummary | Problem | None:
     """Summarize retained business workflow performance for the authenticated customer.
 
@@ -154,6 +161,7 @@ def sync(
         app_id (UUID):
         scope (str):
         workflow (str):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -168,6 +176,7 @@ def sync(
         app_id=app_id,
         scope=scope,
         workflow=workflow,
+        baseline_token=baseline_token,
     ).parsed
 
 
@@ -177,6 +186,7 @@ async def asyncio_detailed(
     app_id: UUID,
     scope: str,
     workflow: str,
+    baseline_token: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceSummary | Problem]:
     """Summarize retained business workflow performance for the authenticated customer.
 
@@ -193,6 +203,7 @@ async def asyncio_detailed(
         app_id (UUID):
         scope (str):
         workflow (str):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -206,6 +217,7 @@ async def asyncio_detailed(
         app_id=app_id,
         scope=scope,
         workflow=workflow,
+        baseline_token=baseline_token,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -219,6 +231,7 @@ async def asyncio(
     app_id: UUID,
     scope: str,
     workflow: str,
+    baseline_token: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceSummary | Problem | None:
     """Summarize retained business workflow performance for the authenticated customer.
 
@@ -235,6 +248,7 @@ async def asyncio(
         app_id (UUID):
         scope (str):
         workflow (str):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -250,5 +264,6 @@ async def asyncio(
             app_id=app_id,
             scope=scope,
             workflow=workflow,
+            baseline_token=baseline_token,
         )
     ).parsed

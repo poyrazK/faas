@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,16 +10,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 226 — a platform customer has one account identity across app consumers.
 func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appA := mustSeedApp(t, e, "tenant-api")
-	appB := mustSeedApp(t, e, "tenant-worker")
-	create := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+	e := apidserver.Setup(t, api.PlanPro)
+	appA := apidserver.MustSeedApp(t, e, "tenant-api")
+	appB := apidserver.MustSeedApp(t, e, "tenant-worker")
+	create := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 		ExternalRef: "customer-42", Name: "Customer 42",
 	}, nil)
 	if create.Code != http.StatusCreated {
@@ -32,13 +34,13 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	if tenant.ID == "" || tenant.Status != "active" {
 		t.Fatalf("tenant = %+v", tenant)
 	}
-	replay := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+	replay := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 		ExternalRef: "customer-42", Name: "Customer 42",
 	}, nil)
 	if replay.Code != http.StatusOK {
 		t.Fatalf("idempotent external ref: %d %s", replay.Code, replay.Body.String())
 	}
-	conflict := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+	conflict := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 		ExternalRef: "customer-42", Name: "Another customer",
 	}, nil)
 	if conflict.Code != http.StatusConflict {
@@ -46,13 +48,13 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	}
 	consumerA := seedPlatformTenantConsumer(t, e, "tenant-api", tenant.ID)
 	consumerB := seedPlatformTenantConsumer(t, e, "tenant-worker", tenant.ID)
-	surfaceID := seedTenantSurface(t, e, appA, "customer-42-domain")
-	linkedSurface := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/surfaces",
+	surfaceID := apidserver.SeedTenantSurface(t, e, appA, "customer-42-domain")
+	linkedSurface := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/surfaces",
 		api.LinkPlatformTenantSurfaceRequest{SurfaceID: surfaceID}, nil)
 	if linkedSurface.Code != http.StatusOK {
 		t.Fatalf("link surface: %d %s", linkedSurface.Code, linkedSurface.Body.String())
 	}
-	detail := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID, nil, nil)
+	detail := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID, nil, nil)
 	if detail.Code != http.StatusOK {
 		t.Fatalf("tenant detail: %d %s", detail.Code, detail.Body.String())
 	}
@@ -65,48 +67,48 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	}
 	keyA := seedPlatformTenantKey(t, e, "tenant-api", consumerA)
 	keyB := seedPlatformTenantKey(t, e, "tenant-worker", consumerB)
-	otherTenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "customer-43", "Customer 43", 2500)
+	otherTenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "customer-43", "Customer 43", 2500)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherConsumer, err := e.store.CreateAPIConsumer(context.Background(), e.acct.ID, appA, "customer-43", "Customer 43")
+	otherConsumer, err := (*e.Store()).CreateAPIConsumer(context.Background(), (*e.Acct()).ID, appA, "customer-43", "Customer 43")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(context.Background(), e.acct.ID, otherTenant.ID, otherConsumer.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(context.Background(), (*e.Acct()).ID, otherTenant.ID, otherConsumer.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, otherPrefix, otherHash, err := api.GenerateConsumerKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateConsumerKeyForConsumer(context.Background(), e.acct.ID, otherConsumer.ID,
+	if _, err := (*e.Store()).CreateConsumerKeyForConsumer(context.Background(), (*e.Acct()).ID, otherConsumer.ID,
 		"other-primary", otherPrefix, otherHash, []string{"read"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(context.Background(), e.acct.ID, otherTenant.ID, consumerA); !errors.Is(err, state.ErrConflict) {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(context.Background(), (*e.Acct()).ID, otherTenant.ID, consumerA); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("linking consumer to two platform tenants = %v", err)
 	}
-	if _, err := e.store.LinkPlatformTenantSurface(context.Background(), e.acct.ID, otherTenant.ID, surfaceID); !errors.Is(err, state.ErrConflict) {
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(context.Background(), (*e.Acct()).ID, otherTenant.ID, surfaceID); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("linking surface to two platform tenants = %v", err)
 	}
-	if _, err := e.store.ConsumerKeyByAppAndPrefix(context.Background(), e.acct.ID, appA, keyA.Prefix); err != nil {
+	if _, err := (*e.Store()).ConsumerKeyByAppAndPrefix(context.Background(), (*e.Acct()).ID, appA, keyA.Prefix); err != nil {
 		t.Fatalf("active key A: %v", err)
 	}
 	minute := time.Now().UTC().Add(-24 * time.Hour).Truncate(24 * time.Hour).Add(12 * time.Hour)
 	for _, event := range []state.APIConsumerUsageEvent{
-		{EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appA, ConsumerKey: consumerA,
+		{EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: appA, ConsumerKey: consumerA,
 			PlatformTenantID: tenant.ID, WindowStart: minute, RequestCount: 10, ErrorCount: 2, BillableUnits: 8},
-		{EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appA, ConsumerKey: consumerA,
+		{EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: appA, ConsumerKey: consumerA,
 			PlatformTenantID: tenant.ID, WindowStart: minute.Add(time.Minute), RequestCount: 4, ErrorCount: 0, BillableUnits: 3},
-		{EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: appB, ConsumerKey: consumerB,
+		{EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: appB, ConsumerKey: consumerB,
 			PlatformTenantID: tenant.ID, WindowStart: minute, RequestCount: 7, ErrorCount: 1, BillableUnits: 6},
 	} {
-		if _, err := e.store.RecordAPIConsumerUsage(context.Background(), event); err != nil {
+		if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	usage := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/usage", nil, nil)
+	usage := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/usage", nil, nil)
 	if usage.Code != http.StatusOK {
 		t.Fatalf("usage: %d %s", usage.Code, usage.Body.String())
 	}
@@ -126,50 +128,50 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 	if dailyA.RequestCount != 14 || !dailyA.WindowStart.Equal(minute.Truncate(24*time.Hour)) {
 		t.Fatalf("daily consumer aggregation = %+v", dailyA)
 	}
-	suspended := e.do(t, http.MethodPatch, "/v1/account/platform-tenants/"+tenant.ID,
+	suspended := e.Do(t, http.MethodPatch, "/v1/account/platform-tenants/"+tenant.ID,
 		api.SetPlatformTenantStatusRequest{Status: "suspended"}, nil)
 	if suspended.Code != http.StatusOK {
 		t.Fatalf("suspend: %d %s", suspended.Code, suspended.Body.String())
 	}
-	if blocked, err := e.store.PlatformTenantSurfaceSuspended(context.Background(), surfaceID); err != nil || !blocked {
+	if blocked, err := (*e.Store()).PlatformTenantSurfaceSuspended(context.Background(), surfaceID); err != nil || !blocked {
 		t.Fatalf("suspended surface = %v, %v", blocked, err)
 	}
 	for _, pair := range []struct{ app, prefix string }{{appA, keyA.Prefix}, {appB, keyB.Prefix}} {
-		if _, err := e.store.ConsumerKeyByAppAndPrefix(context.Background(), e.acct.ID, pair.app, pair.prefix); !errors.Is(err, state.ErrNotFound) {
+		if _, err := (*e.Store()).ConsumerKeyByAppAndPrefix(context.Background(), (*e.Acct()).ID, pair.app, pair.prefix); !errors.Is(err, state.ErrNotFound) {
 			t.Fatalf("suspended key lookup = %v, want not found", err)
 		}
 	}
-	if _, err := e.store.ConsumerKeyByAppAndPrefix(context.Background(), e.acct.ID, appA, otherPrefix); err != nil {
+	if _, err := (*e.Store()).ConsumerKeyByAppAndPrefix(context.Background(), (*e.Acct()).ID, appA, otherPrefix); err != nil {
 		t.Fatalf("unrelated customer's key was blocked: %v", err)
 	}
-	newKey := e.do(t, http.MethodPost, "/v1/apps/tenant-api/consumers/"+consumerA+"/keys",
+	newKey := e.Do(t, http.MethodPost, "/v1/apps/tenant-api/consumers/"+consumerA+"/keys",
 		api.CreateConsumerKeyRequest{Name: "suspended-key", Scopes: []string{"read"}}, nil)
 	if newKey.Code != http.StatusConflict {
 		t.Fatalf("suspended tenant issued key: %d %s", newKey.Code, newKey.Body.String())
 	}
-	resumed := e.do(t, http.MethodPatch, "/v1/account/platform-tenants/"+tenant.ID,
+	resumed := e.Do(t, http.MethodPatch, "/v1/account/platform-tenants/"+tenant.ID,
 		api.SetPlatformTenantStatusRequest{Status: "active"}, nil)
 	if resumed.Code != http.StatusOK {
 		t.Fatalf("resume: %d %s", resumed.Code, resumed.Body.String())
 	}
-	if blocked, err := e.store.PlatformTenantSurfaceSuspended(context.Background(), surfaceID); err != nil || blocked {
+	if blocked, err := (*e.Store()).PlatformTenantSurfaceSuspended(context.Background(), surfaceID); err != nil || blocked {
 		t.Fatalf("resumed surface = %v, %v", blocked, err)
 	}
-	if _, err := e.store.ConsumerKeyByAppAndPrefix(context.Background(), e.acct.ID, appA, keyA.Prefix); err != nil {
+	if _, err := (*e.Store()).ConsumerKeyByAppAndPrefix(context.Background(), (*e.Acct()).ID, appA, keyA.Prefix); err != nil {
 		t.Fatalf("resumed key A: %v", err)
 	}
-	if _, err := e.store.ConsumerKeyByAppAndPrefix(context.Background(), e.acct.ID, appB, keyB.Prefix); err != nil {
+	if _, err := (*e.Store()).ConsumerKeyByAppAndPrefix(context.Background(), (*e.Acct()).ID, appB, keyB.Prefix); err != nil {
 		t.Fatalf("resumed key B: %v", err)
 	}
 
-	other, err := e.store.CreateAccount(context.Background(), "another-platform@example.test", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "another-platform@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.GetPlatformTenant(context.Background(), other.ID, tenant.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).GetPlatformTenant(context.Background(), other.ID, tenant.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account tenant = %v", err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(context.Background(), other.ID, tenant.ID, consumerA); !errors.Is(err, state.ErrNotFound) {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(context.Background(), other.ID, tenant.ID, consumerA); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("cross-account consumer link = %v", err)
 	}
 }
@@ -179,8 +181,8 @@ func TestPlatformTenantCrossAppLifecycle(t *testing.T) {
 // answered 500 "could not load platform tenant usage" (production-us,
 // `platform-tenants usage --since <today> --until <today, later>`).
 func TestPlatformTenantUsageSameDayWindowIsEmpty(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	create := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+	e := apidserver.Setup(t, api.PlanPro)
+	create := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 		ExternalRef: "customer-same-day", Name: "Same Day",
 	}, nil)
 	if create.Code != http.StatusCreated {
@@ -192,7 +194,7 @@ func TestPlatformTenantUsageSameDayWindowIsEmpty(t *testing.T) {
 	}
 	day := time.Now().UTC().Truncate(24 * time.Hour)
 	q := url.Values{"since": {day.Add(time.Hour).Format(time.RFC3339)}, "until": {day.Add(2 * time.Hour).Format(time.RFC3339)}}
-	res := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/usage?"+q.Encode(), nil, nil)
+	res := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/usage?"+q.Encode(), nil, nil)
 	if res.Code != http.StatusOK {
 		t.Fatalf("same-day usage window: %d %s, want 200 with an empty period", res.Code, res.Body.String())
 	}
@@ -206,10 +208,10 @@ func TestPlatformTenantUsageSameDayWindowIsEmpty(t *testing.T) {
 }
 
 func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	originalIDs := make(map[string]struct{}, 3)
 	for _, externalRef := range []string{"page-customer-1", "page-customer-2", "page-customer-3"} {
-		rec := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+		rec := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 			ExternalRef: externalRef, Name: externalRef,
 		}, nil)
 		if rec.Code != http.StatusCreated {
@@ -222,7 +224,7 @@ func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
 		originalIDs[tenant.ID] = struct{}{}
 	}
 
-	firstResponse := e.do(t, http.MethodGet, "/v1/account/platform-tenants?limit=1", nil, nil)
+	firstResponse := e.Do(t, http.MethodGet, "/v1/account/platform-tenants?limit=1", nil, nil)
 	if firstResponse.Code != http.StatusOK {
 		t.Fatalf("first tenant page: %d %s", firstResponse.Code, firstResponse.Body.String())
 	}
@@ -234,7 +236,7 @@ func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
 		t.Fatalf("first tenant page = %+v", first)
 	}
 
-	newResponse := e.do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
+	newResponse := e.Do(t, http.MethodPost, "/v1/account/platform-tenants", api.CreatePlatformTenantRequest{
 		ExternalRef: "page-customer-new", Name: "New customer",
 	}, nil)
 	if newResponse.Code != http.StatusCreated {
@@ -249,7 +251,7 @@ func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
 		"limit":      []string{"1"},
 		"page_token": []string{first.NextPageToken},
 	}.Encode()
-	secondResponse := e.do(t, http.MethodGet, path, nil, nil)
+	secondResponse := e.Do(t, http.MethodGet, path, nil, nil)
 	if secondResponse.Code != http.StatusOK {
 		t.Fatalf("cursor tenant page: %d %s", secondResponse.Code, secondResponse.Body.String())
 	}
@@ -267,19 +269,19 @@ func TestPlatformTenantRegistryCursorPagination(t *testing.T) {
 		t.Fatalf("cursor response pagination fields = %+v", second)
 	}
 
-	badToken := e.do(t, http.MethodGet, "/v1/account/platform-tenants?page_token=bad", nil, nil)
+	badToken := e.Do(t, http.MethodGet, "/v1/account/platform-tenants?page_token=bad", nil, nil)
 	if badToken.Code != http.StatusBadRequest {
 		t.Fatalf("malformed cursor status = %d, want 400: %s", badToken.Code, badToken.Body.String())
 	}
-	mixed := e.do(t, http.MethodGet, path+"&offset=0", nil, nil)
+	mixed := e.Do(t, http.MethodGet, path+"&offset=0", nil, nil)
 	if mixed.Code != http.StatusBadRequest {
 		t.Fatalf("cursor plus offset status = %d, want 400: %s", mixed.Code, mixed.Body.String())
 	}
 }
 
-func seedPlatformTenantConsumer(t *testing.T, e testEnv, slug, tenantID string) string {
+func seedPlatformTenantConsumer(t *testing.T, e apidserver.TestEnv, slug, tenantID string) string {
 	t.Helper()
-	created := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers", api.CreateAPIConsumerRequest{
+	created := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "customer-42", Name: "Customer 42",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -289,7 +291,7 @@ func seedPlatformTenantConsumer(t *testing.T, e testEnv, slug, tenantID string) 
 	if err := json.Unmarshal(created.Body.Bytes(), &consumer); err != nil {
 		t.Fatal(err)
 	}
-	linked := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenantID+"/consumers",
+	linked := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenantID+"/consumers",
 		api.LinkPlatformTenantConsumerRequest{ConsumerID: consumer.ID}, nil)
 	if linked.Code != http.StatusOK {
 		t.Fatalf("link %s consumer: %d %s", slug, linked.Code, linked.Body.String())
@@ -297,9 +299,9 @@ func seedPlatformTenantConsumer(t *testing.T, e testEnv, slug, tenantID string) 
 	return consumer.ID
 }
 
-func seedPlatformTenantKey(t *testing.T, e testEnv, slug, consumerID string) api.ConsumerKeyResponse {
+func seedPlatformTenantKey(t *testing.T, e apidserver.TestEnv, slug, consumerID string) api.ConsumerKeyResponse {
 	t.Helper()
-	created := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys",
+	created := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys",
 		api.CreateConsumerKeyRequest{Name: "primary", Scopes: []string{"read"}}, nil)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create %s key: %d %s", slug, created.Code, created.Body.String())

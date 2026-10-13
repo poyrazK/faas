@@ -1277,6 +1277,8 @@ type Handler struct {
 	geoReader CountryReader
 	// asnReader resolves the asn match field (ADR-966); nil = absent.
 	asnReader ASNReader
+	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
+	botVerifier *BotVerifier
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -2088,8 +2090,11 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 			"reason": "missing_or_malformed_bearer",
 		})
 		rec.status = http.StatusUnauthorized
+		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
+		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`"))
+			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2118,7 +2123,8 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "the presented API key is not valid for this app"))
+			"Unauthorized", "the presented API key is not valid for this app").
+			WithHeader("WWW-Authenticate", `Bearer realm="apps", error="invalid_token"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
@@ -2640,6 +2646,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		// cases to a single "don't stamp" path so
 		// the hot path is a single non-nil test.
 		if app.CORSDefaultEnabled != nil && *app.CORSDefaultEnabled && len(app.CORSDefaultOrigins) > 0 {
+			rec.installHeaderOps(corsVaryOps)
 			origin := r.Header.Get("Origin")
 			allowedOrigin := matchOrigin(app.CORSDefaultOrigins, origin)
 			if origin != "" && allowedOrigin != "" && rec != nil {
@@ -2664,6 +2671,9 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		}
 		return false
 	}
+	// From here the response depends on the request's Origin whatever it
+	// is, including when the request has none.
+	rec.installHeaderOps(corsVaryOps)
 	if requestedMethod != "" {
 		allowed := false
 		for _, method := range rule.AllowMethods {
@@ -2776,6 +2786,16 @@ func splitScheme(origin string) (scheme, rest string, ok bool) {
 	}
 	return origin[:idx], origin[idx+3:], true
 }
+
+// corsVaryOps marks a response whose CORS headers depend on the request's
+// Origin. The gateway stamps Access-Control-Allow-Origin only for an allowed
+// origin and omits it when the request has none, so without Vary: Origin a
+// browser or shared cache that stored one answer (for example a direct page
+// load of a Cache-Control: public resource) replays it to a cross-origin
+// fetch from an allowed origin, which the browser then blocks (production-us
+// hunt #9, H9-130). The platform response cache is unaffected: it captures
+// the response before these ops run and re-applies CORS on every hit.
+var corsVaryOps = []EdgeRuleHeaderOp{{Action: "vary", Name: "Vary", Value: "Origin"}}
 
 // corsDefaultOps is the per-app default CORS header op set (CORS
 // improvements D1). Mirrors the shape of corsResponseOps above
@@ -4615,11 +4635,29 @@ func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 			return
 		}
 		hdr.Set(op.Name, op.Value)
+	case "vary":
+		// Platform-only (customer header ops validate to add/set/remove):
+		// add one field name to the list unless it is already covered.
+		addVaryField(hdr, op.Value)
 	default: // "add" and any unknown verb
 		if op.Value != "" {
 			hdr.Add(op.Name, op.Value)
 		}
 	}
+}
+
+// addVaryField appends field to the response's Vary list unless the list
+// already names it or is "*".
+func addVaryField(hdr http.Header, field string) {
+	for _, value := range hdr.Values("Vary") {
+		for _, existing := range strings.Split(value, ",") {
+			existing = strings.TrimSpace(existing)
+			if existing == "*" || strings.EqualFold(existing, field) {
+				return
+			}
+		}
+	}
+	hdr.Add("Vary", field)
 }
 
 // bearerTokenFromHeader is the per-deployment authz branch's
@@ -5660,6 +5698,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	trustedIP, _ := clientIPFromTrustedXFF(r)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
+	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
 	// ADR-965: response-counted throttles charge once the status is known.
 	requestCtx, statusHooks := withResponseStatusHooks(requestCtx)
@@ -5698,7 +5737,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) {
+			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -5944,7 +5983,8 @@ haveApp:
 	// Consumer-attributed traffic always carries a bounded billing route so
 	// rate cards can weight routes (ADR-952); consumer auth ran above.
 	consumerAttributed := authenticatedFrom(r.Context()).ConsumerID != ""
-	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed {
+	routeCarrier := ObservedRouteCarrierFrom(r.Context())
+	if set != nil || telemetryRouteSet != nil || h.requestAuditEnabled || h.apiDiscoveryEnabled || consumerAttributed || routeCarrier != nil {
 		path := inferredObservedPath(r.URL.Path)
 		if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
 			if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
@@ -5952,6 +5992,7 @@ haveApp:
 			}
 		}
 		preLabel := observedRouteLabel(r.Method, path)
+		routeCarrier.set(preLabel)
 		if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 			r = withAuditRoute(r, preLabel)
 		}
@@ -6880,6 +6921,7 @@ haveApp:
 			// the request AND the wake budget for nothing.
 			h.markHealthFailure(app.ID, err)
 			h.logFleetCapacityRefusal(app.ID, err)
+			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
 			}
@@ -6897,11 +6939,14 @@ haveApp:
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 		if burstErr != nil {
+			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
+				burstErr = fmt.Errorf("%w: %w", ErrWakeQueueWaitTimeout, burstErr)
+			}
 			// A burst that cannot become routable within its admission policy is
 			// a controlled timeout, not an upstream 502. Client disconnects
 			// remain silent; genuine admission failures use the normal
@@ -7634,6 +7679,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
+		if platformFailureUnbillable(r, status) {
+			h.metrics.ObservePlatformError(appID, plan)
+		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
 		// to keep cardinality bounded — full status codes would explode
@@ -8790,7 +8838,7 @@ func (h *Handler) warmTargetNeedsValidation(app App, target Target, now time.Tim
 	idleSeconds := app.IdleTimeoutS
 	if idleSeconds <= 0 {
 		if limits, ok := api.LimitsFor(app.Plan); ok {
-			idleSeconds = limits.IdleTimeoutS
+			idleSeconds = limits.DefaultIdleTimeoutS(string(app.Type))
 		}
 	}
 	if idleSeconds <= 0 || target.InstanceID == "" {
@@ -9061,10 +9109,48 @@ func writeWakeError(w http.ResponseWriter, err error) {
 				writeFleetCapacityRefusal(w)
 				return
 			}
+			if public, ok := publicWakeFailure(prob); ok {
+				w.Header().Set("Cache-Control", "no-store")
+				api.WriteProblem(w, public)
+				return
+			}
 			api.WriteProblem(w, prob)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("wake failed"))
+	}
+}
+
+// publicWakeFailure is what an app's visitor sees when its instance could
+// not be started. The wake error's detail is written for the app owner and
+// operators: platform wake/instance ids, component names ("cold boot: vmm:
+// readiness"), and for a crashed workload its last output lines, which
+// routinely include connection strings and other secrets. A public caller gets
+// the stable code and a generic detail; logWakeFailure keeps the original
+// (production-us hunt #9: a crashing app answered every visitor with
+// "500 vmmd operation failed" and the internal wake detail). 503 rather than
+// 502: Cloudflare replaces 502 bodies.
+func publicWakeFailure(p *api.Problem) (*api.Problem, bool) {
+	switch p.Code {
+	case api.CodeAppStartupCrash, api.CodeAppNotListening, api.CodeAppStartupTimeout,
+		api.CodeAppLoopbackBound, api.CodeAppRuntimeOOM, api.CodeAppArchMismatch, api.CodeDeployFailed:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App failed to start",
+			"the app's process did not become ready; its owner can find the cause in the app's logs and deployment status"), true
+	case "internal", api.CodeInternal:
+		return api.NewProblem(http.StatusServiceUnavailable, p.Code, "App temporarily unavailable",
+			"the platform could not start this app; retry shortly"), true
+	}
+	return nil, false
+}
+
+// logWakeFailure keeps the detail publicWakeFailure withholds from visitors.
+func (h *Handler) logWakeFailure(appID string, err error) {
+	var prob *api.Problem
+	if h.log == nil || !errors.As(err, &prob) {
+		return
+	}
+	if _, hidden := publicWakeFailure(prob); hidden {
+		h.log.Warn("gateway: wake failed", "app_id", appID, "code", prob.Code, "detail", logsanitize.Field(prob.Detail))
 	}
 }
 

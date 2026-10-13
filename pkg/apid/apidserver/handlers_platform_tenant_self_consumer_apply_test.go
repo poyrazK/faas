@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,49 +10,50 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "self-apply", "Self apply", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "self-apply", "Self apply", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherTenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "other-self-apply", "Other tenant", 250)
+	otherTenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "other-self-apply", "Other tenant", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
 	makeSurface := func(slug, name, linkedTenant string) (string, state.TenantSurface) {
 		t.Helper()
-		app, err := e.store.CreateApp(ctx, state.App{
-			AccountID:      e.acct.ID,
+		app, err := (*e.Store()).CreateApp(ctx, state.App{
+			AccountID:      (*e.Acct()).ID,
 			Slug:           slug,
 			Type:           state.AppTypeApp,
 			Status:         state.AppActive,
-			RequireAuthn:   e.acct.Plan.RequireAuthnDefault(),
-			PublicAuthMode: e.acct.Plan.PublicAuthModeDefault(),
+			RequireAuthn:   (*e.Acct()).Plan.RequireAuthnDefault(),
+			PublicAuthMode: (*e.Acct()).Plan.PublicAuthModeDefault(),
 		})
 		if err != nil {
 			t.Fatalf("seed app %s: %v", slug, err)
 		}
 		appID := app.ID
-		limits, ok := api.LimitsFor(e.acct.Plan)
+		limits, ok := api.LimitsFor((*e.Acct()).Plan)
 		if !ok {
 			t.Fatal("missing account plan limits")
 		}
-		surface, err := e.store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
-			AccountID: e.acct.ID, AppID: appID, Name: name,
+		surface, err := (*e.Store()).CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{
+			AccountID: (*e.Acct()).ID, AppID: appID, Name: name,
 		}, limits)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := e.store.UpdateTenantSurfaceStatus(ctx, surface.ID, state.SurfaceStatusActive); err != nil {
+		if err := (*e.Store()).UpdateTenantSurfaceStatus(ctx, surface.ID, state.SurfaceStatusActive); err != nil {
 			t.Fatal(err)
 		}
 		if linkedTenant != "" {
-			if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, linkedTenant, surface.ID); err != nil {
+			if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, linkedTenant, surface.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -63,7 +64,7 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 	appForeign, foreignSurface := makeSurface("self-apply-app-foreign", "surface-foreign", otherTenant.ID)
 	createToken := func(name, scope string) api.CreatePlatformTenantAccessTokenResponse {
 		t.Helper()
-		created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
+		created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens",
 			api.CreatePlatformTenantAccessTokenRequest{Name: name, Scopes: []string{scope}}, nil)
 		if created.Code != http.StatusCreated {
 			t.Fatalf("create %s token: %d %s", scope, created.Code, created.Body)
@@ -85,7 +86,7 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 		req := httptest.NewRequest(http.MethodPost, "/v1/platform-tenant-self/consumers/apply", bytes.NewReader(encoded))
 		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	input := api.ApplyPlatformTenantSelfConsumersRequest{ExternalRef: "bundle-customer", Name: "Bundle Customer",
@@ -112,7 +113,7 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 	if hidden := request(manage.Token, foreign); hidden.Code != http.StatusNotFound || strings.Contains(hidden.Body.String(), appForeign) {
 		t.Fatalf("foreign surface was exposed: %d %s", hidden.Code, hidden.Body)
 	}
-	if _, err := e.store.SetPlatformTenantConsumerProvisioningPolicy(ctx, e.acct.ID, tenant.ID, true, 2); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantConsumerProvisioningPolicy(ctx, (*e.Acct()).ID, tenant.ID, true, 2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +131,7 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 		}
 	}
 	for _, appID := range []string{appA, appB} {
-		consumers, err := e.store.ListAPIConsumersForApp(ctx, e.acct.ID, appID)
+		consumers, err := (*e.Store()).ListAPIConsumersForApp(ctx, (*e.Acct()).ID, appID)
 		if err != nil || len(consumers) != 0 {
 			t.Fatalf("dry-run mutated app %s: %+v err=%v", appID, consumers, err)
 		}
@@ -154,7 +155,7 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 		bySurface[surfaceA.ID].ConsumerID == bySurface[surfaceB.ID].ConsumerID {
 		t.Fatalf("expected one distinct app-local identity per surface: %+v", bySurface)
 	}
-	if _, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appB, "conflicting-bundle", "Owner identity"); err != nil {
+	if _, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appB, "conflicting-bundle", "Owner identity"); err != nil {
 		t.Fatal(err)
 	}
 	conflict := api.ApplyPlatformTenantSelfConsumersRequest{ExternalRef: "conflicting-bundle", Name: "Different name",
@@ -162,11 +163,11 @@ func TestPlatformTenantSelfConsumerApplyIsAtomicPreviewableAndRetrySafe(t *testi
 	if rejected := request(manage.Token, conflict); rejected.Code != http.StatusConflict {
 		t.Fatalf("conflicting second app status=%d body=%s", rejected.Code, rejected.Body)
 	}
-	if consumers, err := e.store.ListAPIConsumersForApp(ctx, e.acct.ID, appA); err != nil || len(consumers) != 1 {
+	if consumers, err := (*e.Store()).ListAPIConsumersForApp(ctx, (*e.Acct()).ID, appA); err != nil || len(consumers) != 1 {
 		t.Fatalf("conflicting batch partially created in first app: %+v err=%v", consumers, err)
 	}
 
-	if _, err := e.store.SetPlatformTenantConsumerProvisioningPolicy(ctx, e.acct.ID, tenant.ID, false, 0); err != nil {
+	if _, err := (*e.Store()).SetPlatformTenantConsumerProvisioningPolicy(ctx, (*e.Acct()).ID, tenant.ID, false, 0); err != nil {
 		t.Fatal(err)
 	}
 	replay := request(manage.Token, input)

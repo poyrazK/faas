@@ -11,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/productcap"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func capabilityByKey(t *testing.T, response api.CapabilitiesResponse, key string) api.CapabilityStatus {
@@ -303,7 +304,7 @@ func TestDisposableRunCapabilityMatchesAdmissionGate(t *testing.T) {
 	}
 }
 
-type capabilitiesLegacyStore struct{ state.Store }
+type capabilitiesLegacyStore struct{ Store state.Store }
 
 func TestGetCapabilitiesConditionalParkingBackend(t *testing.T) {
 	for _, tc := range []struct {
@@ -312,7 +313,7 @@ func TestGetCapabilitiesConditionalParkingBackend(t *testing.T) {
 		want  bool
 	}{
 		{name: "unconfigured"},
-		{name: "legacy backend", store: &capabilitiesLegacyStore{state.NewMemStore()}},
+		{name: "legacy backend", store: statetest.NewStore(&capabilitiesLegacyStore{state.NewMemStore()})},
 		{name: "atomic backend", store: state.NewMemStore(), want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

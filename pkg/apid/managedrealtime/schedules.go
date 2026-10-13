@@ -3,12 +3,11 @@ package managedrealtime
 import (
 	"context"
 	"errors"
-	"log/slog"
-	"time"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
+	"log/slog"
+	"time"
 )
 
 func realtimeScheduledFailureCode(err error) string {
@@ -40,7 +39,7 @@ func (s *Service) RunManagedRealtimeSchedules(ctx context.Context) {
 	if log == nil {
 		log = slog.Default()
 	}
-	run := func() {
+	Run := func() {
 		passCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
 		due, err := store.ListDueManagedRealtimeSchedules(passCtx, 128)
@@ -72,7 +71,7 @@ func (s *Service) RunManagedRealtimeSchedules(ctx context.Context) {
 			if s.Owner == nil {
 				continue
 			}
-			payload := realtime.Message{Data: msg.Data, Binary: msg.Binary, Metadata: msg.Metadata}
+			payload := realtime.Message{Data: msg.Data, Binary: msg.Binary, Metadata: msg.Metadata, ExpiresAt: msg.ExpiresAt}
 			if publisher, ok := s.Owner.(realtimeRetainedPublishStatus); ok {
 				result, publishErr := publisher.PublishRetainedWithStatus(passCtx, msg.EndpointID, msg.Channel, payload, msg.Sequence)
 				if publishErr != nil || result.Partial || result.NodesUnavailable > 0 || result.QueueFull > 0 || result.Failed > 0 {
@@ -83,7 +82,7 @@ func (s *Service) RunManagedRealtimeSchedules(ctx context.Context) {
 			}
 		}
 	}
-	run()
+	Run()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -91,7 +90,7 @@ func (s *Service) RunManagedRealtimeSchedules(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			run()
+			Run()
 		}
 	}
 }

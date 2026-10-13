@@ -17,6 +17,7 @@ from faas_sdk.models import (
     AppManifest,
     ApproveEnvironmentGitRevisionRequest,
     ApproveEnvironmentGitRevisionResponse,
+    CreateEnvironmentGitSourceRequest,
     EnvironmentGitOpsStatusResponse,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
@@ -40,6 +41,19 @@ def test_app_manifest_service_binding_transport_rejects_invalid_wire_values() ->
     manifest = AppManifest(entrypoint=["/app"], service_binding_transport=cast(ServiceBindingTransport, "ftp"))
     with pytest.raises(TypeError, match="Unexpected value"):
         manifest.to_dict()
+
+
+def test_gitlab_source_request_round_trip() -> None:
+    request = CreateEnvironmentGitSourceRequest.from_dict(
+        {
+            "provider": "gitlab",
+            "repository": "team/subgroup/service",
+            "ref": "refs/heads/main",
+            "manifest_path": "environments/production.yaml",
+        }
+    )
+    assert request.to_dict()["provider"] == "gitlab"
+    assert request.to_dict()["repository"] == "team/subgroup/service"
 
 
 def test_reviewed_authority_and_override_identity() -> None:
@@ -81,6 +95,7 @@ def test_reviewed_authority_and_override_identity() -> None:
         "source_verified_at": "2026-10-01T00:00:00Z",
         "source_error_code": "environment_git_source_unavailable",
         "source": {
+            "provider": "github",
             "repository_id": 123,
             "installation_id": 42,
             "repository": "example/shop",

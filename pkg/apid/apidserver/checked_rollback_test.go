@@ -1,13 +1,19 @@
 package apidserver
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func checkedRollbackAPIFixture(t *testing.T) (testEnv, state.App, state.Deployment, state.Deployment) {
@@ -181,5 +187,31 @@ func TestCheckedRollbackAPIServiceWaitsForMatchingHandoff(t *testing.T) {
 	finished, err := e.store.GetCheckedRollback(ctx, e.acct.ID, app.ID, operation.ID)
 	if err != nil || finished.Status != "complete" || finished.CompletedAt == nil || finished.AuditID != routed.AuditID {
 		t.Fatalf("missing matching completion: %+v %v", finished, err)
+	}
+}
+
+type failingCheckedRollbackStore struct {
+	MemStore *state.MemStore
+	err      error
+}
+
+func (f failingCheckedRollbackStore) CreateCheckedRollback(context.Context, string, string, string, string, string) (api.RollbackOperation, error) {
+	return api.RollbackOperation{}, f.err
+}
+
+// production-us hunt #9: a rollback failed with "could not persist checked
+// rollback" after 16 s and the identical retry succeeded; the store error was
+// dropped, so nothing recorded why.
+func TestCheckedRollbackPersistFailureIsLogged(t *testing.T) {
+	e, app, target, current := checkedRollbackAPIFixture(t)
+	var logs bytes.Buffer
+	e.s.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	e.s.store = statetest.NewMem(failingCheckedRollbackStore{MemStore: e.store, err: errors.New("canceling statement due to statement timeout")})
+	_, _, problem := e.s.persistCheckedRollback(t.Context(), e.acct, app, api.RollbackRequest{}, target, current.ID)
+	if problem == nil || problem.Status != http.StatusServiceUnavailable {
+		t.Fatalf("problem = %+v, want the retryable 503", problem)
+	}
+	if !strings.Contains(logs.String(), "checked rollback: persist") || !strings.Contains(logs.String(), "statement timeout") || !strings.Contains(logs.String(), target.ID) {
+		t.Fatalf("log = %s, want the store error with the rollback target", logs.String())
 	}
 }

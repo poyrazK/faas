@@ -13,12 +13,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
-	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
-	registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -84,7 +83,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			}
 			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
 			if !ok || limits.DatabasesMax <= 0 || !managedPostgresPlanAllows(limits, target) || (!target.ScaleToZero && !limits.AlwaysOnAllowed) {
-				return managedpostgres.ErrQuotaExceeded
+				return managedpostgres.ErrNotInPlan
 			}
 			return nil
 		},

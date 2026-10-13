@@ -2,6 +2,17 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "ai-gateway",
+      "name": "AI gateway",
+      "category": "data",
+      "description": "Call LLM providers through managed outbound integrations with hard token and cost caps, per-app guardrails, cross-provider fallback routes, key pools, budget alerts and usage reports.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/ops/outbound-integrations",
+      "acceptance_test": "pkg/outbound/ai_translate_test.go::TestOpenAIRouteFallsBackAcrossProvidersWithTranslation",
+      "operator_flag": "FAAS_AI_GATEWAY_ENABLED"
+    },
+    {
       "id": "api-monetization",
       "name": "API monetization",
       "category": "billing",

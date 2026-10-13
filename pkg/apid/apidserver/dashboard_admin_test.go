@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"io"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,15 +21,15 @@ func TestDashboardAdmin_TLSCutoverBannerPersistsAfterRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	value, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	value, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, stubGithubdClient{}, mgr, nil, 15*60_000_000_000, "")
+	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*60_000_000_000, "")
 	srv.WithAdminAllowlist(acct.Email)
 
 	statePath := filepath.Join(t.TempDir(), "tls-cutover.state")
@@ -38,9 +39,9 @@ func TestDashboardAdmin_TLSCutoverBannerPersistsAfterRollback(t *testing.T) {
 	t.Setenv("FAAS_TLS_CUTOVER_STATE_FILE", statePath)
 
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/admin", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: value})
+	req.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: value})
 	rec := httptest.NewRecorder()
-	srv.handler().ServeHTTP(rec, req)
+	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}

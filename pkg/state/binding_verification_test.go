@@ -1,12 +1,16 @@
+// adr: 1027 — persist permission-pinned write evidence and enforce its command shape.
 package state_test
 
 import (
 	"context"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,6 +21,41 @@ func TestBindingVerificationStoreMem(t *testing.T) {
 func TestBindingVerificationStorePG(t *testing.T) {
 	store, _ := pgStore(t)
 	bindingVerificationStoreSuite(t, store)
+}
+
+func TestObjectStorageWriteVerificationConstraintPG(t *testing.T) {
+	store, pool, ctx := pgStoreWithPool(t)
+	bindingVerificationStoreSuite(t, store)
+	for _, statement := range []string{
+		`UPDATE app_tasks SET command[3]='write' WHERE binding_verification->>'object_storage_mode'='read_write'`,
+		`UPDATE app_tasks SET binding_verification=binding_verification - 'object_storage_mode' WHERE binding_verification->>'object_storage_mode'='read_write'`,
+		`UPDATE app_tasks SET binding_verification=jsonb_set(binding_verification,'{object_storage_mode}','"read"') WHERE binding_verification->>'object_storage_mode'='read_write'`,
+		`UPDATE app_tasks SET binding_verification=jsonb_set(binding_verification,'{type}','"postgres"') WHERE binding_verification->>'object_storage_mode'='read_write'`,
+	} {
+		_, err := pool.Exec(ctx, statement)
+		var pgerr *pgconn.PgError
+		if !errors.As(err, &pgerr) || pgerr.Code != "23514" {
+			t.Fatalf("database accepted invalid mode/command pin: %v", err)
+		}
+	}
+	raw, err := os.ReadFile("../../migrations/20261011120000001_object_storage_write_probe.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(raw), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatal("missing rollback")
+	}
+	if _, err = pool.Exec(ctx, parts[1]); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	var pins int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM app_tasks WHERE binding_verification->>'object_storage_mode' IN ('write','read_write')`).Scan(&pins); err != nil || pins != 0 {
+		t.Fatalf("rollback retained unqualified pins: %d %v", pins, err)
+	}
+	if _, err = pool.Exec(ctx, parts[0]); err != nil {
+		t.Fatalf("reapply: %v", err)
+	}
 }
 
 func bindingVerificationStoreSuite(t *testing.T, store state.Store) {
@@ -111,5 +150,28 @@ func bindingVerificationStoreSuite(t *testing.T, store state.Store) {
 	params.Command[0] = api.AppTaskPostgresBindingProbeCommand
 	if _, err := tasks.CreateAppTask(ctx, params); err == nil {
 		t.Fatal("object-storage pin admitted with PostgreSQL command")
+	}
+	params.Command = []string{api.AppTaskObjectStorageWriteProbeCommand, "ASSETS", "write"}
+	params.BindingVerification.ObjectStorageMode = "write"
+	params.CreatedAt = now.Add(4 * time.Second)
+	writeTask, err := tasks.CreateAppTask(ctx, params)
+	if err != nil {
+		t.Fatalf("write probe admission: %v", err)
+	}
+	rows, err = evidence.ListBindingVerificationTasks(ctx, account.ID, app.ID, []string{api.BindingTypeObjectStorage})
+	if err != nil || len(rows) != 1 || rows[0].Pin.ObjectStorageMode != "write" || writeTask.BindingVerification.ObjectStorageMode != "write" {
+		t.Fatalf("write permission not persisted: %+v %v", rows, err)
+	}
+	params.Command[2] = "read_write"
+	if _, err = tasks.CreateAppTask(ctx, params); err == nil {
+		t.Fatal("mismatched permission pin admitted")
+	}
+	params.BindingVerification.ObjectStorageMode = "read_write"
+	if _, err = tasks.CreateAppTask(ctx, params); err != nil {
+		t.Fatalf("read/write mode rejected: %v", err)
+	}
+	params.Command = []string{api.AppTaskObjectStorageBindingProbeCommand, "ASSETS"}
+	if _, err = tasks.CreateAppTask(ctx, params); err == nil {
+		t.Fatal("legacy command admitted with a write pin")
 	}
 }

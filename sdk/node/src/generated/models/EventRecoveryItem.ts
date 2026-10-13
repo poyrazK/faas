@@ -8,6 +8,14 @@ import type { EventRecoveryExecution } from './EventRecoveryExecution.js';
  */
 export type EventRecoveryItem = {
   /**
+   * Native workflow target; event identity fields are empty for these items.
+   */
+  workflow_run_id?: string;
+  /**
+   * Original reviewed count; queued means the next resume was admitted.
+   */
+  expected_resume_count?: number;
+  /**
    * Parent recovery job identity for a child selection; retained as historical lineage even if the parent job is pruned.
    */
   parent_job_id?: string;

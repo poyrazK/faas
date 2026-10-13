@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -19,22 +19,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestObjectAccountCleanupE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var offset atomic.Int64
 	now := time.Now()
-	e.store.SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
-	objectAccountCleanupE2E(t, e.s, e.store, e.acct, nil, func() { offset.Add(int64(2 * time.Hour)) })
+	(*e.Store()).SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
+	objectAccountCleanupE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), nil, func() { offset.Add(int64(2 * time.Hour)) })
 }
 func TestObjectAccountCleanupE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	objectAccountCleanupE2E(t, e.s, e.store, e.acct, e.pool, func() {
-		if _, err := e.pool.Exec(t.Context(), `UPDATE object_buckets SET retry_at=now()-interval '1 second',lease_until=NULL`); err != nil {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	objectAccountCleanupE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Pool()), func() {
+		if _, err := (*e.Pool()).Exec(t.Context(), `UPDATE object_buckets SET retry_at=now()-interval '1 second',lease_until=NULL`); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -42,7 +43,7 @@ func TestObjectAccountCleanupE2EPG(t *testing.T) {
 
 // Local native HTTP -> adapter -> durable bucket worker -> grace cascade.
 // New Object Lock enrollment stays disabled; cleanup still reads protection.
-func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account state.Account, pool *pgxpool.Pool, advance func()) {
+func objectAccountCleanupE2E(t *testing.T, s *apidserver.Server, st state.Store, account state.Account, pool *pgxpool.Pool, advance func()) {
 	t.Helper()
 	var mu sync.Mutex
 	versions := map[string]bool{"null": false, "marker": true}
@@ -175,7 +176,7 @@ func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account st
 	if err = buckets.FinishObjectBucket(t.Context(), b.ID, "create", "ready"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.CleanupExpiredAccountObjectBuckets(t.Context(), account); !errors.Is(err, state.ErrConflict) || calls.Load() != 0 {
+	if err = (*s.Object()).CleanupExpiredAccountObjectBuckets(t.Context(), account); !errors.Is(err, state.ErrConflict) || calls.Load() != 0 {
 		t.Fatal("cleanup ran before grace", err, calls.Load())
 	}
 	if err = st.MarkAccountDeletionPending(t.Context(), account.ID); err != nil {
@@ -202,7 +203,7 @@ func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account st
 	if _, err = buckets.ReserveObjectBucket(t.Context(), newBucket, 10); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("inactive account accepted new bucket", err)
 	}
-	loop := grace.New(grace.Params{Store: st, BeforeAccountDelete: s.object.CleanupExpiredAccountObjectBuckets})
+	loop := grace.New(grace.Params{Store: st, BeforeAccountDelete: (*s.Object()).CleanupExpiredAccountObjectBuckets})
 	checkPending := func(code string) {
 		t.Helper()
 		kept, err := buckets.GetObjectBucket(t.Context(), account.ID, app.ID, b.ID)
@@ -244,30 +245,30 @@ func objectAccountCleanupE2E(t *testing.T, s *server, st state.Store, account st
 	}
 	// A reconstructed server uses the stored deleting owner even with all
 	// customer ingress/capability enrollment disabled.
-	restarted := newServer(st, testLogger(), "gregale.dev", noopNotifier{}).WithObjectStorage(objectLockTestRegistry(t, upstream.URL, p, objectstorage.ObjectLockConfig{}))
+	restarted := apidserver.NewServer(st, apidserver.TestLogger(), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(objectLockTestRegistry(t, upstream.URL, p, objectstorage.ObjectLockConfig{}))
 	advance()
-	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = (*restarted.Object()).ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	checkPending("cleanup_pending")
 	advance()
-	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = (*restarted.Object()).ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	checkPending("temporary") // Native nonempty response never reopens ownership.
 	advance()
-	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = (*restarted.Object()).ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	checkPending("temporary") // Native bucket DELETE committed, acknowledgment lost.
 	advance()
-	if err = restarted.object.ReconcileObjectBuckets(t.Context(), nil); err != nil {
+	if err = (*restarted.Object()).ReconcileObjectBuckets(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = buckets.GetObjectBucket(t.Context(), account.ID, app.ID, b.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("native bucket not tombstoned", err)
 	}
-	loop = grace.New(grace.Params{Store: st, BeforeAccountDelete: restarted.object.CleanupExpiredAccountObjectBuckets})
+	loop = grace.New(grace.Params{Store: st, BeforeAccountDelete: (*restarted.Object()).CleanupExpiredAccountObjectBuckets})
 	if err = loop.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}

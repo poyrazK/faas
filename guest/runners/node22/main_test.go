@@ -45,21 +45,6 @@ func TestHandle_RoundTrip(t *testing.T) {
 	})
 }
 
-// TestHeaderMap_LowercasesHTTP: §4.9 envelope uses lowercase header
-// keys; the runner folds http.Header into that shape.
-func TestHeaderMap(t *testing.T) {
-	h := http.Header{}
-	h.Set("X-Trace-Id", "abc")
-	h.Set("Content-Type", "application/json")
-	m := headerMap(h)
-	if m["X-Trace-Id"] != "abc" {
-		t.Fatalf("X-Trace-Id = %q, want abc", m["X-Trace-Id"])
-	}
-	if m["Content-Type"] != "application/json" {
-		t.Fatalf("Content-Type = %q", m["Content-Type"])
-	}
-}
-
 // TestEnvelopeRoundTrip sanity-checks the JSON tags line up with §4.9,
 // extended with the waitUntil envelope fields (issue #667 / ADR-078).
 // Body delegated to runnerparity.AssertEnvelopeJSONTags so all five
@@ -82,7 +67,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 // the per-runtime counterpart to the hermetic
 // TestParity_AllRuntimesHonorWaitUntil file-walk. A fake handler
 // writes a JSONL line to the tail pipe before returning; the
-// runner's drainTailHost reads the pipe after invokeHandler returns.
+// runner core (internal.Serve) drains the pipe after the handler returns.
 func TestHandle_WaitUntilEnvelopeRoundTrip(t *testing.T) {
 	fake := runnerparity.FakeNodeScriptWithTail()
 	runnerparity.RunWaitUntilEnvelopeRoundTrip(t, fake, func(w http.ResponseWriter, r *http.Request, handlerPath string, signal *internal.RunnerSignal, tailWaitSec int, tailPipePath string) {

@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,15 +8,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestConsumerControlPlaneLifecycle(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-app")
 
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-app/consumers", api.CreateAPIConsumerRequest{
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-app/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "customer-42",
 		Name:        "Customer 42",
 	}, nil)
@@ -31,7 +33,7 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 		t.Fatalf("unexpected consumer response: %+v", consumer)
 	}
 
-	listed := e.do(t, http.MethodGet, "/v1/apps/consumer-app/consumers", nil, nil)
+	listed := e.Do(t, http.MethodGet, "/v1/apps/consumer-app/consumers", nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list consumers: code=%d body=%s", listed.Code, listed.Body.String())
 	}
@@ -43,7 +45,7 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 		t.Fatalf("consumer list = %+v", consumerList)
 	}
 
-	keyCreated := e.do(t, http.MethodPost, "/v1/apps/consumer-app/consumers/"+consumer.ID+"/keys", api.CreateConsumerKeyRequest{
+	keyCreated := e.Do(t, http.MethodPost, "/v1/apps/consumer-app/consumers/"+consumer.ID+"/keys", api.CreateConsumerKeyRequest{
 		Name:   "primary",
 		Scopes: []string{"read", "write"},
 	}, nil)
@@ -58,7 +60,7 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 		t.Fatalf("unexpected consumer key response: %+v", key)
 	}
 
-	keys := e.do(t, http.MethodGet, "/v1/apps/consumer-app/consumers/"+consumer.ID+"/keys", nil, nil)
+	keys := e.Do(t, http.MethodGet, "/v1/apps/consumer-app/consumers/"+consumer.ID+"/keys", nil, nil)
 	if keys.Code != http.StatusOK {
 		t.Fatalf("list consumer keys: code=%d body=%s", keys.Code, keys.Body.String())
 	}
@@ -70,7 +72,7 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 		t.Fatalf("consumer key list = %+v; plaintext must be create-only", keyList)
 	}
 
-	revokedKey := e.do(t, http.MethodDelete, "/v1/apps/consumer-app/consumers/"+consumer.ID+"/keys/"+key.ID, nil, nil)
+	revokedKey := e.Do(t, http.MethodDelete, "/v1/apps/consumer-app/consumers/"+consumer.ID+"/keys/"+key.ID, nil, nil)
 	if revokedKey.Code != http.StatusOK {
 		t.Fatalf("revoke consumer key: code=%d body=%s", revokedKey.Code, revokedKey.Body.String())
 	}
@@ -82,7 +84,7 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 		t.Fatalf("revoked key response missing revoked_at: %+v", revokedKeyResponse)
 	}
 
-	revokedConsumer := e.do(t, http.MethodDelete, "/v1/apps/consumer-app/consumers/"+consumer.ID, nil, nil)
+	revokedConsumer := e.Do(t, http.MethodDelete, "/v1/apps/consumer-app/consumers/"+consumer.ID, nil, nil)
 	if revokedConsumer.Code != http.StatusOK {
 		t.Fatalf("revoke consumer: code=%d body=%s", revokedConsumer.Code, revokedConsumer.Body.String())
 	}
@@ -96,17 +98,17 @@ func TestConsumerControlPlaneLifecycle(t *testing.T) {
 }
 
 func TestConsumerControlPlaneFreePlanGate(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	rec := e.do(t, http.MethodGet, "/v1/apps/missing/consumers", nil, nil)
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
+	e := apidserver.Setup(t, api.PlanFree)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/missing/consumers", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
 }
 
 func TestAPIConsumerUsageReadSurface(t *testing.T) {
 	// ADR-120 monetization target: usage is read from the durable ledger,
 	// not from sampled request_telemetry rows.
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-usage-app")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-usage-app/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-usage-app")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-usage-app/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "customer-usage", Name: "Customer Usage",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -117,14 +119,14 @@ func TestAPIConsumerUsageReadSurface(t *testing.T) {
 		t.Fatalf("decode consumer: %v", err)
 	}
 	window := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
-	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+	if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 		ConsumerKey: consumer.ID, WindowStart: window,
 		RequestCount: 7, ErrorCount: 2, BillableUnits: 7,
 	}); err != nil {
 		t.Fatalf("record usage: %v", err)
 	}
-	read := e.do(t, http.MethodGet, "/v1/apps/consumer-usage-app/consumers/"+consumer.ID+"/usage", nil, nil)
+	read := e.Do(t, http.MethodGet, "/v1/apps/consumer-usage-app/consumers/"+consumer.ID+"/usage", nil, nil)
 	if read.Code != http.StatusOK {
 		t.Fatalf("read usage: %d %s", read.Code, read.Body)
 	}
@@ -141,9 +143,9 @@ func TestAPIConsumerUsageReadSurface(t *testing.T) {
 // "could not load API consumer usage". The window snaps to UTC midnight and
 // is half-open, so since=today is empty; the ledger answers ErrNotFound.
 func TestAPIConsumerUsageEmptyWindowIsEmptyNot500(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-usage-empty")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-usage-empty/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-usage-empty")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-usage-empty/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "customer-empty", Name: "Customer Empty",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -154,7 +156,7 @@ func TestAPIConsumerUsageEmptyWindowIsEmptyNot500(t *testing.T) {
 		t.Fatalf("decode consumer: %v", err)
 	}
 	today := time.Now().UTC().Format("2006-01-02") + "T11:00:00Z"
-	read := e.do(t, http.MethodGet, "/v1/apps/consumer-usage-empty/consumers/"+consumer.ID+"/usage?since="+today, nil, nil)
+	read := e.Do(t, http.MethodGet, "/v1/apps/consumer-usage-empty/consumers/"+consumer.ID+"/usage?since="+today, nil, nil)
 	if read.Code != http.StatusOK {
 		t.Fatalf("empty window: %d %s, want 200", read.Code, read.Body)
 	}
@@ -168,10 +170,10 @@ func TestAPIConsumerUsageEmptyWindowIsEmptyNot500(t *testing.T) {
 }
 
 func TestUpdateAppConsumerAuthMode(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-mode")
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-mode")
 	mode := api.ConsumerAuthModeRequired
-	rec := e.do(t, http.MethodPatch, "/v1/apps/consumer-mode", api.UpdateAppRequest{ConsumerAuthMode: &mode}, nil)
+	rec := e.Do(t, http.MethodPatch, "/v1/apps/consumer-mode", api.UpdateAppRequest{ConsumerAuthMode: &mode}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update consumer_auth_mode: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -184,23 +186,23 @@ func TestUpdateAppConsumerAuthMode(t *testing.T) {
 	}
 
 	invalid := "bogus"
-	rec = e.do(t, http.MethodPatch, "/v1/apps/consumer-mode", api.UpdateAppRequest{ConsumerAuthMode: &invalid}, nil)
-	assertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeConsumerAuthModeInvalid)
+	rec = e.Do(t, http.MethodPatch, "/v1/apps/consumer-mode", api.UpdateAppRequest{ConsumerAuthMode: &invalid}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusUnprocessableEntity, api.CodeConsumerAuthModeInvalid)
 }
 
 func TestUpdateAppConsumerAuthModeFreePlanGate(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	mustSeedApp(t, e, "consumer-mode-free")
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "consumer-mode-free")
 	mode := api.ConsumerAuthModeRequired
-	rec := e.do(t, http.MethodPatch, "/v1/apps/consumer-mode-free", api.UpdateAppRequest{ConsumerAuthMode: &mode}, nil)
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
+	rec := e.Do(t, http.MethodPatch, "/v1/apps/consumer-mode-free", api.UpdateAppRequest{ConsumerAuthMode: &mode}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodeConsumerKeysNotAllowed)
 }
 
 func TestUpdateAppPlatformTenantRequired(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "platform-app")
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "platform-app")
 	for _, required := range []bool{true, false} {
-		rec := e.do(t, http.MethodPatch, "/v1/apps/platform-app", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
+		rec := e.Do(t, http.MethodPatch, "/v1/apps/platform-app", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("patch platform_tenant_required=%t: code=%d body=%s", required, rec.Code, rec.Body.String())
 		}
@@ -211,7 +213,7 @@ func TestUpdateAppPlatformTenantRequired(t *testing.T) {
 		if app.PlatformTenantRequired != required {
 			t.Fatalf("response platform_tenant_required=%t, want %t", app.PlatformTenantRequired, required)
 		}
-		read := e.do(t, http.MethodGet, "/v1/apps/platform-app", nil, nil)
+		read := e.Do(t, http.MethodGet, "/v1/apps/platform-app", nil, nil)
 		if err := json.Unmarshal(read.Body.Bytes(), &app); err != nil {
 			t.Fatal(err)
 		}
@@ -222,17 +224,17 @@ func TestUpdateAppPlatformTenantRequired(t *testing.T) {
 }
 
 func TestUpdateAppPlatformTenantRequiredFreePlanGate(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	mustSeedApp(t, e, "platform-app-free")
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "platform-app-free")
 	required := true
-	rec := e.do(t, http.MethodPatch, "/v1/apps/platform-app-free", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
-	assertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
+	rec := e.Do(t, http.MethodPatch, "/v1/apps/platform-app-free", api.UpdateAppRequest{PlatformTenantRequired: &required}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
 }
 
 func TestCreateAppPlatformTenantRequired(t *testing.T) {
 	required := true
-	e := setup(t, api.PlanHobby)
-	rec := e.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	rec := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: "tenant-from-start", PlatformTenantRequired: &required,
 	}, nil)
 	if rec.Code != http.StatusCreated {
@@ -245,7 +247,7 @@ func TestCreateAppPlatformTenantRequired(t *testing.T) {
 	if !app.PlatformTenantRequired {
 		t.Fatalf("create response omitted tenant policy: %+v", app)
 	}
-	read := e.do(t, http.MethodGet, "/v1/apps/tenant-from-start", nil, nil)
+	read := e.Do(t, http.MethodGet, "/v1/apps/tenant-from-start", nil, nil)
 	if err := json.Unmarshal(read.Body.Bytes(), &app); err != nil {
 		t.Fatal(err)
 	}
@@ -253,9 +255,9 @@ func TestCreateAppPlatformTenantRequired(t *testing.T) {
 		t.Fatal("tenant policy was not persisted")
 	}
 
-	free := setup(t, api.PlanFree)
-	denied := free.do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
+	free := apidserver.Setup(t, api.PlanFree)
+	denied := free.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{
 		Slug: "tenant-free", PlatformTenantRequired: &required,
 	}, nil)
-	assertProblem(t, denied, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
+	apidserver.AssertProblem(t, denied, http.StatusPaymentRequired, api.CodePlanPlatformTenantRequiredNotAllowed)
 }

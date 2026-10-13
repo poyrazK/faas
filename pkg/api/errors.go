@@ -654,6 +654,7 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
@@ -785,6 +786,11 @@ const (
 	// instance that was served a developer live patch. The VM is destroyed
 	// instead, and the next wake restores the unpatched artifact.
 	CodeDevSourceDiverged = "dev_source_diverged"
+	// CodeDevWatchUnsupported (ADR-1170) refuses watch mode for an
+	// environment or build it cannot serve: too little RAM, an
+	// unauthenticated developer app, a Dockerfile build, or a build plan the
+	// watch overlay does not understand.
+	CodeDevWatchUnsupported = "dev_watch_unsupported"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1127,6 +1133,9 @@ const (
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
+	// CodeMCPTaskCompatibilityGate is a 409 when promotion would route away
+	// from the final workers for an outstanding MCP task handler version.
+	CodeMCPTaskCompatibilityGate = "mcp_task_compatibility_gate_blocked"
 
 	// Traffic mirroring (issue #72 / ADR-125 PR-A2). Seven RFC 7807
 	// codes for the /v1/apps/{slug}/mirrors CRUD surface. The
@@ -1587,6 +1596,12 @@ const (
 	CodeAppRuntimeOOM          = "app_runtime_oom"
 	CodeDepInstallFailed       = "dep_install_failed"
 	CodeAppStartupTimeout      = "app_startup_timeout"
+	// CodeAppStartupCrash means the customer's workload exited before it
+	// became ready: guest-init's supervisor reported its restarts or crash
+	// loop, or the characterization report carried a non-zero startup exit.
+	// Distinct from app_startup_timeout (still running, never ready) and
+	// app_not_listening (running, nothing bound).
+	CodeAppStartupCrash = "app_startup_crash"
 	// CodeDeploymentSmokeFailed means the public post-readiness health
 	// request did not complete successfully. It is distinct from guest boot
 	// failures so operators can tell serving-path regressions from image
@@ -1855,6 +1870,7 @@ const (
 	CodeWorkflowEventNotFound             = "workflow_event_not_found"
 	CodeWebhookAutomationUnavailable      = "webhook_automation_unavailable"
 	CodeWebhookAutomationConflict         = "webhook_automation_conflict"
+	CodeEventRecoveryChanged              = "event_recovery_changed"
 	CodeWorkflowResumeConflict            = "workflow_resume_conflict"
 	CodeWorkflowResumeUnsafe              = "workflow_resume_unsafe"
 	CodeWorkflowResumeLimit               = "workflow_resume_limit"
@@ -1982,7 +1998,7 @@ func StatusForCode(code string) int {
 	case CodeDatabaseCutoverFenced, CodeRealtimeConditionConflict, CodeRealtimeEntityVersionConflict, CodeRealtimeSequenceConflict, CodeConflict, CodeFullEnvironmentCloneUnavailable, CodeEnvironmentQualificationUnconfirmed,
 		CodeDomainNotVerified, CodeNoRollbackTarget, CodeDevSourceBaseMissing,
 		CodeAutomationVersionConflict, CodeAutomationOwnershipConflict,
-		CodeWebhookAutomationConflict, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
+		CodeWebhookAutomationConflict, CodeEventRecoveryChanged, CodeWorkflowResumeConflict, CodeWorkflowResumeUnsafe,
 		CodeWorkflowResumeLimit,
 		CodeWorkflowNotRunning, CodeWorkflowTenantIdentityUnavailable, CodeWorkflowCallbackClosed, CodeWorkflowCallbackPayloadConflict, CodeWorkflowCallbackBindingConflict,
 		CodeWorkflowStepRetryNotAllowed,
@@ -1991,7 +2007,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -2079,6 +2095,7 @@ func StatusForCode(code string) int {
 		CodeAppRuntimeOOM,
 		CodeDepInstallFailed,
 		CodeAppStartupTimeout,
+		CodeAppStartupCrash,
 		CodeDeploymentSmokeFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable:
@@ -2428,6 +2445,16 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
+}
+
+// ErrDevWatchRAM refuses watch mode (ADR-1170) for a developer app whose RAM
+// is below DevWatchMinRAMMB. Limit and observed are MB.
+func ErrDevWatchRAM(ramMB int) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeDevWatchUnsupported,
+		"Watch mode needs more memory",
+		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
+		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
+		WithDocs(docsBase + "/gregale-dev#watch-mode")
 }
 
 // ErrPlanLimitDeveloperLease is returned when a developer session requests a
@@ -5240,6 +5267,16 @@ func ErrTrafficChangeDuringCanary() *Problem {
 		"Canary rollout controls traffic",
 		"traffic cannot be changed directly while a canary rollout is pending or running; advance or recover the rollout, then retry.").
 		WithDocs(docsBase + "/deployments#canary")
+}
+
+// ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so
+// operators can see which task handler version blocks promotion.
+func ErrMCPTaskCompatibilityGate(detail string) *Problem {
+	detail = strings.TrimPrefix(detail, "state: ")
+	return NewProblem(http.StatusConflict, CodeMCPTaskCompatibilityGate,
+		"MCP task handler compatibility blocks promotion",
+		detail+" Refresh the observer report or use --mcp-task-migration-override if dropping those tasks is intentional.").
+		WithDocs(docsBase + "/mcp#mcp-tasks")
 }
 
 // ErrPlanMirrorNotAllowed (issue #72 / ADR-125 traffic mirroring

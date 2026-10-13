@@ -29,7 +29,7 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Free first-week defaults (env vars / secrets / idle / per-VM concurrency / log archive) | 16 / 8 / 60 s / 4 / 1 day | `apid` plan limits, gateway archive read-back, and the customer-facing CLI/dashboard quota surfaces |
 | Plan per-VM concurrency bound (`concurrency_per_vm`) | Free 4 · Hobby 5 · Pro 25 · Scale 80 | `apid` validation on `GET /v1/apps/{slug}`; CLI `gregale app <slug> --concurrency`; **listener-level only** — handler-process concurrency is the customer's responsibility (§4.9.1, issue #559) |
 | Per-deployment `require_authn` opt-in (issue #560) | Free no · Hobby no · Pro yes · Scale yes | `apid` PATCH validator via `Plan.RequireAuthnAllowed()`; column default `false` so every existing customer is unaffected; `gatewayd-internal` enforces after Host→app resolution and before the wake gate, cross-account tokens receive 403 |
-| Spend cap (`accounts.overage_cap_cents`, issue #561) | Free 0 (no overage) · Hobby NULL · Pro NULL · Scale NULL; customer-mutable via `POST /v1/account/overage-cap` and the dashboard `Spend cap` form | storage layer #279 (`migrations/00054_account_credits.sql`); enforcement at `schedd.Engine.admitGate` via `pkg/sched/OverageChecker` (5 s TTL cache, fail-open); wire surface `CodeAdmissionRefused` (HTTP 402); meterd's quota tick is the unchanged advisory-skip signal (#279 PR-A) |
+| Spend cap (`accounts.overage_cap_cents`, issue #561) | Free 0 (no overage) · Hobby NULL · Pro NULL · Scale NULL; customer-mutable via `POST /v1/account/overage-cap` and the dashboard `Spend cap` form | storage layer #279 (`migrations/00054_account_credits.sql`); enforcement at `schedd.Engine.admitGate` via `pkg/sched/OverageChecker` (5 s TTL cache, fail-open); wire surface `CodeAdmissionRefused` (HTTP 402); ADR-1162: a hard monthly ceiling — usage is billed only up to the cap, never back-billed, and schedd parks the account's workloads while it holds |
 | Capacity-pressure rebalancer (Tier A9 / ADR-087) | `PressureAtCapacityThresholdPerMin=5`, `PressureReassessmentIntervalSeconds=30`, `PressureMigrationPolicy="migrate_after_2"` (closed set ∈ {skip_live, migrate_after_1, migrate_after_2}); env-overridable via `FAAS_PRESSURE_*`; surface lives in `pkg/api/limits.go` and `pkg/sched/pressure_aggregator.go` + `pressure_rebalancer.go` | `schedd` engine-side `IncAtCapacity` at every `WakeResult{AtCapacity:true}` return; aggregator + watcher poll for sustained apps; `Engine.RebalancePressuredApps` reassigns to peer with headroom; `app_changed{pressure_rebalanced}` notify on the rebalance — see ADR-087 |
 | Expected resident concurrency (planning) | 0.02 / 0.15 / 0.60 / 3.00 | telemetry comparison only |
 | Continuous app ownership recovery (ADR-421) | `OwnershipRecoveryIntervalSeconds=5`, `OwnershipRecoveryTimeoutSeconds=30`, `OwnershipRecoveryStoreTimeoutSeconds=5`; existing rebalance cooldown 60 s and batch limit 50 | `schedd` startup and periodic scan, fair app-ID pages, node-health-fenced ownership transfer, existing routing invalidation and durable service recovery |
@@ -84,7 +84,7 @@ Cloudflare, public network, and client distance remain separate end-to-end costs
 
 **Deploy path:** `apid` accepts source (≤ 100 MB) or OCI reference → `builderd` runs the build in an ephemeral builder microVM → OCI image → `imaged` converts it to a per-app **app layer** over a shared read-only base (two-drive scheme, §4.6) + injects `guest-init` → boots once, waits ready, pauses, snapshots → app state = `PARKED`. First deploy of an app is also its first snapshot.
 
-**Two workload models, one data plane (ADR-003):** an *App* is any HTTP server listening on `:8080` in its microVM. A *Function* is an App whose rootfs we generate from a platform runner image (node22 / node24 / python312 / python313 / go124 / go124-alpine) wrapping the customer's handler file behind the same `:8080` contract. Functions get zero new infrastructure: same lifecycle, same snapshots, same metering, same routing. Cron triggers are synthetic requests fired by `schedd`.
+**Two workload models, one data plane (ADR-003):** an *App* is any HTTP server listening on `:8080` in its microVM. A *Function* is an App whose rootfs we generate from a platform runner image (node22 / node24 / python312 / python313 / go124 / go124-alpine, plus `binary`, which runs one static executable built from the customer's Dockerfile on the go124 runner, ADR-987) wrapping the customer's handler file behind the same `:8080` contract. Functions get zero new infrastructure: same lifecycle, same snapshots, same metering, same routing. Cron triggers are synthetic requests fired by `schedd`.
 
 ---
 
@@ -137,7 +137,7 @@ the upstream Caddy/Cloudflare edge.
 - **Rate limits (ADR-040 / issues #292 and #1680):** `gatewayd-internal` runs two token buckets per request in series, both before the wake gate so abuse doesn't burn the schedd gRPC admission queue. The **per-account** bucket (`RateLimitPerAccountRPM` — Free 300/min, Hobby 1200/min, Pro 6000/min, Scale 30000/min; key = `apps.account_id` joined in `pgRouter.toApp`) runs first and bounds attacks spread across one customer's apps. Every plan obeys `RateLimitPerAccountRPM >= 60 * RateLimitRPS`, so the shared account boundary can sustain at least one app at its advertised per-app rate. The **per-app** bucket (`RateLimitRPS`/`RateLimitBurst`) runs second as the inner cap. Each 429 carries `Retry-After: 1` and `x-faas-rate-limit-scope: {account,app}` so observability tooling can split the two populations. The counter is `gateway_per_account_rate_limited_total{account_id, plan}`, pre-instantiated under `__other__`; the `FaasPerAccountRateLimitSpike` alert fires above 300 rejected requests/min fleet-wide for 5 minutes.
 - **Per-deployment `require_authn` opt-in (issue #560):** an app may opt into per-deployment authentication by setting `apps.require_authn=true` (PATCH via `UpdateAppRequest`; Pro/Scale only). When set, the routing layer in `gatewayd-internal` requires a valid `Authorization: Bearer <token>` header on every incoming request — tokens are account-scoped API keys (`fp_live_…`, SHA-256 verified through `pkg/auth.Middleware.RequireSession`). The check runs **after** Host→app resolution (so the app's `require_authn` flag is known) and **before** the wake gate / forwarder (so unauthenticated traffic cannot trigger cold-boot on a token-gated app). Cross-account tokens — token valid for *any* account other than the app's owning account — receive 403 `insufficient_scope` and never reach the wake path. Audit rows: `app.authn_required` on the PATCH that flips the flag on, `app.authn_disabled` on the true→false transition, and `instances.authn_missing` / `instances.authn_invalid` / `instances.authn_scope` per denied request. The default is `false`; every existing customer is unaffected.
 - **Per-app wire-protocol selector (issue #67 / ADR-124, hardened ADR-127):** an app may pick the wire protocol its customer-facing edge speaks via `apps.app_protocol` (closed-set `{http1, http2, grpc}`; migration `00382_apps_app_protocol.sql` + `apps_app_protocol_chk` CHECK). Default is `http1` (universal — every pre-ADR-124 app keeps its current behaviour); `http1` and `http2` are permitted on every plan; `grpc` is gated to Hobby+/Pro/Scale and rejected on Free with 403 `plan_app_protocol_grpc_not_allowed`. Invalid values (anything outside the closed set) are rejected at `apid` with 400 `app_protocol_invalid` — the column-level CHECK is the belt-and-braces backstop, not the primary validator. `apid` writes via `CreateAppRequest.AppProtocol` (closed-set pointer; apid-floor coerces empty→`"http1"` so legacy callers stay green) and `UpdateAppRequest.AppProtocol` (same Set\*/optional-pointer convention as every other field). On the read side, `gatewayd-internal` plumbs `state.App.AppProtocol` through `pgRouter.toApp` onto `gateway.App.AppProtocol`, and the handler stamps `x-faas-protocol: <http1|http2|grpc>` on every inbound request at the same site `x-faas-stream` and `x-faas-upgrade` are stamped today (`pkg/gateway/handler.go` ~5131 streaming, ~5261 buffered). The forwarder reads the header at `pkg/gateway/forwardproxy.go::fwdStreamOnceWithEvents` and emits a `slog.Debug` framing-selection line so operators with debug logging on can correlate per-app protocol choice with bridge-side framing behaviour. **Wire-shape is now in fleet (ADR-126, PR #1050).** The per-app framing switch reaches the guest's `:8080` as native H2 frames (for `app_protocol=http2`) or native gRPC trailers (for `app_protocol=grpc`) via the bridge-side H2C terminator (`cmd/vmmd-stream-bridge/h2c_terminator.go::handleH2CStream`); `app_protocol=http1` rides the legacy `handleH1Stream` path verbatim (zero behaviour change). Two rollback switches (`FAAS_BRIDGE_PROTOCOL=h1` surgical, `FAAS_STREAM_BRIDGE_VERSION=v1` wholesale) and the runbook at `docs/ops/h2c-rollback.md` are the operator's levers. **Hardening follow-on (ADR-127, G19.1).** The four production-readiness gaps surfaced by the post-#1050 audit are addressed: snapshot invalidation on `app_protocol ∈ {http2, grpc}` adoption (`FAAS_BASE_IMAGE_VERSION` + `MarkAllSnapshotsStaleByAppProtocol` + F3 sweep in `pkg/imaged/loop.go::runFCSweep`); listener + transport security pins (`MaxConcurrentStreams=100`, `MaxReadFrameSize=1 MiB`, `MaxHeaderListSize=1 MiB`, `ReadIdleTimeout`, `PingTimeout`, `WriteByteTimeout`, `defer recover()` + `defer transport.CloseIdleConnections()` on `handleH2CStream`); observability (`vmmd_bridge_framing_total{app_protocol, bridge_protocol, framing}` counter pre-instantiated across the closed cross-product + `slog.Info` framing-selection line on every request + `bridge-protection` Grafana dashboard + `FaasBridgeFramingMismatch` / `FaasBridgeRollbackStuck` Prometheus alerts); and these docs (spec §4.1 + STATUS M8.6 + `docs/ops/h2c-rollout.md` + `docs/ops/h2c-rollback.md`). Layer 12 (metal acceptance: 5 unconditional `t.Skip`s in `cmd/e2e/bridge_h2c_terminator_metal_test.go`) is **deliberately out of scope** and lands in two follow-on issues (G19.2 un-stub the tests; G19.3 add `deploy/ansible/roles/metal-h2c-acceptance/`).
-- **Spend cap → workload refuse (issue #561):** a customer may set `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) to a monthly ceiling on overage spending. The schedd enforces the gate at `Engine.admitGate` via the `pkg/sched/OverageChecker` seam (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. Existing live instances are **not** auto-parked by the cap alone; parking is the M7 free-stop path (`pkg/meter/quota.go::EnforceQuota` case "stop"). Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`); the API surface carries the precise current `cap_cents` / `current_overage_cents` in the RFC 7807 body so a script can compute "how much to raise" without parsing prose. Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding.
+- **Spend cap → workload refuse (issue #561):** a customer may set `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) to a monthly ceiling on overage spending. The schedd enforces the gate at `Engine.admitGate` via the `pkg/sched/OverageChecker` seam (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. ADR-1162 makes the cap a hard ceiling: explicit-deployment admissions (floors, service replicas, workers, per-deployment wakes) check it too, the reaper parks every app of a capped account (`Engine.appMustPark`), warm pools are reclaimed, queued job tasks are deferred, and meterd bills usage only up to the cap and never back-bills it when the cap is raised. Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`); the API surface carries the precise current `cap_cents` / `current_overage_cents` in the RFC 7807 body so a script can compute "how much to raise" without parsing prose. Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding.
 - Records `last_request_at[instance]` (in-memory, flushed to PG every 15 s) — this drives idle parking.
 - Rate limits (token bucket, per app): Free 5 rps burst 20; Hobby 20 rps burst 100; Pro 100 rps burst 500; Scale 500 rps burst 2000. Over-limit → `429`.
 - Request/response size caps (per-plan, ADR-047):
@@ -147,7 +147,7 @@ the upstream Caddy/Cloudflare edge.
   - **Per-request opt-out:** `Accept: application/json` flips a single request to the buffered path. The customer's per-app flag stays unchanged so flipping the flag on later is a config change, not a per-request decision.
   - **Plan gate:** `apid` rejects `streaming_enabled=true` on Free apps with `CodePlanStreamingNotAllowed` (per pkg/api/errors.go) at deploy time. The runtime fallback log `streamingFallbackLog` fires only when `!streaming && plan == Free && SSE` — the operator-toggled `FAAS_GATEWAY_STREAMING` is the operator-side lever, not a per-app misconfiguration.
 - **Multi-node forwarding (ADR-028 + ADR-047):** When schedd has placed an instance on a remote compute_node, `gatewayd-internal` dials the per-node vmmd over the overlay (Tailscale or Wireguard; see §10 below) and bridges the HTTP bytes via vmmd's bidi `ForwardHTTPStream` RPC. The cache layer is `NodeClientCache`: one `*grpc.ClientConn` per `compute_node.id`, evicted on every `compute_node_changed` pg_notify. Hop-by-hop headers (RFC 7230 §6.1) are stripped before the bridge. The streaming envelope is 100 MB body / 900 s response deadline (the per-plan caps in §4.1 apply on `gatewayd-internal` via `capWriter`; the vmmd bridge runs the streaming cap uniformly). The local-node path (default single-node deploy) skips the bridge and uses the existing direct reverse-proxy path. The legacy unary `ForwardHTTP` RPC was removed in PR-D — `ForwardHTTPStream` is the only bridge today.
-- Emits: `gateway_requests_total{app,code}`, `gateway_wake_latency_seconds` (histogram), `gateway_queue_depth`, `gateway_response_bytes_total{app,plan}` (per-flush delta + residual capture), `gateway_stream_flushes_total{app,plan}` (per-`doFlush` increment), `gateway_stream_active{app,plan}` (gauge — Inc on `setupStreamingWriter`, Dec on handler defer; buffered-path requests never touch the gauge). All emitted by `gatewayd-internal`. See §12 for the dashboard table.
+- Emits: `gateway_requests_total{app,code}`, `gateway_platform_errors_total{app,plan}` (5xx produced before any guest response byte; the API availability SLO's error numerator — an app-authored 5xx is not platform unavailability), `gateway_wake_latency_seconds` (histogram), `gateway_queue_depth`, `gateway_response_bytes_total{app,plan}` (per-flush delta + residual capture), `gateway_stream_flushes_total{app,plan}` (per-`doFlush` increment), `gateway_stream_active{app,plan}` (gauge — Inc on `setupStreamingWriter`, Dec on handler defer; buffered-path requests never touch the gauge). All emitted by `gatewayd-internal`. See §12 for the dashboard table.
 
 #### 4.1.1 Platform path reservations
 
@@ -413,7 +413,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - Auth: API keys (`fp_live_…`, SHA-256 stored), per-user; sessions for the dashboard later. Every key scoped to an account. **Tenancy** lands in IAM-6 (ADR-061, issue #190); the tenant is the `orgs` row, APIs are path-scoped under `/v1/orgs/{slug}/...`, and cookie sessions stay account-bound. See ADR-061 for the wire-shape contract.
 - Resources (all JSON; full endpoint table in Appendix A): accounts, apps, deployments, builds, instances (read-only), usage, plans, custom_domains.
 - Deploy inputs (three, ADR-004): `POST /v1/apps/{app}/deployments` with (a) tarball upload `source` (≤ 100 MB Free/Hobby, ≤ 250 MB Pro/Scale — reject larger with `413` and a docs link), (b) `dockerfile: true` flag if tarball root has one, or (c) `image: registry.gregale.dev/...@sha256:...` reference.
-- Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
+- Function deploys: `type: function`, `runtime: node22 | node24 | python312 | python313 | go124 | go124-alpine | binary`, tarball contains `handler.{js,py}` (+ optional `package.json` / `requirements.txt`); a `binary` tarball contains a root `Dockerfile` whose image names one static executable inside `/app` (ADR-987). apid rewrites this into an App deployment using the runner scaffold (§4.9) and the same pipeline runs.
 - Validation enforces plan quotas *before* work happens: deployed-sandbox count, RAM size ≤ plan cap, concurrency setting ≤ plan cap.
 - Idempotency: `Idempotency-Key` header on all POSTs, stored 24 h.
 - Never talks to vmmd/builderd directly — writes rows, notifies via `pg_notify`; owners poll/listen.
@@ -426,7 +426,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - **Admission (wake or build):** grant iff
   `resident_ram_mb + request_mb + 8 ≤ 0.85 × 56_000` **and** plan concurrent count not exceeded **and** vCPU slots (160) not exhausted. Builds request from the same guard but are also capped by the build semaphore (§9). Denial → `gatewayd-internal` serves `503 capacity` (alert fires long before customers see this; see §12).
 - **`AdmitInstance` RPC (issue #168):** `gatewayd-internal` can ask schedd to admit ONE additional instance for an app, bypassing the Phase-1 fast-path shortcut. The cap is enforced atomically by the same ledger as `Wake`; the response carries an `at_capacity` typed result so the gateway can distinguish "we refused because you're already at cap" (no FAILED row written) from a real failure (RAM headroom, chooser, store). The gRPC surface is additive — see ADR-018 update.
-- **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 60 s, Hobby 60 s, Pro 300 s, Scale 600 s (app-configurable down to 10 s, not above plan default × 2).
+- **Idle reaper:** every 10 s, park instances with `now − last_request_at > idle_timeout(plan)`. Defaults: Free 60 s, Hobby 60 s, Pro 300 s, Scale 600 s; functions 30 s on every plan (ADR-974). Configurable down to 10 s, not above plan default × 2.
 - **Aggressive reaper (ADR-038, issue #171):** every 10 s, *alongside* the idle reaper, a fast-cooldown path parks the surplus above `max(min_instances, desired + 1)` where `desired = ceil(windowed_rps / autoscale_target_rps)` from a per-app 5 × 1 s rolling RPS mirror (`pkg/sched/recentload/`). The `+1` is a hysteresis buffer so a brief RPS wobble doesn't wake-then-park. Scope: apps with `max_concurrency > 1` and `autoscale_target_rps > 0`; single-instance apps and apps without an autoscale target stay on the idle reaper only. Per-tick cap of 8 parks per app to prevent a single tick from blocking the reaper for `8 × ~150 ms ≈ 1.2 s` during a sudden scale-down storm. Default ON; `FAAS_REAPER_AGGRESSIVE=false` (schedd.toml `reaper_aggressive = false`) disables in-place — the mirror, metric, and audit row stay live so diagnosis continues. G7 (OpenConns > 0) and `MinInstanceAge` (30 s) protections still apply. Acceptance: 5-instance burst → 0 rps parks back to ≤ `min_instances + 1` within 30 s (three 10 s ticks). Audit row `events.kind='reaper_scale_down'` is emitted once per app per tick that parks ≥ 1 instance with `{app, desired, parked[], reason: "traffic_dropped", now}` in `data jsonb`.
 - **Eviction (RAM pressure > 80 % of the 85 % target):** park instances LRU by last request; never evict an instance younger than 30 s; Scale plan evicted last.
 - **Free-tier disk reaper:** free apps with zero requests for 14 days → snapshot + rootfs moved to object storage, state `EVICTED_COLD` (redeploy = one click, re-flatten from stored image). This is the founding doc's ceiling-protection policy (§9.7 there).
@@ -442,7 +442,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - API: gRPC `CreateFromSnapshot(app, instance)`, `CreateColdBoot(app, instance)`, `Pause+Snapshot(instance)`, `Destroy(instance)`, `Stats()`.
 - Snapshot create: pause VM → `PUT /snapshot/create` (full; memory file + vmstate) → fsync → destroy VM → record `snapshot_bytes`. Diff snapshots: not v1.
 - Restore: create netns + TAP (§7) → jailer spawn → `PUT /snapshot/load` (`mem_backend: File`) → resume → guest agent re-seeds entropy + steps clock (§4.8) → readiness.
-- Boot config (cold path): kernel 6.1 LTS from Firecracker CI artifacts, `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon off (v1), entropy: virtio-rng. The canonical plan RAM/vCPU pairs are Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, and Scale `(1024, 4)`; see ADR-173. `POST /v1/apps` may assert this pair with `vcpu`, but vCPU remains plan-derived and is not a per-app override.
+- Boot config (cold path): kernel 6.18 LTS built from the pinned Firecracker guest config (ADR-983), `console=off quiet`, **two virtio-blk drives** (drive0 shared base rootfs read-only; drive1 app layer — §4.6), one virtio-net, `mem_size_mib = plan`, `vcpu_count` = 2 (Scale: 4), MMDS off, balloon never inflated and used only for free page reporting on Firecracker 1.14+ (ADR-907), entropy: virtio-rng. The canonical plan RAM/vCPU pairs are Free `(128, 2)`, Hobby `(256, 2)`, Pro `(512, 2)`, and Scale `(1024, 4)`; see ADR-173. `POST /v1/apps` may assert this pair with `vcpu`, but vCPU remains plan-derived and is not a per-app override.
 - **Firecracker version pinning:** snapshots are only guaranteed to load on the Firecracker version that made them. `snapshots.fc_version` column; on FC upgrade, mark all snapshots stale — apps lazily re-snapshot via cold boot on next wake (this is why ADR-005 requires cold boot to always work).
 - **Backing image pinning (ADR-510):** a snapshot's RAM holds the guest kernel's page cache and ext4 metadata for drive0, so it may only be restored onto the exact kernel and read-only base it was captured with. vmmd records their content digests in the capture's `…/backing` object and refuses a restore whose identity is missing or differs, before any VM process starts; the wake cold-boots and schedd marks the snapshot stale. The shared base is a logical key that a release refresh replaces in place, so every base change retires the snapshots taken on the previous one.
 
@@ -483,7 +483,7 @@ Two operator-side addenda on top of the §4.7 quota ladder:
 
 - **`POST /v1/admin/accounts/{id}/credits`** (admin scope + `FAAS_ADMIN_EMAILS` allowlist, idempotent via the `Idempotency-Key` header) inserts one row in `account_credits` and one immutable row in `credit_ledger`, then emits a `credit.issued` audit event. Reason is `3..500` chars (CHECK at the column + handler 400). Migration `00054_account_credits.sql` adds both tables with `ON DELETE CASCADE` on `account_id` so GDPR delete is a single transaction (slot walked past 00050 → 00051 → 00053 → 00054 to dodge collisions with PR #325 / #322 / #341 / #340; memory: `migration-slot-collisions-across-prs.md`). Credits are surfaced in `usageSummary` as `credits_remaining_cents` but are **not** applied at the per-minute derivation.
 - **`POST /v1/invoices/{id}/consume-credits`** (issue #279 PR-C; admin scope + `FAAS_ADMIN_EMAILS` allowlist + MFA-gated, idempotent via the `Idempotency-Key` header) is the operator trigger for the credit consumption reducer. The reducer reads `usage_minutes.mb_seconds` for the invoice's billing period `[period_start, period_end)`, converts to integer cents via `floor(mb_seconds × 100 / 3600)` at `OverageMillicentsPerGBHour` (€0.01/GB-h, floored; same formula as `pgstore.CurrentMonthOverageCents`), and drains the account's active credits FIFO (`created_at ASC`) against the overage. `cents_remaining` never goes negative: each credit decrement is `UPDATE … WHERE cents_remaining >= $amt RETURNING cents_remaining`, conditional inside a single PgStore transaction. The `consume_credits` loop is the same reducer that a future `meterd` cron and the PR-B `UpsertInvoice` webhook Tx both call — the HTTP endpoint is just one trigger. Idempotent under webhook redelivery via the `UNIQUE (provider, provider_invoice_id, credit_id) WHERE provider_invoice_id IS NOT NULL AND delta_cents < 0` partial index on `credit_ledger` (ADR-220); a second reducer call for the same account, provider and `provider_invoice_id` returns `already_consumed_for_invoice=true` with the same `consumed_cents` and writes no new ledger rows. Migration `00058` adds the invoice ID and initial partial unique index; ADR-220 and migration `20260922183947369` qualify the receipt by provider and fail closed on legacy rows whose provider cannot be resolved safely. Issuance rows leave `provider_invoice_id` NULL so the partial constraint does not apply.
-- **`accounts.overage_cap_cents`** (nullable `bigint`, optional per-account ceiling; zero is a valid cap) is read by `meterd`'s quota tick once per account per cycle. The tick computes the current-month derived overage (`SUM(usage_minutes.mb_seconds) since date_trunc('month', now()) at UTC`) and skips the overage-row insert when `month_cents >= cap_cents`. The Free hard-stop / paid warning ladder is unchanged — the cap is layered on top of in-budget usage. Per-hit increments of `meterd_billing_cap_exceeded_total{plan=…}` (cardinality 4) provide the alert signal. **Race scope**: meterd is the sole writer to `usage_minutes` today (spec §6.1), so the cap check + overage-row insert is serialised by the single-writer invariant. A future meterd-replica deploy would need a per-account `SELECT … FOR UPDATE` on `accounts` around the cap check + insert decision — that locking is the obvious follow-up; until then, the worst-case is one minute's overage-row insertion past the cap.
+- **`accounts.overage_cap_cents`** (nullable `bigint`, optional per-account ceiling; zero is a valid cap) is read by `meterd`'s quota tick once per account per cycle. The tick computes the current-month derived overage (`SUM(usage_minutes.mb_seconds) since date_trunc('month', now()) at UTC`, net of the month's largest recorded plan grant, ADR-1162) and skips the overage-row insert when `month_cents >= cap_cents`. The provider pusher bills an hour that crosses the cap exactly up to it and settles it; capped usage is never back-billed when the cap is raised, and schedd parks the account's workloads while the cap holds (ADR-1162). The Free hard-stop / paid warning ladder is unchanged — the cap is layered on top of in-budget usage. Per-hit increments of `meterd_billing_cap_exceeded_total{plan=…}` (cardinality 4) provide the alert signal. **Race scope**: meterd is the sole writer to `usage_minutes` today (spec §6.1), so the cap check + overage-row insert is serialised by the single-writer invariant. A future meterd-replica deploy would need a per-account `SELECT … FOR UPDATE` on `accounts` around the cap check + insert decision — that locking is the obvious follow-up; until then, the worst-case is one minute's overage-row insertion past the cap.
 - **Provider refund seam**: `billing.Provider.Refund(ctx, chargeID, amountCents)` is on the interface. The operator route `POST /v1/admin/accounts/{id}/refunds` currently supports Polar order IDs, binds the provider order to a paid local invoice, requires MFA for session principals plus the admin allowlist, and forwards the explicit `Idempotency-Key` through the provider context. Polar ignores the `Idempotency-Key` request header, so the Polar adapter stamps the key into refund metadata, lists the order's refunds before writing, sends the refund POST exactly once (no transport retry), and re-lists on an ambiguous failure to recover a committed refund — a redelivered operator request with the same key never moves money twice. Stripe and Paddle retain their adapter implementations for compatibility deployments; a provider without `CapRefund` returns 501. Provider refund webhooks remain observational and emit a `refund.processed` audit row after verification.
 
 #### 4.7.2 Post-response tail metering (issue #667 / ADR-078 — informational only)
@@ -563,7 +563,7 @@ Resume path (post-restore, triggered by host signal via vsock): re-seed `/dev/ur
 `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`: a 15-line HTTP host on `:8080` that loads the customer handler and adapts request/response.
 
 Contract (identical across languages): handler receives `{method, path, headers, query, body_b64}`; returns `{status, headers, body_b64}` or a plain body. Node: `export default async function handler(event, ctx)` or a Fetch API object, `export default { fetch(request, env, ctx) }`; Fetch API requests and responses are translated to and from the envelope by the generated adapter. Python: `def handler(request) -> Response | dict | str`.
-Streaming, websockets: not in v1 for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
+A response header value may be a string or a list of strings, one header line per element; a repeated request header arrives joined with `", "` (`"; "` for `Cookie`). Streamed responses (ADR-999): instead of one response line, a handler may send a `{"frame":"head",status,headers}` line, `{"frame":"chunk",body_b64}` lines and a final `{"frame":"end"}` (or `{"frame":"error",message}` to abort); the runner sends the head at once and flushes each chunk, and the gateway's ADR-102 path carries the stream to the client. Node Fetch bodies still being produced, async-iterable bodies, Python generator bodies and Go handlers that `Flush` stream; every other response is sent whole as before. All runners share `guest/runners/internal.Serve`. Request timeouts (ADR-1150): the gateway appends `X-Faas-Deadline-Ms`, the request budget left at dispatch, to every guest request, and the runner bounds an invocation, a stream included, by the longer of that and 30 s, capped at 15 min; per-plan ceilings on `request_timeout_s` are Free 30 s, Hobby 60 s, Pro 5 min, Scale 15 min. Async, queue, cron and replay invocations get the same timeout, never less than 30 s (ADR-1180): gatewayd-internal sends it as their deadline, and schedd sizes their leases and delivers long ones off the drain tick and the cron loop. Websockets: not for functions (fine for Apps — `gatewayd-internal` proxies them transparently).
 Adding a runtime is a 7-layer procedure (migrations, schema, apid handler whitelist, openapi enums, runner shim, imaged handler surfaces, base Dockerfile + auto-stage wiring) — see ADR-052 for the canonical touch-list. The worked example for `node24` and `python313` is Tier 1 PR 1 + PR 2.
 
 #### 4.9.1 Per-VM concurrency model (issue #559)
@@ -812,7 +812,7 @@ create table apps (
   account_id uuid not null references accounts(id),
   slug text unique not null,                    -- {slug}.gregale.dev
   type text not null default 'app',             -- app|function
-  runtime text,                                 -- node22|node24|python312|python313|go124|go124-alpine when function
+  runtime text,                                 -- node22|node24|python312|python313|go124|go124-alpine|binary when function
   ram_mb int not null,                          -- ≤ plan cap
   idle_timeout_s int,
   max_concurrency int not null default 1,       -- ≤ plan cap
@@ -1086,7 +1086,7 @@ App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s the
 ### 6.2 Invariants (test these, they are the product)
 
 1. At most `max_concurrency(plan)` + `RolloutConcurrencyGrant` instances of one app in {WAKING, COLD_BOOTING, RUNNING}. **Issue #168:** `gatewayd-internal` routes requests across the entire live set via atomic round-robin so a fan-out burst actually distributes load; `Backend.Admit` atomically refuses over-cap callers under the same `tgtMu` lock that mutates the cache. **ADR-199:** the grant is `1` and applies only while a second deployment is coming up alongside the one already serving — the overlap window of a traffic split or canary stage. Steady state remains `max_concurrency(plan)`; the grant retires on its own when the old revision's instances are reaped, and it never relaxes invariant 2, the per-node ceiling (ADR-193), or vCPU admission.
-2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB.
+2. Σ (ram_mb + 8) over all instances in {WAKING, COLD_BOOTING, RUNNING, SNAPSHOTTING} ≤ 47,600 MB. **ADR-909 (accepted 2026-10-12):** under measured admission, schedd's default, a node's measured memory stays ≤ its admission ceiling (47,600 MB on the reference box) and Σ (ram_mb + 8) ≤ twice it. Each instance is charged its cgroup memory at the larger of its latest sample and its 10-minute p95, plus 25%, never more than ram_mb + 8. When measured memory crosses the ceiling, schedd evicts until it is under 90%. `measured_admission = false` restores the reservation form.
 3. An app always has either a live snapshot or a rootfs it can cold boot — never neither.
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
 5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-680:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
@@ -1156,6 +1156,7 @@ This subsection is the cross-reference page for the three v1.1 ADRs. Steady-stat
 | Container OOM (cgroup `memory.events` OOM kill on the workload) | `guest/init/cgroup_partition_linux.go` listens on `cgroup.events`; vsock msg_type=3 surfaces the kill | RFC 7807 `app_runtime_oom` 422 with the plan's RAM cap in the prose. CLI hints to upgrade plan or trim in-memory state | error-explanations cluster, amendment 1 |
 | Dependency install step (npm/pip/go mod/cargo) exited non-zero | `pkg/builderd/vm_metal.go::classifyBuildFailure` extended with the `pkg` discriminator | RFC 7807 `dep_install_failed` 422 with `pkg` (npm/pip/go/cargo) on the wire. CLI recommends `npm install` locally to reproduce | error-explanations cluster, amendment 1 |
 | App boot timeout (readiness probe waited the full `startup_timeout_s` and `/healthz` never returned 200) | `pkg/sched/engine.go::KillStuck` carries `StuckReason` into the typed Problem | RFC 7807 `app_startup_timeout` 422 distinct from idle timeout (which parks). CLI hints to increase `startup_timeout_s` or defer boot work until after the `/healthz` listener is up | error-explanations cluster, amendment 1 |
+| App process exited during startup (crash loop, or a non-zero exit in the characterization report) | `pkg/fcvm/vmm.go::guestStoppedDuringStartup` requires guest-init's supervisor restart/crash-loop lines; `characterizationBootOutcome` reads the reported exit code | RFC 7807 `app_startup_crash` 422 carrying the workload's last output lines. A guest that died without supervisor output (overlay/pivot/init failure) stays a platform error. Customer-caused codes (`api.CustomerCausedDeploymentFailureCodes`) are excluded from the public status page's deployment-success SLO (§12) | error-explanations cluster, amendment 1 |
 | Tarball or base image is a stateful shape (Dockerfile `VOLUME`, top-level `data/` / `db/` / `var/`, or a stateful base image) | `pkg/oci` + G13 stateless-only gate | RFC 7807 `stateless_only_violation` 422 (already shipped pre-cluster). Now flows through the same 5-line renderer from `pkg/whycopy` row `stateless_only_violation` so the prose is uniform with the new codes | error-explanations cluster, amendment 1 |
 
 **Operator runbook pointers:**
@@ -1505,9 +1506,10 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 ## 10. Metering and billing detail
 
 - Unit: GB-RAM-hour, billed on provisioned `ram_mb + 8` per running second (§4.7). Definition published verbatim in docs — no surprise-RSS billing.
-- Included quotas per plan per calendar month (UTC): 5 / 50 / 250 / 1,500 GB-h. Overage €0.01/GB-h, metered in millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`.
+- Included quotas per plan per calendar month (UTC): 5 / 50 / 250 / 1,500 GB-h. Overage €0.01/GB-h, metered in millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`. An hour is delivered only once every minute up to its end is final — recorded compute-complete or older than `MeterUsageFinalAfter` — so a late catch-up row never lands in a delivered hour (ADR-1162). Deleting an app keeps its usage rows; they are the month's billing evidence.
+- When the plan changes mid-month, the month's allowance for usage up to an instant is the largest plan grant recorded before it (financial price activations): a downgrade never shrinks the month's allowance, an upgrade applies from its activation and does not refund overage already billed (ADR-1162).
 - Requests are counted but not billed (v1). Canonical customer egress is `usage_minutes.net_tx_bytes`; gateway `tx_bytes` remains a diagnostic subset and is never added. Polar egress billing is independently gated `off` (default) / `shadow` / `live`, with explicit per-plan monthly GiB allowances and a whole-cent per-GiB price. Shadow records local, non-retroactive receipts and sends no provider events. Live uses a separate Polar meter. Stripe/Paddle remain compute-only. The host uplink and per-plan shaping (10/25/100/250 Mbit, §7) are unchanged.
-- Plan changes: upgrade immediate with provider-managed proration; downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
+- Plan changes: upgrade immediate with provider-managed proration (Polar schedules paid-to-paid changes for the subscription period end; the local plan flips on its webhook); downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
 - The `usage` API (`GET /v1/usage?month=`) returns compute billing math plus canonical egress usage. When the Polar egress policy is configured, the summary also returns its mode, included amount, current overage, and unit price. `cpu_usec`, gateway `tx_bytes`, ingress `net_rx_bytes`, requests, and cold boots remain informational.
 
 ---
@@ -1549,7 +1551,8 @@ The inline `onclick="return confirm(…)"` in `pkg/dashboard/templates/account.h
 control-plane schedd cluster member carries a `StandbyState` gauge
 (`warming | warm | draining`) and the standby side redirects writes to the
 active leader. The redirection rate is exposed as
-`gatewayd_internal_write_redirect_total{outcome,auth_kind}` per ADR-083
+`gatewayd_write_redirect_total{outcome,auth_kind}` (gatewayd-internal's
+OpsMetrics prefix is `gatewayd`) per ADR-083
 §"Open #2". Failure drill runbook at
 `docs/runbooks/active-passive-ha.md`; the native two-node acceptance harness
 is documented in `docs/ops/native-m9-acceptance.md`. Probe timeout bounded by
@@ -1583,19 +1586,19 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `gateway_queue_depth{app}` alert metric | plan queue cap | > 50 / 15 m (queue backlog) |
 | `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
 | `slo_burn_rate` alert metric | 99.5% API availability SLO | > 14.4x / 1 h **and** > 6x / 6 h (0.5% error budget, Google SRE multi-window) |
-| `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
+| `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 for 15 m warn (hot loop; `FaasInstanceHotLoop`, ADR-1235) |
 | `gateway_service_call_total{outcome}` | n/a (fleet) | `transport_denied` counts HTTPS-first callers rejected before endpoint lookup or wake; `woken / (woken+forwarded)` is the internal cold-start rate (ADR-196/197/248) |
 | `gateway_service_preview_to_preview_total` | increasing when sibling previews exist | none yet — the positive signal that PR traffic stayed inside its account/project/PR scope |
 | `gateway_service_preview_to_production_total` | 0 for accounts that expect preview isolation | none yet — a non-zero rate means PR traffic is exercising production services |
 | `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 defers `depends_on` wake-ahead on this evidence) |
-| `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page |
-| `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page |
+| `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page — not implemented: needs per-app plan limits in Prometheus (ADR-1235) |
+| `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page — not implemented: needs per-app plan limits in Prometheus (ADR-1235) |
 | `schedd_instance_stats_collect_seconds` p95 | < 0.05 s | > 0.2 s warn (dialer saturation) |
 | `schedd_instance_stats_partial_errors_total{node}` | 0 | > 5 / min page (vmmd unreachable) |
-| `gatewayd_internal_write_redirect_total{outcome,auth_kind}` rate | n/a (per-outcome) | `outcome="leader_unreachable"` > 0.1 / min page (ADR-083 §Open #2 closure); `outcome="loop_prevented"` > 1 / min page (redirect-storm DoS); `outcome="mTLS_failure"` > 0 page (cert / clock-skew); `outcome="cookie_blocked"` rate tracked (deferred, ADR-025 Tier 2 unblocks) |
-| `gatewayd_internal_write_redirect_latency_seconds` p95 | ≤ 1.5 s | > 3 s warn (overlay degradation), > 5 s page (StandbyWriteRedirectTimeoutMS fires) |
+| `gatewayd_write_redirect_total{outcome,auth_kind}` rate | n/a (per-outcome) | `outcome="leader_unreachable"` > 0.1 / min page (ADR-083 §Open #2 closure); `outcome="loop_prevented"` > 1 / min page (redirect-storm DoS); `outcome="mTLS_failure"` > 0 page (cert / clock-skew); `outcome="cookie_blocked"` rate tracked (deferred, ADR-025 Tier 2 unblocks). The three alerts ship as warn (ADR-1235) |
+| `gatewayd_write_redirect_latency_seconds` p95 | ≤ 1.5 s | > 3 s warn (overlay degradation); above 5 s StandbyWriteRedirectTimeoutMS fails the write. The 5 s page is not separate (ADR-1235) |
 | `gateway_edge_rule_apply_total{kind,result}` rate | n/a (per-kind) | per-kind `result="error"` rate > 1 / min warn (runbook `FaasEdgeRuleApplyHigh.md`) |
-| `gateway_edge_rule_compile_error_total{kind}` rate | 0 | any non-zero page (runbook `FaasEdgeRuleCompileError.md`; ADR-091 Amendment 1: compile error = correctness signal, not headroom) |
+| `gateway_edge_rule_compile_error_total{kind}` rate | 0 | any non-zero, shipped as warn (ADR-1235; runbook `FaasEdgeRuleCompileError.md`; ADR-091 Amendment 1: compile error = correctness signal, not headroom) |
 | `gateway_edge_rule_match_total{kind,outcome}` rate | n/a (per-kind) | per-kind `outcome="failed"` for kind=jwt > 5 / min warn (runbook `FaasEdgeRuleJWTFailures.md`; audit-grep `data.err` for `context deadline exceeded` separates timeout from verifier error; CORS preflight short-circuits IP+JWT gates — filter `method != "OPTIONS"` before counting) |
 | `gateway_response_cache_total{outcome}` rate | n/a (per-outcome) | global operator surface; `outcome="bypass_authed" > 5 % / 5 m` warn; `outcome="bypass_uncacheable"` is informational; `outcome="store_skipped"` rate > 50 % warn; `outcome="stale_while_revalidate_served"` reports intentional SWR serves; `outcome="stale_if_error_served"` rate > 5 % / 5 m warns that the origin is flapping (runbook `FaasResponseCache.md`) |
 | `gateway_response_cache_app_total{app,outcome}` rate | n/a (per-app) | customer hit rate is `outcome="hit" / (outcome="hit" + outcome="miss")`; bypass and stale outcomes are excluded from the ratio, and absence means no cache telemetry for the app/window |
@@ -1608,10 +1611,10 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `safedeploy_orchestrator_started_total` rate | n/a (fleet rollup) | none (PR-B's `canary_fleet_in_flight_high` alert pair) — paired with `_completed_total` / `_aborted_total` for the rollout-state panel |
 | `safedeploy_orchestrator_completed_total` rate | n/a (fleet rollup) | none — per-rollout termination is the §12.6 audit timeline |
 | `safedeploy_orchestrator_aborted_total` rate | n/a (fleet rollup) | rate > 1 / 5 m warn (runbook `FaasSafedeployAbortSurge.md` — fleet-wide abort signal, distinct from PR-B's per-rollout stuck detection) |
-| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m page (PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
-| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
+| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m, shipped as warn `FaasCanaryStuckStep` (ADR-1235; PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
+| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m, shipped as warn `FaasSafedeployAuditEmitFailing` (ADR-1235; PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
 | `safedeploy_orchestrator_stuck_check_missing_timestamp_total` rate | 0 | > 0 / 15 m warn (runbook `FaasSafedeployMissingTimestamp.md` — deployments rows landing without `canary_step_started_at`, the stuck-detection predicate becomes a no-op for that row) |
-| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
+| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m, warn via `FaasSafedeployAuditEmitFailing` (ADR-1235; PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
 | `deployment_audit_gc_failed_total` rate | 0 | > 0 / 1 h warn (PR-B's `deployment_audit_gc_failing` alert — 90-day GC cron failing, disk-fill risk) |
 | `<daemon>_loop_stalled{loop}` gauge | 0 | == 1 for 30 s page (`FaasDaemonLoopStalled`, runbook `FaasDaemonLoopStalled.md`; ADR-190 — the daemon is up and ready but its named loop has not beaten within budget; systemd restarts the unit after `WatchdogSec`) |
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
@@ -1631,8 +1634,20 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_db_pool_acquire_wait_seconds_total` rate | ≈ 0 | none — diagnostic. Near-zero growth on a busy daemon is the positive evidence that a cap has headroom to give back |
 | `<daemon>_db_notify_hub_conns` / `_subscribers` / `_channels` gauges | conns == 1, subscribers ≫ 1 | `<daemon>_db_notify_hub_conns == 0` while subscribers > 0 warn — `FAAS_DB_NOTIFY_HUB=0` is set and the daemon is back to one parked LISTEN connection per subscriber. Not an outage: the daemon's pool budget follows the switch (`db.DaemonMaxConnectionsNotifyHubDisabled`), so it is sized for that mode. It is a capacity signal — that daemon is consuming its pre-hub connection count against the fleet's `max_connections`, and the gap between `_conns` and `_subscribers` is the headroom the hub would return |
 | `schedd_instance_divergence_total{outcome}` rate | 0 | > 0 / 15 m warn (`FaasInstanceDivergence`, runbook `FaasInstanceDivergence.md`; ADR-191 §1 — live rows the owning vmmd is not reporting, after the node-reporting, grace and confirm-twice gates. `suppressed` is report-only mode counting what enforcement would repair; promote to page in the change that sets `FAAS_SCHEDD_RECONCILE_ENFORCE=1`) |
-| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"` page (a handler bug, not a capacity signal) |
+| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"`, shipped as warn (ADR-1235; a handler bug, not a capacity signal) |
 | `schedd_loop_work_duration_seconds{kind}` p95 | `kind="prime"` ≤ 110 s; every other kind ≤ 1 s | none (ADR-191 §2 diagnostic; the prime tail carries cold boot plus snapshot capture by design, so alert on `gateway_wake_latency_seconds` instead) |
+
+**Alert implementation (ADR-1235).** The rows above that promised an alert
+with no rule behind it now have one, in the `faas_spec12_operator_signals`
+group of `deploy/ansible/roles/prometheus/files/faas.rules.yml`, each with a
+promtool fixture. The two `schedd_instance_*` rows marked not implemented are
+the exceptions. These rules all ship at warn with `public_status: internal`,
+including rows that say page. ADR-1236 then triaged the whole paging set:
+where a severity in this table differs from the rule, the rule and ADR-1236
+are authoritative. The safe-deploy
+and deployment-audit counters are registered per daemon; only meterd runs the
+orchestrator, so rules and dashboards read `meterd_safedeploy_*` and
+`meterd_deployment_audit_*`.
 
 The four `schedd_instance_*` gauges (ADR-036, issue #170) are the
 new per-`(app,node)` rolled-up surfaces — max CPU, sum RSS, sum
@@ -1909,7 +1924,7 @@ request therefore does not create an instance transition or resident usage.
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 256 · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,304 → **1 guaranteed builder VM (2,048 + 8) lives here** |
-| `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits only to 47,600 MB** (85 % of the model's 56 GB budget) |
+| `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
@@ -2038,7 +2053,7 @@ Conventions (agents: treat as lint): errors wrapped with `%w` + operation contex
 | G13 | **Stateless contract unenforced** — the platform is year-one stateless-only but a customer can `gregale deploy` a `postgres:16` base image, a Dockerfile with `VOLUME /data`, or a tarball with a top-level `data/` directory and only discover the data is gone after the first park. Today nothing in apid or imaged encodes "this platform is stateless" | **RESOLVED (Wave 0 PR-A, no ADR — the architecture is unchanged, we add a check):** new RFC 7807 code `CodeStatelessOnlyViolation` (422, mapped in `pkg/api/errors.go::StatusForCode`), apid tarball scan rejects `VOLUME`, `mkfs.ext4/xfs`, `mount -t ext4/xfs`, and top-level `data/`/`db/` at accept time (before any build slot is consumed), and imaged's `buildImageLayer` consults `pkg/imaged/base.go::StatefulDenyListMatch` against the resolved OCI ref (8 well-known stateful bases: postgres / redis / mysql / mariadb / mongo / cockroach / cassandra / clickhouse). Both paths feed `pkg/oci::SentinelToCode` → `deployments.error_code`. PR-B adds `gregale init --template={s3-uploader,slack-bot,rest-api-postgres,cron-worker}` to teach the pattern. **PR-C (ADR-047) under review (draft PR #421):** guest-init `fanotify` advisory on runtime writes to state-shaped paths (`/data`, `/db`, `/var/lib/postgresql`, etc.) shipped over AF_VSOCK DGRAM (`port=1025, msg_type=2`, distinct from `VsockResumePort=1024`) to the host, debounced 1s per `(path, mask-set)`. vmmd forwards each batch to apid over a new `/run/faas/apid.sock` gRPC seam (`api/proto/onebox/faas/apid/v1/advisory.proto`), which writes one `stateless.advisory` audit row via `pkg/audit.Auditor.Emit`. Surfaced at `GET /v1/audit-events?kind_prefix=stateless.advisory` (plus `?app_id=` and `?include_anonymous=` for the dashboard drill-down) and the new `db.NotifyStatelessAdvisory` SSE channel. Customer surface: `gregale audit-events [--kind-prefix=…] [--app-id=…] [--include-anonymous]`; `gregale tail --include-stateless`; dashboard `/dashboard/audit-events` (+ app_detail.html "Stateless advisories" link). Advisory-only — spec §17 G13 explicitly forbids EROFS for Wave 0. vmmd becomes a gRPC client for the first time; default-local stays DB-less (Manager.advisoryClient == nil is a no-op). | M8 |
 | G14 | **Account is the only tenant — no org / team abstraction** — `accounts.id` owns resources, carries the plan and provider identifiers, scopes gateway limits, and drives scheduler / metering admission. A 5-engineer team has no way to share a single billing identity, role-gate access, or rotate a colleague's key without nuking the host session key. Sales stalls at the first team-sized customer | **RESOLVED (ADR-061, issue #190 / IAM-6, 9-PR staged rollout across 5 migration phases: expansion, backfill, dual-write, cut-over, contraction):** introduce an `orgs` table as the tenant for ownership, plan, quota, billing, and audit. Keep `accounts` as a human authentication identity that belongs to one or more orgs. Path-scoped APIs under `/v1/orgs/{org_slug}/...`, automatic personal-org compatibility for every account, and one existing plan/quota pool per org. Paid per-seat charging and SSO are deferred to follow-up issues. Each `Limits` row gains `OrgMembersMax` and `OrgPendingInvitationsMax` (PR 1 ships 0/0 fail-closed; **PR 2 populates from the existing per-plan ladder — Free 0/0 (gate closed at the abuse-floor tier), Hobby 10/5, Pro 50/25, Scale 200/100, with the fail-closed `active >= limit` guard as the load-bearing invariant; the open follow-up is reconciliation against `ex44_faas_financial_model.xlsx` once the workbook is updated**). Twelve new RFC 7807 codes (`org_not_found`, `org_slug_invalid`, `org_slug_taken`, `org_member_cap_exceeded`, `org_invitation_cap_exceeded`, `org_role_forbidden`, `org_already_member`, `org_invitation_invalid`, `org_invitation_expired`, `org_last_owner`, `org_personal_immutable`, `org_api_key_requires_org`) added to `pkg/api/errors.go` with full `StatusForCode` mapping. Shared `OrgSlugPattern` constant exported for PR 5's handler validator. Roles: `owner`, `admin`, `developer`, `viewer`, `billing` — exactly one owner per non-personal org; ownership transfer is the only way to vacate the role. Personal orgs are immutable. Cookie sessions remain account-bound; org selection is per-request via URL. Detailed ownership inventory checked in at `docs/iam-6-ownership-inventory.md` | M8 (IAM-6 PR 1–9) |
 | G15 | **Per-deployment auth is opt-in, not default (issue #560, scope-limited)** — every `{slug}.gregale.dev` route is public-by-default. Customers deploying internal APIs, B2B services, or anything with PII must `PATCH require_authn=true` on every app; the global default is unchanged to avoid breaking existing customers. Out of scope for this PR: (a) flipping the global default to `true` and migrating every existing app to opt-out (different migration problem; ADR-061-style dual-write window required), (b) OAuth / IAP / SSO in front of the gateway (orgs/teams story, see G14), (c) mTLS for customer→gateway (terminated by the platform cert; per-app client certs is a customer-runtime concern). | **PARTIAL (issue #560, this PR):** new `apps.require_authn` column default `false`, per-app PATCH/CLI, gatewayd-internal authz branch, three audit kinds. **Open follow-ups:** (a) global default flip + grand-father migration, (b) OAuth/IAP via the post-G14 org identity, (c) per-app mTLS option (decide with §11 ship-blocking review). | M8 follow-up |
-| G16 | **Spend cap is advisory, not workload-pausing (issue #561)** — `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) stopped meterd from pushing overage rows once the cap was reached, but `schedd` kept waking live instances and serving requests. Customers who set a spend cap expected Cloud-Run-style "budget pauses workload" behaviour. Issue #279 storage stayed unchanged; issue #561 layers the workload-side gate. | **RESOLVED (issue #561, this PR):** `schedd.Engine.admitGate` consults `pkg/sched/OverageChecker` (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. Existing live instances are **not** auto-parked by the cap alone (that path lives in `pkg/meter/quota.go::EnforceQuota` case "stop", out of scope for #561). Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`). Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding. Cache invalidation via TTL only — explicit pg_notify-driven invalidation is a follow-up if 5 s proves too coarse in practice. | M7 (M7.5 follow-up) |
+| G16 | **Spend cap is advisory, not workload-pausing (issue #561)** — `accounts.overage_cap_cents` (storage layer #279, `migrations/00054_account_credits.sql`) stopped meterd from pushing overage rows once the cap was reached, but `schedd` kept waking live instances and serving requests. Customers who set a spend cap expected Cloud-Run-style "budget pauses workload" behaviour. Issue #279 storage stayed unchanged; issue #561 layers the workload-side gate. | **RESOLVED (issue #561, this PR):** `schedd.Engine.admitGate` consults `pkg/sched/OverageChecker` (5 s TTL cache, fail-open on transient PG errors; meterd's quota loop is the safety net for sustained outages). When the cap is reached, the wake path lifts to `CodeAdmissionRefused` (`pkg/api/errors.go`) — HTTP 402 on the gateway edge, `FailedPrecondition` on the gRPC ingress. Live instances are parked by the reaper while the cap holds, and capped usage is never billed (ADR-1162; #561 originally left both out of scope). Customers manage the cap via `POST /v1/account/overage-cap` (account-self-scoped) or the dashboard `Spend cap` form (CSRF-envelope POST `/dashboard/raise-overage-cap`). Audit row `overage.cap_reached` is emitted the first time each (account, UTC day) the gate refuses; UTC-day dedupe chosen over the issue body's calendar-month wording to prevent audit-table flooding. Cache invalidation via TTL only — explicit pg_notify-driven invalidation is a follow-up if 5 s proves too coarse in practice. | M7 (M7.5 follow-up) |
 | G17 | **Wake-boot telemetry is blind** — `wake.boot_started` / `wake.boot_completed` events carry no info on *why* an instance started or what was queueing when it admitted. Cloud Run's per-cold-start `trigger` field has no Gregale analog; operators investigating Hobby-tier latency regressions cannot distinguish a request-driven cold-boot from a cron fire from a scale-up | **RESOLVED (ADR-123, this PR + PR-A follow-on):** additive fields on `BootStarted` + `BootCompleted` payloads — closed `trigger` enum (`gateway` / `floor` / `floor.deployment` / `scaleup` / `targets` / `cron.schedule` / `cron.manual` / `meterd`, see `pkg/sched/triggers.go`), `queued_count` (`ledger.Concurrency(app.ID)` at admit), `concurrency_at_admit` (same reading; 0 is cold start), `at_capacity` (true when `admitGate`'s `wakeAdmit` branch observed `concurrency+1 >= maxConc`, PR-A), `ready_in_ms` (`boot_completed.at - boot_started.at` via LEFT JOIN LATERAL, PR-A). Stamped via new `bootInput` fields + new `trigger string` parameter on `Engine.Wake` / `Engine.AdmitInstance` / `Engine.AdmitInstanceForDeployment` / `Engine.EnsureWake` / `scheddgrpc.Server.{Wake,AdmitInstance,EnsureWake}` / `gateway.Backend.Admit` / `gateway.Scheduler.{AdmitInstance,EnsureWake}` / `scheddgrpc.Client.{AdmitInstance,EnsureWake}`. Gated by the existing `events_wake_id_idx` partial index (migration 00114); no new migration strictly required (the optional analytics index is deferred). Surfaced via the existing `/v1/apps/{slug}/wakes/{wake_id}/timeline` endpoint, the CLI `gregale wake-timeline` (new `triggers: …` histogram header + per-event `trigger=… q=N c=N` context line), the dashboard "Recent wakes" table on `/dashboard/apps/{slug}` (five columns: Trigger / Queued / Concurrency / At cap / Ready), the new dedicated `/dashboard/apps/{slug}/wake-timeline` per-app wake-narrative page (24h summary card + 50-row table, PR-A), and the wake-boot telemetry pre-fill on `RecentInstanceItem`. Wire is additive per ADR-016 — pre-ADR-123 schedd + gateway pairs observe byte-identical behaviour | M8.5 |
 | G18 | **`gregalectl` operator CLI surface drift** — the operator-only CLI (`cmd/gregalectl/`, 15 top-level commands, 44 leaf verbs) shipped per issue #911 / ADR-110 PR-6.5 is referenced by `Makefile` (build-clis, manifest-ansible, native-m9-acceptance), 5 ansible roles (`control_plane_service`, `vmmd_service`, `log_archive`, `compute_only_service`, `githubd_service`, `builderd_service`, `firecracker`), `cmd/deployctl/upgrade.go` (4 verbs), `scripts/pre-release-check.sh`, and 4 e2e suites — but had no spec row, no docs/ops coverage beyond ~5 verbs, and no CI-pinned wire-shape discipline. The pre-investigation audit found: `backup init` dispatched-but-unimplemented; `manifest ansible` referenced by Makefile but absent from `cli_meta.go`; `release kgv init` aliased-but-deprecated with no deprecation line; `host-age status` / `prune-previous` / `sign-keys status` / `sign-keys rotate` had explicit "future patch" TODOs for `--json`; `compute-nodes list|show` and `pki list` (--daemon filter) were missing read-only introspection leaves; the doctor had literal panics in argument parsing; the operator quickstart covered ~10% of the binary | **RESOLVED (this mega-PR, no ADR — no architecture change):** wired `backup init` (Cluster A1); added `manifest ansible` to `cli_meta.go` (A2); corrected the stale header comment (A3); added `release kgv init` alias with deprecation line (A4); added `--json` to host-age status/prune-previous + sign-keys status/rotate + `--keep-old-pub` archive (B1-B4); added `compute-nodes list|show --json [--active-only]` + `pki list --json [--daemon] [--box-role]` (C1-C2); replaced doctor panics with error-returning parse + defensive-default finding (E1); rewrote `docs/ops/gregalectl-operator-quickstart.md` to cover all 44 verbs across 8 lifecycle sections (D1); added `gregalectl checks` section to `docs/ci-required-checks.md` (D2); documented the gate matrix here (G18 row, D3). Drift guards `commands_completion_test.go::TestCompletion_ManifestDrift` (dispatcher ↔ cli_meta ↔ comment header) and `json_parity_test.go::TestJSONOutputHonored` (every `--json`-honouring dispatcher has a `_test.go` exercise) prevent regressions on future PRs | M8 |
 | G19 | **Per-deployment protocol selector knob never reached the wire** — PR #1023 / ADR-124 landed the customer-facing `apps.app_protocol ∈ {http1, http2, grpc}` closed-set field (default `http1`), and `gatewayd-internal` stamps `x-faas-protocol` for downstream observability, but the framing the guest's `:8080` actually receives is still HTTP/1.1 + chunked regardless of the customer's choice. A customer running `app_protocol=grpc` gets their gRPC trailers back through the edge as plain `Trailer:` headers over H1+chunked; the in-guest server only sees H1. The reason is `cmd/vmmd-stream-bridge` (issue #686 / PR #750): it speaks H2C inbound from the vmmd side but **re-frames to H1+chunked** before talking to the guest at `10.0.0.2:<port>`. The framing transition is the load-bearing gap; ADR-124 was the customer-side knob, the inner-leg wire-shape follow-on was always a separate ADR | **RESOLVED (ADR-126, this PR):** the bridge grew a per-stream framing switch (`FAAS_BRIDGE_PROTOCOL ∈ {h1, h2c}` read per-request from env, mirroring `FAAS_STREAM_BRIDGE_VERSION` per ADR-028). `app_protocol=http1` rides the legacy H1+chunked path verbatim (zero behavior change for every existing customer); `app_protocol ∈ {http2, grpc}` rides the new H2C terminator (`handleH2CStream` in `cmd/vmmd-stream-bridge/h2c_terminator.go`) which originates HTTP/2 prior-knowledge frames to the guest via `golang.org/x/net/http2.Transport{AllowHTTP:true}`. Wire-additive proto bump per ADR-016 (`ForwardHTTPRequestInit.app_protocol = string`; `ForwardHTTPResponseInit.trailers` for gRPC trailer HEADERS forwarding). Guest-side listener opts into H2C via stdlib `srv.Protocols.SetUnencryptedHTTP2(true)` (Go 1.24+); every shipped runner (`go124`, `node22`, `node24`, `python312`, `python313`) routes through the shared `internal.ListenAndServeH2C` helper so the closed-set behavior is uniform. Two rollback switches: `FAAS_BRIDGE_PROTOCOL=h1` (per-vmmd surgical, per ADR-126 §Decision 7) and `FAAS_STREAM_BRIDGE_VERSION=v1` (wholesale shell-bridge fallback, pre-existing ADR-028 amendment). Snapshot invalidation is contained to the opt-in slice — every app adopting `app_protocol ∈ {http2, grpc}` must adopt the new h2c-capable base image; the `app_protocol=http1` slice stays valid forever. Coverage: `pkg/vmmdgrpc/forward_v2_internal_test.go::TestStreamBridgeEnv_AppProtocolWiring`, `TestAppProtocolToBridgeProtocol_ClosedSet`; `cmd/vmmd-stream-bridge/framing_test.go` (per-stream env lookup + hop-by-hop); `cmd/vmmd-stream-bridge/h2c_terminator_test.go` (unary + gRPC trailers + dial-failure); `guest/runners/internal/h2c_listener_test.go` (H2 prior-knowledge + H1 fallback); `cmd/e2e/bridge_h2c_terminator_e2e_test.go` (real bridge binary against a loopback H2C guest listener); metal sibling at `cmd/e2e/bridge_h2c_terminator_metal_test.go` documents the §14 M8 row 5 acceptance gates for `make test-metal` | M8.5 |
@@ -2223,3 +2238,603 @@ Managed-operation retries therefore retain the run/step receipt identity from
 ADR-587; ordinary HTTP delivery remains at least once. See
 `docs/adr/588-in-place-workflow-step-retry.md` and `docs/event-driven.md` for
 the API and CLI contract.
+
+### Active workflow condition visibility
+
+Performance summaries expose optional `active_conditions` for the same latest
+100 ongoing workflows and evaluation time. Complete retained histories supply
+the latest explicit reason decision and latest nonempty selected-path snapshot.
+Each explicit decision replaces its condition array, so an omitted condition is
+unreported rather than carried forward as unknown. Metadata-only reports retain
+prior evidence. A new contract version resets contexts; paths without a decision
+fact remove their context. Different rule versions in independent contexts stay
+separate; conflicting results for the same exact identity exclude the whole run.
+
+Coverage separates incomplete, conflicting, bounded-evidence and unclassified
+runs. Limits are 256 contexts and 256 final identities per workflow; the first 64
+lexical groups retain exact memberships. Counts overlap across conditions. Each
+group shows full workflow elapsed/blocked duration, evidence age and stale-state
+counts. State staleness uses the declared workflow threshold, not predicate
+expiry. These snapshots are application reports, never current business truth.
+
+`active_condition_elapsed` and `active_condition_blocked` contributors require
+`cohort=ongoing`, the summary token, and the exact returned contract/decision/rule/
+version/condition ID/description/result identity. Outcome, path and other group
+selectors are rejected. Shared selection logic gives matching counts, ranked
+workflow links, decision fact/report timestamps and evidence age frozen at the
+summary evaluation time. Changed retained evidence requires a refreshed summary.
+Completed condition outcome behavior remains unchanged. No migration or business
+execution is introduced; applications own evaluation and actions.
+
+### Pinned condition report freshness budgets
+
+A condition definition may declare `evidence_max_age_seconds`, a nonnegative
+integer bounded to ten years. Omission or zero leaves the budget unconfigured.
+For example, a milestone step can declare:
+
+```yaml
+decision_conditions:
+  - id: payment-verification
+    description: Payment verification reported by the application
+    evidence_max_age_seconds: 900
+```
+
+The active condition view resolves the selected fact's milestone against the
+reporting Operation's immutable definition and exact workflow contract version.
+It never reads the current deployment to reinterpret historical evidence. The
+source definitions participate in the cohort fingerprint. Read queries project
+this metadata from existing definition JSON and milestone rows; no migration is
+required. Memory and PostgreSQL stores use the same fact ownership and milestone
+mapping. Budgets belong to definitions, not application-reported result payloads.
+
+Each returned active group partitions its workflow count into
+`within_budget_workflow_count`, `overdue_workflow_count`, and
+`no_budget_workflow_count`. Contributor evidence includes `condition_freshness`
+with status, configured budget, refresh deadline, and optional overdue seconds.
+A report at 12:00 with a 900-second budget is within budget before 12:15 and
+becomes overdue at 12:15. All calculations use the token-bound `evaluated_at`.
+The optional `condition_evidence_status` selector filters active contributor
+queries by `within_budget`, `overdue`, or `no_budget`; a status must have matching
+contributors in the returned group. Other dimensions reject this selector.
+Dashboard overdue links rank workflows by their full observed blocked duration.
+
+Metadata-only reports preserve evidence and its original clock. An explicitly
+republished decision snapshot refreshes reporting age; it does not prove the
+application performed a new verification. Unknown remains an explicit business
+result and is independent of reporting freshness. Unreported conditions and
+incomplete histories retain their existing coverage handling. Workflow state
+staleness is separate. No facts expire and no application actions are triggered.
+
+### Condition evidence refresh ownership and guidance
+
+Pinned condition definitions may include independent optional `refresh_owner`
+(up to 128 UTF-8 bytes) and `refresh_instructions` (up to 1024 UTF-8 bytes).
+Both are public text without controls or surrounding whitespace. Omission leaves
+the owner unassigned or instructions unavailable; neither field configures a
+freshness budget or triggers an action. For example:
+
+```yaml
+decision_conditions:
+  - id: payment-verification
+    description: Payment verification reported by the application
+    evidence_max_age_seconds: 900
+    refresh_owner: payments-team
+    refresh_instructions: Recheck the payment provider and publish an updated decision snapshot.
+```
+
+Contributor `condition_freshness` carries the selected fact's pinned owner and
+instructions, including overdue evidence. The source definition belongs to the
+reporting Operation and milestone; current deployment changes do not reinterpret
+retained reports. Existing definition JSON, metadata projections and cohort
+fingerprints carry these fields, so no SQL schema migration is needed.
+
+Active summaries also expose `refresh_owners`, grouping eligible ongoing
+workflows with overdue selected condition reports. A workflow contributes once
+per owner; multiple overdue conditions for that owner increase
+`overdue_condition_count` without multiplying full-workflow durations. Workflow
+memberships overlap across owners. Missing owners use the explicit unassigned
+group. `overdue_workflow_count` and `overdue_condition_count` remain exact across
+the eligible sample before display limits. The first 64 lexical owner strings
+are displayed (unassigned first), with `refresh_owners_truncated` when limited.
+These counts are independent of condition-group display truncation and inherit
+incomplete-history, conflicting-snapshot and evidence-limit exclusions.
+
+`dimension=condition_refresh_owner` requires `cohort=ongoing`, the summary token,
+and exactly one of `owner` or `unassigned=true` matching a returned owner group.
+Contract, state, blocker, decision, path, outcome and condition/status selectors
+are rejected. Contributors rank by full observed blocked duration with stable
+workflow ties, rather than inferred time under an owner. Each carries the first
+16 overdue condition facts in canonical identity order as `refresh_evidence`,
+with exact `refresh_evidence_count` and `refresh_evidence_truncated`. Fact links,
+report timestamps, refresh deadlines and per-condition guidance remain visible;
+a workflow with many conditions is still counted once. Dashboard owner links
+open this same bound contributor view.
+
+Refresh instructions are displayed as text and never executed. Applications own
+verification, authorization and actions. Reporting freshness, condition results,
+and workflow state staleness remain separate observations.
+
+### Workflow refresh prioritization
+
+The ongoing performance contributor view adds overall
+`condition_refresh_age` and `condition_refresh_blocked` dimensions. Both require
+`cohort=ongoing` and the summary token, reject all condition/decision/state/
+blocker/owner selectors, and include eligible workflows with at least one
+selected overdue condition report. Each workflow appears once across all teams.
+These views use the same bounded latest-100 sample, complete-history requirement,
+pinned definitions, conflict exclusions and evaluation time as active coverage.
+Condition and owner display caps do not hide qualifying workflows. A fresh
+summary with zero overdue workflows produces an empty ranked list.
+
+Age priority ranks by the age in whole seconds of the oldest selected overdue
+report, not seconds past its refresh deadline. Blocked priority ranks by full
+observed workflow blocked duration, not duration attributed to a condition or
+team. Stable workflow identity breaks equal-score ties. Response `duration`
+statistics and contributor `observed_seconds` use the selected ranking measure.
+A change in retained evidence requires refreshing the bound summary.
+
+Each contributor includes `refresh_priority`, with the oldest overdue report's
+full qualifying evidence and pinned deadline/guidance, its age, the full blocked
+duration, all distinct assigned refresh owners in lexical order, an exact
+unassigned condition count, and a plain explanation of the ranking. Timestamp
+ties for the oldest evidence use canonical condition identity. Assigned owner
+lists are bounded by the existing 256-condition identity eligibility limit;
+they remain complete even when the 16-fact canonical evidence preview is
+truncated. The oldest ranking fact is included independently of that preview.
+`refresh_evidence_count` counts all overdue conditions in these workflow views;
+`refresh_evidence_truncated` explicitly flags omitted preview facts. Existing
+owner contributor views continue to count and preview only their selected owner.
+
+Dashboard summary links open either priority view. Each ranked workflow shows
+all teams, report timestamps, refresh deadlines, full blocked duration,
+application-declared guidance and links to the reporting Operations and workflow
+history. These observations do not assign business severity, infer causation,
+expire facts, or trigger verification or actions. Applications keep execution
+and authorization. Existing definition/history metadata is sufficient; no
+migration or new persistence is introduced.
+
+
+### Condition refresh progress
+
+Performance summaries optionally accept `baseline_token` from a previously saved
+summary. The token binds the query and evaluation time; comparison deliberately
+accepts changed evidence fingerprints. It does not store historical cohort
+membership. Progress reconstructs evidence visible at the baseline from retained
+report publication timestamps for today's bounded latest-100 completed and
+latest-100 ongoing workflow samples. Workflows absent from today's sample are
+not treated as cleared backlog.
+
+Coverage explicitly counts compared workflows, workflows without a baseline or
+baseline overdue conditions, and exclusions for incomplete history, ambiguous
+condition results or evidence limits. Missing publication timestamps and gaps
+exclude comparison. Contract boundaries are permitted for progress classification
+without relaxing existing duration or active-condition eligibility.
+
+Exact condition and decision/rule identities compare baseline overdue facts with
+current explicit contexts. Results may change. Statuses are `refreshed` (newer
+report within its pinned budget), `still_overdue` (including newer reports already
+overdue), `unreported`, `contract_changed`, and `budget_removed`. Cross-contract
+facts are not compared. Newer-report counts and all status totals precede the
+16-change preview cap. Workflow completion, missing conditions and removed
+budgets do not establish successful business verification.
+
+Dashboard bookmark links preserve the baseline and show coverage, before/after
+results, reporting timestamps, pinned deadlines and guidance, reporting Operation
+links and workflow history. Customer projections omit tenant identifiers. Go,
+Node and Python SDKs expose the optional summary comparison. No new persistence,
+migration, automatic verification or application action is introduced.
+
+
+### Expected condition reporting coverage
+
+A pinned workflow step condition may declare `expected_states`, a canonical
+unique list of up to 32 declared workflow state names. Omission makes no
+expectation. YAML/TOML manifests and API definitions use the same field. This
+annotation is observational: it never gates transitions, invokes checks or
+changes application-reported pass/fail/unknown results.
+
+Performance summaries include `condition_coverage` for the bounded latest-100
+ongoing sample. Expectations for the current state come from the latest reporting
+Operation's immutable definition and current contract, not a global workflow
+registry or the union of every Operation's definitions. Workflows with no declared
+expectations are counted as unconfigured, not complete. Continuous retained
+history is required; incomplete histories, conflicting latest results and
+condition/context evidence limits are explicitly excluded.
+
+Evidence matches the declaring workflow step and exact condition ID and
+description in the latest explicit contexts of the current contract. Two steps
+with the same condition vocabulary remain separate expectations. Explicit
+omission cannot resurrect an older condition, metadata-only reports preserve
+evidence, and contract changes reset contexts. Conflicting results for a step
+and condition exclude that workflow. At most 256 expected or source step-condition
+identities qualify, using the existing condition identity bound.
+
+Coverage counts expected, reported, missing and overdue conditions. Reported
+includes overdue, so expected equals reported plus missing; overdue is a subset
+of reported. A reported fail or unknown is still evidence. Missing means absent
+from current contexts, not a failed check or proof no historical report exists.
+Report freshness retains the source Operation's pinned age budget rather than
+substituting a newer definition's budget. Counts precede the canonical first-16
+condition preview per workflow and an explicit truncation flag. Workflows appear
+in stable identity order. Customer projections omit tenant identifiers.
+
+The dashboard shows coverage/exclusions, expected step and milestone vocabulary,
+application-declared guidance, matching result and report timestamp, pinned
+freshness status, reporting Operation links and workflow history. API schemas
+and Go, Node and Python SDKs expose the projection. SQLC reads existing pinned
+metadata; no migration, new persistence, authorization or execution is introduced.
+
+Example condition declaration on a workflow step:
+
+```yaml
+decision_conditions:
+  - id: payment-confirmed
+    description: Payment provider confirmation is available
+    expected_states: [ready-to-ship]
+    evidence_max_age_seconds: 3600
+    refresh_owner: payments
+```
+
+`ready-to-ship` must also be in that step's workflow `states` list. The application
+still evaluates and reports the result through its business decision facts.
+
+
+### Missing condition report groups and contributors
+
+Condition coverage adds `missing_groups`, ordered by effective contract version,
+current state and declared refresh owner (empty owner is `unassigned`). Groups
+count all matching missing conditions before condition previews. Each workflow
+contributes once per owner to `blocked_time`; a workflow with missing conditions
+for several owners appears in several groups. The measure is full observed
+workflow blocked duration, not delay caused by a condition or team. Only the
+first 64 groups are displayed using the existing active-condition group bound;
+`missing_groups_truncated` flags omissions without changing coverage totals.
+
+The `condition_missing_owner` contributor dimension requires `cohort=ongoing`
+and `cohort_token`, an exact returned missing group selected by `contract_version`,
+current `state` and exactly one of `owner` or `unassigned=true`. It rejects all
+condition/result/status, decision/path/outcome and blocker selectors. Invalid or
+undisplayed groups are rejected. The existing query-bound token checks both
+cohorts' retained evidence before deriving contributors; changed or expired
+evidence requires a new summary. Evaluation time remains the summary's time.
+
+Missing contributors share the full coverage eligibility and explicit-context
+selection helper: pinned expectations from the latest reporting Operation,
+complete histories, conflict and evidence-limit exclusions, exact declaring
+step and condition vocabulary, and no inference of failed verification. Display
+caps cannot hide matching workflows or owners from contributor counting. Each
+workflow appears once in its selected group and ranks by full observed blocked
+duration descending, with stable workflow identity ties. `observed_seconds` and
+response `duration` statistics use that same measure; no evidence age is invented
+for an absent report.
+
+Contributor `missing_condition_count` is exact for the selected state and owner;
+`missing_conditions` previews the first 16 matching expected declarations in
+step/condition ID order, independent of the overall coverage preview.
+`missing_conditions_truncated` flags omissions. Entries have no evidence report
+and include pinned vocabulary, step, milestone, budget and public refresh
+guidance. Customer responses omit tenant identifiers from contributors and
+nested condition coverage. API schemas and Go, Node and Python SDKs expose the
+same group and contributor fields.
+
+The dashboard coverage card shows missing-group counts and snapshot-bound links.
+Drilldowns show coverage exclusions, exact missing counts, expected declarations
+and guidance, the latest reporting Operation and pinned definition revision, and
+workflow history. The previously misplaced schema text in the summary template
+is replaced by the actual expected-condition coverage card. These observations
+neither assign severity nor execute refreshes, business checks or application
+actions. No new SQL, migration or persistence is required.
+
+
+### Missing-report progress from a saved baseline
+
+The existing optional summary `baseline_token` now also returns
+`missing_progress`. Its query and evaluation time anchor reconstruction; the
+changed evidence fingerprint is intentionally accepted for comparisons. Current
+retained latest-100 completed and latest-100 ongoing samples are compared, not
+original saved cohort membership or every historical backlog item. Workflows
+outside today's sample never count as resolved.
+
+The last report published by baseline time supplies baseline state, contract and
+reporting Operation. One bounded, ownership-scoped SQLC batch reads those
+Operations' immutable workflow definitions; the memory store uses the same
+retained pins. The baseline declaration is never substituted with today's
+Operation definition. Missing historical definitions have an explicit exclusion
+count. Definition lookup is comparison-only and does not enter the contributor
+fingerprint, so snapshot-bound drilldowns still work from comparison summaries.
+No schema migration or new persistence is needed.
+
+Continuous baseline report history within one contract is required; today's
+history may have contract boundaries solely to classify `contract_changed`.
+Unknown publication timestamps, gaps and other report-history failures exclude
+comparison. Historical terminal reports produce no baseline missing gaps.
+Reporting conflicts and existing expectation/context/identity limits exclude
+comparison. Coverage explicitly partitions today's samples into compared,
+no-baseline, no-baseline-missing, incomplete, conflicting, over-limit and
+unavailable-definition workflows. This reconstructs report history and pinned
+expectations, not historical verification obligations or the original queue.
+
+Baseline missing entries retain declaring step, milestone and full condition
+definition. Current state expectations are found by step and condition ID:
+`received_report` requires identical declaration and milestone plus a current
+matching fact; `still_missing` retains the same expectation without evidence;
+`expectation_changed` includes changed vocabulary, expected states, budget,
+owner or guidance; `not_expected` means the condition left the current state's
+expectation set; `contract_changed` never compares facts across contracts.
+State changes are explicitly flagged and current terminal reports remain visible
+without implying resolution. Current evidence in changed declarations is shown
+separately and does not count as filling the old expectation.
+
+Any application result (pass, fail or unknown) counts as received evidence; its
+source-pinned freshness may be within budget, overdue or unconfigured. Received
+reporting does not mean successful verification. Metadata-only reports preserve
+explicit contexts, omitted conditions stay missing, and changing expectations
+does not manufacture a report. All five status counts include every baseline
+missing condition before the first-16 canonical step/condition preview, with an
+explicit truncation flag. Workflow items are ordered by stable identity.
+
+The dashboard's saved comparison link opens overdue and missing-report progress
+cards together, showing coverage/exclusions, baseline report publication time and
+pinned reporting Operation, current state, changed definitions, results, report
+age deadlines, reporting Operation links and workflow history. Customer
+projections omit tenant identifiers. API schemas and Go, Node and Python SDKs
+expose the optional comparison; execution and verification remain application
+responsibilities.
+
+
+### New and existing missing-report gaps
+
+Saved-baseline performance summaries also expose `new_missing_progress`,
+explaining every current missing expectation in comparable ongoing workflows.
+The existing `missing_progress` continues to follow baseline missing gaps;
+these views overlap and their totals must not be added. They share one
+comparison eligibility helper, publication visibility, immutable baseline
+Operation definition lookup and full expectation/evidence limits before previews.
+No additional SQL, persistence or migration is introduced. Comparisons use
+today's retained latest-100 completed and latest-100 ongoing sample, not original
+saved cohort membership. Unknown baselines are explicitly counted and never
+invented as newly introduced gaps; workflows outside the sample are not resolved.
+
+Current terminal workflows produce no active missing gaps. A terminal baseline
+has no active expectations: a later ongoing run's missing declarations count as
+`new_expectation`, not lost evidence. Responses expose `baseline_terminal`,
+baseline report/state, current state and a state-change flag. Coverage partitions
+samples into compared workflows with current gaps, no current active gaps after
+comparison, no baseline and existing incomplete/conflicting/over-limit or
+unavailable-definition exclusions. No-current-gap counts apply only after valid
+comparison, not to excluded or unknown workflows.
+
+For each current missing condition, step and condition ID locate a baseline
+candidate. Classification precedence is: `contract_changed` (no cross-contract
+Before), `new_expectation` (absent or inactive baseline expectation),
+`expectation_changed` (different milestone or full pinned declaration including
+vocabulary, expected states, age budget, owner or guidance), `report_lost`
+(identical active expectation with prior evidence), and `still_missing`
+(identical expectation missing before and now). Changed current states alone do
+not create a new expectation if the same declaration was active at both times.
+Previous pass, fail, unknown and overdue reports all qualify as prior evidence;
+report-age expiry never removes a report and cannot alone create report loss.
+Classification describes reporting coverage, not business verification success,
+failure, causation or severity.
+
+Before optionally includes the pinned baseline expectation and prior result,
+report timestamp, reporting Operation and baseline-evaluated freshness. After
+always contains the current missing declaration with no evidence. Status counts
+cover all current gaps before the canonical first-16 current step/condition ID
+preview and an explicit truncation flag. Workflows appear in stable identity
+order; customer projections omit tenant identifiers. The dashboard adds a new
+and existing gaps card to the saved comparison view with coverage, before/after
+expectations, guidance, prior reporting Operation, baseline/current pin links and
+workflow history. API schemas and Go, Node and Python SDKs expose the projection.
+Execution and business decisions remain application-owned.
+
+### Reporting-gap category drilldowns
+
+`new_missing_progress.groups` groups comparable current gaps by current contract,
+state, refresh owner (including unassigned) and category. Canonical ordering is
+contract/state/owner/category, capped at the existing 64-group limit. Counts use
+full classified evidence before previews. Each workflow contributes once per
+group and can appear in several groups; workflow counts are not additive.
+
+The `condition_gap_owner` contributor dimension requires ongoing cohort, the
+current comparison summary's `cohort_token`, saved `baseline_token`, and an exact
+returned group selected by contract_version/state/gap_status plus exactly one
+of owner or unassigned=true. The baseline must match account/customer, app,
+environment and workflow and cannot be later than the current token evaluation.
+Changed current evidence returns 409 and requires refreshing the summary. Other
+dimensions reject baseline_token and gap_status. Comparison-only historical
+definitions use the existing scoped batch SQLC lookup once and do not enter the
+current cohort fingerprint.
+
+Contributors include `gap_progress` filtered to the selected category and owner
+before the first-16 preview, with exact counts, baseline report/state, prior
+evidence and pinned current guidance. Customer responses omit nested tenant
+identifiers. Dashboard links carry both tokens and link workflow history and
+baseline/current/prior reporting Operations. Lost reports, new expectations,
+existing gaps, changed declarations and contract changes remain separate.
+
+Ranks and distributions measure full observed report-only workflow blocked
+intervals with stable identity ties, not gap age, causation or business severity.
+Intervals spanning contract boundaries are omitted. Current report comparisons permit contract boundaries while baseline history
+must be continuous within its contract. Generic duration coverage retains its
+stricter eligibility; new_missing_progress reports comparison coverage separately
+so contract-change contributors remain accessible. No persistence, migrations,
+new limits, execution, notifications or VM lifecycle changes are introduced.
+
+### Workflow reporting-gap queue
+
+`condition_gap_queue` uses the existing contributor routes with ongoing cohort,
+current comparison cohort_token and saved baseline_token. Scope, baseline time,
+comparison eligibility, definition lookup and current fingerprint checks match
+condition_gap_owner. Optional gap_status and owner or unassigned=true filters
+select matching gaps; both may be absent. Other group selectors are rejected.
+Every eligible workflow appears once, independent of the 64-group display cap;
+empty filter results are valid. Membership and coverage use the current retained
+sample, not original saved cohort membership.
+
+Each contributor exposes gap_queue_priority with full current gap/category
+counts, sorted complete assigned owner list, unassigned count and all pinned
+missing expectation guidance before filtering or previews, bounded by the
+existing 256-condition comparison limit. Guidance includes category and current
+expectation without prior facts. gap_progress instead contains exact filtered
+counts and the canonical first-16 matching changes, including prior evidence.
+Customer responses omit tenant identifiers as before. Ranking uses observed
+report-only blocked duration with stable workflow identity ties and an explicit
+explanation; intervals spanning contract boundaries are omitted. Neither gap
+age, causation nor business severity is inferred. Comparison coverage remains
+separate from stricter generic duration coverage.
+
+The dashboard offers a snapshot-bound queue, category/owner filters, one row per
+workflow, full guidance and links to existing returned category/owner groups,
+reporting Operations and workflow history. Group links retain both tokens;
+undisplayed groups lack links but their guidance and counts remain available.
+SDKs and OpenAPI expose the queue dimension and priority payload. No new SQL,
+persistence, migration, limits, notifications or execution are introduced.
+
+### Reporting context in transition readiness
+
+Existing transition readiness, action previews and the workflow overview now
+include workflow-wide current-state condition reporting context and retained
+pending resolution proof advisories. Existing declared policy, milestone,
+effect, invariant, dependency and blocker guards alone determine Ready. Reporting
+expected_states are not transition guards, and missing, overdue, failed or
+unknown condition reports do not invent new guards. Planned decision evidence
+may satisfy existing requirements but does not replace retained reporting context.
+
+The optional reporting payload uses the latest reporting Operation's immutable
+pinned workflow condition declarations and the existing full condition coverage
+evaluator. It returns compared/unconfigured/terminal or explicit unavailable,
+incomplete, ambiguous and limit statuses. Counts precede the existing first-16
+preview and full 256-condition identity checks. Conditions refer to current
+state, not proposed destination state. Explicit decision replacement, metadata
+preservation, contract boundaries, step identity and source-pinned freshness
+match performance coverage. Incomplete histories cannot imply missing or
+satisfied reporting; unconfigured means no declared current-state expectations.
+
+Pending_verification_count counts retained awaiting resolution proofs targeting
+the transition Operation across retained workflow reports before canonical
+first-16 previews. Other targets and verified proofs are excluded. Declared
+verification owners, milestone references and resolution reporting Operations
+are exposed with explicit truncation. These historical retained obligations are
+advisory unless an existing declared prerequisite independently prevents readiness.
+
+MemStore and PgStore compute reporting context once per selected workflow at the
+shared projection clock, including readiness-only requests; all transition edges
+reuse it. The existing scoped SQLC bottleneck history projection now includes
+explicit decision/path contexts and pinned condition metadata matching memory.
+Current definition lookup reuses the scoped batch definition reader. There is
+no dependence on fact/history page cursors and no per-edge queries. Internal
+full verification/context slices are omitted from snapshot JSON; public evidence
+contains no tenant override. Dashboard guidance and evidence Operation links
+explain the findings without granting execution or authorization. No persistence,
+migrations, new limits, business evaluation or VM lifecycle changes are introduced.
+
+
+### Transition readiness queue across ongoing workflows
+
+`GET /v1/apps/{slug}/workflow-readiness/queue` (account read scope plus MFA)
+and `GET /v1/platform-tenant-self/workflow-readiness/queue` (customer Operations
+read scope) require an explicit environment and app. The customer endpoint derives
+ownership from authentication and rejects customer overrides. The dashboard at
+`/dashboard/apps/{slug}/customer-operations/readiness` links each transition to
+its workflow readiness detail and current reporting Operation.
+
+The queue samples up to `OperationWorkflowPerformanceCohortMax` (100) recently
+updated retained ongoing workflows, across workflow names unless filtered. The
+SQLC and memory readers sort by update time descending then the existing stable
+workflow identity digest descending. Within each unchanged sampled workflow,
+matching current-state edges sort by Operation/from/to and evaluate up to
+`OperationHistoryPageMax` (100), reusing one readiness-only milestone projection
+per workflow. Evaluation supplies no planned milestones, decisions, effects or
+invariants. Existing declared requirements alone determine Ready; current-state
+reporting and pending resolution verification remain advisories.
+
+`target_operation` filters before edge sampling. `owner`, `unassigned`, and
+`requirement` filter evaluated transitions before the row limit (default 20,
+maximum 100). Owners come from blockers or all retained pending verification
+obligations targeting that transition Operation, before proof previews. Reporting
+refresh owners are excluded. Unassigned requires an actual ownerless blocker or
+pending proof; a transition with no owner-bearing finding does not qualify.
+The bounded pending-proof preview exposes verification owners and expected milestone
+references with resolution and verification Operation links; preview truncation
+is explicit. Requirement accepts existing readiness reason codes and never advisory codes.
+Unmet rows precede ready rows while preserving source sample/edge order. Counts
+cover evaluated matching transitions before row truncation. Workflow sampling,
+edge sampling and row truncation are independent and explicit, including empty
+results and sampled workflows with no matching edge.
+
+This is a live bounded investigation view, not a cursor or cohort snapshot. The
+sample time and completion time are exposed, with per-row shared readiness
+clocks. Workflows whose current Operation/report/revision/contract changed between
+candidate selection and projection are excluded and counted. Refresh before
+acting; application authorization and execution remain application-owned. No
+new persistence, migrations, limits, business evaluator or VM lifecycle changes
+are introduced. Go, Node and Python SDKs expose the scoped queue contract.
+
+
+### Saved transition readiness comparisons
+
+The readiness queue now returns a versioned caller-held `snapshot` of its returned
+rows. `POST /v1/apps/{slug}/workflow-readiness/compare` and
+`POST /v1/platform-tenant-self/workflow-readiness/compare` compare that snapshot
+with fresh scoped readiness-only projections of the same workflow instances.
+Account routes require read scope and MFA; customer routes derive tenant ownership
+from authentication and reject overrides. The scope fingerprint binds account,
+app, environment, tenant selector and role. It is a query binding, not a signature
+or authenticated historical proof. Caller-provided baselines remain advisory and
+cannot authorize execution. Every current fact is read under current caller scope.
+
+At most `OperationHistoryPageMax` (100) saved edges are accepted. The new centralized
+`OperationWorkflowReadinessComparisonBodyMaxBytes` bounds the JSON body at 1 MiB;
+strict decoding rejects unknown fields and duplicate JSON keys. Baselines validate
+format, ownership selectors, identity names, unique edges, reason/advisory codes,
+ready/reason consistency, digest shapes, revisions and capture/evaluation times.
+Each distinct saved workflow is projected once, independent of the recent-workflow
+sample and original owner/requirement filters. This means a blocker clearing is
+still compared when the row disappears from an owner-filtered queue.
+
+Only an exact target Operation/from/to edge that remains applicable to the current
+state with unchanged pinned version and declared requirement fingerprint can be
+`newly_ready` or `newly_blocked`. Other comparable rows are `changed` or `unchanged`.
+Contract/requirement changes, terminal state, missing retained state, unavailable
+current-state edges, and older retained revisions (`baseline_ahead`) count as
+unavailable comparisons and never imply resolved requirements. Added/resolved
+reason codes explain guard changes; full canonical blocker, prerequisite, pending
+verification and reporting summaries identify evidence categories that changed.
+Retained freshness evaluation clocks and elapsed-age counters are excluded from
+fingerprints, while evidence identity, invalidation and expiry status are included.
+All pending verification obligations contribute before previews. Verification and
+reporting advisories cannot independently change Ready. Each row links to the
+saved/current reporting Operations and detailed evidence.
+
+`change` filters (`newly_ready`, `newly_blocked`, `changed`, `unchanged`, `unavailable`)
+and row limits apply after comparing all saved edges. Counts cover the full saved
+view. The response supplies the next available-edge snapshot before filtering;
+unavailable edges are omitted. New edges outside the saved view are not enumerated.
+Reads remain live rather than atomic, and per-workflow evaluation clocks remain
+visible. There is no historical reconstruction or durable snapshot store.
+
+The dashboard saves snapshots explicitly in browser-tab session storage, supports
+clearing or replacing them, and compares through the scoped read-only API. Account
+or scope changes clear incompatible saved views. Dynamic findings use DOM text
+nodes and encoded same-origin links under the existing CSP nonce. Go, Node and
+Python clients expose comparison requests and results. Application authorization,
+business decisions and execution remain unchanged; no migrations or VM lifecycle
+changes are introduced.
+
+Saved readiness comparisons now include a compact inventory of at most 16 evidence observations per edge (the existing milestone declaration preview cap). Stable identities preserve retained prerequisite group/path selectors, selected workflow dependency references and verification obligations. Dependency observations retain status and source Operation without moving age counters. The inventory covers blockers, retained milestones, selected dependency references and verification obligations; planned policy, invariant and effect evidence continues to use the existing reason/category summaries. Individual changes expose owners, retained status, evidence Operations and invalidation Operations. Both inventories must be complete before absence establishes blocker clearance; missing proof is always unavailable, and fulfillment requires a retained verified obligation. Older version-1 snapshots remain accepted with unavailable evidence detail. Contract/state boundaries suppress individual deltas. Full category fingerprints remain independent of previews. This advisory comparison does not authorize execution.
+
+Durable workflow readiness subscriptions and inboxes extend the saved comparison surface. Account subscriptions require deploy-write scope and MFA for creation/deletion; account reads require read scope and MFA. Customer subscriptions require Operations manage scope for creation/deletion and Operations read scope for inbox/list; their tenant identity derives from authentication. Subscription and inbox lookups fence account, app, environment and account/customer role, with optional account-only tenant narrowing. Applications and selected customers must belong to the account. The shared app budget is 20 subscriptions, enforced under the account lock. Configuration bodies are capped at 4096 bytes.
+
+The apid worker polls every 30 seconds, claims at most five due subscriptions using a five-minute lease and SKIP LOCKED, and evaluates each with a one-minute timeout. Creation initializes a fresh server-read baseline and emits no invented readiness change. Every evaluation compares previously saved edges independently of owner filtering, then discovers matching recent queue edges; discovery is capped at the existing 100-workflow cohort and 100 saved-transition budget. Fresh comparison observations take precedence over earlier discovery reads. Newly ready, newly blocked, retained owner reassignments and unavailable observations are selectable notification kinds. Newly unknown dependency evidence and removed retained proof also report unavailable evidence rather than fulfillment. Reassignment that also changes readiness is represented by the highest-priority selected kind, with both changes preserved in its evidence. Owner-filtered work is compared through its reassignment before leaving that watch. New edges initialize observations without claiming a previous blocked state. This is periodic bounded observation, not capture of every transient business change; narrowed selectors improve coverage.
+
+A single transaction commits the new baseline, inbox sequence, notifications and retention pruning under the current lease token. Worker retries or concurrent claimers cannot publish the same comparison twice; deletion cancels outstanding commits and cascades inbox removal. Unchanged evaluations create no entries. Repeated identical unavailable states and evaluation failures are suppressed until recovery or a meaningful observation change. Failed evaluations preserve the last successful baseline and show retrying status. Evidence previews remain capped at 16; full category fingerprints still detect changes. If changed blocker/verification evidence cannot support complete individual ownership explanations, an unavailable notification reports that limitation rather than claiming a reassignment. Coverage flags report discovery, preview and saved-edge limitations. Inboxes retain the latest 100 notifications per subscription, expose ascending sequences and explicit resync-required gaps, and provide bounded pages. Dashboard controls create/delete watches and incrementally read inboxes; the worker continues when browsers close. No external destination is contacted and no workflow or Operation is executed. The schema migration is shipped for review and is not applied by this implementation workflow.
+
+
+Readiness inbox coordination (ADR-519): shared unread/read/acknowledged status, authenticated actors and timestamps, owner, note and optional UTC follow-up time are retained with notifications. Updates require the current revision and never mutate application evidence. Owner/note budgets are 256/1024 UTF-8 bytes and bodies use the existing 4096-byte subscription cap. Coordination shares the latest-100 notification retention window. Individual notification checks return current advisory readiness or an explicit unavailable/comparison boundary while preserving historical evidence. Dashboard filters apply to loaded entries; API and Go/Node/Python SDKs support scoped coordination updates and evidence checks.
+
+
+Readiness follow-up queue (ADR-519): account and customer readers can aggregate retained pending follow-ups across an application's environment-scoped readiness subscriptions, filter coordination owner, workflow, customer (account only) and due classification, and sort overdue work before upcoming deadlines. Compact rows retain original inbox identities and revisions for existing reschedule/clear updates and current-evidence checks. Aggregation is bounded to the existing 20 × 100 = 2000 retained notifications, with default 20/max 100 rows per live offset page and offset max 2000; counts are filtered before pagination and retention limitations remain explicit. No new migration or execution authority is introduced.
+
+
+Readiness due reminders (ADR-519): one durable marker per original notification/normalized deadline is published by a separate apid worker, with a 100-reminder batch budget, 30-second polling interval and 10-second publication timeout. Retries and restarts preserve stable reminder identity. Coordination edits and publication serialize on the notification row; rescheduling or clearing retires the marker, while unchanged deadlines preserve it. Follow-up queue reads expose optional reminder metadata, filtered due-reminder counts and reminder-only selection under existing account/customer/environment authorization. Dashboard counts and the reminder view link to original notifications and current evidence. Reminders share source notification retention and do not advance inbox sequences, mutate application evidence or authorize execution. No new migration is required.

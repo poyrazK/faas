@@ -44,21 +44,6 @@ func TestHandle_RoundTrip(t *testing.T) {
 	})
 }
 
-// TestHeaderMap_LowercasesHTTP: §4.9 envelope uses lowercase header
-// keys; the runner folds http.Header into that shape.
-func TestHeaderMap(t *testing.T) {
-	h := http.Header{}
-	h.Set("X-Trace-Id", "abc")
-	h.Set("Content-Type", "application/json")
-	m := headerMap(h)
-	if m["X-Trace-Id"] != "abc" {
-		t.Fatalf("X-Trace-Id = %q, want abc", m["X-Trace-Id"])
-	}
-	if m["Content-Type"] != "application/json" {
-		t.Fatalf("Content-Type = %q", m["Content-Type"])
-	}
-}
-
 // TestEnvelopeRoundTrip sanity-checks the JSON tags line up with §4.9,
 // extended with the waitUntil envelope fields (issue #667 / ADR-078).
 // Body delegated to runnerparity.AssertEnvelopeJSONTags so all five

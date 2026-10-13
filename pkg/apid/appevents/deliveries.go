@@ -363,29 +363,21 @@ func (s *Service) ReplayEventFanoutFailure(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation("event_id, event_source and subscription_id are required"))
 		return
 	}
+	if err := (api.AppEventAcceptanceGuard{ExpectedAcceptedAt: req.ExpectedAcceptedAt}).Validate(); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if req.ExpectedGeneration != nil && (*req.ExpectedGeneration < 0 || req.ExpectedAcceptedAt == nil) {
+		api.WriteProblem(w, api.ErrValidation("expected_generation must be nonnegative and requires expected_accepted_at"))
+		return
+	}
 	store, ok := s.Host.Store().(state.EventFanoutReplayStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
 		return
 	}
 	err := s.applyEventAgeReplay(r, store, acct.ID, app.ID, req)
-	switch {
-	case errors.Is(err, state.ErrEventDeliveryExpired):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
-		return
-	case errors.Is(err, state.ErrNotFound):
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
-		return
-	case errors.Is(err, state.ErrConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
-		return
-	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
-		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
-		return
-	case err != nil:
-		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
+	if writeEventRoutingReplayError(w, r, err) {
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusAccepted, api.ReplayEventFanoutFailureResponse{
@@ -433,4 +425,39 @@ func (s *Service) ReplayRetryableEventFanoutFailures(w http.ResponseWriter, r *h
 	httpkit.WriteJSON(w, http.StatusAccepted, api.ReplayRetryableEventFanoutFailuresResponse{
 		AppSlug: app.Slug, ReplayedCount: result.Replayed, HasMore: result.HasMore,
 	})
+}
+
+func writeEventRoutingReplayError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, state.ErrEventReplayGenerationChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_replay_generation_changed", "Replay generation changed", "the recipient generation changed; no recipient was requeued"))
+		return true
+	case errors.Is(err, state.ErrEventReplayAcceptanceChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Event acceptance changed", "the guarded event acceptance was replaced; no recipient was requeued"))
+		return true
+	case errors.Is(err, state.ErrInvalidArgument):
+		api.WriteProblem(w, api.ErrValidation("invalid recovery expectation or incompatible age override"))
+		return true
+	case errors.Is(err, state.ErrEventRecoveryChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEventRecoveryChanged, "Recovery plan changed", "routing state or automation revision no longer matches the reviewed plan"))
+		return true
+	case errors.Is(err, state.ErrEventDeliveryExpired):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))
+		return true
+	case errors.Is(err, state.ErrNotFound):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Event fanout failure not found", "no failed recipient with that event identity belongs to this app"))
+		return true
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Event fanout failure is not replayable yet", "the event fanout receipt is still being processed; retry after it settles"))
+		return true
+	case errors.Is(err, state.ErrEventReplayBackfillQuota), errors.Is(err, state.ErrEventReplayBackfillState):
+		api.WriteProblem(w, eventReplayBackfillProblem(err, r.Context().Err()))
+		return true
+	case err != nil:
+		api.WriteProblem(w, api.ErrInternal("event fanout replay"))
+		return true
+	}
+	return false
 }

@@ -13,6 +13,8 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/net/http/httpguts"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -110,10 +112,30 @@ func logDrainAuthHeader(env string) (*string, error) {
 	if !set || strings.TrimSpace(value) == "" {
 		return nil, fmt.Errorf("environment variable %s is not set", env)
 	}
-	if len(value) > api.AppLogDrainAuthHeaderMaxBytes {
+	header, err := logDrainAuthHeaderPair(strings.TrimSpace(value))
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", env, err)
+	}
+	if len(header) > api.AppLogDrainAuthHeaderMaxBytes {
 		return nil, fmt.Errorf("%s is longer than %d bytes", env, api.AppLogDrainAuthHeaderMaxBytes)
 	}
-	return &value, nil
+	return &header, nil
+}
+
+// logDrainAuthHeaderPair turns the variable's value into the API's single
+// "Name: value" pair. A bare value ("Bearer …", the documented form) is the
+// Authorization header; "Name: value" sets another header (DD-API-KEY: …).
+// The API used to receive a bare value verbatim and reject it, so the
+// documented example never worked (production-us hunt #9, H9-107).
+func logDrainAuthHeaderPair(value string) (string, error) {
+	name, rest, hasColon := strings.Cut(value, ":")
+	if !hasColon {
+		return "Authorization: " + value, nil
+	}
+	if !httpguts.ValidHeaderFieldName(strings.TrimSpace(name)) || strings.TrimSpace(rest) == "" || strings.Contains(rest, ":") {
+		return "", errors.New(`set it to an Authorization value ("Bearer <token>") or one "Name: value" header pair; header values cannot contain ':'`)
+	}
+	return value, nil
 }
 
 func cmdLogDrainsAdd(args []string) int {
@@ -122,7 +144,7 @@ func cmdLogDrainsAdd(args []string) int {
 	slug, _, ok := logDrainFlags("add", args, false, func(fs *flag.FlagSet) {
 		kind = fs.String("kind", "http_json", "destination format: "+strings.Join(api.AllowedAppLogDrainKinds, "|"))
 		target = fs.String("url", "", "destination URL (required)")
-		authEnv = fs.String("auth-header-env", "", "environment variable holding the Authorization header value sent to the destination")
+		authEnv = fs.String("auth-header-env", "", "environment variable holding the Authorization value ('Bearer …') or one 'Name: value' header sent to the destination")
 		disabled = fs.Bool("disabled", false, "create the drain disabled")
 	})
 	if !ok {
@@ -205,7 +227,7 @@ func cmdLogDrainsUpdate(args []string) int {
 	var enable, disable *bool
 	slug, id, ok := logDrainFlags("update", args, true, func(fs *flag.FlagSet) {
 		target = fs.String("url", "", "new destination URL")
-		authEnv = fs.String("auth-header-env", "", "environment variable holding the new Authorization header value")
+		authEnv = fs.String("auth-header-env", "", "environment variable holding the new Authorization value ('Bearer …') or one 'Name: value' header")
 		enable = fs.Bool("enable", false, "resume delivery")
 		disable = fs.Bool("disable", false, "pause delivery")
 	})

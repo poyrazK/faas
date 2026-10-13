@@ -133,7 +133,7 @@ func recordGuestExecutionEvidence(ctx context.Context, name, value string) bool 
 
 func validGuestRuntime(value string) bool {
 	switch value {
-	case "node22", "node24", "python312", "python313", "go124":
+	case "node22", "node24", "python312", "python313", "go124", "binary":
 		return true
 	default:
 		return false

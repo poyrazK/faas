@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -126,28 +127,29 @@ func (f *writeProtectionControlNative) commit(key string, h http.Header) {
 
 // adr: 619
 func TestWriteProtectionControlE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	now := time.Now().UTC().Add(-17 * time.Minute)
-	e.store.SetClockForTest(func() time.Time { return now })
-	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func(reset bool) {
+	(*e.Store()).SetClockForTest(func() time.Time { return now })
+	writeProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, func(reset bool) {
 		if reset {
 			now = time.Now().UTC()
+			(*
 			// Signed URL admission must follow its wall-clock expiry source.
-			e.store.SetClockForTest(nil)
+			e.Store()).SetClockForTest(nil)
 		} else {
 			now = now.Add(16 * time.Minute)
-			e.store.SetClockForTest(func() time.Time { return now })
+			(*e.Store()).SetClockForTest(func() time.Time { return now })
 		}
 	})
 }
 func TestWriteProtectionControlE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func(reset bool) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	writeProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), func(reset bool) {
 		if reset {
 			return
 		}
 		for _, q := range []string{`UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END`, `UPDATE object_upload_completions SET recovery_retry_at=clock_timestamp() WHERE status='pending'`, `UPDATE object_storage_multipart_uploads SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_token IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state='completing'`} {
-			if _, err := e.pool.Exec(t.Context(), q); err != nil {
+			if _, err := (*e.Pool()).Exec(t.Context(), q); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -156,28 +158,29 @@ func TestWriteProtectionControlE2EPG(t *testing.T) {
 
 // adr: 622
 func TestEventWriteProtectionControlE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	now := time.Now().UTC().Add(-17 * time.Minute)
-	e.store.SetClockForTest(func() time.Time { return now })
-	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func(reset bool) {
+	(*e.Store()).SetClockForTest(func() time.Time { return now })
+	writeProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, func(reset bool) {
 		if reset {
 			now = time.Now().UTC()
+			(*
 			// Signed URL admission must follow its wall-clock expiry source.
-			e.store.SetClockForTest(nil)
+			e.Store()).SetClockForTest(nil)
 		} else {
 			now = now.Add(16 * time.Minute)
-			e.store.SetClockForTest(func() time.Time { return now })
+			(*e.Store()).SetClockForTest(func() time.Time { return now })
 		}
 	}, true)
 }
 func TestEventWriteProtectionControlE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	writeProtectionControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func(reset bool) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	writeProtectionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), func(reset bool) {
 		if reset {
 			return
 		}
 		for _, q := range []string{`UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END`, `UPDATE object_upload_completions SET recovery_retry_at=clock_timestamp() WHERE status='pending'`, `UPDATE object_storage_multipart_uploads SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_token IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE state='completing'`} {
-			if _, err := e.pool.Exec(t.Context(), q); err != nil {
+			if _, err := (*e.Pool()).Exec(t.Context(), q); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -232,9 +235,9 @@ func prepareWriteProtectionControl(t *testing.T, st state.Store, b state.ObjectB
 	advance(true)
 }
 
-func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func(bool), event ...bool) {
+func writeProtectionControlE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, advance func(bool), event ...bool) {
 	held := len(event) != 0 && event[0]
-	identity, teardown := withTestIdentities(t)
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	native := &writeProtectionControlNative{objects: map[string]http.Header{}, event: held}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { native.serve(t, w, r) }))
@@ -242,14 +245,14 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	_, b, _, policy := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{Enabled: true, EventHolds: held}))
 	prepareWriteProtectionControl(t, st, b, advance, held)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	var gateway atomic.Pointer[s3gateway.Handler]
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.Load().ServeHTTP(w, r) }))
 	defer public.Close()
-	s.objectStorage.PublicEndpoint = public.URL
-	gatewayConfig := s3gateway.Config{Registry: s.objectStorage, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
+	gatewayConfig := s3gateway.Config{Registry: (*s.ObjectStorage()), Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
 		ns, plain, e := secretbox.OpenBytes(identity, blob)
 		if e != nil || ns != s3gateway.CredentialSecretNamespace {
 			return "", objectstorage.ErrConfiguration
@@ -261,7 +264,7 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		t.Fatal(err)
 	}
 	gateway.Store(h)
-	management := httptest.NewServer(s.handler())
+	management := httptest.NewServer(s.Handler())
 	defer management.Close()
 	client := api.NewClient(management.URL, bearer)
 	until := time.Now().UTC().AddDate(0, 0, 7)
@@ -322,8 +325,8 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 		t.Fatal(err)
 	}
 	s.WithObjectStorage(objectLockTestRegistry(t, upstream.URL, policy, objectstorage.ObjectLockConfig{}))
-	s.objectStorage.PublicEndpoint = public.URL
-	gatewayConfig.Registry = s.objectStorage
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
+	gatewayConfig.Registry = (*s.ObjectStorage())
 	h, err = s3gateway.New(gatewayConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -342,11 +345,11 @@ func writeProtectionControlE2E(t *testing.T, s *server, st state.Store, acct sta
 	if pool != nil {
 		st = state.NewPgStore(pool)
 	}
-	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(s.objectStorage)
-	if err = fresh.object.ReconcileObjectUploads(t.Context(), nil); err != nil {
+	fresh := apidserver.NewServer(st, (*s.Log()), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage((*s.ObjectStorage()))
+	if err = (*fresh.Object()).ReconcileObjectUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = fresh.object.ReconcileObjectMultipartUploads(t.Context(), nil); err != nil {
+	if err = (*fresh.Object()).ReconcileObjectMultipartUploads(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	c, err := st.(state.ObjectTrackedGatewayUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", lostSubject, lost.UploadID)

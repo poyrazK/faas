@@ -9,8 +9,8 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/outboundai"
 	"github.com/onebox-faas/faas/pkg/outbound"
-	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -30,6 +30,17 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		OwnerKind:            offer.OwnerKind,
 		DailyRequestLimit:    copyOutboundDailyLimit(offer.DailyRequestLimit),
 		RequestPolicy:        offer.RequestPolicy,
+		AIProvider:           offer.AIProvider,
+		AIDailyTokenLimit:    copyOutboundDailyLimit(offer.AIDailyTokenLimit),
+		// ADR-990 cost limits, priced from the integration's price list.
+		AIDailyCostLimitMillicents:   copyOutboundDailyLimit(offer.AIDailyCostLimit),
+		AIMonthlyCostLimitMillicents: copyOutboundDailyLimit(offer.AIMonthlyCostLimit),
+		AIRequestLogEnabled:          offer.AIRequestLogEnabled,
+		// ADR-994 per-end-user limits.
+		AIUserDailyTokenLimit:          copyOutboundDailyLimit(offer.AIUserDailyTokenLimit),
+		AIUserDailyCostLimitMillicents: copyOutboundDailyLimit(offer.AIUserDailyCostLimit),
+		AIRequestLogContent:            offer.AIRequestLogContent,
+		AIContentPolicy:                offer.AIContentPolicy.Normalized(),
 	}
 }
 
@@ -49,7 +60,20 @@ func outboundBindingResponse(binding state.OutboundAppBinding) api.OutboundAppBi
 		CreatedAt:           binding.CreatedAt,
 		AllowedMethods:      append([]string{}, binding.RouteMethods...),
 		AllowedPathPrefixes: append([]string{}, binding.RoutePathPrefixes...),
+		AIDailyTokenLimit:   copyOutboundDailyLimit(binding.BindingAIDailyTokenLimit),
+		// ADR-991 per-app guardrails.
+		AIRequestsPerMinute: copyOutboundDailyLimit(binding.BindingAIRequestsPerMinute),
+		AITokensPerMinute:   copyOutboundDailyLimit(binding.BindingAITokensPerMinute),
+		AIAllowedModels:     outboundAllowedModels(binding.BindingAIAllowedModels),
+		AIMaxOutputTokens:   copyOutboundDailyLimit(binding.BindingAIMaxOutputTokens),
 	}
+}
+
+func outboundAllowedModels(models []string) []string {
+	if models == nil {
+		return nil
+	}
+	return append([]string{}, models...)
 }
 
 func (s *server) outboundBindingStore(w http.ResponseWriter) (state.OutboundBindingStore, bool) {
@@ -95,6 +119,14 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if !api.ValidOutboundAIPolicy(req.AIProvider, req.AIDailyTokenLimit) {
+		outboundBindingProblem(w, http.StatusBadRequest, api.CodeValidation, outboundai.PolicyInvalidDetail)
+		return
+	}
+	if req.AIProvider != "" && !s.aiGatewayEnabled {
+		writeAIGatewayUnavailable(w)
+		return
+	}
 	requestPolicy := api.DefaultOutboundRequestPolicy()
 	if req.RequestPolicy != nil {
 		requestPolicy = *req.RequestPolicy
@@ -119,6 +151,8 @@ func (s *server) createOutboundIntegration(w http.ResponseWriter, r *http.Reques
 		DailyRequestLimit:   copyOutboundDailyLimit(req.DailyRequestLimit),
 		RequestPolicy:       requestPolicy,
 		Enabled:             true, CredentialSource: outbound.CredentialSourceCustomerSealed, OwnerKind: "customer",
+		AIProvider:        req.AIProvider,
+		AIDailyTokenLimit: copyOutboundDailyLimit(req.AIDailyTokenLimit),
 	}
 	created, err := store.CreateOutboundIntegration(r.Context(), offer)
 	switch {
@@ -474,19 +508,8 @@ func (s *server) putOutboundCredential(w http.ResponseWriter, r *http.Request, a
 	if !ok {
 		return
 	}
-	if outboundCredentialRecipient == nil {
-		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
-		return
-	}
-	recipient := outboundCredentialRecipient()
-	if recipient == nil {
-		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
-		return
-	}
-	sealed, err := secretbox.SealBytes(recipient, outbound.ManagedAuthorizationSealNamespace,
-		[]byte(req.Authorization), outbound.ManagedAuthorizationMaxBytes)
-	if err != nil {
-		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
+	sealed, ok := sealOutboundCredential(w, req.Authorization)
+	if !ok {
 		return
 	}
 	if err := store.SetOutboundCredential(r.Context(), acct.ID, integrationID, sealed); errors.Is(err, state.ErrNotFound) {

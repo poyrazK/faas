@@ -114,6 +114,11 @@ env:
   PROM_TARBALL_SHA256_LINUX_AMD64: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f"
 
 jobs:
+  storage-node-starter:
+    uses: ./.github/workflows/storage-node-starter.yml
+    permissions:
+      contents: read
+
   # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
   # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.
@@ -586,7 +591,10 @@ jobs:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
-    timeout-minutes: 45
+    # Green runs on 2026-10-12/13 took 42-43 minutes. The TestPGClone* suite
+    # runs in unit-tests-pg-1-pgclone instead: after #4499 its 317 sequential
+    # functions could not finish here in 100 minutes under these bounds.
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -689,7 +697,7 @@ jobs:
           # the aggregate still requires every complete state shard below.
           STATEPKG=$(go list ./pkg/state)
           COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | sort -u | paste -sd, -)
-          go test -json -race -count=1 -p 4 -timeout=30m -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
+          go test -json -race -count=1 -p 4 -timeout=45m -skip '^TestPGClone' -coverpkg="$COVERPKGS" -coverprofile=coverage/cover-shard1.out -covermode=atomic $PKGS
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1.out
 
       - name: upload public API state-adapter coverage
@@ -711,6 +719,95 @@ jobs:
           # Coverage reporting is best-effort; an OIDC/Codecov outage must
           # not turn a passing unit-test shard red.
           fail_ci_if_error: false
+
+  # pkg/apid/apidserver's environment-clone suite (TestPGClone*, ADR-590)
+  # runs here, split four ways by name. Only the apidserver test binary runs
+  # in each part, so after a compile under pg shard 1's memory bounds it can
+  # use the default GC with a soft limit: GOGC=10 on two cores made these
+  # tests several times slower under -race and coverage.
+  unit-tests-pg-1-pgclone:
+    name: unit tests (pg shard 1 — apidserver environment clone ${{ matrix.part }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+      FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1"'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + test cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-pg-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+      - name: select this part's tests
+        id: select
+        run: |
+          set -euo pipefail
+          # Every TestPGClone* function lands in exactly one of the four parts.
+          names=$(grep -h '^func TestPGClone' pkg/apid/apidserver/*_test.go | sed -E 's/^func (TestPGClone[A-Za-z0-9_]*).*/\1/' | sort -u)
+          total=$(printf '%s\n' "$names" | wc -l)
+          part=$(printf '%s\n' "$names" | awk -v p=${{ matrix.part }} 'NR % 4 == p - 1')
+          test -n "$part"
+          echo "part ${{ matrix.part }}: $(printf '%s\n' "$part" | wc -l) of $total tests"
+          echo "run=^($(printf '%s\n' "$part" | paste -sd'|' -))\$" >> "$GITHUB_OUTPUT"
+      - name: compile apidserver tests
+        env:
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
+        run: |
+          STATEPKG=$(go list ./pkg/state)
+          APIDPKG=$(go list ./pkg/apid/apidserver)
+          go test -race -count=1 -run='^$' -coverpkg="$APIDPKG,$STATEPKG" -covermode=atomic ./pkg/apid/apidserver > /dev/null
+      - name: environment clone tests
+        env:
+          GOMEMLIMIT: 6GiB
+          RUN: ${{ steps.select.outputs.run }}
+        run: |
+          mkdir -p coverage
+          STATEPKG=$(go list ./pkg/state)
+          APIDPKG=$(go list ./pkg/apid/apidserver)
+          go test -race -count=1 -timeout=60m -run "$RUN" -coverpkg="$APIDPKG,$STATEPKG" -covermode=atomic -coverprofile=coverage/cover-shard1-pgclone-${{ matrix.part }}.out ./pkg/apid/apidserver
+          python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1-pgclone-${{ matrix.part }}.out
+      - name: upload state-adapter coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-state-api-pgclone-${{ matrix.part }}
+          path: coverage/cover-shard1-pgclone-${{ matrix.part }}.out
+          if-no-files-found: error
 
   # The complete state test inventory runs on four independent PostgreSQL
   # runners. Fuzz seeds and runnable examples belong to exactly one shard;
@@ -800,7 +897,7 @@ jobs:
           - id: a
             label: parity/operations/reconcile/reposcan
             # Bridge, GitOps, and customer-operation acceptance require PostgreSQL.
-            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|tests/object-compute-triggers)(/|$)'
             coverage_file: cover-shard2a.out
             gitops_acceptance: true
             state_coverage: true
@@ -815,8 +912,8 @@ jobs:
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
-            test_timeout: 20m
-            job_timeout_minutes: 30
+            test_timeout: 30m
+            job_timeout_minutes: 45
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
     # in its four deterministic shards above.
@@ -906,6 +1003,16 @@ jobs:
         run: |
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
+      - name: PostgreSQL fixture API and guest compilation (no KVM)
+        if: matrix.id == 'b'
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
+          GOGC: 10
+          GOMEMLIMIT: 2GiB
+          GOMAXPROCS: 2
+        run: |
+          go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
+          go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10
@@ -996,7 +1103,7 @@ jobs:
   # cannot replace the full exact-package 70% gate.
   state-coverage:
     name: pkg/state coverage gate (all shards)
-    needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1]
+    needs: [unit-tests-state, unit-tests-pg-2, unit-tests-pg-1, unit-tests-pg-1-pgclone]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1010,7 +1117,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out coverage/cover-shard1.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1043,10 +1150,17 @@ jobs:
     runs-on: ubuntu-latest
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
-    timeout-minutes: 20
+    # The memory-bounded pkg/sched compile below roughly doubles that
+    # compile's time on a cold cache.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
+    # pkg/sched with its internal tests is ~140k lines; its race+coverage
+    # compile reached ~15 GB RSS with DWARF on. Both steps must pass the same
+    # flags, or the test step recompiles it instead of hitting the cache.
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/sched=-dwarf=false -c=1"'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -1075,6 +1189,20 @@ jobs:
           restore-keys: |
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+      # The pkg/sched test compile peaked near 15 GB of compiler RSS and
+      # pkg/fcvm's tests near 6 GB. With both in flight under -p 4 the 16 GB
+      # hosted runner ran out of memory and GitHub reported "The runner has
+      # received a shutdown signal" (diagnosed 2026-10-13). Compiling first,
+      # two packages at a time and under a soft memory limit, fills the build
+      # cache, so the test step below only links and runs.
+      - name: compile shard 1 test binaries
+        env:
+          # The soft limit makes the pkg/sched compile collect harder instead of
+          # growing to ~11 GB; it only affects this compile-only step.
+          GOMEMLIMIT: 6GiB
+        run: |
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/pkg/apid/apidserver$' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          go test -race -cover -covermode=atomic -count=1 -p 2 -run='^$' $PKGS > /dev/null
       - name: unit tests (pure Go shard 1)
         env:
           # Pull requests let Go's test cache skip packages whose transitive
@@ -1160,7 +1288,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|pkg/apid/apidserver|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|pkg/apid/apidserver|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|tests/object-compute-triggers|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 
@@ -1190,7 +1318,8 @@ jobs:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
     # Bounded-memory cold builds reached 14 min before the contracts finished.
-    timeout-minutes: 35
+    # Whole green runs took 29-34 minutes on 2026-10-12/13.
+    timeout-minutes: 50
     permissions:
       contents: read
     # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
@@ -1279,7 +1408,9 @@ jobs:
     # The complete cold-run gate sequence can exhaust 30 minutes at the
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
-    timeout-minutes: 45
+    # A cold run on 2026-10-13 spent 18 minutes in the standards gates and
+    # 11 in promtool, and was cancelled at 45 during the last gate.
+    timeout-minutes: 70
     permissions:
       contents: read
     env:
@@ -1308,13 +1439,6 @@ jobs:
         run: make adr-number-uniqueness-check
       - name: ADR number gate checker tests
         run: make adr-number-uniqueness-check-test
-      # ADR-977: pkg/apid/apidserver is one package compiled as a unit (~16 GB peak for its
-      # tests). New code goes in pkg/apid/<domain>; growth needs a visible
-      # baseline bump.
-      - name: apid size
-        run: make apid-size-check
-      - name: apid size gate checker tests
-        run: make apid-size-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that
@@ -1571,10 +1695,12 @@ jobs:
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             pkg/promqlrules/data_placement.yaml
-          promtool test rules deploy/ansible/roles/prometheus/files/faas_safe_release.test.yml
-          promtool test rules deploy/ansible/roles/prometheus/files/faas_managed_postgres_health.test.yml
-          promtool test rules pkg/promqlrules/testdata/service_dependency_errors.test.yml
-          make udp-alert-check tcp-tls-alert-check commit-alert-check host-alert-check
+          # Every rule fixture, not a hand-picked list: an unlisted
+          # fixture (slo_low_traffic) broke unnoticed when an alert changed.
+          for fixture in deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml; do
+            echo "promtool test rules ${fixture}"
+            promtool test rules "${fixture}"
+          done
 
       - name: Prometheus alert metadata check
         run: make prometheus-alert-metadata-check

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
 
@@ -62,6 +63,9 @@ const (
 	RuntimeNode24       = "node24"
 	RuntimePython313    = "python313"
 	RuntimeDebianParent = "base-debian-parent" // ADR-053: shared parent runtime id
+	// RuntimeBinary runs a static executable built from the function's
+	// Dockerfile on the go124 base and runner (ADR-987).
+	RuntimeBinary = api.FunctionRuntimeBinary
 )
 
 // StatefulBaseImageDenylist is the Wave 0 / year-one set of OCI image
@@ -231,7 +235,7 @@ var errStatefulViolation = oci.ErrStatelessOnlyViolation
 // snapshot_fleet_avg_mb with both bases co-resident
 // (pkg/api/limits.go::FleetSnapshotAvgTargetMB = 130, alarm 160).
 func baseRefFor(runtime string) string {
-	switch runtime {
+	switch api.FunctionBaseRuntime(runtime) {
 	case RuntimeNode22:
 		return BaseRefNode22
 	case RuntimePython312:
@@ -273,6 +277,9 @@ func baseRefFor(runtime string) string {
 // envLookup nil-falls-back to os.Getenv; the test seam is a map
 // literal (TestResolveDeployBaseRef_*).
 func resolveDeployBaseRef(runtime string, envLookup func(string) string) (string, error) {
+	// A runtime sharing another runtime's base (binary → go124, ADR-987)
+	// resolves, and honours operator overrides, as that runtime.
+	runtime = api.FunctionBaseRuntime(runtime)
 	if envLookup == nil {
 		envLookup = os.Getenv
 	}

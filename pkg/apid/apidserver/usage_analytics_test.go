@@ -1,16 +1,17 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 046
 func TestUsageAppDataUsesCanonicalInterfaceEgress(t *testing.T) {
 	const gib = int64(1024 * 1024 * 1024)
-	got := usageAppData(
+	got := apidserver.UsageAppData(
 		[]state.Usage{{AppID: "app-a", TXBytes: gib, NetTxBytes: 2 * gib}},
 		[]state.App{{ID: "app-a", Slug: "api"}},
 		0,
@@ -33,7 +34,7 @@ func TestUsageDailyPointsAggregatesTopAppAndSorts(t *testing.T) {
 		{ID: "app-b", Slug: "worker"},
 	}
 
-	got := usageDailyPoints(rows, apps)
+	got := apidserver.UsageDailyPoints(rows, apps)
 	if len(got) != 2 {
 		t.Fatalf("got %+v, want two daily points", got)
 	}
@@ -53,7 +54,7 @@ func TestUsageDailyRowsForMonthExcludesAdjacentMonths(t *testing.T) {
 		{AppID: "october", Day: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)},
 	}
 
-	got := usageDailyRowsForMonth(rows, time.Date(2026, 9, 18, 12, 0, 0, 0, time.FixedZone("UTC+3", 3*60*60)))
+	got := apidserver.UsageDailyRowsForMonth(rows, time.Date(2026, 9, 18, 12, 0, 0, 0, time.FixedZone("UTC+3", 3*60*60)))
 	if len(got) != 2 || got[0].AppID != "september-start" || got[1].AppID != "september-end" {
 		t.Fatalf("got %+v, want only September UTC rows", got)
 	}

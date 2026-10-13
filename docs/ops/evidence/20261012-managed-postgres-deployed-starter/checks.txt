@@ -1,0 +1,32 @@
+api-sql-targeted.log:
+=== RUN   TestManagedPostgresFixturePublicRotation
+--- PASS: TestManagedPostgresFixturePublicRotation (24.41s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/apid	27.232s
+local-sql-final.log:
+=== RUN   TestProxySlowConnectionDoesNotDelayReplacement
+--- PASS: TestProxySlowConnectionDoesNotDelayReplacement (0.31s)
+=== RUN   TestRemoteControlAuthenticatesAndPreservesErrors
+--- PASS: TestRemoteControlAuthenticatesAndPreservesErrors (0.01s)
+=== RUN   TestSQLFixtureSerialAuthorityAndRemoteRevocation
+--- PASS: TestSQLFixtureSerialAuthorityAndRemoteRevocation (7.61s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/e2etest/postgresfixture	10.156s
+=== RUN   TestSourceKeepsShippedEntrypointsAndManifest
+--- PASS: TestSourceKeepsShippedEntrypointsAndManifest (0.09s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/e2etest/postgresstarter	2.057s
+local-sql.log:
+ok  	github.com/onebox-faas/faas/pkg/e2etest/postgresstarter	1.957s
+ok  	github.com/onebox-faas/faas/pkg/e2etest/postgresfixture	19.376s
+ok  	github.com/onebox-faas/faas/cmd/gregale/templates	7.176s
+production-driver.log (targeted overlay):
+=== RUN   TestManagedPostgresProductionRejectsFixtureDriver
+--- PASS: TestManagedPostgresProductionRejectsFixtureDriver (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/apid	2.422s
+
+Pinned golangci-lint 2.14.0: 0 issues (postgresfixture/postgresstarter).
+Python verdict contracts: 7 tests passed.
+Runner shellcheck: passed.
+Tagged e2e go test -c: exit 0; no guest execution.

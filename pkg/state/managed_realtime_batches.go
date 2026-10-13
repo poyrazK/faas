@@ -18,9 +18,10 @@ const ManagedRealtimeBatchMaxMessages = 32
 const ManagedRealtimeBatchMaxBytes = 64 << 10
 
 type ManagedRealtimeBatchItem struct {
-	Metadata map[string]string `json:"Metadata,omitempty"`
-	Data     []byte
-	Binary   bool
+	TTLSeconds int               `json:"TTLSeconds,omitempty"`
+	Metadata   map[string]string `json:"Metadata,omitempty"`
+	Data       []byte
+	Binary     bool
 }
 type managedRealtimeBatchKey struct{ endpointID, channel, id string }
 type managedRealtimeBatchRecord struct {
@@ -39,7 +40,7 @@ func validateBatch(ep, ch, id string, items []ManagedRealtimeBatchItem) ([]byte,
 	total := 0
 	for _, item := range items {
 		total += len(item.Data)
-		if api.ValidateRealtimeMetadata(item.Metadata) != nil || len(item.Data) > ManagedRealtimeHistoryMaxPayloadBytes {
+		if item.TTLSeconds < 0 || item.TTLSeconds > api.RealtimeMessageTTLMaxSeconds || api.ValidateRealtimeMetadata(item.Metadata) != nil || len(item.Data) > ManagedRealtimeHistoryMaxPayloadBytes {
 			return nil, ErrManagedRealtimeHistoryInvalid
 		}
 	}
@@ -66,7 +67,11 @@ func batchMessages(ep, ch, id string, items []ManagedRealtimeBatchItem, first in
 	hash := sha256.Sum256([]byte(id))
 	for i, item := range items {
 		key := fmt.Sprintf("batch:%x:%d", hash, i)
-		out[i] = ManagedRealtimeChannelMessage{Metadata: cloneRealtimeMetadata(item.Metadata), EndpointID: ep, Channel: ch, Sequence: first + int64(i), Data: append([]byte(nil), item.Data...), Binary: item.Binary, CreatedAt: created, IdempotencyKey: key, TargetMessageID: key, Version: 1, MessageEvent: "created"}
+		out[i] = ManagedRealtimeChannelMessage{TTLSeconds: item.TTLSeconds, Metadata: cloneRealtimeMetadata(item.Metadata), EndpointID: ep, Channel: ch, Sequence: first + int64(i), Data: append([]byte(nil), item.Data...), Binary: item.Binary, CreatedAt: created, IdempotencyKey: key, TargetMessageID: key, Version: 1, MessageEvent: "created"}
+		if item.TTLSeconds > 0 {
+			expiry := created.Add(time.Duration(item.TTLSeconds) * time.Second)
+			out[i].ExpiresAt = &expiry
+		}
 	}
 	return out
 }
@@ -159,6 +164,7 @@ func (m *MemStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep
 	}
 	for _, msg := range messages {
 		h.messages = append(h.messages, cloneManagedRealtimeChannelMessage(msg))
+		m.enqueueRealtimeChannelWebhookLocked(msg)
 	}
 	m.saveReducerLocked(reducer)
 	h.next += int64(len(items))
@@ -254,6 +260,8 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 			return nil, err
 		}
 	}
+	// Match PostgreSQL timestamp precision so retries reproduce the same deadlines.
+	now = time.Now().UTC().Truncate(time.Microsecond)
 	messages := batchMessages(ep, ch, id, items, next, now)
 	for _, msg := range messages {
 		var duplicate bool
@@ -271,6 +279,9 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 		}
 		_, err = tx.Exec(ctx, `insert into managed_realtime_channel_messages(endpoint_id,channel,sequence,data,is_binary,idempotency_key,created_at,metadata) values($1,$2,$3,$4,$5,$6,$7,$8)`, ep, ch, msg.Sequence, data, msg.Binary, msg.IdempotencyKey, now, metadataJSON(msg.Metadata))
 		if err != nil {
+			return nil, err
+		}
+		if err := saveRealtimeExpiration(ctx, tx, &msg); err != nil {
 			return nil, err
 		}
 	}

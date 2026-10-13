@@ -104,6 +104,7 @@ func (v *JailerVMM) killNative(ctx context.Context, lease Lease) error {
 	if err := v.sweepMaterialised(lease.Instance); err != nil {
 		return fmt.Errorf("vmm: sweep native materialised files: %w", err)
 	}
+	v.untrackCgroupFence(lease.Instance)
 	v.mu.Lock()
 	if v.recs[lease.Instance] == rec {
 		delete(v.recs, lease.Instance)

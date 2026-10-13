@@ -164,3 +164,32 @@ func TestRequestBudgetDetailNamesThePhase(t *testing.T) {
 		t.Fatalf("capacity detail = %s", capacity.Body.String())
 	}
 }
+
+// Production-us hunt #9 (H9-80): an app whose own `--request-timeout 3`
+// expired was told to "raise the budget with a kind=budget edge rule". The
+// detail names the setting that produced the budget.
+func TestRequestBudgetDetailNamesTheBudgetSource(t *testing.T) {
+	h := NewHandlerWith(&fakeBackend{}, NewMetrics(), nil)
+	app := App{ID: "app", Plan: api.PlanScale, RequestTimeoutS: 3}
+	for _, tc := range []struct {
+		source string
+		want   string
+		reject string
+	}{
+		{source: "app", want: "--request-timeout", reject: "kind=budget"},
+		{source: "plan_default", want: "--request-timeout", reject: "kind=budget"},
+		{source: "rule", want: "kind=budget", reject: "--request-timeout"},
+		{source: "header_override", want: "kind=budget", reject: "--request-timeout"},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "http://example.test/slow", nil)
+			h.stampRequestBudget(httptest.NewRecorder(), r, app, 3*time.Second, tc.source)
+			rec := httptest.NewRecorder()
+			writeRequestBudgetExceededForRequest(rec, r)
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.want) || strings.Contains(body, tc.reject) {
+				t.Fatalf("detail = %s, want %q and not %q", body, tc.want, tc.reject)
+			}
+		})
+	}
+}

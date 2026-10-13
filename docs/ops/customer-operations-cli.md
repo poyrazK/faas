@@ -479,3 +479,290 @@ Go exposes `LookupPlatformTenantSelfOperationSubmission`, Node exposes
 Optional principal and feature fences on the start request reject credential
 or feature changes; they never authorize another owner. See
 [ADR-663](../adr/663-browser-operation-submission-receipts.md).
+
+### Workflow outcome paths
+
+History includes `outcome_link` in JSON and `workflow-outcome-path` in text.
+A `linked` report points to the first reported outcome at or after it on the
+same page, with the outcome code, report, Operation and revision. Decision
+reasons and selected paths remain on their original reports. The dashboard
+shows these links alongside the retained revision timeline.
+
+Elapsed and blocked seconds cover only that observed path. Blocked intervals
+count once even when multiple blockers overlap. Missing revisions, duplicate
+revisions, contract changes, or inconsistent occurrence times prevent a link.
+`outcome_unavailable` means no later outcome is visible on the current page;
+it does not mean the workflow is ongoing. Durations are meaningful only for
+`linked` status, and sequence alone does not establish business causation.
+
+### Business decision outcome summaries
+
+The existing workflow performance summary now includes `decision_outcomes`,
+also shown on the workflow performance dashboard. Go, Node and Python clients
+receive the same additive projection without a new endpoint or migration.
+It uses the existing latest retained completed cohort (up to 100 workflows),
+account/app/environment/customer boundaries, per-instance 1024-report history
+window, and complete-history eligibility rules. Ongoing workflows remain in
+the separate performance cohort and do not contribute to outcome groups.
+
+A group identifies the pinned contract, decision code, rule ID/version and
+latest application-reported outcome. Path groups additionally identify the
+selected prerequisite group and path; choices without a linked decision still
+form path groups. Both application change reasons and selected-path decision
+snapshots classify workflows. Each workflow contributes once per exact group,
+even when it repeats that decision or reports it through both sources. Only
+reports at or before the first terminal report classify the completed path.
+Groups overlap; summing their counts does not produce a cohort total.
+
+Completion and blocked-time distributions reuse the full completed workflow's
+observed state and blocked durations, with nearest-rank p50/p95 values. They
+are not decision execution times or decision-to-outcome latency. Overlapping
+blockers count once per workflow. The latest reported outcome is an application
+claim, and an association does not prove that a business rule caused it.
+
+Coverage separates sampled workflows into incomplete histories, missing
+reported outcomes, unclassified complete workflows, and classified workflows.
+Cohort truncation distinguishes all matching completed instances from the
+bounded sample. At most 64 groups are returned, in canonical identity order
+(contract, kind, decision code, rule ID, rule version, group, path, outcome).
+`groups_truncated` makes omissions explicit; classified workflow counts still
+include those whose groups were omitted. Group accumulation retains only the
+64 smallest identities, with one duration sample per workflow/group, bounding
+memory without losing counts for any returned group.
+
+### Contributors to business decision outcome groups
+
+The existing workflow performance contributor endpoint now accepts
+`dimension=decision_completion` or `dimension=decision_blocked`. Both require
+`cohort=completed`, the summary's `cohort_token`, and an exact group returned
+by its bounded `decision_outcomes` projection: `kind`, `contract_version`,
+`outcome_code`, and the decision code/rule ID/rule version triple. Decision
+kind requires that triple and rejects path selectors. Path kind additionally
+requires `group_id` and `path_id`; its decision triple is entirely present or
+entirely absent, matching the summary. Legacy state/blocker/owner selectors
+are rejected for these dimensions, and decision selectors are rejected for
+legacy dimensions. Invalid or omitted summary groups return invalid_argument.
+
+Summary and contributor reads share classification: complete retained
+histories, latest reported outcome, and facts at or before the first terminal
+report. Repeated identities contribute once per workflow/group. The existing
+cohort fingerprint verifies evaluation time, both sampled cohorts, and their
+retained evidence. A changed or expired cohort returns the existing 409 and
+requires a fresh summary. Tokens cannot be borrowed across owners or workflow
+selectors. No new query or migration is required.
+
+Results include all eligible contributors (up to 100), ranked by the selected
+full-workflow duration descending with stable identity ties. The existing
+`duration` distribution matches the summary group's completion or blocked
+statistics. `decision_outcomes` preserves the summary's coverage and group
+truncation alongside the existing cohort coverage. Each item optionally
+includes `decision_evidence`: the earliest qualifying report/Operation/revision,
+its state transition and occurrence time, and the validated decision fact ID
+and public snapshot where present. A path without a decision is evidenced by
+its report. Current state retains the latest reported outcome and report IDs.
+These are application claims and sequence associations, not causal proof.
+
+Dashboard summary duration cells open the corresponding contributors using
+the cohort token. Contributors link to the qualifying Operation, latest
+reporting Operation, and retained workflow history (transitions, blockers and
+outcome). The existing refresh prompt handles cohort changes. Go and Node
+helpers serialize the exact selectors; generated Node and Python clients
+expose the additive parameters and evidence DTOs.
+
+### Compare observed rule versions
+
+`decision_outcomes.rule_comparisons` adds side-by-side version statistics to
+the existing performance summary and decision contributor coverage. Identity
+is the pinned workflow contract, decision code and rule ID; versions are opaque
+strings displayed in lexical order. No newer/older relationship is inferred.
+The dashboard shows outcome counts and percentages and full-workflow completion
+and blocked-time p50/p95 distributions for every returned version.
+
+Coverage uses the same bounded completed sample and latest retained 1024 reports
+per workflow, excluding pagination lookahead. A workflow counts once per exact
+observed identity/version, whether its decision was reported as a change reason,
+selected-path fact, or both. Membership stops at the first retained terminal
+report. Incomplete histories can identify observed versions only; they never
+supply duration or outcome statistics. Missing history may hide other versions
+or an earlier terminal report, so these coverage memberships do not establish
+the full business path. Versions without eligible observations display no data.
+
+For each version, observed counts partition into eligible workflows, excluded
+incomplete histories, and complete workflows without a latest reported outcome.
+Unattributed workflows have no observed decision identity (including paths with
+no decision), which does not prove a rule was unused. A workflow can report
+several versions and appear in several columns. Cohort coverage and truncation
+remain on the enclosing decision summary; these are observed associations,
+not a controlled experiment, significance test or proof of rule causation.
+`compared` means at least two returned versions have eligible observations;
+otherwise status is `insufficient_data`.
+
+Each outcome's integer proportion uses all eligible workflows for that version:
+`floor(workflow_count * 10000 / eligible_workflow_count)` basis points. The
+dashboard displays percentages to two decimal places. Proportions may sum below
+100% because of rounding or omitted outcomes. Up to 16 comparison identities,
+16 versions per identity, and 16 outcome codes per version are retained in
+canonical/lexical order, with independent truncation flags. Accumulators retain
+only the smallest keys, preserving every sample for returned identities and
+durations/denominators across omitted outcomes. Comparisons do not depend on
+which decision outcome groups survive the separate 64-group limit.
+
+Go, Node and Python expose the additive DTOs. Existing cohort tokens and
+contributor refresh behavior remain in force. No endpoint or migration is added.
+
+### Separate observed rule version overlap
+
+Rule comparisons now count distinct sampled workflows reporting multiple versions
+for the same contract/decision code/rule identity. The observed overlap count
+includes incomplete histories; the eligible overlap count requires complete
+history and a latest reported outcome. Version membership is collected before
+comparison/version display limits, so an omitted version cannot create a false
+single-version classification. Repeated facts through change reasons and selected
+paths still count once per workflow/version. Decisions after the first retained
+terminal report remain outside classification.
+
+Each returned version has a `single_version` cohort: complete completed histories
+with a reported outcome and exactly one observed version for this identity.
+It includes counts, full-workflow completion and blocked-time distributions,
+outcome counts/proportions, and outcome truncation. `single_version_status`
+requires eligible single-version workflows in at least two returned version
+columns to report compared. Empty subsets provide zero counts, empty outcomes,
+and the existing zero-duration convention. Incomplete histories never qualify;
+absence of another version in partial history is not sufficient. This restriction
+refers to reported decision reasons and selected-path facts, not every rule that
+might have executed in the application. It does not establish causality.
+
+The dashboard offers a separate single-version comparison and a bounded list of
+overlapping runs. Up to eight examples per comparison appear in stable workflow
+identity order, with up to 16 earliest-per-version decision reports in revision
+order and explicit truncation flags. Counts include omitted examples/evidence.
+Examples carry subject, instance, latest Operation, history/eligibility flags, and
+public decision report/fact snapshots. Account views link to the scoped retained
+workflow history and reporting Operations; customer responses omit tenant IDs.
+Tied revisions and lexical version names do not imply a policy replacement or
+an ordering between decisions. History links show their current retained view.
+
+Go, Node and Python expose these additive fields and DTOs through the existing
+summary and contributor APIs. Existing owner boundaries, cohort tokens, refresh
+behavior, sample limits, and version/outcome truncation rules remain in force.
+No endpoint or migration is added.
+
+
+### Explain a decision with reported conditions
+
+Declare vocabulary on the decision milestone's workflow step:
+
+```yaml
+decision_conditions:
+  - id: credit-limit-exceeded
+    description: Order total exceeded the customer credit limit
+  - id: customer-verified
+    description: Customer verification passed
+```
+
+Then attach results to the typed business decision in the same application
+transaction as the business write:
+
+```json
+{
+  "kind": "gregale.business-decision.v1",
+  "decision": {
+    "workflow": "order-review",
+    "instance_id": "order-123",
+    "code": "manual-review",
+    "description": "Selected manual review",
+    "rule_id": "credit-review",
+    "rule_version": "2026-10",
+    "conditions": [
+      {"id": "credit-limit-exceeded", "description": "Order total exceeded the customer credit limit", "result": "pass"},
+      {"id": "customer-verified", "description": "Customer verification passed", "result": "pass"}
+    ]
+  }
+}
+```
+
+Use Go `OperationBusinessConditionResult` values, Node's `conditions` array, or
+Python's `conditions` list of dictionaries with the existing business decision
+helper. The milestone's payload schema must also allow this optional field.
+IDs must be unique and descriptions must match the pinned step exactly. There are
+at most 16 conditions per declaration/report, each with a 64-byte slug ID and a
+1024-byte public description. `pass` means the named condition held according to
+the application; it does not mean the decision approved the business operation.
+`fail` and explicit `unknown` are also supported. An omitted result is unreported.
+Changing the vocabulary requires a new workflow contract version.
+
+Existing history and contributor APIs retain conditions in change reasons and
+selected-path decision snapshots. The dashboard displays them alongside decision
+facts and explanations. Existing reports without conditions remain compatible;
+no migration is needed for this extension. Gregale never evaluates these predicates
+or infers actions or causation from their reported results.
+
+### Compare reported condition results
+
+Workflow history's `comparison.condition_comparison` shows condition changes
+between consecutive, uniquely retained revisions on the same pinned contract.
+Decision contributor `decision_evidence.condition_comparison` describes changes
+in the entire qualifying report from the same bounded cohort history.
+
+- `changed`: the application reported a different result or public description.
+- `newly_reported`: the current decision reports an ID absent from the preceding
+  decision in that context; an earlier result is unreported.
+- `unreported`: an explicit current decision omits a previously reported ID.
+  This does not prove that the business condition changed or was resolved.
+
+Explicit `unknown` is distinct from an unreported condition. Conditions match by
+ID within the application reason or selected path group. Missing decisions on
+metadata updates do not clear earlier conditions. Missing baselines, gaps,
+ambiguous revisions, or changed contracts produce an empty comparison with the
+corresponding status, rather than inferred changes. The comparison retains at
+most 64 entries in reason/group/condition order and sets `truncated` when more
+changes exist. Unchanged conditions are omitted.
+
+The dashboard links each available side to its decision fact's reporting
+Operation and shows both report IDs, revisions, rule identities, and public
+condition descriptions. Links show the current retained Operation view. CLI
+history adds `workflow-condition-comparison`, `workflow-condition-change`, and
+`workflow-condition-evidence` rows, including side-specific fact references.
+No predicate evaluation, execution authority, or causal claim is added.
+
+### Explore condition-based outcomes
+
+The existing workflow performance summary now returns `condition_outcomes` for
+completed workflows. Groups show workflow counts, completion and blocked p50/p95,
+and latest reported outcomes for explicit `pass`, `fail`, or `unknown` condition
+results. A group includes the contract version, decision code, rule ID/version,
+condition ID, exact public description, result, and outcome. Descriptions remain
+part of the identity so reused IDs with different meanings are not merged.
+
+Only complete histories with a reported outcome qualify. Evidence comes from
+application reasons and selected-path decisions at or before the first terminal
+report. Legacy decisions without conditions count as unclassified in condition
+coverage. Missing conditions are not treated as unknown. Repeated references to
+one result count once per workflow/group.
+
+If a workflow reported both unknown and pass for one exact identity, it appears
+in both groups. `changing_result_workflow_count` makes this overlap visible; do
+not sum result group counts. Rule version or description changes remain separate
+identities. The counts show reported associations, not predicate evaluation or
+proof that a condition caused an outcome. Durations cover the full workflow,
+not time spent under a particular condition result.
+
+Open contributor lists using existing `/workflow-performance/instances` account
+or customer endpoints with `cohort=completed`, the summary's `cohort_token`, and
+`dimension=condition_completion` or `condition_blocked`. Supply the exact returned
+`contract_version`, `decision_code`, `rule_id`, `rule_version`, `condition_id`,
+`condition_description`, `condition_result`, and `outcome_code`. Encode these as
+query values with your SDK or URL encoder; do not interpolate public descriptions
+into raw URLs. These dimensions reject kind/path/state/blocker/owner selectors.
+Other dimensions reject condition selectors. Unreturned groups cannot be queried,
+and a changed or expired cohort requires refreshing the summary.
+
+Each contributor includes its earliest qualifying decision fact, `condition`,
+and `observed_condition_results`, plus the existing revision comparison and
+history links. The dashboard builds exact completion/blocked contributor links
+for each summary group and shows overlap alongside the qualifying evidence.
+The summary returns up to 64 canonical groups in a sample of at most 100 completed
+workflows. Runs exceeding 256 distinct condition identities are excluded entirely
+and counted in `excluded_condition_evidence_workflow_count`; display truncation
+is separate. Coverage counts include eligible workflows whose groups were omitted.
+No new migration or endpoint is needed.

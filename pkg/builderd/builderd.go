@@ -831,6 +831,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
+	watchCommand, watchErr := devWatchCommand(ctx, b.store, app)
+	if watchErr != nil {
+		b.markFailed(ctx, build, state.FailureInfra, "load developer watch mode: "+watchErr.Error(), buildStart)
+		return BuildResult{}, watchErr
+	}
+	if watchCommand != "" {
+		b.emitBuildLog(ctx, build.ID, "watch mode: building a development image that starts "+watchCommand+"\n")
+	}
 
 	// The cache recipe includes the selected member as well as the complete
 	// source context. Sibling apps can share archive bytes without sharing
@@ -842,7 +850,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		SourceSHA256: srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
-		Function: app.Type == state.AppTypeFunction,
+		Function:        app.Type == state.AppTypeFunction,
+		DevWatchCommand: watchCommand,
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
 	if cacheAvailable {
@@ -942,6 +951,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Runtime:            runtimeName,
 		RuntimeBaseRef:     runtimeBaseRef,
 		Function:           app.Type == state.AppTypeFunction,
+		DevWatchCommand:    watchCommand,
 		DependencyCacheKey: dependencyCacheKey,
 		LogPath:            dep.LogPath,
 		RAMMB:              api.BuildVMRAMMB,
@@ -1159,8 +1169,12 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// for the coarse-grained exit-code-only case (no code
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
-		if out.FailureCode != "" {
-			b.markFailedEx(ctx, build, fc, out.FailureCode, out.FailurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		if failureCode == "" && fc == state.FailureUserError {
+			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
+		}
+		if failureCode != "" {
+			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		} else {
 			b.markFailed(ctx, build, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
 		}
@@ -1654,8 +1668,31 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 // payload ceiling after JSON escaping. The guest already bounds its source
 // tail; this tighter transport cap retains the newest, usually actionable,
 // Railpack or BuildKit lines.
+//
+// A failed guest build reports "[build]\n<buildctl/Railpack output>" followed
+// by "\n[buildkitd]\n<daemon log>". Cutting the newest bytes of that whole
+// string kept only buildkitd's --debug stack traces and never the customer's
+// failing step (production-us hunt #9: a RUN exiting 3 showed "ot complete
+// successfully: exit code: 3" and Go frames). The customer's build output gets
+// the budget first; the daemon log keeps only a short tail for operators.
 func boundedGuestBuildLogTail(raw string) string {
-	const maxBytes = 3 * 1024
+	const (
+		maxBytes       = 3 * 1024
+		daemonTail     = 512
+		daemonSection  = "\n[buildkitd]\n"
+		customerHeader = "[build]\n"
+	)
+	build, daemon, split := strings.Cut(raw, daemonSection)
+	body := strings.TrimPrefix(build, customerHeader)
+	if split && strings.TrimSpace(body) != "" {
+		daemon = strings.TrimSpace(safetext.TruncateTail(daemon, daemonTail))
+		budget := maxBytes - len(customerHeader) - len(daemonSection) - len(daemon)
+		out := customerHeader + strings.TrimSpace(safetext.TruncateTail(body, budget))
+		if daemon != "" {
+			out += daemonSection + daemon
+		}
+		return strings.TrimSpace(out)
+	}
 	// safetext.TruncateTail advances to the next rune boundary, so a cut
 	// landing inside a multi-byte character drops the partial rune instead of
 	// prefixing the customer's build log with a stray U+FFFD. It also

@@ -189,6 +189,11 @@ func TestRejectProductionDevEnvironment(t *testing.T) {
 	if contains(got, "do-not-log-this-value") {
 		t.Fatalf("error leaked credential value: %q", got)
 	}
+	if err := rejectProductionDevEnvironment(role.RoleControlPlane, lookup(map[string]string{
+		environmentGitOpsAcceptanceEnforcementFlag: "1",
+	})); err == nil || !contains(err.Error(), environmentGitOpsAcceptanceEnforcementFlag) {
+		t.Fatalf("control-plane accepted GitOps acceptance enforcement: %v", err)
+	}
 }
 
 func TestRunAppErrorsServer_RejectsPlaintextRemoteTarget(t *testing.T) {
@@ -322,13 +327,13 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 	t.Setenv("FAAS_OTEL_SPANS_WRITER_ENABLED", "true")
 	deps := defaultDeps()
 	// Let runWithDeps own the listener (more realistic).
-	var capturedAddr atomic.Value
+	listenerReady := make(chan string, 1)
 	deps.listen = func(_, _ string) (net.Listener, error) {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return nil, err
 		}
-		capturedAddr.Store(l.Addr().String())
+		listenerReady <- l.Addr().String()
 		return l, nil
 	}
 
@@ -369,27 +374,18 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 	go func() { done <- runWithDeps(ctx, discardLogger(), deps) }()
 	t.Cleanup(cancel)
 
-	// Wait for the listen address to be captured, then for Accept to be ready.
-	deadline := time.Now().Add(3 * time.Second)
+	// Race-instrumented cold startup constructs the complete API schema. Wait
+	// for the actual bind event and fail immediately if startup exits early.
+	const startupTimeout = 30 * time.Second
 	var addr string
-	for time.Now().Before(deadline) {
-		if v := capturedAddr.Load(); v != nil {
-			addr = v.(string)
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case addr = <-listenerReady:
+	case runErr := <-done:
+		t.Fatalf("runWithDeps returned %v before binding listener", runErr)
+	case <-time.After(startupTimeout):
+		t.Fatal("listener address never captured before startup timeout")
 	}
-	if addr == "" {
-		// Surface the goroutine error so we know why runWithDeps returned.
-		cancel()
-		select {
-		case err := <-done:
-			t.Fatalf("runWithDeps returned %v before binding listener", err)
-		case <-time.After(time.Second):
-			t.Fatal("listener address never captured and runWithDeps didn't return")
-		}
-	}
-	spansWriterDeadline := time.Now().Add(3 * time.Second)
+	spansWriterDeadline := time.Now().Add(startupTimeout)
 	for time.Now().Before(spansWriterDeadline) {
 		if _, err := os.Stat(spansWriterSocket); err == nil {
 			break
@@ -405,6 +401,7 @@ func TestRunWithDeps_ServesUntilCancel(t *testing.T) {
 		t.Fatalf("app-errors-disabled APID did not start spans writer: %v", err)
 	}
 	// Bounded wait for Accept — httpSrv.Serve is in a goroutine.
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		c, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if derr == nil {

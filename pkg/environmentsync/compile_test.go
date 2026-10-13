@@ -109,6 +109,9 @@ func TestCompileRejectsUnsafeOrUnsupportedIntent(t *testing.T) {
 		{"source function runner", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Kind: "source", Runtime: "node22"}
 		})},
+		{"source full rootfs", setWorkload(func(w *api.EnvironmentWorkload) {
+			w.Source = &api.EnvironmentWorkloadSource{Kind: "source", Directory: "api", FullRootfs: true}
+		})},
 		{"image plus directory", setWorkload(func(w *api.EnvironmentWorkload) {
 			w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry/api@sha256:" + strings.Repeat("a", 64), Directory: "api"}
 		})},

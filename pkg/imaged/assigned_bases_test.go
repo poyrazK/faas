@@ -47,6 +47,31 @@ func TestAssignedBasePlanScopesAndDeduplicatesRuntimes(t *testing.T) {
 	}
 }
 
+// ADR-987: binary shares go124's base, so a node with both stages it once.
+func TestAssignedBasePlanStagesSharedBaseOnce(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "shared@example.com", "acct-shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []state.App{
+		{AccountID: account.ID, Slug: "rust", Type: state.AppTypeFunction, Runtime: RuntimeBinary},
+		{AccountID: account.ID, Slug: "go", Type: state.AppTypeFunction, Runtime: RuntimeGo124},
+	} {
+		if _, err := store.CreateApp(ctx, app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtimes, _, err := assignedBasePlan(ctx, store, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{RuntimeGo124}; !reflect.DeepEqual(runtimes, want) {
+		t.Fatalf("runtimes = %v, want %v", runtimes, want)
+	}
+}
+
 func TestAssignedBasePlanSingleBoxIncludesAllApps(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()

@@ -205,6 +205,12 @@ func Roles() []Role {
 		{CommonName: "apid.faas", Kind: KindServer, Directory: "apid", Filename: "advisory", AltNames: ProductionSANs("apid.faas")},
 		{CommonName: "githubd.faas", Kind: KindServer, Directory: "githubd", Filename: "server", AltNames: ProductionSANs("githubd.faas")},
 		{CommonName: "meterd.faas", Kind: KindServer, Directory: "meterd", Filename: "server", AltNames: ProductionSANs("meterd.faas")},
+		// ADR-989's outboundd/server and vmmd/outboundd-client leaves are not
+		// listed here yet. Every role in this table is required by trust-bundle
+		// validation, renewal and expiry metrics, and no rollout or renewal
+		// path issues a role an existing host lacks: listing them blocked every
+		// live-node compute rollout of v0.1.18-rc.255. They return with an
+		// issuance migration; until then the relay stays closed as documented.
 		// Tier A9 / ADR-084: the cross-box standby write-
 		// redirect hop lands on the LEADER box's
 		// gatewayd-public listener over an mTLS-only port

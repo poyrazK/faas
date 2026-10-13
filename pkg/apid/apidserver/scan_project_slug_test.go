@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,7 +27,7 @@ func scanMultipartWithProjectSlug(t *testing.T, slug string) *api.Problem {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := part.Write(applyProjectOneWorkloadTarGz(t)); err != nil {
+	if _, err := part.Write(apidserver.ApplyProjectOneWorkloadTarGz(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := mw.Close(); err != nil {
@@ -34,7 +35,7 @@ func scanMultipartWithProjectSlug(t *testing.T, slug string) *api.Problem {
 	}
 	req := httptest.NewRequest("POST", "/v1/projects/scan", &body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	parsed, problem := parseScanMultipart(req, state.Account{}, api.MustLimitsFor(api.PlanPro))
+	parsed, problem := apidserver.ParseScanMultipart(req, state.Account{}, api.MustLimitsFor(api.PlanPro))
 	if parsed != nil {
 		_ = os.Remove(parsed.SourcePath)
 		_ = os.RemoveAll(parsed.ScanDir)

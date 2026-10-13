@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantReconciliationPlanIsReadOnlyAndOwnershipAware(t *testing.T) {
 	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "reconciliation-plan")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "reconciliation-plan")
 	initial := api.ApplyPlatformTenantRequest{ExternalRef: "plan-customer", Name: "Plan Customer",
 		Consumers: []api.ApplyPlatformTenantConsumerRequest{
 			{AppID: appID, ExternalRef: "managed-keep", Name: "Managed Keep"},
@@ -21,30 +22,30 @@ func TestPlatformTenantReconciliationPlanIsReadOnlyAndOwnershipAware(t *testing.
 		},
 		Surfaces: []api.ApplyPlatformTenantSurfaceRequest{{AppID: appID, Name: "Managed surface",
 			Hostnames: []string{"keep.example.com", "remove.example.com"}}}}
-	applied := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", initial, nil))
+	applied := readApplyResponse(t, e.Do(t, http.MethodPost, "/v1/account/platform-tenants/apply", initial, nil))
 	if applied.TenantID == "" || len(applied.Surfaces) != 1 || applied.Surfaces[0].ID == "" {
 		t.Fatalf("initial apply = %+v", applied)
 	}
 
 	ctx := context.Background()
-	unmanagedConsumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, "unmanaged", "Unmanaged")
+	unmanagedConsumer, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appID, "unmanaged", "Unmanaged")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(ctx, e.acct.ID, applied.TenantID, unmanagedConsumer.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, applied.TenantID, unmanagedConsumer.ID); err != nil {
 		t.Fatal(err)
 	}
-	limits, ok := api.LimitsFor(e.acct.Plan)
+	limits, ok := api.LimitsFor((*e.Acct()).Plan)
 	if !ok {
 		t.Fatal("missing account plan limits")
 	}
-	if _, err := e.store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
+	if _, err := (*e.Store()).CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
 		SurfaceID: applied.Surfaces[0].ID, Hostname: "legacy.example.com", ChallengeToken: "legacy-token",
 	}, limits); err != nil {
 		t.Fatal(err)
 	}
-	unmanagedSurfaceID := seedTenantSurface(t, e, appID, "Legacy surface")
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, applied.TenantID, unmanagedSurfaceID); err != nil {
+	unmanagedSurfaceID := apidserver.SeedTenantSurface(t, e, appID, "Legacy surface")
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, applied.TenantID, unmanagedSurfaceID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +60,7 @@ func TestPlatformTenantReconciliationPlanIsReadOnlyAndOwnershipAware(t *testing.
 	path := "/v1/account/platform-tenants/" + applied.TenantID + "/reconciliation-plan"
 	readPlan := func() api.PlatformTenantReconciliationPlanResponse {
 		t.Helper()
-		resp := e.do(t, http.MethodPost, path, request, nil)
+		resp := e.Do(t, http.MethodPost, path, request, nil)
 		if resp.Code != http.StatusOK {
 			t.Fatalf("plan = %d %s", resp.Code, resp.Body.String())
 		}
@@ -106,15 +107,15 @@ func TestPlatformTenantReconciliationPlanIsReadOnlyAndOwnershipAware(t *testing.
 		t.Fatalf("plan is not deterministic:\nfirst:  %+v (%s)\nsecond: %+v (%s)", plan.Changes, plan.PlanHash, repeated.Changes, repeated.PlanHash)
 	}
 
-	consumers, err := e.store.ListPlatformTenantConsumers(ctx, e.acct.ID, applied.TenantID)
+	consumers, err := (*e.Store()).ListPlatformTenantConsumers(ctx, (*e.Acct()).ID, applied.TenantID)
 	if err != nil || len(consumers) != 3 {
 		t.Fatalf("planning changed consumers: %+v, %v", consumers, err)
 	}
-	surfaces, err := e.store.ListPlatformTenantSurfaces(ctx, e.acct.ID, applied.TenantID)
+	surfaces, err := (*e.Store()).ListPlatformTenantSurfaces(ctx, (*e.Acct()).ID, applied.TenantID)
 	if err != nil || len(surfaces) != 2 {
 		t.Fatalf("planning changed surfaces: %+v, %v", surfaces, err)
 	}
-	hostnames, err := e.store.ListTenantHostnamesForSurface(ctx, applied.Surfaces[0].ID)
+	hostnames, err := (*e.Store()).ListTenantHostnamesForSurface(ctx, applied.Surfaces[0].ID)
 	if err != nil || len(hostnames) != 3 {
 		t.Fatalf("planning changed hostnames: %+v, %v", hostnames, err)
 	}
@@ -143,16 +144,16 @@ func equalOptionalBool(a, b *bool) bool {
 }
 
 func TestPlatformTenantReconciliationPlanDoesNotAcceptCrossAccountTenant(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	other, err := e.store.CreateAccount(context.Background(), "reconcile-plan-other@example.test", api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "reconcile-plan-other@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, _, err := e.store.CreatePlatformTenant(context.Background(), other.ID, "foreign-plan", "Foreign plan", 100)
+	foreign, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), other.ID, "foreign-plan", "Foreign plan", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+foreign.ID+"/reconciliation-plan",
+	resp := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+foreign.ID+"/reconciliation-plan",
 		api.PlanPlatformTenantReconciliationRequest{}, nil)
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("cross-account plan = %d %s", resp.Code, resp.Body.String())

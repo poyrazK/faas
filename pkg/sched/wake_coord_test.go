@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestWakeCoord_ScopeIsolationAndAppDeletion(t *testing.T) {
@@ -495,7 +496,7 @@ func TestEngineWakeFanoutForRefreshesExistingFromLedger(t *testing.T) {
 }
 
 type countingAppLookupStore struct {
-	state.Store
+	Store        state.Store
 	appByIDCalls atomic.Int32
 }
 
@@ -508,7 +509,7 @@ func TestEngineWakeFanoutForAppReusesOwnerGateLookup(t *testing.T) {
 	mem := state.NewMemStore()
 	_, app, _ := seedApp(t, mem, api.PlanScale, 1024, 20)
 	store := &countingAppLookupStore{Store: mem}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewStore(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 
 	got := e.wakeFanoutForApp(context.Background(), app.ID, &app)
 	if got.MaxInFlight != app.MaxConcurrency || got.PerVM != api.MustLimitsFor(api.PlanScale).ConcurrencyPerVMBound {

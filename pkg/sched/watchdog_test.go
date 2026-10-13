@@ -8,12 +8,38 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+func TestColdBootWatchdogLeavesQualificationForAttemptRetirement(t *testing.T) {
+	store, _, claimed := qualificationExecutionFixture(t, api.ExecutionModeRequest, 5*time.Minute)
+	vmm := &fakeVMM{}
+	engine := newEngine(t, store, vmm, &fakeNotifier{}, "test-fc")
+	admission, err := store.CreateEnvironmentWorkloadQualificationInstance(t.Context(), claimed, state.EnvironmentWorkloadQualificationPlacement{
+		NodeID: engine.defaultLocalNodeID, WakeID: uuid.NewString(), RAMMB: 512,
+	})
+	if err != nil || !admission.Created {
+		t.Fatalf("qualification admission: %+v %v", admission, err)
+	}
+	backdateInstance(t, store, admission.Instance.ID, ColdBootSweepBudget+time.Second)
+	NewWatchdog(store, engine, nil).WithClock(time.Now).sweepRuns(t.Context())
+	if err := engine.KillStuck(t.Context(), admission.Instance.ID, claimed.AppID, StuckColdBootTimeout); err != nil {
+		t.Fatal(err)
+	}
+	ins, err := store.InstanceByID(t.Context(), admission.Instance.ID)
+	if err != nil || ins.State != string(state.StateColdBooting) || vmm.destroys != 0 {
+		t.Fatalf("watchdog stole qualification retirement: instance=%+v destroys=%d err=%v", ins, vmm.destroys, err)
+	}
+	status, err := store.EnvironmentQualificationExecution(t.Context(), admission.Instance.ID)
+	if err != nil || status.RetiredAt != nil || status.Execution != admission.Execution {
+		t.Fatalf("watchdog changed attempt frame: %+v %v", status, err)
+	}
+}
 
 // backdateInstance rewinds the row's "age" anchor by the supplied
 // delta. MemStore stamps started_at on creation; for SNAPSHOTTING

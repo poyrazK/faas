@@ -54,6 +54,20 @@ func validateCloneResourceTransition(op ProjectEnvironmentCloneOperation, nextSt
 		return validateCloneReadyResources(op, resources, errorCode)
 	}
 	if nextStatus == CloneOperationCompensated {
+		// Common-checkpoint cleanup requires authenticated native retirement
+		// journals, including unknown capture/restore outcomes. Resource labels
+		// carry no such proof. Keep this generic transition closed until the
+		// whole-stage reconciler can authenticate those journals atomically.
+		for _, resource := range op.Resources {
+			if strings.HasPrefix(resource.Kind, "data_checkpoint") {
+				return ErrConflict
+			}
+		}
+		for _, resource := range resources {
+			if strings.HasPrefix(resource.Kind, "data_checkpoint") {
+				return ErrConflict
+			}
+		}
 		for _, resource := range resources {
 			if resource.Status != "compensated" {
 				return ErrConflict

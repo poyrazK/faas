@@ -65,6 +65,9 @@ func TestIssueReporterCapturesExceptionAndBoundedContext(t *testing.T) {
 	if len(got.Event.Frames) == 0 || len(got.Event.StackTrace) == 0 {
 		t.Fatalf("stack evidence missing: %+v", got.Event)
 	}
+	if got.Event.GroupingStrategy != "" || got.Event.FrameOrder != "" {
+		t.Fatal("legacy reporter unexpectedly opted into new grouping")
+	}
 	if !strings.Contains(got.Event.Frames[0].Function, "TestIssueReporterCapturesExceptionAndBoundedContext") {
 		t.Fatalf("first stack frame did not identify the application capture site: %+v", got.Event.Frames[0])
 	}
@@ -100,11 +103,14 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 
 	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{
 		BaseURL: srv.URL, App: "exports", Token: "g_issue_test", RetryDelay: 10 * time.Millisecond,
+		GroupingStrategy: "failure-site-v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventID := reporter.CaptureException(errors.New("temporary outage"))
+	eventID := reporter.CaptureException(errors.New("temporary outage"), faas.IssueContext{
+		ErrorCode: "PROVIDER_503", FingerprintOverride: strings.Repeat("é", 200),
+	})
 	if eventID == "" {
 		t.Fatal("CaptureException did not enqueue an event")
 	}
@@ -128,6 +134,10 @@ func TestIssueReporterRetriesIdenticalPayload(t *testing.T) {
 	var event faas.IssueEvent
 	if err := json.Unmarshal(bodies[0], &event); err != nil || event.EventID != eventID {
 		t.Fatalf("retry event identity = %+v, err %v", event, err)
+	}
+	if event.GroupingStrategy != "failure-site-v1" || event.FrameOrder != "newest-first" ||
+		event.ErrorCode != "PROVIDER_503" || event.FingerprintOverride != strings.Repeat("é", 128) {
+		t.Fatalf("retry grouping controls = %+v", event)
 	}
 }
 
@@ -342,6 +352,7 @@ func TestNewIssueReporterRejectsUnsafeConfiguration(t *testing.T) {
 		{BaseURL: "https://api.example.test/path", App: "exports", Token: "g_issue_test"},
 		{BaseURL: "https://api.example.test", App: "exports", Token: "owner-key"},
 		{BaseURL: "https://api.example.test", Token: "g_issue_test"},
+		{BaseURL: "https://api.example.test", App: "exports", Token: "g_issue_test", GroupingStrategy: "unknown"},
 	}
 	for _, options := range cases {
 		if reporter, err := faas.NewIssueReporter(options); err == nil {

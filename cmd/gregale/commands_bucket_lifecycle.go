@@ -13,12 +13,19 @@ import (
 )
 
 func cmdBucketLifecycle(args []string) int {
-	if !validBucketLifecycleArgs(args) {
-		PrintUsage(osStderr, "usage: gregale bucket lifecycle <get|clear|scan> <app> <bucket-id> | set <app> <bucket-id> <JSON-file|-> | status <app> <bucket-id> <scan-id>", "bucket")
+	const usage = "usage: gregale bucket lifecycle <get|clear|scan> <app> <bucket-id> | set <app> <bucket-id> <JSON-file|-> | status <app> <bucket-id> <scan-id>"
+	// The explicit length checks restate validBucketLifecycleArgs where gosec
+	// (G602) can see them.
+	if len(args) < 3 || !validBucketLifecycleArgs(args) {
+		PrintUsage(osStderr, usage, "bucket")
 		return 1
 	}
 	var in api.ObjectBucketLifecycleRequest
 	if args[0] == "set" {
+		if len(args) < 4 {
+			PrintUsage(osStderr, usage, "bucket")
+			return 1
+		}
 		var err error
 		in, err = readBucketLifecycleFile(args[3])
 		if err != nil {

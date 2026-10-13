@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
  * Account-owned managed integration metadata; never contains a provider key or gateway token.
@@ -34,5 +35,38 @@ export type OutboundIntegrationOffer = {
    */
   daily_request_limit: number | null;
   request_policy: OutboundRequestPolicy;
+  /**
+   * Present for AI gateway integrations (ADR-988, ADR-991). openai is the OpenAI-compatible wire format; the provider also selects how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-account token for vertex) and how token usage is read.
+   */
+  ai_provider?: 'openai' | 'anthropic' | 'gemini' | 'azure_openai' | 'bedrock' | 'vertex';
+  /**
+   * UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means no limit.
+   */
+  ai_daily_token_limit?: number | null;
+  /**
+   * UTC-day cost limit priced from the integration's price list (ADR-990).
+   */
+  ai_daily_cost_limit_millicents?: number | null;
+  /**
+   * Calendar-month cost limit priced from the integration's price list (ADR-990).
+   */
+  ai_monthly_cost_limit_millicents?: number | null;
+  /**
+   * Whether every settled AI call writes one metadata row to the request log (ADR-991).
+   */
+  ai_request_log_enabled?: boolean;
+  /**
+   * Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
+   */
+  ai_request_log_content?: boolean;
+  ai_content_policy?: OutboundAIContentPolicy;
+  /**
+   * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
+   */
+  ai_user_daily_token_limit?: number | null;
+  /**
+   * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
+   */
+  ai_user_daily_cost_limit_millicents?: number | null;
 };
 

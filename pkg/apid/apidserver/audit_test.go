@@ -7,7 +7,7 @@
 // is the end-to-end counterpart that pins the action-not-rolled-back
 // invariant under ADR-035 and exercises the new account_label arg.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -20,7 +20,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // stubAuditOps is an in-memory auditOps for unit tests. The full
@@ -125,7 +127,7 @@ func (o stubObserver) Observe(secs float64) {
 // Same pattern as handlers_audit_test.go::failingAuditStore, kept
 // inline here so audit_test.go is self-contained.
 type failingStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (failingStore) AppendEvent(_ context.Context, _, _ string, _ *string, _ []byte) error {
@@ -145,7 +147,7 @@ func (failingStore) AppendEventWithTrace(_ context.Context, _, _ string, _ *stri
 func TestAuditEmit_SuccessObservesOkHistogram(t *testing.T) {
 	store := state.NewMemStore()
 	ops := newStubAuditOps()
-	a := newAuditor(store, slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
+	a := apidserver.NewAuditor(store, slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
 	id := "acct-success"
 	a.Emit(context.Background(), "test.kind", &id, map[string]any{"k": "v"})
 	if got := ops.failureCount(t, id); got != 0 {
@@ -162,7 +164,7 @@ func TestAuditEmit_SuccessObservesOkHistogram(t *testing.T) {
 func TestAuditEmit_FailureObservesFailedAndIncrementsCounter(t *testing.T) {
 	store := failingStore{Store: state.NewMemStore()}
 	ops := newStubAuditOps()
-	a := newAuditor(store, slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
+	a := apidserver.NewAuditor(statetest.NewStore(store), slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
 	id := "acct-failure"
 	a.Emit(context.Background(), "test.kind", &id, map[string]any{"k": "v"})
 	if got := ops.failureCount(t, id); got != 1 {
@@ -180,7 +182,7 @@ func TestAuditEmit_FailureObservesFailedAndIncrementsCounter(t *testing.T) {
 func TestAuditEmit_NilAccountNormalizesToEmpty(t *testing.T) {
 	store := failingStore{Store: state.NewMemStore()}
 	ops := newStubAuditOps()
-	a := newAuditor(store, slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
+	a := apidserver.NewAuditor(statetest.NewStore(store), slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
 	a.Emit(context.Background(), "test.kind", nil, map[string]any{"k": "v"})
 	if got := ops.failureCount(t, ""); got != 1 {
 		t.Errorf("nil-account failure counter (empty key) = %v, want 1", got)
@@ -194,7 +196,7 @@ func TestAuditEmit_NilAccountNormalizesToEmpty(t *testing.T) {
 func TestAuditEmit_DoesNotPanicOnFailingStore(t *testing.T) {
 	store := failingStore{Store: state.NewMemStore()}
 	ops := newStubAuditOps()
-	a := newAuditor(store, slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
+	a := apidserver.NewAuditor(statetest.NewStore(store), slog.New(slog.NewTextHandler(io.Discard, nil)), ops)
 	id := "acct-no-panic"
 	a.Emit(context.Background(), "test.kind", &id, map[string]any{"k": "v"})
 }

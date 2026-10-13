@@ -739,6 +739,13 @@ func renderAPIError(w io.Writer, e *APIError) {
 			_, _ = fmt.Fprintln(w)
 		}
 	}
+	// A server-side secret scan names what matched; without these rows the
+	// customer saw only "Secret-shaped values found" and could not tell which
+	// file or line to fix (production-us hunt #9). Same `file:line [provider]
+	// snippet` shape as the client-side strict scan.
+	for _, f := range p.SecretFindings {
+		_, _ = fmt.Fprintf(w, "  %s:%d [%s] %s\n", f.File, f.Line, f.Provider, f.Snippet)
+	}
 	if p.RetryAfterSeconds != nil {
 		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second
 		_, _ = fmt.Fprintf(w, "  Retry after: %s (%d seconds)\n", retryAfter, *p.RetryAfterSeconds)

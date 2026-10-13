@@ -1425,6 +1425,9 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			return fmt.Errorf("decode snapshot_written payload: %w", err)
 		}
 		if err := h.handleSnapshotWritten(ctx, p); err != nil {
+			if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
+				return nil
+			}
 			return fmt.Errorf("handle snapshot written %s: %w", p.DeploymentID, err)
 		}
 		return nil
@@ -1434,6 +1437,9 @@ func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) err
 			return fmt.Errorf("decode deployment_ready payload: %w", err)
 		}
 		if err := h.handleDeploymentReady(ctx, p); err != nil {
+			if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
+				return nil
+			}
 			return fmt.Errorf("handle deployment ready %s: %w", p.DeploymentID, err)
 		}
 		return nil
@@ -2276,8 +2282,21 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		// ghcr.io/onebox-faas/...). Production RegistryClient
 		// satisfies AuthManifestPuller so both paths carry the
 		// correct auth shape.
-		above, diffs, err := h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
-		fullRootfsDispatched := false
+		var above aboveBaseStream
+		var diffs []string
+		fullRootfsDispatched := dep.FullRootfsOverride != nil && *dep.FullRootfsOverride
+		if fullRootfsDispatched {
+			// An explicit full-rootfs image is self-contained. Pulling the
+			// shared runtime base first would make this path depend on an
+			// unrelated registry and turn an unreachable base into a deploy
+			// failure, even though BuildFullRootfs never consumes it.
+			if err := h.dispatchFullRootfs(ctx, app, dep, acct, manifest, appAuth); err != nil {
+				_ = h.markDeployFailed(ctx, dep.ID, err, "imaged: full-rootfs dispatch")
+				return err
+			}
+		} else {
+			above, diffs, err = h.aboveBaseLayers(ctx, mp, ref, app.Runtime, manifest, appAuth)
+		}
 		if err != nil {
 			// ADR-141 §Decision 3 + §Decision 2: when the app image is
 			// not built FROM our runner-* base, dispatch on the
@@ -2704,7 +2723,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		// doesn't carry the runtime — keeps older clients working.
 		runtime = dep.Handler
 	}
-	if runtime != RuntimeNode22 && runtime != RuntimePython312 && runtime != RuntimeGo124 && runtime != RuntimeGo124Alpine && runtime != RuntimeNode24 && runtime != RuntimePython313 {
+	if runtime != RuntimeNode22 && runtime != RuntimePython312 && runtime != RuntimeGo124 && runtime != RuntimeGo124Alpine && runtime != RuntimeNode24 && runtime != RuntimePython313 && runtime != RuntimeBinary {
 		_ = h.transitionFailure(ctx, dep.ID, "unsupported runtime: "+runtime)
 		return fmt.Errorf("imaged: unsupported function runtime %q", runtime)
 	}
@@ -2807,6 +2826,16 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			"--handler", "/app/handler",
 		}
 	}
+	if runtime == RuntimeBinary {
+		// ADR-987: the go124 runner execs any static executable that
+		// speaks the §4.9 envelope protocol; the executable named by the
+		// function's Dockerfile image was extracted to /app/handler.
+		manifest.Entrypoint = []string{
+			"/usr/local/bin/faas-runner",
+			"--runtime", runtime,
+			"--handler", "/app/handler",
+		}
+	}
 	// PR-B (issue #460 / ADR-053): same seam as buildImageLayer (handler.go:546).
 	// Function deploys build their manifest inline (no OCI pull), so the
 	// "OCI base" is the runtime-default argv from the switch above;
@@ -2838,7 +2867,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	// legacy raw-tarball path.
 	var builtLayers []io.Reader
 	var cleanupBuiltLayers func()
-	if (runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine) &&
+	if (runtime == RuntimeGo124 || runtime == RuntimeGo124Alpine || runtime == RuntimeBinary) &&
 		dep.RootfsPath != "" && dep.RootfsPath != dep.SourcePath && dep.Kind != state.DeploymentKindImage {
 		_, layers, cleanup, loadErr := loadLocalOCIArchive(dep.RootfsPath)
 		if loadErr != nil {
@@ -2898,8 +2927,13 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 			return fmt.Errorf("imaged: select function build artifact: %w", artifactErr)
 		}
 		defer cleanup()
+		handlerSource, handlerErr := functionHandlerSourcePath(runtime, dep.Handler, sourcePath)
+		if handlerErr != nil {
+			_ = h.markDeployFailed(ctx, dep.ID, handlerErr, "select function handler file")
+			return fmt.Errorf("imaged: select function handler file: %w", handlerErr)
+		}
 		buildInput.Layers = layers
-		buildInput.FunctionHandlerSourcePath = sourcePath
+		buildInput.FunctionHandlerSourcePath = handlerSource
 	} else {
 		// Keep the hermetic legacy/test seam. Production handlers always
 		// enable runtime-base staging and therefore take the artifact path.
@@ -2949,6 +2983,8 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 // when nothing was wired. Empty string is the fail-loud signal — callers
 // must transition the deployment to failed before building.
 func (h *Handler) runnerPathFor(runtime string) string {
+	// binary shares the go124 runner (ADR-987).
+	runtime = api.FunctionBaseRuntime(runtime)
 	switch runtime {
 	case RuntimeNode22:
 		return h.functionRunnerNode22Path
@@ -2970,6 +3006,7 @@ func (h *Handler) runnerPathFor(runtime string) string {
 // fail-loud error message names the operator-facing knob (e.g. NODE22 for
 // FAAS_FUNCTION_RUNNER_NODE22).
 func runtimeToEnvSuffix(runtime string) string {
+	runtime = api.FunctionBaseRuntime(runtime)
 	switch runtime {
 	case RuntimeNode22:
 		return "NODE22"
@@ -3542,7 +3579,17 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			return nil
 		}
 	}
-	if !checkedRollback && dep.Kind.RequiresLatestRevision() {
+	recovering, _ := ctx.Value(mcpTaskRecoveryContextKey{}).(bool)
+	if !recovering {
+		hold, err := h.store.MCPTaskPromotionHold(ctx, dep.ID)
+		if err != nil {
+			return fmt.Errorf("imaged: inspect MCP promotion hold: %w", err)
+		}
+		recovering = hold != nil
+	}
+	if recovering {
+		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
+	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
 		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
@@ -3550,6 +3597,23 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
 		return nil
+	}
+	if errors.Is(promoteErr, state.ErrMCPTaskCompatibilityGate) {
+		problem := api.ErrMCPTaskCompatibilityGate(promoteErr.Error())
+		recovery := state.MCPTaskPromotionRecovery{DeploymentID: dep.ID, NodeID: h.nodeName, Channel: db.NotifySnapshotWritten}
+		var payloadErr error
+		if ready != nil {
+			recovery.Channel = db.NotifyDeploymentReady
+			recovery.Payload, payloadErr = json.Marshal(ready)
+		} else {
+			recovery.Payload, payloadErr = json.Marshal(snapshot)
+		}
+		if payloadErr != nil {
+			return fmt.Errorf("imaged: encode MCP task promotion recovery: %w", payloadErr)
+		}
+		if err := h.store.RecordMCPTaskPromotionHold(ctx, dep.ID, problem.Detail, recovery); err != nil {
+			return fmt.Errorf("imaged: persist MCP task promotion hold: %w", err)
+		}
 	}
 	if promoteErr != nil {
 		var routeRemovalBlocker *state.RouteRemovalBlockedError

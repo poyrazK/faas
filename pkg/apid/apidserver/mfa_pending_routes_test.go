@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -71,13 +72,13 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 	if len(routes) < 300 {
 		t.Fatalf("only %d session routes found; the scan is broken", len(routes))
 	}
-	e := setupWithMFA(t, api.PlanPro, false, true)
-	if _, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID: e.acct.ID, Slug: "mfa-pending-app", Status: state.AppActive, RAMMB: 256,
+	e := apidserver.SetupWithMFA(t, api.PlanPro, false, true)
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID: (*e.Acct()).ID, Slug: "mfa-pending-app", Status: state.AppActive, RAMMB: 256,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	pending := e.mfaIssueWithPending(t, true)
+	pending := e.MfaIssueWithPending(t, true)
 	for i, route := range routes {
 		method, path, _ := strings.Cut(route, " ")
 		if authmw.IsMFAAllowlisted(path) {
@@ -92,7 +93,7 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(pending)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		cancel()
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), api.CodeMFARequired) {
 			t.Errorf("%s with an mfa_pending session = %d, want 403 %s: %.160s", route, rec.Code, api.CodeMFARequired, rec.Body.String())

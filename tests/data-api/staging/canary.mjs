@@ -259,7 +259,7 @@ export class Canary {
       for (const file of ['package.json', 'package-lock.json']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, file))
       for (const file of ['migrate.mjs', 'migration-server.mjs']) await cp(join(this.repoRoot, 'tests/data-api/staging', file), join(migrationDir, file))
       await mkdir(join(migrationDir, 'rpc-runtime'))
-      for (const file of ['types.mjs', 'config.mjs']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, 'rpc-runtime', file))
+      for (const file of ['types.mjs', 'type-render.mjs', 'config.mjs']) await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api', file), join(migrationDir, 'rpc-runtime', file))
       for (const [source, target] of [['release.mjs', 'release.mjs'], ['rpc-permissions.mjs', 'rpc-permissions.mjs']])
         await cp(join(this.repoRoot, 'cmd/gregale/templates/data-api-starter/migrations', source), join(migrationDir, target))
       await writeFile(join(migrationDir, 'version'), '1')

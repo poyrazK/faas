@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,7 +18,7 @@ import (
 // id, an optional subscription binding, and a dunning status, and
 // returns a server wired with a recording mailer so the tests can call
 // handleBillingEventWithOptions directly.
-func newSubscriptionEndFixture(t *testing.T, plan api.Plan, status state.AccountStatus, subID string) (*server, *state.MemStore, *recordingMailer, state.Account) {
+func newSubscriptionEndFixture(t *testing.T, plan api.Plan, status state.AccountStatus, subID string) (*apidserver.Server, *state.MemStore, *apidserver.RecordingMailer, state.Account) {
 	t.Helper()
 	ctx := context.Background()
 	store := state.NewMemStore()
@@ -38,9 +39,9 @@ func newSubscriptionEndFixture(t *testing.T, plan api.Plan, status state.Account
 			t.Fatalf("UpdateAccountStatus: %v", err)
 		}
 	}
-	mailer := &recordingMailer{}
+	mailer := &apidserver.RecordingMailer{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", mailer, stubGithubdClient{}, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", mailer, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	acct, err = store.AccountByID(ctx, acct.ID)
 	if err != nil {
 		t.Fatalf("AccountByID: %v", err)
@@ -56,7 +57,7 @@ func newSubscriptionEndFixture(t *testing.T, plan api.Plan, status state.Account
 func TestSubscriptionEnded_VoluntaryDowngradesToFree(t *testing.T) {
 	srv, store, mailer, acct := newSubscriptionEndFixture(t, api.PlanPro, state.AccountActive, "sub_1")
 	ev := billing.Event{Type: billing.EventSubscriptionCanceled, CustomerID: "polar-cust-1", SubscriptionID: "sub_1"}
-	if err := srv.handleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
+	if err := srv.HandleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
 		t.Fatalf("handleBillingEvent: %v", err)
 	}
 	got, err := store.AccountByID(context.Background(), acct.ID)
@@ -72,7 +73,7 @@ func TestSubscriptionEnded_VoluntaryDowngradesToFree(t *testing.T) {
 	if got.Status != state.AccountActive {
 		t.Errorf("status = %q, want active (voluntary cancel is not a dunning event)", got.Status)
 	}
-	msgs := mailer.snapshot()
+	msgs := mailer.Snapshot()
 	if len(msgs) != 1 {
 		t.Fatalf("mails = %d, want 1", len(msgs))
 	}
@@ -101,7 +102,7 @@ func TestSubscriptionEnded_VoluntaryDowngradesToFree(t *testing.T) {
 func TestSubscriptionEnded_PastDueKeepsDunningStatus(t *testing.T) {
 	srv, store, mailer, acct := newSubscriptionEndFixture(t, api.PlanHobby, state.AccountPastDue, "sub_1")
 	ev := billing.Event{Type: billing.EventSubscriptionCanceled, CustomerID: "polar-cust-1", SubscriptionID: "sub_1"}
-	if err := srv.handleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
+	if err := srv.HandleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
 		t.Fatalf("handleBillingEvent: %v", err)
 	}
 	got, err := store.AccountByID(context.Background(), acct.ID)
@@ -114,7 +115,7 @@ func TestSubscriptionEnded_PastDueKeepsDunningStatus(t *testing.T) {
 	if got.Status != state.AccountPastDue {
 		t.Errorf("status = %q, want past_due preserved for dunning", got.Status)
 	}
-	if n := len(mailer.snapshot()); n != 0 {
+	if n := len(mailer.Snapshot()); n != 0 {
 		t.Errorf("mails = %d, want 0 on the non-payment path", n)
 	}
 }
@@ -125,7 +126,7 @@ func TestSubscriptionEnded_PastDueKeepsDunningStatus(t *testing.T) {
 func TestSubscriptionEnded_IgnoresSupersededSubscription(t *testing.T) {
 	srv, store, mailer, acct := newSubscriptionEndFixture(t, api.PlanScale, state.AccountActive, "sub_new")
 	ev := billing.Event{Type: billing.EventSubscriptionCanceled, CustomerID: "polar-cust-1", SubscriptionID: "sub_old"}
-	if err := srv.handleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
+	if err := srv.HandleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
 		t.Fatalf("handleBillingEvent: %v", err)
 	}
 	got, err := store.AccountByID(context.Background(), acct.ID)
@@ -135,7 +136,7 @@ func TestSubscriptionEnded_IgnoresSupersededSubscription(t *testing.T) {
 	if got.Plan != api.PlanScale || got.StripeSubscriptionItem != "sub_new" || got.Status != state.AccountActive {
 		t.Errorf("account changed on a stale revoke: plan=%q sub=%q status=%q", got.Plan, got.StripeSubscriptionItem, got.Status)
 	}
-	if n := len(mailer.snapshot()); n != 0 {
+	if n := len(mailer.Snapshot()); n != 0 {
 		t.Errorf("mails = %d, want 0", n)
 	}
 }
@@ -145,14 +146,14 @@ func TestSubscriptionEnded_IgnoresSupersededSubscription(t *testing.T) {
 func TestSubscriptionEnded_ReplayOnFreeIsNoop(t *testing.T) {
 	srv, store, mailer, acct := newSubscriptionEndFixture(t, api.PlanFree, state.AccountActive, "")
 	ev := billing.Event{Type: billing.EventSubscriptionCanceled, CustomerID: "polar-cust-1", SubscriptionID: "sub_1"}
-	if err := srv.handleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
+	if err := srv.HandleBillingEventWithOptions(context.Background(), ev, acct, false); err != nil {
 		t.Fatalf("handleBillingEvent: %v", err)
 	}
 	got, _ := store.AccountByID(context.Background(), acct.ID)
 	if got.Plan != api.PlanFree || got.Status != state.AccountActive {
 		t.Errorf("replay changed account: plan=%q status=%q", got.Plan, got.Status)
 	}
-	if n := len(mailer.snapshot()); n != 0 {
+	if n := len(mailer.Snapshot()); n != 0 {
 		t.Errorf("mails = %d, want 0 on replay", n)
 	}
 }
@@ -162,22 +163,22 @@ func TestSubscriptionEnded_ReplayOnFreeIsNoop(t *testing.T) {
 // wiring is covered end to end (the Polar path shares
 // handleBillingEventWithOptions).
 func TestStripeWebhook_SubscriptionDeleted_DowngradesToFree(t *testing.T) {
-	env, mailer := stripeWebhookHarness(t, api.PlanPro)
-	if err := env.store.UpdateAccountStripeSubscriptionItem(context.Background(), env.acct.ID, "si_1"); err != nil {
+	env, mailer := apidserver.StripeWebhookHarness(t, api.PlanPro)
+	if err := (*env.Store()).UpdateAccountStripeSubscriptionItem(context.Background(), (*env.Acct()).ID, "si_1"); err != nil {
 		t.Fatalf("seed subscription: %v", err)
 	}
-	rec := postStripeEvent(t, env.h, "customer.subscription.deleted", "cus_test_123")
+	rec := apidserver.PostStripeEvent(t, (*env.H()), "customer.subscription.deleted", "cus_test_123")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200\nbody = %s", rec.Code, rec.Body.String())
 	}
-	got, err := env.store.AccountByID(context.Background(), env.acct.ID)
+	got, err := (*env.Store()).AccountByID(context.Background(), (*env.Acct()).ID)
 	if err != nil {
 		t.Fatalf("AccountByID: %v", err)
 	}
 	if got.Plan != api.PlanFree || got.StripeSubscriptionItem != "" || got.Status != state.AccountActive {
 		t.Errorf("after deleted: plan=%q sub=%q status=%q, want free/\"\"/active", got.Plan, got.StripeSubscriptionItem, got.Status)
 	}
-	if n := len(mailer.snapshot()); n != 1 {
+	if n := len(mailer.Snapshot()); n != 1 {
 		t.Errorf("mails = %d, want 1", n)
 	}
 }

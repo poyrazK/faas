@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Issue #3360: a secret or env change invalidates existing snapshots, but a
@@ -156,8 +157,8 @@ func TestInvalidateAppSnapshotsStampsRuntimeConfigChange(t *testing.T) {
 // changeLookupFailingStore fails the runtime-config stamp read, standing in
 // for a database error during park.
 type changeLookupFailingStore struct {
-	*state.MemStore
-	fail bool
+	MemStore *state.MemStore
+	fail     bool
 }
 
 func (s *changeLookupFailingStore) AppRuntimeConfigChangedAt(ctx context.Context, appID string) (time.Time, bool, error) {
@@ -180,11 +181,11 @@ func TestPark_RuntimeConfigLookupFailureSkipsCapture(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
 	store := &changeLookupFailingStore{MemStore: mem}
-	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	_, app, dep := seedApp(t, statetest.NewMem(store), api.PlanPro, 256, 5)
 	vmm := &fakeVMM{}
 	notif := &fakeNotifier{}
-	e := newEngine(t, store, vmm, notif, "1.10.0")
-	insID := primeRunPlusFrameworkReady(t, store, vmm, notif, e, app.ID, dep.ID)
+	e := newEngine(t, statetest.NewMem(store), vmm, notif, "1.10.0")
+	insID := primeRunPlusFrameworkReady(t, statetest.NewMem(store), vmm, notif, e, app.ID, dep.ID)
 	store.fail = true
 	capturesBefore := vmm.snapshots
 	publishedBefore := notif.count(db.NotifySnapshotWritten)
@@ -198,7 +199,7 @@ func TestPark_RuntimeConfigLookupFailureSkipsCapture(t *testing.T) {
 	if got := notif.count(db.NotifySnapshotWritten) - publishedBefore; got != 0 {
 		t.Errorf("snapshot_written = %d, want 0", got)
 	}
-	ins, err := store.InstanceByID(ctx, insID)
+	ins, err := store.MemStore.InstanceByID(ctx, insID)
 	if err != nil {
 		t.Fatalf("InstanceByID: %v", err)
 	}

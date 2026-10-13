@@ -346,6 +346,24 @@
   failed_when: false
   notify: reload postgresql
 
+# JIT off. PostgreSQL's default (jit=on, jit_above_cost 100000) LLVM-compiles
+# any statement the planner costs above 100k, with inlining and optimization
+# above 500k. The planner's cost is a poor proxy for runtime on our OLTP
+# reads, and on the 2-vCPU control plane the compile dominates: the wake
+# timeline's boot lookup (100 wake ids) ran past a 20 s statement timeout
+# with JIT and took 1.0 s without it (production-us hunt #9, H9-159); the
+# ADR-422 capacity snapshot was 6-8 s vs 10 ms and is already pinned off per
+# function (migration 20261004191632612). Reload-only.
+- name: postgres — disable JIT (reload-only)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?jit\\s*="
+    line: "jit = off"
+    create: false
+  register: pg_jit
+  failed_when: false
+  notify: reload postgresql
+
 # TCP keepalives — reap backends whose client host vanished.
 #
 # Without these, Postgres inherits the OS default (tcp_keepalives_idle 7200 s)

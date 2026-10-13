@@ -1,8 +1,9 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,7 +27,7 @@ func TestDebugReplayRequestPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := debugReplayRequestPath(tt.method, tt.route)
+			got, ok := apidserver.DebugReplayRequestPath(tt.method, tt.route)
 			if got != tt.want || ok != tt.ok {
 				t.Fatalf("debugReplayRequestPath(%q, %q) = (%q, %t), want (%q, %t)", tt.method, tt.route, got, ok, tt.want, tt.ok)
 			}
@@ -43,21 +44,21 @@ func TestSelectDebugReplayMirrorRule(t *testing.T) {
 	}
 
 	t.Run("default selects first enabled target for source", func(t *testing.T) {
-		got, ok := selectDebugReplayMirrorRule(rules, "source", "")
+		got, ok := apidserver.SelectDebugReplayMirrorRule(rules, "source", "")
 		if !ok || got.ID != "first" {
 			t.Fatalf("rule = %#v, ok=%t; want first enabled source rule", got, ok)
 		}
 	})
 
 	t.Run("requested target selects matching rule", func(t *testing.T) {
-		got, ok := selectDebugReplayMirrorRule(rules, "source", "target-b")
+		got, ok := apidserver.SelectDebugReplayMirrorRule(rules, "source", "target-b")
 		if !ok || got.ID != "second" {
 			t.Fatalf("rule = %#v, ok=%t; want second target rule", got, ok)
 		}
 	})
 
 	t.Run("requested target cannot cross source deployment", func(t *testing.T) {
-		if got, ok := selectDebugReplayMirrorRule(rules, "source", "missing"); ok || got.ID != "" {
+		if got, ok := apidserver.SelectDebugReplayMirrorRule(rules, "source", "missing"); ok || got.ID != "" {
 			t.Fatalf("rule = %#v, ok=%t; want no matching rule", got, ok)
 		}
 	})

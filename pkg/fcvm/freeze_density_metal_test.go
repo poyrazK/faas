@@ -1,0 +1,167 @@
+//go:build metal
+
+// adr: 906 — frozen instances at density: freezing idle VMs returns most of
+// their memory to the host, and each thaws to its first byte far faster than
+// a snapshot restore.
+package fcvm
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+// TestMetalFreezeDensity boots FAAS_TEST_FREEZE_DENSITY_VMS 1 GiB app VMs
+// (default 12; FAAS_TEST_LAYER_ROOTFS starts an app on :8080 that answers
+// /heavy), freezes them all, then thaws each and times its first byte and a
+// CPU-bound request. With swap (zram or zswap) on the host, a freeze also
+// moves anonymous memory out. FAAS_TEST_FREEZE_FROM_SNAPSHOT=1 restores every
+// VM from one snapshot first, as production wakes do: pages read since the
+// restore stay file-backed and reclaimable without swap.
+func TestMetalFreezeDensity(t *testing.T) {
+	kernel, base, layer := metalImages(t)
+	if os.Getenv("FAAS_TEST_FREEZE_DENSITY") != "1" {
+		t.Skip("set FAAS_TEST_FREEZE_DENSITY=1 (boots 12 1 GiB VMs)")
+	}
+	n := 12
+	if raw := os.Getenv("FAAS_TEST_FREEZE_DENSITY_VMS"); raw != "" {
+		var err error
+		if n, err = strconv.Atoi(raw); err != nil || n < 1 {
+			t.Fatalf("FAAS_TEST_FREEZE_DENSITY_VMS=%q", raw)
+		}
+	}
+	ctx := context.Background()
+	fcVersion, err := DetectFirecrackerVersion(ctx)
+	if err != nil {
+		t.Skipf("firecracker version: %v", err)
+	}
+	withCgroupRootAt(t, "/sys/fs/cgroup")
+	snapshotRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(snapshotRoot, "snap"), 0o2770); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.NewLocalStorageBackend(snapshotRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 180*time.Second).WithStorage(store), Paths{Kernel: kernel}, fcVersion, nil, nil)
+	var snap *Snapshot
+	if os.Getenv("FAAS_TEST_FREEZE_FROM_SNAPSHOT") == "1" {
+		snap = &Snapshot{FCVersion: fcVersion, StorageKey: "snap/frz/mem", VMStateStorageKey: "snap/frz/vmstate", VMStatePath: t.TempDir() + "/vmstate"}
+		src, err := m.Wake(ctx, WakeRequest{Instance: "frz-src", AccountID: "acct", AppID: "app-frz", Plan: "scale",
+			BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 1024})
+		if err != nil {
+			t.Fatalf("wake snapshot source: %v", err)
+		}
+		t.Cleanup(func() { _ = m.Destroy(context.Background(), "frz-src") })
+		if _, err := firstResponse("http://"+src.Lease.HostIP.String()+":8080/", 120*time.Second); err != nil {
+			t.Fatalf("snapshot source does not serve: %v", err)
+		}
+		get(t, "http://"+src.Lease.HostIP.String()+":8080/heavy")
+		if _, err := m.Park(ctx, "frz-src", SnapshotSpec{VMStatePath: snap.VMStatePath, StorageKey: snap.StorageKey, VMStateStorageKey: snap.VMStateStorageKey}); err != nil {
+			t.Fatalf("park snapshot source: %v", err)
+		}
+	}
+	ids := make([]string, n)
+	hosts := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("frz-%d", i)
+		inst, err := m.Wake(ctx, WakeRequest{Instance: ids[i], AccountID: "acct", AppID: "app-frz", Plan: "scale",
+			BaseKey: base, LayerKey: layer, VcpuCount: 2, MemSizeMiB: 1024, Snapshot: snap})
+		if err != nil {
+			t.Fatalf("wake %d: %v", i, err)
+		}
+		if snap != nil && inst.Method != WakeRestore {
+			t.Fatalf("wake %d came back by %s, want restore", i, inst.Method)
+		}
+		id := ids[i]
+		t.Cleanup(func() { _ = m.Destroy(context.Background(), id) })
+		hosts[i] = "http://" + inst.Lease.HostIP.String() + ":8080"
+		if _, err := firstResponse(hosts[i]+"/", 120*time.Second); err != nil {
+			t.Fatalf("%s does not serve: %v", id, err)
+		}
+		get(t, hosts[i]+"/heavy")
+	}
+	time.Sleep(3 * time.Second)
+	vmMB := func() (total int64) {
+		for _, id := range ids {
+			if cur, err := readCgroupInt(cgroupRoot+"/"+ParentCgroupFor("scale")+"/"+PerInstanceScope(id), "memory.current"); err == nil {
+				total += cur >> 20
+			}
+		}
+		return total
+	}
+	running, availRunning := vmMB(), memAvailableMB(t)
+
+	var freezeTimes []time.Duration
+	var swapped int64
+	for _, id := range ids {
+		start := time.Now()
+		rep, err := m.Freeze(ctx, id)
+		if err != nil {
+			t.Fatalf("freeze %s: %v", id, err)
+		}
+		freezeTimes = append(freezeTimes, time.Since(start))
+		swapped += rep.SwappedBytes >> 20
+	}
+	time.Sleep(2 * time.Second)
+	frozen, availFrozen := vmMB(), memAvailableMB(t)
+	t.Logf("freeze: %d VMs, VM cgroups %d -> %d MB (%.1f -> %.1f per VM), %d MB to swap, host MemAvailable %d -> %d MB, freeze p50 %v max %v",
+		n, running, frozen, float64(running)/float64(n), float64(frozen)/float64(n), swapped, availRunning, availFrozen,
+		percentile(freezeTimes, 50), percentile(freezeTimes, 100))
+
+	var firstByte, heavy []time.Duration
+	for i, id := range ids {
+		start := time.Now()
+		if err := m.Thaw(ctx, id); err != nil {
+			t.Fatalf("thaw %s: %v", id, err)
+		}
+		if _, err := firstResponse(hosts[i]+"/", 30*time.Second); err != nil {
+			t.Fatalf("%s does not serve after thaw: %v", id, err)
+		}
+		firstByte = append(firstByte, time.Since(start))
+		start = time.Now()
+		get(t, hosts[i]+"/heavy")
+		heavy = append(heavy, time.Since(start))
+	}
+	t.Logf("thaw: first byte p50 %v p99 %v max %v; CPU-bound request p50 %v max %v; VM cgroups %d MB",
+		percentile(firstByte, 50), percentile(firstByte, 99), percentile(firstByte, 100),
+		percentile(heavy, 50), percentile(heavy, 100), vmMB())
+	if frozen > running {
+		t.Fatalf("freezing grew the VMs: %d -> %d MB", running, frozen)
+	}
+}
+
+func get(t *testing.T, url string) {
+	t.Helper()
+	resp, err := (&http.Client{Timeout: 60 * time.Second}).Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: %s", url, resp.Status)
+	}
+}
+
+func percentile(d []time.Duration, p int) time.Duration {
+	if len(d) == 0 {
+		return 0
+	}
+	s := append([]time.Duration(nil), d...)
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+	i := (len(s)*p + 99) / 100
+	if i < 1 {
+		i = 1
+	}
+	return s[i-1].Round(100 * time.Microsecond)
+}

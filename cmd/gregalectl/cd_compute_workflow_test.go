@@ -483,6 +483,9 @@ func TestCDComputeWorkflowVerifiesFastCacheAfterActivation(t *testing.T) {
 		"-mindepth 1",
 		"! -group faas",
 		"! -perm -g+w",
+		// vmmd's private pmem bases (root, UMask 0022) are outside the
+		// shared-cache contract; checking them failed the rc.257 fsn-3 rollout.
+		"-path /var/lib/faas/cache/.faas-pmem -prune -o",
 		"cache permission contract violation",
 	} {
 		if !strings.Contains(workflow[cacheGate:gatewayGate], want) {

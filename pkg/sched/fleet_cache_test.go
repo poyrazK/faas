@@ -7,6 +7,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestNodeRegistryRefreshAndRemove(t *testing.T) {
@@ -123,7 +124,7 @@ func TestNodeUsageCacheRequiresCompleteSnapshot(t *testing.T) {
 }
 
 type countingNodeUsageStore struct {
-	*state.MemStore
+	MemStore    *state.MemStore
 	activeCalls int
 	bulkCalls   int
 	singleCalls int
@@ -163,7 +164,7 @@ func TestPlacementUsesRegistryAndOneBulkUsageRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ActiveComputeNodes: %v", err)
 	}
-	engine, err := NewEngine(context.Background(), store, NewNodeLedger(), nil, nil, "", nil)
+	engine, err := NewEngine(context.Background(), statetest.NewMem(store), NewNodeLedger(), nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}

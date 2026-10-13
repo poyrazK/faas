@@ -1,5 +1,5 @@
 // adr: 592 — portable reader permissions and capability discovery.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -47,10 +48,10 @@ func capabilitiesService(t *testing.T, canary string) *managedpostgres.Service {
 }
 
 func TestManagedPostgresCapabilitiesRoute(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	e.s.managedPostgres = capabilitiesService(t, e.acct.ID)
+	e := apidserver.Setup(t, api.PlanHobby)
+	(*(*e.S()).ManagedPostgres()) = capabilitiesService(t, (*e.Acct()).ID)
 	path := "/v1/postgres/capabilities"
-	response := e.do(t, http.MethodGet, path, nil, nil)
+	response := e.Do(t, http.MethodGet, path, nil, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("capabilities: %d %s", response.Code, response.Body)
 	}
@@ -69,22 +70,22 @@ func TestManagedPostgresCapabilitiesRoute(t *testing.T) {
 			t.Fatal("capability response leaked placement details")
 		}
 	}
-	e.s.managedPostgres = capabilitiesService(t, "another-canary")
-	response = e.do(t, http.MethodGet, path+"?region=us-east-1", nil, nil)
+	(*(*e.S()).ManagedPostgres()) = capabilitiesService(t, "another-canary")
+	response = e.Do(t, http.MethodGet, path+"?region=us-east-1", nil, nil)
 	if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil || out.ProvisioningEnabled || !slices.Contains(out.CredentialAccess, "read_only") {
 		t.Fatal("closed rollout hid configured support", err)
 	}
 	for _, query := range []string{"?unknown=value", "?region=us-east-1&region=us-east-1", "?region=%ZZ", "?region=x;y", "?region=" + strings.Repeat("a", 256)} {
-		if rec := e.do(t, http.MethodGet, path+query, nil, nil); rec.Code != http.StatusBadRequest {
+		if rec := e.Do(t, http.MethodGet, path+query, nil, nil); rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid query %q: %d %s", query, rec.Code, rec.Body)
 		}
 	}
-	if rec := e.do(t, http.MethodGet, path+"?region=unconfigured", nil, nil); rec.Code != http.StatusUnprocessableEntity {
+	if rec := e.Do(t, http.MethodGet, path+"?region=unconfigured", nil, nil); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unknown region: %d %s", rec.Code, rec.Body)
 	}
 	request := httptest.NewRequest(http.MethodGet, path, nil)
 	response = httptest.NewRecorder()
-	e.h.ServeHTTP(response, request)
+	(*e.H()).ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated discovery: %d", response.Code)
 	}
@@ -92,10 +93,10 @@ func TestManagedPostgresCapabilitiesRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.CreateAPIKey(context.Background(), e.acct.ID, hash, "wrong-scope", []string{"usage:read"}); err != nil {
+	if _, err := (*e.Store()).CreateAPIKey(context.Background(), (*e.Acct()).ID, hash, "wrong-scope", []string{"usage:read"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := e.do(t, http.MethodGet, path, nil, map[string]string{"Authorization": "Bearer " + plain}); rec.Code != http.StatusForbidden {
+	if rec := e.Do(t, http.MethodGet, path, nil, map[string]string{"Authorization": "Bearer " + plain}); rec.Code != http.StatusForbidden {
 		t.Fatalf("discovery without postgres read scope: %d %s", rec.Code, rec.Body)
 	}
 }
@@ -105,17 +106,17 @@ func TestManagedPostgresCapabilitiesPlanAndAvailabilityLimits(t *testing.T) {
 		t.Run(string(plan), func(t *testing.T) {
 			limits, _ := api.ManagedPostgresLimitsFor(plan)
 			d := managedpostgres.CapabilityDiscovery{Region: "us-east-1", Capabilities: capabilityOnlyProvider{}.Capabilities(), DatabaseLimit: 2, ProvisioningEnabled: true}
-			out := managedPostgresCapabilitiesView(d, limits)
+			out := apidserver.ManagedPostgresCapabilitiesView(d, limits)
 			if out.DatabaseLimit != min(2, limits.DatabasesMax) || (plan == api.PlanFree && (out.ProvisioningEnabled || len(out.CredentialAccess) != 0)) {
 				t.Fatalf("plan capabilities=%+v", out)
 			}
 			for _, class := range out.ServiceClasses {
-				if !managedPostgresPlanAllows(limits, managedpostgres.Spec{Class: managedpostgres.ServiceClass(class)}) {
+				if !apidserver.ManagedPostgresPlanAllows(limits, managedpostgres.Spec{Class: managedpostgres.ServiceClass(class)}) {
 					t.Fatal("unsupported plan class advertised", class)
 				}
 			}
 			d.Capabilities.ScaleToZero = false
-			out = managedPostgresCapabilitiesView(d, limits)
+			out = apidserver.ManagedPostgresCapabilitiesView(d, limits)
 			if !limits.AlwaysOnAllowed && (out.ProvisioningEnabled || len(out.ServiceClasses) != 0) {
 				t.Fatal("always-on-only backend advertised to restricted plan")
 			}
