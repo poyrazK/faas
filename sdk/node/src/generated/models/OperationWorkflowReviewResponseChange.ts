@@ -9,6 +9,10 @@ import type { OperationWorkflowReviewResponseHandoffAcceptance } from './Operati
  */
 export type OperationWorkflowReviewResponseChange = {
   /**
+   * OperationWorkflowReviewResponseChange.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
+   */
+  handoff_accept_after_seconds?: number;
+  /**
    * OperationWorkflowReviewResponseChange.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
    */
   handoff_acceptance?: OperationWorkflowReviewResponseHandoffAcceptance;

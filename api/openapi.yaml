@@ -79363,6 +79363,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_handoff_acceptance_overdue
           - review_response_decision_review_overdue
           - review_response_decision_review_required
           - review_response_recovered
@@ -80663,6 +80664,14 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        acceptance_due_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual handoff time and effective window, separate from the unchanged decision-review deadline.
+        acceptance_deadline_notified_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.acceptance_deadline_notified_at. One-time unaccepted handoff alert marker, independent of notification acknowledgment.
         acceptance:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffAcceptance'
           description: OperationWorkflowReviewResponseDecisionReview.acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
@@ -80803,6 +80812,12 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        handoff_accept_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: OperationWorkflowReviewResponseRequest.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
         handoff_acceptance:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffAcceptanceRequest'
           description: OperationWorkflowReviewResponseRequest.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
@@ -81000,6 +81015,12 @@ components:
       description: OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision fence, independent of business workflow success.
       required: [owner, plan, status, reviews, created_at, created_by, updated_at, updated_by, history, history_truncated]
       properties:
+        handoff_accept_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
         decision_review_fallback_owner:
           type: string
           maxLength: 256
@@ -81089,6 +81110,12 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        handoff_accept_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: OperationWorkflowReviewResponseChange.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
         handoff_acceptance:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffAcceptance'
           description: OperationWorkflowReviewResponseChange.handoff_acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.

@@ -41,6 +41,10 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    handoff_accept_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReviewResponseRequest.handoff_accept_after_seconds. Future handoff acceptance window,
+    defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
+   """
     handoff_acceptance: OperationWorkflowReviewResponseHandoffAcceptanceRequest | Unset = UNSET
     """Accept the current reassigned review for its responsible team. Parent response must remain active with the
     handed-off owner and a future check-in, without an accompanying decision."""
@@ -72,6 +76,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        handoff_accept_after_seconds = self.handoff_accept_after_seconds
 
         handoff_acceptance: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_acceptance, Unset):
@@ -107,6 +113,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if handoff_accept_after_seconds is not UNSET:
+            field_dict["handoff_accept_after_seconds"] = handoff_accept_after_seconds
         if handoff_acceptance is not UNSET:
             field_dict["handoff_acceptance"] = handoff_acceptance
         if decision_review_fallback_owner is not UNSET:
@@ -140,6 +148,8 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        handoff_accept_after_seconds = d.pop("handoff_accept_after_seconds", UNSET)
 
         _handoff_acceptance = d.pop("handoff_acceptance", UNSET)
         handoff_acceptance: OperationWorkflowReviewResponseHandoffAcceptanceRequest | Unset
@@ -181,6 +191,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            handoff_accept_after_seconds=handoff_accept_after_seconds,
             handoff_acceptance=handoff_acceptance,
             decision_review_fallback_owner=decision_review_fallback_owner,
             decision_review_after_seconds=decision_review_after_seconds,

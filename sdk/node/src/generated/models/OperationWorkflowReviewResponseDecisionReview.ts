@@ -9,6 +9,14 @@ import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowR
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
   /**
+   * OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual handoff time and effective window, separate from the unchanged decision-review deadline.
+   */
+  acceptance_due_at?: string;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.acceptance_deadline_notified_at. One-time unaccepted handoff alert marker, independent of notification acknowledgment.
+   */
+  acceptance_deadline_notified_at?: string;
+  /**
    * OperationWorkflowReviewResponseDecisionReview.acceptance. Explicit acceptance for the current handed-off review, separate from notification acknowledgment and decision revalidation.
    */
   acceptance?: OperationWorkflowReviewResponseHandoffAcceptance;

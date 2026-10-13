@@ -36,6 +36,12 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    acceptance_due_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual
+    handoff time and effective window, separate from the unchanged decision-review deadline."""
+    acceptance_deadline_notified_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.acceptance_deadline_notified_at. One-time unaccepted handoff
+    alert marker, independent of notification acknowledgment."""
     acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset = UNSET
     """Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
     team membership or satisfying the original review deadline."""
@@ -73,6 +79,14 @@ class OperationWorkflowReviewResponseDecisionReview:
 
         health = self.health.to_dict()
 
+        acceptance_due_at: str | Unset = UNSET
+        if not isinstance(self.acceptance_due_at, Unset):
+            acceptance_due_at = self.acceptance_due_at.isoformat()
+
+        acceptance_deadline_notified_at: str | Unset = UNSET
+        if not isinstance(self.acceptance_deadline_notified_at, Unset):
+            acceptance_deadline_notified_at = self.acceptance_deadline_notified_at.isoformat()
+
         acceptance: dict[str, Any] | Unset = UNSET
         if not isinstance(self.acceptance, Unset):
             acceptance = self.acceptance.to_dict()
@@ -107,6 +121,10 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if acceptance_due_at is not UNSET:
+            field_dict["acceptance_due_at"] = acceptance_due_at
+        if acceptance_deadline_notified_at is not UNSET:
+            field_dict["acceptance_deadline_notified_at"] = acceptance_deadline_notified_at
         if acceptance is not UNSET:
             field_dict["acceptance"] = acceptance
         if initial_owner is not UNSET:
@@ -143,6 +161,20 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = cast(list[str], d.pop("changes"))
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
+
+        _acceptance_due_at = d.pop("acceptance_due_at", UNSET)
+        acceptance_due_at: datetime.datetime | Unset
+        if isinstance(_acceptance_due_at, Unset):
+            acceptance_due_at = UNSET
+        else:
+            acceptance_due_at = datetime.datetime.fromisoformat(_acceptance_due_at)
+
+        _acceptance_deadline_notified_at = d.pop("acceptance_deadline_notified_at", UNSET)
+        acceptance_deadline_notified_at: datetime.datetime | Unset
+        if isinstance(_acceptance_deadline_notified_at, Unset):
+            acceptance_deadline_notified_at = UNSET
+        else:
+            acceptance_deadline_notified_at = datetime.datetime.fromisoformat(_acceptance_deadline_notified_at)
 
         _acceptance = d.pop("acceptance", UNSET)
         acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset
@@ -182,6 +214,8 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            acceptance_due_at=acceptance_due_at,
+            acceptance_deadline_notified_at=acceptance_deadline_notified_at,
             acceptance=acceptance,
             initial_owner=initial_owner,
             owner_changed=owner_changed,

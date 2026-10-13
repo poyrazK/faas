@@ -55,6 +55,9 @@ class OperationWorkflowReviewResponse:
     """OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history."""
     history_truncated: bool
     """OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned."""
+    handoff_accept_after_seconds: int | Unset = UNSET
+    """OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting
+    to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned."""
     decision_review_fallback_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponse.decision_review_fallback_owner. Optional distinct fallback team for future
     overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain
@@ -117,6 +120,8 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = self.history_truncated
 
+        handoff_accept_after_seconds = self.handoff_accept_after_seconds
+
         decision_review_fallback_owner = self.decision_review_fallback_owner
 
         decision_review_after_seconds = self.decision_review_after_seconds
@@ -167,6 +172,8 @@ class OperationWorkflowReviewResponse:
                 "history_truncated": history_truncated,
             }
         )
+        if handoff_accept_after_seconds is not UNSET:
+            field_dict["handoff_accept_after_seconds"] = handoff_accept_after_seconds
         if decision_review_fallback_owner is not UNSET:
             field_dict["decision_review_fallback_owner"] = decision_review_fallback_owner
         if decision_review_after_seconds is not UNSET:
@@ -233,6 +240,8 @@ class OperationWorkflowReviewResponse:
 
         history_truncated = d.pop("history_truncated")
 
+        handoff_accept_after_seconds = d.pop("handoff_accept_after_seconds", UNSET)
+
         decision_review_fallback_owner = d.pop("decision_review_fallback_owner", UNSET)
 
         decision_review_after_seconds = d.pop("decision_review_after_seconds", UNSET)
@@ -296,6 +305,7 @@ class OperationWorkflowReviewResponse:
             updated_by=updated_by,
             history=history,
             history_truncated=history_truncated,
+            handoff_accept_after_seconds=handoff_accept_after_seconds,
             decision_review_fallback_owner=decision_review_fallback_owner,
             decision_review_after_seconds=decision_review_after_seconds,
             decision_review=decision_review,

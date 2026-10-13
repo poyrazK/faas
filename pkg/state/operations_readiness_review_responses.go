@@ -28,6 +28,9 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	if input.FallbackOwner != nil && *input.FallbackOwner != "" && (!text(*input.FallbackOwner, api.OperationWorkflowReadinessFollowUpOwnerMaxBytes) || *input.FallbackOwner == input.Owner) {
 		return nil, ErrInvalidArgument
 	}
+	if input.HandoffAcceptAfterSeconds != nil && (*input.HandoffAcceptAfterSeconds < 60 || *input.HandoffAcceptAfterSeconds > 604800) {
+		return nil, ErrInvalidArgument
+	}
 	if input.DecisionReviewAfterSeconds != nil && (*input.DecisionReviewAfterSeconds < 60 || *input.DecisionReviewAfterSeconds > 604800) {
 		return nil, ErrInvalidArgument
 	}
@@ -60,10 +63,14 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 			return nil, err
 		}
 	}
-	response := &api.OperationWorkflowReviewResponse{DecisionReviewAfterSeconds: api.OperationWorkflowReviewResponseDecisionReviewDefaultSeconds, Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
+	response := &api.OperationWorkflowReviewResponse{HandoffAcceptAfterSeconds: api.OperationWorkflowReviewResponseHandoffAcceptDefaultSeconds, DecisionReviewAfterSeconds: api.OperationWorkflowReviewResponseDecisionReviewDefaultSeconds, Owner: input.Owner, Plan: input.Plan, Status: input.Status, Reviews: []api.OperationWorkflowReviewResponseLink{}, History: []api.OperationWorkflowReviewResponseChange{}}
 	if alert.ReviewResponse != nil {
+		response.HandoffAcceptAfterSeconds = effectiveHandoffAcceptanceWindow(alert.ReviewResponse)
 		response.DecisionReviewFallbackOwner = alert.ReviewResponse.DecisionReviewFallbackOwner
 		response.DecisionReviewAfterSeconds = effectiveDecisionReviewWindow(alert.ReviewResponse)
+	}
+	if input.HandoffAcceptAfterSeconds != nil {
+		response.HandoffAcceptAfterSeconds = *input.HandoffAcceptAfterSeconds
 	}
 	if input.DecisionReviewFallbackOwner != nil {
 		response.DecisionReviewFallbackOwner = *input.DecisionReviewFallbackOwner

@@ -12,6 +12,10 @@ import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowRev
  */
 export type OperationWorkflowReviewResponse = {
   /**
+   * OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
+   */
+  handoff_accept_after_seconds?: number;
+  /**
    * OperationWorkflowReviewResponse.decision_review_fallback_owner. Optional distinct fallback team for future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain their pinned fallback.
    */
   decision_review_fallback_owner?: string;
