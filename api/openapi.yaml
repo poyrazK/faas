@@ -31443,8 +31443,8 @@ paths:
         - name: outcome
           in: query
           required: false
-          description: Only matched (enforced) or logged (log-mode) events.
-          schema: { type: string, enum: [matched, logged] }
+          description: Only events with this outcome; detected, warned and blocked are kind=waf detections.
+          schema: { type: string, enum: [matched, logged, detected, warned, blocked] }
         - name: since
           in: query
           required: false
@@ -77486,7 +77486,11 @@ components:
         next_cursor: { type: string }
 
     EdgeRuleEventResponse:
-      description: One sampled request an edge rule matched (ADR-964).
+      description: |
+        One sampled request an edge rule matched (ADR-964), or a request a
+        kind=waf rule detected as a likely attack (ADR-831 amendment 5).
+        Detections carry the CRS rule IDs that scored, their attack
+        categories and the anomaly score, never the matched payload.
       type: object
       required: [id, rule_id, outcome, occurred_at]
       properties:
@@ -77494,7 +77498,10 @@ components:
         rule_id: { type: string }
         rule_name: { type: string, description: Empty once the rule is deleted. }
         rule_kind: { type: string }
-        outcome: { type: string, enum: [matched, logged] }
+        outcome:
+          type: string
+          enum: [matched, logged, detected, warned, blocked]
+          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403).'
         occurred_at: { type: string, format: date-time }
         request_id: { type: string }
         method: { type: string }
@@ -77503,6 +77510,17 @@ components:
         client_ip: { type: string, description: 'Trusted client IP, when known.' }
         country: { type: string }
         user_agent: { type: string }
+        waf_rule_ids:
+          type: array
+          maxItems: 32
+          description: CRS rule IDs that scored in a kind=waf detection.
+          items: { type: integer }
+        waf_categories:
+          type: array
+          maxItems: 16
+          description: CRS attack categories of a kind=waf detection (sqli, xss, lfi, ...).
+          items: { type: string }
+        waf_score: { type: integer, minimum: 0, maximum: 10000, description: CRS inbound anomaly score of a kind=waf detection. }
 
     EdgeRuleStatsResponse:
       description: Per-rule match counts over a window (ADR-960).

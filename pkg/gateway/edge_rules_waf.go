@@ -76,6 +76,9 @@ type WAFSample struct {
 	Header           http.Header
 	Body             []byte
 	BodyTruncated    bool
+	// country resolves the client's country on demand for a detection
+	// event (ResolveCountry); nil when the request had no match context.
+	country func() string
 }
 
 // WAFInspector evaluates samples off the request path. Submit must never
@@ -97,6 +100,7 @@ type WAFInlineResult struct {
 	Outcome    string
 	RuleIDs    []int
 	Categories []string
+	Score      int
 	Seconds    float64
 }
 
@@ -182,6 +186,7 @@ func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample
 		URI:              r.URL.RequestURI(),
 		Proto:            r.Proto,
 		Header:           r.Header.Clone(),
+		country:          wafSampleCountry(r.Context()),
 	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		sample.ClientIP = ip.String()
@@ -208,6 +213,11 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 		for _, id := range res.RuleIDs {
 			h.metrics.ObserveWAFRuleMatch(sample.AppID, id)
 		}
+		event := EdgeRuleEventWarned
+		if rule.Mode == api.EdgeWAFModeBlock {
+			event = EdgeRuleEventBlocked
+		}
+		h.recordWAFEvent(sample, event, res)
 	}
 	h.metrics.ObserveWAFInline(sample.AppID, outcome, res.Seconds)
 	return res.Outcome == WAFInlineDetected

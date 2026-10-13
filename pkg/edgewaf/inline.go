@@ -82,7 +82,7 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 	case err != nil:
 		out.Outcome = gateway.WAFInlineError
 	case res.Detected:
-		out.Outcome, out.RuleIDs, out.Categories = gateway.WAFInlineDetected, res.RuleIDs, res.Categories
+		out.Outcome, out.RuleIDs, out.Categories, out.Score = gateway.WAFInlineDetected, res.RuleIDs, res.Categories, res.Score
 	default:
 		out.Outcome = gateway.WAFInlineClean
 	}

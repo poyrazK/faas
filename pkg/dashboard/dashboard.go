@@ -1003,6 +1003,8 @@ type EdgeRuleEventPageItem struct {
 	Country    string
 	UserAgent  string
 	RequestID  string
+	// WAF summarizes a kind=waf detection (categories, CRS rules, score).
+	WAF string
 }
 
 // EdgeRuleTraceFormData keeps the submitted request context and read-only
