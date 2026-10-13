@@ -20307,7 +20307,7 @@ func (m *MemStore) PutManagedPostgresSecret(_ context.Context, secret AppSecret)
 		secret.ManagedCredentialRef == "" || secret.ManagedCredentialGeneration < 1 {
 		return ErrInvalidArgument
 	}
-	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" {
+	if secret.ManagedPostgresAccess != "read_write" && secret.ManagedPostgresAccess != "read_only" && secret.ManagedPostgresAccess != "migration" && secret.ManagedPostgresAccess != "data_api" && secret.ManagedPostgresAccess != "auth" {
 		return ErrInvalidArgument
 	}
 	m.mu.Lock()

@@ -10213,6 +10213,13 @@ const (
 	DataAPIDiagnosticsMaxRecords = 100000
 )
 
+// Application Auth bounds (ADR-1190). AuthStatementTimeoutMS is the auth
+// login's default statement timeout; release-task migrations may raise it
+// for their own session. It is a runaway-query guard, not a plan quota.
+const (
+	AuthStatementTimeoutMS = 30000
+)
+
 // A compatibility receipt is short-lived authorization for captured declarations.
 const RouteLifecycleApprovalTTL = time.Hour
 

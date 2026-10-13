@@ -17,8 +17,8 @@ import (
 const ownerLogin = "gregale_owner"
 
 type credentialRole struct {
-	name, schemaOwner, marker, scope, database, legacy string
-	access                                             managedpostgres.CredentialAccess
+	name, schemaOwner, authOwner, marker, scope, database, legacy string
+	access                                                        managedpostgres.CredentialAccess
 }
 
 type credentialRoleManager interface {
@@ -45,9 +45,12 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		prefix = "gregale_api_"
 	case managedpostgres.CredentialMigration:
 		prefix = "gregale_mig_"
+	case managedpostgres.CredentialAuth:
+		prefix = "gregale_auth_"
 	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
-		scope: hex.EncodeToString(scope[:20]), marker: "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
+		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
 		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey)}
 }
 
@@ -103,6 +106,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if err := initializeCredentialSchema(ctx, tx, role); err != nil {
 		return err
 	}
+	if role.access == managedpostgres.CredentialAuth {
+		if err := ensureAuthOwner(ctx, tx, role); err != nil {
+			return err
+		}
+	}
 	info, err := credentialRoleInfo(ctx, tx, role.name)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -129,6 +137,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 		}
 		if role.access == managedpostgres.CredentialDataAPI {
 			if _, err := tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(role.name)+" SET statement_timeout = "+strconv.Itoa(api.DataAPIQueryTimeoutMS)); err != nil {
+				return err
+			}
+		}
+		if role.access == managedpostgres.CredentialAuth {
+			if err := configureAuthLogin(ctx, tx, role); err != nil {
 				return err
 			}
 		}
@@ -197,6 +210,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			return err
 		}
 	}
+	if role.access == managedpostgres.CredentialAuth {
+		if err := verifyAuthCredential(ctx, tx, role); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -255,6 +273,9 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
 		return len(i.memberships) == 0 && len(i.configuration) == 1 && i.configuration[0] == "statement_timeout="+strconv.Itoa(api.DataAPIQueryTimeoutMS)
+	}
+	if role.access == managedpostgres.CredentialAuth {
+		return len(i.memberships) == 1 && i.memberships[0] == role.authOwner && sameSettings(i.configuration, authLoginSettings(role))
 	}
 	return len(i.memberships) == 0 && len(i.configuration) == 0
 }
@@ -398,7 +419,7 @@ func (m *sqlCredentialRoles) RestrictInherited(ctx context.Context, material man
 	}
 	defer func() { _ = conn.Close(ctx) }()
 	rows, err := conn.Query(ctx, `SELECT rolname::text FROM pg_roles WHERE rolcanlogin
- AND rolname ~ '^gregale_(rt_|ro_|mig_)?[0-9a-f]{40}$'
+ AND rolname ~ '^gregale_(rt_|ro_|mig_|api_|auth_)?[0-9a-f]{40}$'
  AND COALESCE(shobj_description(oid, 'pg_authid'), '') NOT LIKE $1`, "gregale:credential:v1:"+scope+":%")
 	if err != nil {
 		return err

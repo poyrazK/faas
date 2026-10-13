@@ -293,7 +293,21 @@ const (
 	CredentialMigration CredentialAccess = "migration"
 	// Data API logins receive only api-schema DML, without owner memberships.
 	CredentialDataAPI CredentialAccess = "data_api"
+	// Auth logins act as a separate owner of only the auth and gregale_auth
+	// schemas (ADR-1190). GoTrue enables RLS on its tables, so its runtime
+	// must own them; no customer schema is reachable.
+	CredentialAuth CredentialAccess = "auth"
 )
+
+// Known reports whether access is a portable credential mode. Every
+// validation site uses it so a new mode cannot be missed by one of them.
+func (a CredentialAccess) Known() bool {
+	switch a {
+	case CredentialReadWrite, CredentialReadOnly, CredentialMigration, CredentialDataAPI, CredentialAuth:
+		return true
+	}
+	return false
+}
 
 type EndpointRole string
 
@@ -684,7 +698,7 @@ func (c Capabilities) Validate() error {
 		}
 	}
 	for _, access := range c.CredentialAccess {
-		if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
+		if !access.Known() {
 			return ErrInvalid
 		}
 	}
@@ -701,7 +715,7 @@ func (c Capabilities) Validate() error {
 // the backend prevents Gregale from reserving work that the provider can never
 // reconcile.
 func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
-	if access != CredentialReadWrite && access != CredentialReadOnly && access != CredentialMigration && access != CredentialDataAPI {
+	if !access.Known() {
 		return ErrInvalid
 	}
 	if !contains(c.CredentialAccess, access) {
@@ -786,6 +800,12 @@ type ReadOnlyCredentialProber interface {
 // on a disposable resource before the backend can advertise data_api bindings.
 type DataAPICredentialProber interface {
 	ProbeDataAPICredentials(context.Context, string) (DataAPICredentialEvidence, error)
+}
+
+// AuthCredentialProber verifies auth-schema ownership, customer-schema
+// isolation, recovery and retirement before the backend can advertise auth.
+type AuthCredentialProber interface {
+	ProbeAuthCredentials(context.Context, string) (AuthCredentialEvidence, error)
 }
 
 // RestoreCredentialIsolationProber verifies that the source login cannot
