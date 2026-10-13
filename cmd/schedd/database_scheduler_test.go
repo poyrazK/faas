@@ -59,3 +59,19 @@ func TestEnableDatabaseSchedulerDisabledByDefault(t *testing.T) {
 	}
 	stop()
 }
+
+// adr: 1027 — database nodes are not compute_nodes rows; their vmmd leaves
+// carry <id>.faas and only configured nodes are accepted.
+func TestDatabaseNodeVerifierAcceptsConfiguredNodesOnly(t *testing.T) {
+	verifier := databaseNodeVerifier(&DatabaseSchedulerConfig{Nodes: []DatabaseNodeConfig{{ID: "db-1"}, {ID: "db-2.faas"}}})
+	for _, cn := range []string{"db-1.faas", "db-2.faas"} {
+		if err := verifier.LookupCN(cn); err != nil {
+			t.Errorf("LookupCN(%q) = %v", cn, err)
+		}
+	}
+	for _, cn := range []string{"db-3.faas", "fsn-2.faas", "vmmd.faas", "db-1"} {
+		if err := verifier.LookupCN(cn); err == nil {
+			t.Errorf("LookupCN(%q) accepted", cn)
+		}
+	}
+}

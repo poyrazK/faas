@@ -79,7 +79,7 @@ func loadHostAgeIdentities(path string) ([]*age.X25519Identity, error) {
 }
 
 // scheddServerVerifier permits the registered compute-node identities and the
-// three role-specific service leaves that legitimately call schedd. The
+// role-specific service leaves that legitimately call schedd. The
 // compute_nodes registry intentionally contains host identities, while the
 // gatewayd, meterd, and vmmd schedd-client leaves carry stable role CNs.
 // Applying the registry verifier alone rejects those clients after the
@@ -92,6 +92,7 @@ func scheddServerVerifier(nodeVerifier wire.NodeVerifier) wire.NodeVerifier {
 	serviceVerifier.Set([]string{
 		"gatewayd.faas",
 		"meterd.faas",
+		"pgproxyd.faas", // ADR-1027: wakes databases, records activity
 		"vmmd.faas",
 	})
 	return wire.NewAnyNodeVerifier(nodeVerifier, serviceVerifier)
@@ -1616,7 +1617,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if nodeVerifier != nil {
 		grpcHandler.WithPeerNodeResolver(nodeVerifier)
 	}
-	stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, vmmTLS, grpcHandler, log)
+	// Database nodes (ADR-1027) present node-identity vmmd leaves that are
+	// not compute_nodes rows; without a fleet registry (single box) the
+	// CA alone authenticates vmmd, as on the compute path.
+	loadDatabaseVMMTLS := func(v wire.NodeVerifier) (*tls.Config, error) {
+		if nodeVerifier == nil {
+			v = nil
+		}
+		return cfg.LoadVMMTLSWithPrefixAndVerifierAndReload(v, nil)
+	}
+	stopDatabases, err := enableDatabaseScheduler(ctx, cfg.DatabaseScheduler, pool, loadDatabaseVMMTLS, grpcHandler, log)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,11 @@
+---
+- name: pgproxyd_service — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-pgproxyd
+
+- name: pgproxyd_service — try-restart faas-pgproxyd
+  ansible.builtin.command: systemctl try-restart faas-pgproxyd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-pgproxyd
+  when: pgproxyd_enabled | bool

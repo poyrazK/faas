@@ -74,6 +74,8 @@ type Config struct {
 	HandshakeTimeout time.Duration
 	WakeTimeout      time.Duration
 	TouchInterval    time.Duration
+	// Metrics records session outcomes; nil records nothing.
+	Metrics *Metrics
 }
 
 // Proxy serves PostgreSQL clients.
@@ -139,21 +141,28 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	_ = raw.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
 	conn, err := p.negotiateTLS(raw)
 	if err != nil {
+		p.cfg.Metrics.result("tls")
 		return
 	}
 	defer func() { _ = conn.Close() }()
 	client := pgproto3.NewBackend(conn, conn)
 	session, databaseID, err := p.establish(ctx, conn, client)
 	if err != nil {
+		result := "error"
 		var f *fatal
 		if errors.As(err, &f) {
 			client.Send(&pgproto3.ErrorResponse{Severity: "FATAL", SeverityUnlocalized: "FATAL", Code: f.code, Message: f.msg})
 			_ = client.Flush()
+			result = f.code
 		}
+		p.cfg.Metrics.result(result)
 		p.log.Info("pgproxy: session refused", "database_id", databaseID, "err", err)
 		return
 	}
 	defer func() { _ = session.Close() }()
+	p.cfg.Metrics.result("ok")
+	p.cfg.Metrics.sessionStarted()
+	defer p.cfg.Metrics.sessionEnded()
 	_ = conn.SetDeadline(time.Time{})
 	p.splice(ctx, conn, session, databaseID)
 }
@@ -238,7 +247,9 @@ func (p *Proxy) establish(ctx context.Context, conn *tls.Conn, client *pgproto3.
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
+	wakeStarted := time.Now()
 	target, err := p.waker.Wake(wakeCtx, databaseID)
+	p.cfg.Metrics.woke(time.Since(wakeStarted))
 	if err != nil {
 		return nil, databaseID, &fatal{"57P03", "the database is starting or unavailable; retry shortly"}
 	}

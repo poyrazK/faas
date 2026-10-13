@@ -1,0 +1,32 @@
+#!/usr/sbin/nft -f
+# Managed by Ansible (database_node). ADR-1027: pgproxyd is the only public
+# listener on a database node; the overlay carries control traffic.
+flush ruleset
+
+table inet faas_database_node {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    iifname "lo" accept
+    ct state established,related accept
+    ct state invalid drop
+    meta l4proto { icmp, ipv6-icmp } accept
+    tcp dport 5432 accept
+{% for cidr in database_node_overlay_cidrs %}
+    {{ 'ip6' if ':' in cidr else 'ip' }} saddr {{ cidr }} accept
+{% endfor %}
+{% for cidr in database_node_ssh_cidrs %}
+    {{ 'ip6' if ':' in cidr else 'ip' }} saddr {{ cidr }} tcp dport 22 accept
+{% endfor %}
+{% for port in database_node_overlay_udp_ports %}
+    udp dport {{ port }} accept
+{% endfor %}
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}

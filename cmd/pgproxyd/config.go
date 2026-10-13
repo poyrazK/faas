@@ -38,11 +38,16 @@ type Config struct {
 	VmmdClientCAPath   string `toml:"vmmd_client_ca_path"`
 	// VerifierCacheTTL bounds how long a removed role keeps working.
 	VerifierCacheTTL time.Duration `toml:"verifier_cache_ttl"`
+	// OpsAddr serves /healthz, /readyz and /metrics on loopback.
+	OpsAddr string `toml:"ops_addr"`
 }
+
+// DefaultOpsAddr is pgproxyd's loopback ops listener.
+const DefaultOpsAddr = "127.0.0.1:9109"
 
 // LoadConfig reads and validates the config file.
 func LoadConfig(path string) (*Config, error) {
-	cfg := &Config{ListenAddr: ":5432", ScheddTarget: "unix:///run/faas/schedd.sock", VerifierCacheTTL: 30 * time.Second}
+	cfg := &Config{ListenAddr: ":5432", ScheddTarget: "unix:///run/faas/schedd.sock", VerifierCacheTTL: 30 * time.Second, OpsAddr: DefaultOpsAddr}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return nil, fmt.Errorf("pgproxyd: read %s: %w", path, err)
 	}

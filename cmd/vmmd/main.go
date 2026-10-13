@@ -1443,12 +1443,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// The compute_nodes registry contains vmmd identities, but local
 		// service clients use role-specific leaves and are intentionally not
 		// rows in that registry. Keep the server-side CN gate strict while
-		// allowing the three services that legitimately call vmmd directly.
+		// allowing the services that legitimately call vmmd directly.
+		// pgproxyd opens DatabaseSession streams on database nodes
+		// (ADR-1027); the RPC itself admits no other caller.
 		serviceVerifier := wire.NewInmemNodeVerifier()
 		serviceVerifier.Set([]string{
 			"builderd.faas",
 			"gatewayd.faas",
 			"imaged.faas",
+			"pgproxyd.faas",
 			"schedd.faas",
 		})
 		serverVerifier = wire.NewAnyNodeVerifier(nodeVerifier, controlPlaneVerifier, serviceVerifier)

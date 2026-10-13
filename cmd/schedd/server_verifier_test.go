@@ -16,6 +16,7 @@ func TestScheddServerVerifierAcceptsRegisteredNodesAndServiceClients(t *testing.
 		"fsn-2.faas",
 		"gatewayd.faas",
 		"meterd.faas",
+		"pgproxyd.faas",
 		"vmmd.faas",
 	} {
 		if err := verifier.LookupCN(cn); err != nil {

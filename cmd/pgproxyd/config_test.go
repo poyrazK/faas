@@ -28,7 +28,7 @@ db_url_path = "/u"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ListenAddr != ":5432" || cfg.ScheddTarget != "unix:///run/faas/schedd.sock" || cfg.VerifierCacheTTL != 30*time.Second {
+	if cfg.ListenAddr != ":5432" || cfg.ScheddTarget != "unix:///run/faas/schedd.sock" || cfg.VerifierCacheTTL != 30*time.Second || cfg.OpsAddr != DefaultOpsAddr {
 		t.Fatalf("defaults = %+v", cfg)
 	}
 	if _, err := LoadConfig(write(`tls_cert_path = "/c"`)); err == nil || !strings.Contains(err.Error(), "host_suffix") {

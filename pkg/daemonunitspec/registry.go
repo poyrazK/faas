@@ -44,6 +44,9 @@ type Role string
 const (
 	RoleControlPlane Role = "control-plane"
 	RoleComputeOnly  Role = "compute-only"
+	// RoleDatabase hosts native managed databases (ADR-1027): vmmd in
+	// database mode and pgproxyd, never app VMs.
+	RoleDatabase Role = "database"
 )
 
 // DaemonsForRole returns the Registry daemon names that run on a host of
@@ -140,6 +143,7 @@ var OptionalRegistry = []Entry{
 	{Name: "s3-gatewayd", Unit: UnitS3Gateway, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:8084", ReadyzURL: "http://127.0.0.1:9096/readyz"}},
 	{Name: "bridged", Unit: UnitBridged, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:9098"}},
 	{Name: "apid-clone-worker", Unit: UnitApidCloneWorker, Role: RoleControlPlane, Critical: false, Lifecycle: Lifecycle{After: []string{"apid"}, Probe: ProbeSystemd}},
+	{Name: "pgproxyd", Unit: UnitPgproxyd, Role: RoleDatabase, Critical: false, Lifecycle: Lifecycle{After: []string{"vmmd"}, Probe: ProbeTCP, ProbeTarget: "127.0.0.1:5432", ReadyzURL: "http://127.0.0.1:9109/readyz"}},
 }
 
 // UnitEntries returns fresh registry storage containing both always-on and

@@ -242,6 +242,44 @@ Evidence:
 - **Metal, driver:** `TestMetalDriverEndToEnd` connects through the
   forwarder to a parked database in 1.07 s, against 1.01 s direct.
 
+### Deployment
+
+Database nodes are an auxiliary host group, like the ADR-372 egress
+gateway: inventory group `database_nodes`, playbook
+`deploy/ansible/database_node.yml`, `make bootstrap-database-nodes`. They
+are not a fourth manifest box role yet.
+
+- **pgproxyd** is an `OptionalRegistry` unit (`pkg/daemonunitspec`,
+  generated into `roles/pgproxyd_service/files`). It is not a core daemon:
+  the control-plane and legacy trees skip it.
+  - It runs as its own `faas-pgproxyd` user with an empty capability set and
+    the platform's sandbox. Its secrets are owner-only files in
+    `/etc/faas/pgproxyd/` (public TLS key, decoy key, database URL), and it
+    refuses group- or world-readable ones.
+  - It is `Type=notify` with a 60 s watchdog. `127.0.0.1:9109` serves
+    `/healthz`, `/readyz` (control-plane database ping, schedd connection,
+    listener) and `/metrics` (`pgproxyd_sessions_total{result}`,
+    `pgproxyd_active_sessions`, `pgproxyd_wake_seconds`).
+- **Database access.** pgproxyd reads the control-plane database as
+  `faas_pgproxyd`, which may only `SELECT database_role_verifiers`. It never
+  uses the fleet-wide `faas` role: it is the one daemon that faces the
+  internet. The playbook creates the role on the control plane. The postgres
+  role's `faas_postgres_pgproxyd_cidrs` admits it in pg_hba.
+- **mTLS.** `pkg/pki` gains a `database` box role. Its leaves are vmmd's,
+  under the node identity `<id>.faas`, plus `pgproxyd/{schedd,vmmd}-client`
+  with CN `pgproxyd.faas`. Operators issue them with
+  `gregalectl pki issue-bundle --box-role database --cn <id>`.
+  - schedd and vmmd allowlist `pgproxyd.faas` at the handshake.
+  - schedd's database scheduler verifies database-node vmmd certificates
+    against its configured node ids. It does not use the `compute_nodes`
+    registry, which never lists database nodes.
+- **Firewall** (`database_node` role): only TCP 5432 is public. The overlay
+  is trusted; SSH is admitted only from listed ranges; forwarding is
+  dropped, because database VMs have no network.
+
+Still manual: issuing the public `*.<suffix>` certificate (pgproxyd takes
+it as files), and vmmd's database-mode configuration on the node.
+
 ### Driver
 
 `pkg/managedpostgres/firecracker` is the `managedpostgres.Provider` for this

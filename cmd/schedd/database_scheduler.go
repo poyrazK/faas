@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/dbsched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // DatabaseSchedulerConfig enables schedd's database scheduler (ADR-1027):
@@ -58,12 +60,40 @@ func (c DatabaseNodeConfig) node() (dbsched.Node, error) {
 	return dbsched.Node{ID: c.ID, TargetURL: c.TargetURL, AdmissionCeilingMB: c.AdmissionCeilingMB, VolumeCapacityBytes: c.VolumeCapacityBytes, Lifecycle: lifecycle}, nil
 }
 
+// databaseNodeVerifier binds database-node vmmd certificates to the
+// configured nodes. A database node's vmmd leaf carries the node identity
+// <id>.faas (`gregalectl pki issue-bundle --box-role database --cn <id>`).
+func databaseNodeVerifier(cfg *DatabaseSchedulerConfig) wire.NodeVerifier {
+	names := make([]string, 0, len(cfg.Nodes))
+	for _, node := range cfg.Nodes {
+		id := strings.TrimSpace(node.ID)
+		if id == "" {
+			continue
+		}
+		if !strings.HasSuffix(id, ".faas") {
+			id += ".faas"
+		}
+		names = append(names, id)
+	}
+	verifier := wire.NewInmemNodeVerifier()
+	verifier.Set(names)
+	return verifier
+}
+
 // enableDatabaseScheduler registers the configured database nodes, settles
 // transitions a previous schedd left in flight, starts the idle sweep and
 // turns the database RPCs on. It returns a cleanup func.
-func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, pool *pgxpool.Pool, vmmTLS *tls.Config, handler *scheddgrpc.Server, log *slog.Logger) (func(), error) {
+//
+// loadVMMTLS builds the client TLS for database-node vmmd. It receives
+// databaseNodeVerifier(cfg): database nodes are not in compute_nodes, so
+// the compute registry verifier would refuse their vmmd certificates.
+func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, pool *pgxpool.Pool, loadVMMTLS func(wire.NodeVerifier) (*tls.Config, error), handler *scheddgrpc.Server, log *slog.Logger) (func(), error) {
 	if cfg == nil {
 		return func() {}, nil
+	}
+	vmmTLS, err := loadVMMTLS(databaseNodeVerifier(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("schedd: database node TLS: %w", err)
 	}
 	store, err := dbsched.NewPgStore(pool)
 	if err != nil {

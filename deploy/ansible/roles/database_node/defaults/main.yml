@@ -1,0 +1,13 @@
+---
+# ADR-1027 database node firewall. pgproxyd (5432) is the only public
+# listener; the overlay carries schedd -> vmmd and gatewayd -> pgproxyd.
+# Database VMs have no network interface, so nothing is forwarded.
+
+# Overlay ranges trusted for every port (schedd, the app route, metrics).
+database_node_overlay_cidrs: "{{ overlay_cidrs | default([]) }}"
+# Sources allowed to reach SSH. Empty keeps SSH reachable only over the
+# overlay.
+database_node_ssh_cidrs: []
+# UDP ports the overlay transport needs from the internet (WireGuard 51820,
+# Tailscale 41641).
+database_node_overlay_udp_ports: []

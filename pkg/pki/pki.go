@@ -256,6 +256,10 @@ func Roles() []Role {
 		{CommonName: "imaged.faas", Kind: KindClient, Directory: "imaged", Filename: "vmmd-client", AltNames: ProductionSANs("imaged.faas")},
 		{CommonName: "imaged.faas", Kind: KindClient, Directory: "imaged", Filename: "githubd-client", AltNames: ProductionSANs("imaged.faas")},
 		{CommonName: "gatewayd-internal-public.faas", Kind: KindClient, Directory: "gatewayd-internal-public", Filename: "leader-client", AltNames: MergeProductionSANs("gatewayd-internal-public.faas", "gatewayd-public.faas")},
+		// ADR-1027: pgproxyd on a database node wakes databases through
+		// schedd and opens DatabaseSession streams on vmmd.
+		{CommonName: "pgproxyd.faas", Kind: KindClient, Directory: "pgproxyd", Filename: "schedd-client", AltNames: ProductionSANs("pgproxyd.faas")},
+		{CommonName: "pgproxyd.faas", Kind: KindClient, Directory: "pgproxyd", Filename: "vmmd-client", AltNames: ProductionSANs("pgproxyd.faas")},
 	}
 
 	all := make([]Role, 0, len(serverRoles)+len(clientRoles))
@@ -302,6 +306,8 @@ func RolesForBox(role string) []Role {
 		return rolesForControlPlane()
 	case "compute-only":
 		return rolesForComputeOnly()
+	case "database":
+		return rolesForDatabase()
 	case "single-box", "":
 		return Roles()
 	default:
@@ -379,6 +385,24 @@ func rolesForComputeOnly() []Role {
 		"gatewayd-internal-public": true, // fsn-2's standby dialer (ADR-084)
 	}
 	return filterRolesByDirectory(keep)
+}
+
+// rolesForDatabase returns the leaves a database node needs (ADR-1027). It
+// runs vmmd, which serves the database VM RPCs to schedd under the node's
+// own identity, and pgproxyd, which dials schedd and vmmd. App VMs never
+// run there, so none of the compute data-path leaves are issued.
+func rolesForDatabase() []Role {
+	return filterRolesByDirectory(map[string]bool{
+		"vmmd":     true, // vmmd/server under the node identity
+		"pgproxyd": true, // pgproxyd/{schedd-client,vmmd-client}
+	})
+}
+
+// UsesNodeIdentity reports whether a box role's node-identity leaves (see
+// RoleUsesNodeIdentity) carry the host's own CN: compute nodes and database
+// nodes, whose vmmd the control plane verifies against its node registry.
+func UsesNodeIdentity(hostRole string) bool {
+	return hostRole == "compute-only" || hostRole == "database"
 }
 
 // filterRolesByDirectory returns the subset of Roles() whose Directory

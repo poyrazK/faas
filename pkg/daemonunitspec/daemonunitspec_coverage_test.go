@@ -424,7 +424,7 @@ func TestUnitS3Gateway_OptionalShape(t *testing.T) {
 }
 
 func TestOptionalRegistry_ExplicitlyConfiguredDataPlanes(t *testing.T) {
-	if len(OptionalRegistry) != 3 || OptionalRegistry[0].Name != "s3-gatewayd" || OptionalRegistry[1].Name != "bridged" || OptionalRegistry[2].Name != "apid-clone-worker" {
+	if len(OptionalRegistry) != 4 || OptionalRegistry[0].Name != "s3-gatewayd" || OptionalRegistry[1].Name != "bridged" || OptionalRegistry[2].Name != "apid-clone-worker" || OptionalRegistry[3].Name != "pgproxyd" {
 		t.Fatalf("optional registry = %+v, want [s3-gatewayd, bridged, apid-clone-worker]", OptionalRegistry)
 	}
 	for _, core := range Registry {

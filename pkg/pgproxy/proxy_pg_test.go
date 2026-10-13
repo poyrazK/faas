@@ -27,6 +27,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -106,6 +108,7 @@ type harness struct {
 	creds     *mapCredentials
 	waker     *countingWaker
 	dbName    string
+	metrics   *Metrics
 }
 
 func newHarness(t *testing.T) *harness {
@@ -121,8 +124,9 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { _ = admin.Close(context.Background()) })
 	cfg := admin.Config()
-	h := &harness{backend: admin, creds: &mapCredentials{verifiers: map[string]pgscram.Verifier{}}, waker: &countingWaker{}, dbName: cfg.Database}
-	p, err := New(Config{TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)), TouchInterval: 50 * time.Millisecond},
+	h := &harness{backend: admin, creds: &mapCredentials{verifiers: map[string]pgscram.Verifier{}}, waker: &countingWaker{}, dbName: cfg.Database,
+		metrics: NewMetrics(prometheus.NewRegistry())}
+	p, err := New(Config{TLS: selfSignedTLS(t), HostSuffix: testSuffix, DecoySecret: []byte(strings.Repeat("k", 32)), TouchInterval: 50 * time.Millisecond, Metrics: h.metrics},
 		h.creds, h.waker, tcpDialer{addr: net.JoinHostPort(cfg.Host, strconv.Itoa(int(cfg.Port)))}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -223,6 +227,14 @@ func TestProxyAuthenticatesBeforeWaking(t *testing.T) {
 		if h.waker.wakes.Load() != before {
 			t.Errorf("%s: woke the database before authenticating", tc.name)
 		}
+	}
+	for result, want := range map[string]float64{"ok": 1, "28P01": 3, "tls": 1, "08004": 1} {
+		if got := testutil.ToFloat64(h.metrics.sessions.WithLabelValues(result)); got != want {
+			t.Errorf("pgproxyd_sessions_total{result=%q} = %v, want %v", result, got, want)
+		}
+	}
+	if got := testutil.ToFloat64(h.metrics.active); got != 0 {
+		t.Errorf("pgproxyd_active_sessions = %v after every session ended", got)
 	}
 	h.creds.mu.Lock()
 	defer h.creds.mu.Unlock()

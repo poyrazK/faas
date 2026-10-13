@@ -1,0 +1,174 @@
+---
+# pgproxyd_service — the PostgreSQL proxy of native managed databases
+# (ADR-1027) on a database node. It faces the internet, so it runs as its own
+# user and every secret it reads is an owner-only file of that user;
+# pgproxyd refuses group- or world-readable secrets at startup.
+
+- name: pgproxyd_service — require every input when enabled
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in (groups['database_nodes'] | default([]))
+      - pgproxyd_host_suffix | length > 0
+      - pgproxyd_schedd_target | length > 0
+      - pgproxyd_tls_cert_src | length > 0
+      - pgproxyd_tls_key_src | length > 0
+      - pgproxyd_db_url | length > 0
+    fail_msg: >-
+      pgproxyd runs only on hosts in the database_nodes group and needs
+      pgproxyd_host_suffix, pgproxyd_schedd_target, pgproxyd_tls_cert_src,
+      pgproxyd_tls_key_src and pgproxyd_db_url.
+  when: pgproxyd_enabled | bool
+
+- name: pgproxyd_service — create the service group
+  ansible.builtin.group:
+    name: faas-pgproxyd
+    system: true
+
+- name: pgproxyd_service — create the service user
+  ansible.builtin.user:
+    name: faas-pgproxyd
+    group: faas-pgproxyd
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: pgproxyd_service — create the secret directory
+  ansible.builtin.file:
+    path: /etc/faas/pgproxyd
+    state: directory
+    owner: root
+    group: faas-pgproxyd
+    mode: "0750"
+
+- name: pgproxyd_service — install the public certificate chain
+  ansible.builtin.copy:
+    src: "{{ pgproxyd_tls_cert_src }}"
+    dest: /etc/faas/pgproxyd/tls.crt
+    owner: faas-pgproxyd
+    group: faas-pgproxyd
+    mode: "0444"
+  when: pgproxyd_enabled | bool
+  notify: restart faas-pgproxyd
+
+- name: pgproxyd_service — install the public certificate key
+  ansible.builtin.copy:
+    src: "{{ pgproxyd_tls_key_src }}"
+    dest: /etc/faas/pgproxyd/tls.key
+    owner: faas-pgproxyd
+    group: faas-pgproxyd
+    mode: "0400"
+  no_log: true
+  when: pgproxyd_enabled | bool
+  notify: restart faas-pgproxyd
+
+- name: pgproxyd_service — install the read-only control-plane DSN
+  ansible.builtin.copy:
+    content: "{{ pgproxyd_db_url }}\n"
+    dest: /etc/faas/pgproxyd/db-url
+    owner: faas-pgproxyd
+    group: faas-pgproxyd
+    mode: "0400"
+  no_log: true
+  when: pgproxyd_enabled | bool
+  notify: restart faas-pgproxyd
+
+# The decoy key makes unknown databases and roles fail exactly like a wrong
+# password. It is minted once per host and never rotated by a converge:
+# force=false keeps the existing key.
+- name: pgproxyd_service — mint the decoy key once
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}\n"
+    dest: /etc/faas/pgproxyd/decoy
+    owner: faas-pgproxyd
+    group: faas-pgproxyd
+    mode: "0400"
+    force: false
+  no_log: true
+  notify: restart faas-pgproxyd
+
+- name: pgproxyd_service — stage the database-node trust bundle
+  ansible.builtin.copy:
+    src: "{{ pgproxyd_pki_source }}/"
+    dest: /etc/faas/tls/
+    owner: root
+    group: root
+    mode: preserve
+  no_log: true
+  when: pgproxyd_pki_source | length > 0
+  notify: restart faas-pgproxyd
+
+# The issuer stores private keys root-only. Grant pgproxyd its own two
+# client leaves and nothing else.
+- name: pgproxyd_service — let pgproxyd reach its client leaves
+  ansible.builtin.file:
+    path: /etc/faas/tls/pgproxyd
+    state: directory
+    owner: root
+    group: faas-pgproxyd
+    mode: "0750"
+
+- name: pgproxyd_service — let pgproxyd read its client keys
+  ansible.builtin.file:
+    path: "/etc/faas/tls/pgproxyd/{{ item }}.key"
+    owner: root
+    group: faas-pgproxyd
+    mode: "0440"
+  loop:
+    - schedd-client
+    - vmmd-client
+  when: pgproxyd_enabled | bool
+
+- name: pgproxyd_service — render pgproxyd.toml
+  ansible.builtin.template:
+    src: pgproxyd.toml.j2
+    dest: /etc/faas/pgproxyd.toml
+    owner: root
+    group: faas-pgproxyd
+    mode: "0640"
+  notify: restart faas-pgproxyd
+
+- name: pgproxyd_service — install systemd unit
+  ansible.builtin.copy:
+    src: faas-pgproxyd.service
+    dest: /etc/systemd/system/faas-pgproxyd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-pgproxyd
+
+# Binaries arrive with the release, never from this role.
+- name: pgproxyd_service — check for the released binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/pgproxyd
+  register: pgproxyd_binary
+
+- name: pgproxyd_service — enable and start
+  ansible.builtin.systemd_service:
+    name: faas-pgproxyd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - pgproxyd_enabled | bool
+    - pgproxyd_binary.stat.exists
+
+- name: pgproxyd_service — note a missing release
+  ansible.builtin.debug:
+    msg: >-
+      pgproxyd is configured but /opt/faas/current/bin/pgproxyd is missing;
+      it starts on the converge after a release containing it is installed.
+  when:
+    - pgproxyd_enabled | bool
+    - not pgproxyd_binary.stat.exists
+
+- name: pgproxyd_service — wait for readiness
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9109/readyz
+    status_code: 200
+  register: pgproxyd_ready
+  retries: 30
+  delay: 2
+  until: pgproxyd_ready.status == 200
+  when:
+    - pgproxyd_enabled | bool
+    - pgproxyd_binary.stat.exists

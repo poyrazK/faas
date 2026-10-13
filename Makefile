@@ -819,6 +819,10 @@ bootstrap-compute: ansible-preflight ## Bootstrap the compute-nodes group. Honor
 	@test -f deploy/ansible/bootstrap.yml || (echo "deploy/ansible/bootstrap.yml missing — run on the control-plane / compute node, not the dev box"; exit 1)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/bootstrap.yml --limit $${ANSIBLE_LIMIT:-compute_nodes}
 
+.PHONY: bootstrap-database-nodes
+bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on the control plane, then converge every database node (firewall + pgproxyd).
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/database_node.yml
+
 .PHONY: bootstrap-tenant-egress-gateway
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml

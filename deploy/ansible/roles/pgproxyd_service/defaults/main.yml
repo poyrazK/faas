@@ -1,0 +1,30 @@
+---
+# ADR-1027: pgproxyd, the PostgreSQL proxy of native managed databases and
+# the only public listener on a database node. Off until the operator
+# supplies every input below.
+pgproxyd_enabled: false
+
+# SNI suffix after the database id: clients connect to <id>.<suffix>.
+pgproxyd_host_suffix: ""
+pgproxyd_listen_addr: ":5432"
+pgproxyd_verifier_cache_ttl: "30s"
+
+# Control-plane schedd over the overlay, authenticated with the
+# pgproxyd.faas client leaf (e.g. "tcp://100.64.0.10:7444").
+pgproxyd_schedd_target: ""
+
+# Publicly trusted certificate chain and key for *.<suffix>. Files on the
+# Ansible controller; the key is installed owner-only.
+pgproxyd_tls_cert_src: ""
+pgproxyd_tls_key_src: ""
+
+# Read-only control-plane DSN for the faas_pgproxyd role (Ansible Vault).
+# The role may only SELECT database_role_verifiers; database_node.yml
+# creates it on the control plane.
+pgproxyd_db_url: ""
+
+# Trust bundle from the PKI issuer:
+#   gregalectl pki issue-bundle --issuer-root ... --output-dir DIR \
+#     --box-role database --cn <node> --transport-san <overlay-ip>
+# Empty keeps the bundle already installed under /etc/faas/tls.
+pgproxyd_pki_source: ""

@@ -203,6 +203,11 @@
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
+      # ADR-1027: database nodes' pgproxyd reads role verifiers as the
+      # read-only faas_pgproxyd role (database_node.yml creates it).
+      {% for cidr in (faas_postgres_pgproxyd_cidrs | default([])) %}
+      host    faas            faas_pgproxyd                           {{ cidr }}                scram-sha-256
+      {% endfor %}
       host    all             all             127.0.0.1/32            reject
       host    all             all             ::1/128                 reject
   register: pg_hba

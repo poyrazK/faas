@@ -1,0 +1,33 @@
+---
+# database_node — host baseline of a native managed-database node (ADR-1027).
+
+- name: database_node — require the database_nodes group
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in (groups['database_nodes'] | default([]))
+      - database_node_overlay_cidrs | length > 0
+    fail_msg: >-
+      database_node runs only on hosts in the database_nodes group and needs
+      the overlay ranges (database_node_overlay_cidrs or overlay_cidrs);
+      without them schedd could not reach vmmd.
+
+- name: database_node — install nftables
+  ansible.builtin.package:
+    name: nftables
+    state: present
+
+- name: database_node — render the firewall
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: nft -c -f %s
+  notify: reload database node firewall
+
+- name: database_node — enable the firewall at boot
+  ansible.builtin.systemd_service:
+    name: nftables.service
+    enabled: true
+    state: started

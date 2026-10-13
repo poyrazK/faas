@@ -1,0 +1,67 @@
+---
+# ADR-1027: converge native managed-database nodes. Run with an inventory
+# whose database_nodes group lists them (and control_plane the issuer):
+#
+#   make ANSIBLE_INVENTORY=... bootstrap-database-nodes
+#
+# The control plane goes first: pgproxyd authenticates clients against role
+# verifiers it reads as faas_pgproxyd, a role that may only SELECT
+# database_role_verifiers. Admit the database nodes' overlay addresses with
+# faas_postgres_pgproxyd_cidrs (postgres role) before enabling pgproxyd.
+
+- name: Authorize pgproxyd on the control-plane database
+  hosts: control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: database nodes — require the faas_pgproxyd password
+      ansible.builtin.assert:
+        that:
+          - faas_pgproxyd_postgres_password | default('') | length > 0
+        fail_msg: >-
+          Set faas_pgproxyd_postgres_password (Ansible Vault); pgproxyd's
+          pgproxyd_db_url must use the same password.
+
+    - name: database nodes — create the read-only faas_pgproxyd role
+      community.postgresql.postgresql_user:
+        name: faas_pgproxyd
+        password: "{{ faas_pgproxyd_postgres_password }}"
+        role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE,NOINHERIT
+        state: present
+      become_user: postgres
+      no_log: true
+
+    - name: database nodes — let faas_pgproxyd connect to faas
+      community.postgresql.postgresql_privs:
+        database: faas
+        roles: faas_pgproxyd
+        type: database
+        privs: CONNECT
+      become_user: postgres
+
+    - name: database nodes — let faas_pgproxyd read role verifiers only
+      community.postgresql.postgresql_privs:
+        database: faas
+        roles: faas_pgproxyd
+        type: table
+        schema: public
+        objs: database_role_verifiers
+        privs: SELECT
+      become_user: postgres
+
+    - name: database nodes — let faas_pgproxyd resolve the public schema
+      community.postgresql.postgresql_privs:
+        database: faas
+        roles: faas_pgproxyd
+        type: schema
+        objs: public
+        privs: USAGE
+      become_user: postgres
+
+- name: Converge database nodes
+  hosts: database_nodes
+  become: true
+  gather_facts: true
+  roles:
+    - role: database_node
+    - role: pgproxyd_service
