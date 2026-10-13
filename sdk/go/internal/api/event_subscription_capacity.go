@@ -73,3 +73,40 @@ func (c *Client) GetEventSubscriptionCapacityCommand(ctx context.Context, app, i
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/delivery-control/capacity/commands/"+url.PathEscape(command), nil, &out)
 	return out, err
 }
+
+// History pages are fresh observations of retained evidence, not frozen snapshots.
+type EventSubscriptionCapacityCommands struct {
+	AppID          string                                    `json:"app_id"`
+	SubscriptionID string                                    `json:"subscription_id"`
+	Outcome        string                                    `json:"outcome"`
+	ObservedAt     time.Time                                 `json:"observed_at"`
+	Receipts       []EventSubscriptionCapacityCommandReceipt `json:"receipts"`
+	HasMore        bool                                      `json:"has_more"`
+	NextAfter      string                                    `json:"next_after,omitempty"`
+}
+
+type EventSubscriptionCapacityCommandsQuery struct {
+	Outcome string
+	After   string
+	Limit   int
+}
+
+func (c *Client) ListEventSubscriptionCapacityCommands(ctx context.Context, app, id string, query EventSubscriptionCapacityCommandsQuery) (EventSubscriptionCapacityCommands, error) {
+	var out EventSubscriptionCapacityCommands
+	values := url.Values{}
+	if query.Outcome != "" {
+		values.Set("outcome", query.Outcome)
+	}
+	if query.After != "" {
+		values.Set("after", query.After)
+	}
+	if query.Limit != 0 {
+		values.Set("limit", fmt.Sprint(query.Limit))
+	}
+	path := "/v1/apps/" + url.PathEscape(app) + "/event-subscriptions/" + url.PathEscape(id) + "/delivery-control/capacity/commands"
+	if len(values) > 0 {
+		path += "?" + values.Encode()
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}

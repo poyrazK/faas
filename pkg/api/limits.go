@@ -10431,6 +10431,10 @@ const EventExecutionLineageControlPlanMaxBytes = 128 * 1024
 const EventExecutionLineageControlReportMaxBytes = 1024 * 1024
 
 // Capacity command evidence is bounded independently of delivery slots.
+const EventSubscriptionCapacityCommandPageDefault = 25
+const EventSubscriptionCapacityCommandPageMax = 100
+const EventSubscriptionCapacityCommandCursorMaxBytes = 512
+
 const EventSubscriptionCapacityCommandMaxReceipts = 128
 const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
 const EventSubscriptionCapacityCommandPruneBatch = 500

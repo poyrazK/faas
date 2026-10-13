@@ -68,3 +68,11 @@ WITH expired AS (
  ORDER BY retain_until,subscription_id,command_id FOR UPDATE SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
 )
 DELETE FROM event_subscription_capacity_commands c USING expired e WHERE c.subscription_id=e.subscription_id AND c.command_id=e.command_id;
+
+-- name: ListEventSubscriptionCapacityCommands :many
+SELECT * FROM event_subscription_capacity_commands
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid
+ AND retain_until>sqlc.arg(now_at)::timestamptz AND recorded_at<=sqlc.arg(now_at)::timestamptz
+ AND (sqlc.arg(outcome)::text='any' OR receipt->>'outcome'=sqlc.arg(outcome)::text)
+ AND (NOT sqlc.arg(has_after)::boolean OR (recorded_at,command_id)<(sqlc.arg(after_recorded_at)::timestamptz,sqlc.arg(after_command_id)::uuid))
+ORDER BY recorded_at DESC,command_id DESC LIMIT sqlc.arg(page_limit)::integer;

@@ -1354,6 +1354,8 @@ from .event_storage_usage_response import EventStorageUsageResponse
 from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
 from .event_subscription_capacity_command_receipt import EventSubscriptionCapacityCommandReceipt
 from .event_subscription_capacity_command_receipt_outcome import EventSubscriptionCapacityCommandReceiptOutcome
+from .event_subscription_capacity_commands import EventSubscriptionCapacityCommands
+from .event_subscription_capacity_commands_outcome import EventSubscriptionCapacityCommandsOutcome
 from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
@@ -1735,6 +1737,7 @@ from .list_event_execution_lineage_retry_jobs_status import ListEventExecutionLi
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
+from .list_event_subscription_capacity_commands_outcome import ListEventSubscriptionCapacityCommandsOutcome
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -5411,6 +5414,8 @@ __all__ = (
     "EventStorageUsageResponseLimits",
     "EventSubscriptionCapacityCommandReceipt",
     "EventSubscriptionCapacityCommandReceiptOutcome",
+    "EventSubscriptionCapacityCommands",
+    "EventSubscriptionCapacityCommandsOutcome",
     "EventSubscriptionCapacityGuard",
     "EventSubscriptionCapacityRequest",
     "EventSubscriptionDeliveryControl",
@@ -5782,6 +5787,7 @@ __all__ = (
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",
+    "ListEventSubscriptionCapacityCommandsOutcome",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",

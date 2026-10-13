@@ -2671,6 +2671,19 @@ Set a lower live-delivery limit for one subscription
 | `--max-pending <N>` | pending plus dispatching ceiling; 0 restores plan default |  |
 | `--yes` | confirm changing subscription capacity |  |
 
+### events subscription-capacity-commands
+
+List a page of retained original capacity-command receipts
+
+`gregale events subscription-capacity-commands [--outcome <FILTER>] [--limit <N>] [--after <CURSOR>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--outcome <FILTER>` | any (default), applied or unchanged |  |
+| `--limit <N>` | receipts per page (default 25; maximum 100) |  |
+| `--after <CURSOR>` | next_after for the same app, subscription and outcome filter |  |
+| `--timeout <DURATION>` | total read deadline (default 5s; maximum 1m) |  |
+
 ### events subscription-capacity-command
 
 Read retained original capacity-command evidence without applying a change

@@ -3286,3 +3286,15 @@ gregale events subscription-capacity-command APP SUBSCRIPTION_ID COMMAND_UUID --
 The GET endpoint `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}` requires `apps:read` or `admin` and MFA. Go `GetEventSubscriptionCapacityCommand`, Node `getEventSubscriptionCapacityCommand` and Python `faas_sdk.api.events.get_event_subscription_capacity_command` (`sync` or `asyncio`) return the original receipt. `--json` includes the original proposed value, reviewed expectations, previous setting, outcome, original effective and plan ceilings, recording time and fixed retention deadline. The lookup does not change controls or extend the thirty-day retention window.
 
 A receipt describes the original successful command, even if later commands changed capacity. A 404 means retained evidence is unavailable for the owned target; it does not establish that the command never ran. Inspect current controls separately before deciding whether a new change is needed.
+
+### Discover recent capacity commands
+
+```sh
+gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25
+# Continue using next_after from the response and the same scope/filter:
+gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25 --after CURSOR
+```
+
+The read-only GET collection at `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands` requires `apps:read` or `admin` and MFA. Outcome can be `any`, `applied`, or `unchanged`. The page limit defaults to 25 and accepts 1–100; explicit HTTP zero is invalid. Go `ListEventSubscriptionCapacityCommands`, Node `listEventSubscriptionCapacityCommands`, and Python `faas_sdk.api.events.list_event_subscription_capacity_commands` (`sync` or `asyncio`) expose the same listing. `--json` includes scope, normalized filter, observation time, original receipts, `has_more`, and `next_after` when available. The CLI fetches one page per invocation.
+
+Receipts sort newest first by recording time, with command UUID descending as a tie-breaker. Cursors are bound to account, app, subscription and outcome filter; changing page size is allowed. Each page observes current retained evidence, so expiry can remove entries and newer commands above a continuation boundary require refreshing from the first page. An accessible empty history returns an empty array. Recording order does not imply delivery order, and missing evidence does not prove a command never ran. Listing never changes controls or extends receipt retention.

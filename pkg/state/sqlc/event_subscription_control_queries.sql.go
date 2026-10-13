@@ -310,6 +310,66 @@ func (q *Queries) EventSubscriptionControlUsePermit(ctx context.Context, db DBTX
 	return err
 }
 
+const listEventSubscriptionCapacityCommands = `-- name: ListEventSubscriptionCapacityCommands :many
+SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND retain_until>$4::timestamptz AND recorded_at<=$4::timestamptz
+ AND ($5::text='any' OR receipt->>'outcome'=$5::text)
+ AND (NOT $6::boolean OR (recorded_at,command_id)<($7::timestamptz,$8::uuid))
+ORDER BY recorded_at DESC,command_id DESC LIMIT $9::integer
+`
+
+type ListEventSubscriptionCapacityCommandsParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  pgtype.UUID
+	NowAt           pgtype.Timestamptz
+	Outcome         string
+	HasAfter        bool
+	AfterRecordedAt pgtype.Timestamptz
+	AfterCommandID  pgtype.UUID
+	PageLimit       int32
+}
+
+func (q *Queries) ListEventSubscriptionCapacityCommands(ctx context.Context, db DBTX, arg ListEventSubscriptionCapacityCommandsParams) ([]EventSubscriptionCapacityCommand, error) {
+	rows, err := db.Query(ctx, listEventSubscriptionCapacityCommands,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+		arg.Outcome,
+		arg.HasAfter,
+		arg.AfterRecordedAt,
+		arg.AfterCommandID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventSubscriptionCapacityCommand{}
+	for rows.Next() {
+		var i EventSubscriptionCapacityCommand
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.CommandID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Request,
+			&i.Receipt,
+			&i.RecordedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pruneEventSubscriptionCapacityCommands = `-- name: PruneEventSubscriptionCapacityCommands :execrows
 WITH expired AS (
  SELECT subscription_id,command_id FROM event_subscription_capacity_commands WHERE retain_until<=$1::timestamptz

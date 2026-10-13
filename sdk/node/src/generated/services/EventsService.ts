@@ -63,6 +63,7 @@ import type { EventSchemaRolloutRequest } from '../models/EventSchemaRolloutRequ
 import type { EventSchemaRolloutResponse } from '../models/EventSchemaRolloutResponse.js';
 import type { EventStorageUsageResponse } from '../models/EventStorageUsageResponse.js';
 import type { EventSubscriptionCapacityCommandReceipt } from '../models/EventSubscriptionCapacityCommandReceipt.js';
+import type { EventSubscriptionCapacityCommands } from '../models/EventSubscriptionCapacityCommands.js';
 import type { EventSubscriptionCapacityRequest } from '../models/EventSubscriptionCapacityRequest.js';
 import type { EventSubscriptionDeliveryControl } from '../models/EventSubscriptionDeliveryControl.js';
 import type { EventSubscriptionListResponse } from '../models/EventSubscriptionListResponse.js';
@@ -2884,6 +2885,61 @@ export class EventsService {
         409: `Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
         429: `New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.`,
         504: `Set consumer delivery capacity: subscription control request timed out.`,
+      },
+    });
+  }
+  /**
+   * List retained original capacity-command receipts.
+   * Requires apps:read or admin and MFA. Read-only newest-first pagination by recorded_at and command UUID descending. Outcome and expiry filters apply before the page limit. Each page has a fresh ownership and receipt snapshot; cursors are bound to account, app, subscription and normalized outcome filter, but do not freeze history. New commands and expiry can affect later pages. Listing never applies commands, prunes evidence or extends retention. Empty history does not prove commands never ran. Recording order does not establish delivery or execution order. Responses use Cache-Control no-store.
+   * @returns EventSubscriptionCapacityCommands Scoped page of original receipts and a continuation cursor when more matching retained receipts exist.
+   * @throws ApiError
+   */
+  public static listEventSubscriptionCapacityCommands({
+    slug,
+    subscriptionId,
+    outcome = 'any',
+    limit = 25,
+    after,
+  }: {
+    /**
+     * Owned application slug.
+     */
+    slug: string,
+    /**
+     * Owned active subscription or retained delivery control identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Original successful command outcome to include. Omission is equivalent to any.
+     */
+    outcome?: 'any' | 'applied' | 'unchanged',
+    /**
+     * Maximum receipts in this page. Omission uses 25. Explicit zero is invalid.
+     */
+    limit?: number,
+    /**
+     * Opaque next_after from the preceding page with the same owned scope and outcome filter. Page size may change. This cursor is a boundary rather than an authorization credential.
+     */
+    after?: string,
+  }): CancelablePromise<EventSubscriptionCapacityCommands> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'outcome': outcome,
+        'limit': limit,
+        'after': after,
+      },
+      errors: {
+        400: `Invalid UUID, outcome filter, page limit or scoped cursor.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Read-only command history timed out.`,
       },
     });
   }

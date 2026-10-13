@@ -102,6 +102,8 @@ func cmdEvents(args []string) int {
 		return cmdEventsSubscriptionHealth(args[1:])
 	case "subscription-capacity-preview":
 		return cmdEventsSubscriptionCapacityPreview(args[1:])
+	case "subscription-capacity-commands":
+		return cmdEventsSubscriptionCapacityCommands(args[1:])
 	case "subscription-capacity-command":
 		return cmdEventsSubscriptionCapacityCommand(args[1:])
 	case "subscription-capacity":

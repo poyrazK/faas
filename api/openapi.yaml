@@ -35113,6 +35113,56 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands:
+    get:
+      tags: [events]
+      operationId: listEventSubscriptionCapacityCommands
+      summary: List retained original capacity-command receipts.
+      description: Requires apps:read or admin and MFA. Read-only newest-first pagination by recorded_at and command UUID descending. Outcome and expiry filters apply before the page limit. Each page has a fresh ownership and receipt snapshot; cursors are bound to account, app, subscription and normalized outcome filter, but do not freeze history. New commands and expiry can affect later pages. Listing never applies commands, prunes evidence or extends retention. Empty history does not prove commands never ran. Recording order does not establish delivery or execution order. Responses use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Owned application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Owned active subscription or retained delivery control identifier.
+          schema: { type: string, format: uuid }
+        - name: outcome
+          in: query
+          description: Original successful command outcome to include. Omission is equivalent to any.
+          schema: { type: string, enum: [any, applied, unchanged], default: any }
+        - name: limit
+          in: query
+          description: Maximum receipts in this page. Omission uses 25. Explicit zero is invalid.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - name: after
+          in: query
+          description: Opaque next_after from the preceding page with the same owned scope and outcome filter. Page size may change. This cursor is a boundary rather than an authorization credential.
+          schema: { type: string, maxLength: 512 }
+      responses:
+        '200':
+          description: Scoped page of original receipts and a continuation cursor when more matching retained receipts exist.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventSubscriptionCapacityCommands' }
+        '400':
+          description: Invalid UUID, outcome filter, page limit or scoped cursor.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Read-only command history timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}:
     get:
       tags: [events]
@@ -63784,6 +63834,23 @@ components:
         command_id: { type: string, format: uuid, description: "Optional nonzero command UUID scoped to this owned subscription. Repeat the same value and expectations while its 30-day receipt remains retained; repeats return the original receipt without applying again, even after later settings or plan changes. Different normalized inputs conflict. No guarantee after expiry or deletion." }
         expected: { $ref: '#/components/schemas/EventSubscriptionCapacityGuard' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Maximum pending plus dispatching deliveries; zero restores the current plan default. }
+
+    EventSubscriptionCapacityCommands:
+      type: object
+      required: [app_id, subscription_id, outcome, observed_at, receipts, has_more]
+      description: One fresh page of retained original command evidence. History order does not establish execution order or current configuration.
+      properties:
+        app_id: { type: string, format: uuid, description: Owned application identifier. }
+        subscription_id: { type: string, format: uuid, description: Owned subscription or retained control identifier. }
+        outcome: { type: string, enum: [any, applied, unchanged], description: Normalized original-outcome filter for this page. }
+        observed_at: { type: string, format: date-time, description: Logical observation time shared by this page. }
+        receipts:
+          type: array
+          maxItems: 100
+          description: Matching unexpired original receipts in descending recorded_at and command UUID order. An accessible empty history returns an empty array.
+          items: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
+        has_more: { type: boolean, description: Whether another matching retained receipt existed at this observation. }
+        next_after: { type: string, maxLength: 512, description: Opaque scope-bound boundary for the next page. Present only when has_more is true. }
 
     EventSubscriptionCapacityCommandReceipt:
       type: object
