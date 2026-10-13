@@ -287,6 +287,15 @@ func (d *safeReleaseDrill) createApp(t *testing.T, slug string) {
 	if got := postOK(t, d.h, d.key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app %s: status=%d", slug, got)
 	}
+	// The harness does not destroy VMs on teardown; park so leakcheck stays
+	// clean. Registered on the parent so it runs after every case but before
+	// the harness stops its daemons.
+	key := d.key
+	d.t.Cleanup(func() {
+		if raw, status := doReq(d.t, d.h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
+			d.t.Errorf("cleanup park %s: status=%d body=%s", slug, status, raw)
+		}
+	})
 }
 
 // deployLive submits a deployment and waits until it is live. A canary
