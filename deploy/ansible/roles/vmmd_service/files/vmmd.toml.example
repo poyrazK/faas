@@ -45,6 +45,14 @@
 # Default: false
 # disable_restore_prefetch = false
 
+# quiet_pause: pause an eligible instance's vCPUs between requests and resume
+# it when the next one arrives (ADR-957). The instance stays RUNNING and
+# billed; a paused VM uses no host CPU. schedd decides which instances are
+# eligible (function apps only, for now); this switch keeps the whole node out
+# of it. FAAS_QUIET_PAUSE overrides.
+# Default: false
+# quiet_pause = false
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"

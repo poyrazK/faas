@@ -488,6 +488,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PUBLIC_STATUS_LAUNCH_AT", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "public-beta launch boundary rendered by the control-plane deployment"},
 	{Name: "FAAS_PYROSCOPE_TOKEN", Owners: []string{"apid", "profiled"}, Source: EnvSourceDefault, Note: "operator backend credential; never sent into guests"},
 	{Name: "FAAS_PYROSCOPE_URL", Owners: []string{"apid", "profiled"}, Source: EnvSourceDefault, Note: "private tenant-enabled backend configured in /etc/faas/profiling.env"},
+	{Name: "FAAS_QUIET_PAUSE", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch for ADR-957 quiet pause between requests; production default is off"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 
 	{Name: "FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
