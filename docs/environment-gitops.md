@@ -228,6 +228,22 @@ It intentionally has no serving candidate. Dedicated native x86_64 KVM
 capture, restore, guest, gateway and rollback acceptance is still required
 before production qualification polling or enforcement can be enabled.
 
+The opt-in native graph journey now includes an image API and a push worker
+with a reviewed queue binding. It requires an isolated designated x86_64 KVM
+host, a disposable PostgreSQL database, the qualified kernel and generic base,
+and guest-init built from the same checkout. Run it with
+`make test-environment-gitops-native` after setting `DATABASE_URL`,
+`FAAS_TEST_KERNEL`, `FAAS_TEST_MINIMAL_BASE_PATH`, `FAAS_GUEST_INIT`, and
+`GREGALE_GITOPS_NATIVE_HOST_CLASS=native`. The guarded runner requires a clean
+checkout, refuses active Gregale services, checks leaks before and after, and
+requires the named metal test to pass rather than skip. Set the host class to
+`nested-diagnostic` only for troubleshooting; that result cannot qualify a
+production gate. A passing journey would prove API serving through the gateway,
+a completed scoped customer queue delivery for the applied Git revision, and
+repair of a console change after its temporary override expires while the
+graph is serving. Dedicated native results and outage/rollback on that graph
+remain outstanding.
+
 ## Next implementation steps
 
 1. Pass dedicated Linux capture/restore acceptance. The scheduler requests

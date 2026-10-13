@@ -64,6 +64,7 @@ func main() {
 	contract := flag.Bool("contract", false, "expose fixed process-contract evidence")
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
+	queueAck := flag.Bool("queue-ack", false, "acknowledge push-queue fixture deliveries without returning customer data")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
 	flag.Parse()
 	if *addr == "" {
@@ -157,6 +158,15 @@ func main() {
 	}
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	}
+	if *queueAck {
+		mux.HandleFunc("/_triggers/esm/", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
