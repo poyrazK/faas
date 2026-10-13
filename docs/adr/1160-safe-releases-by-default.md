@@ -206,8 +206,9 @@ route health gate required:
   Probes never feed latency, cold-boot, CPU, or dependency comparisons.
 - **Abort.** The 5xx rules run on organic plus probe responses: the decisive
   small-sample rule, and the rate regression rule once both sides reach the
-  floor. The abort records `abort_5xx`, and its reason ends with "synthetic
-  probes included".
+  floor. The abort records `abort_5xx` and the usual 5xx rollout reason;
+  meterd logs the decision with a reason ending in "synthetic probes
+  included".
 - **Advance.** When organic plus probe responses meet the floor on both sides
   with no 5xx regression, and the OOM and liveness signals are readable and
   clean, the stage advances at its boundary instead of after

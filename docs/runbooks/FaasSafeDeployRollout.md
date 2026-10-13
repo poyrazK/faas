@@ -142,7 +142,10 @@ these staging checks against an app with a known-good predecessor:
   candidate and the predecessor, and that each stage advances at its boundary
   with `canary_progression_circuit_breaker_total{event="advance_probe_evidence"}`.
   A candidate whose `/` starts failing after its hosting smoke must abort with
-  `abort_5xx` and a reason ending in "synthetic probes included". If a quiet
+  `abort_5xx`. The deployment's rollout reason is "circuit breaker: 5xx error
+  rate regression; restoring predecessor <id>"; meterd's "canary: circuit
+  breaker aborted rollout" log line carries the detail, whose `reason` ends in
+  "synthetic probes included". If a quiet
   canary still waits the 5-minute bound, check that the probes are
   attributed: an auth-gated `/` (401/403 on at least half the probes) or a
   missing probe origin falls back to `advance_low_traffic`.
