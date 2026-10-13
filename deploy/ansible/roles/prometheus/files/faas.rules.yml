@@ -4596,3 +4596,326 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
           summary: "Durable entity {{ $labels.target }} backlog has aged"
           description: "A recent rotation observed work older than five minutes. Alarm age starts at its saved deadline; outbox age uses known stored timestamps. This is sampled bucket backlog, not receiver-delivery latency."
+
+  # ─────────────────────────────────────────────────────────────────
+  # Spec §12 operator signals (ADR-1235). These rows of the §12 table
+  # promised alerts that no rule implemented. All ship as warn,
+  # including the rows the spec marks page, until the paging set is
+  # triaged; public_status is internal so none reach the status page.
+  # schedd_instance_rss_mb and _inflight_requests are not here: their
+  # thresholds depend on per-app plan limits Prometheus does not have.
+  # ─────────────────────────────────────────────────────────────────
+  - name: faas_spec12_operator_signals
+    rules:
+      - alert: FaasEdgeRuleApplyHigh
+        expr: sum by (kind) (rate(gateway_edge_rule_apply_total{result="error"}[5m])) * 60 > 1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "Edge rule kind {{ $labels.kind }} is failing more than one request per minute"
+          description: "gateway_edge_rule_apply_total{result=\"error\"} for kind {{ $labels.kind }} has exceeded 1/min for 5m. Each error is a non-2xx response the edge wrote for a rule, so customers are seeing it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleApplyHigh.md"
+      - alert: FaasEdgeRuleCompileError
+        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total[10m])) > 0
+        for: 1m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "Edge rules of kind {{ $labels.kind }} are failing to compile"
+          description: "gatewayd-internal dropped at least one {{ $labels.kind }} edge rule at load time in the last 10m. A shipped rule is broken and is not being enforced; the counter is cumulative, so this alert reads new ticks only."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      - alert: FaasEdgeRuleJWTFailures
+        expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "Edge JWT verification is rejecting more than five requests per minute"
+          description: "gateway_edge_rule_match_total{kind=\"jwt\",outcome=\"failed\"} has exceeded 5/min for 5m. Customers are receiving 401s from the JWT gate; check verifier reachability and key rotation before treating it as client error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleJWTFailures.md"
+      - alert: FaasResponseCacheBypassAuthedHigh
+        expr: sum(rate(gateway_response_cache_total{outcome="bypass_authed"}[5m])) / sum(rate(gateway_response_cache_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: response_cache
+          public_status: internal
+        annotations:
+          summary: "More than 5% of cacheable lookups bypass the cache as authenticated"
+          description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+      - alert: FaasResponseCacheStoreSkippedHigh
+        expr: sum(rate(gateway_response_cache_total{outcome="store_skipped"}[5m])) / sum(rate(gateway_response_cache_total[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: response_cache
+          public_status: internal
+        annotations:
+          summary: "More than half of response-cache decisions skip the store"
+          description: "More than 50% of response-cache decisions over 10m were store_skipped: origins are returning veto headers or statuses, or bodies above the 1 MiB entry limit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+      - alert: FaasResponseCacheStaleIfErrorHigh
+        expr: sum(rate(gateway_response_cache_total{outcome="stale_if_error_served"}[5m])) / sum(rate(gateway_response_cache_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: response_cache
+          public_status: internal
+        annotations:
+          summary: "More than 5% of cached responses are stale-if-error serves"
+          description: "More than 5% of response-cache decisions over 10m served a stale entry because the origin failed. Treat it as an origin incident that the cache is masking."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+      - alert: FaasResponseCacheL1Pressure
+        expr: max by (job, instance) (gateway_response_cache_bytes) > 0.8 * 67108864
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: response_cache
+          public_status: internal
+        annotations:
+          summary: "Response-cache L1 on {{ $labels.instance }} is above 80% of its 64 MiB ceiling"
+          description: "The local response cache on {{ $labels.instance }} has held more than 80% of DefaultResponseCacheMaxBytes for 15m, so the LRU is evicting faster than hit rate can settle. Reduce route or vary_on cardinality."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
+      - alert: FaasCanaryStuckStep
+        expr: sum(increase(meterd_safedeploy_orchestrator_stuck_detected_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: meterd
+          family: safe_deploy
+          public_status: internal
+        annotations:
+          summary: "A canary rollout is stuck at one step"
+          description: "The safe-deploy orchestrator found a rollout past StuckAfterDuration at the same step in the last 5m. Traffic is held at the current split until an operator advances or aborts it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - alert: FaasSafedeployAbortSurge
+        expr: sum(increase(meterd_safedeploy_orchestrator_aborted_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warn
+          component: meterd
+          family: safe_deploy
+          public_status: internal
+        annotations:
+          summary: "Safe-deploy rollouts are aborting fleet-wide"
+          description: "More than one rollout aborted per 5m, sustained for 5m. A fleet-wide abort rate points at a shared cause (health gate, metrics source, platform regression) rather than one bad release."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - alert: FaasSafedeployAuditEmitFailing
+        expr: sum(rate(meterd_safedeploy_orchestrator_audit_emit_failed_total[5m])) > 0.1 or sum(rate(meterd_deployment_audit_emitted_total{outcome="failed"}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warn
+          component: meterd
+          family: safe_deploy
+          public_status: internal
+        annotations:
+          summary: "Deployment audit writes are failing"
+          description: "Orchestrator or deployment audit emits have failed above 0.1/s for 10m. Rollouts keep advancing, but their audit trail is silently incomplete until writes recover."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - alert: FaasSafedeployMissingTimestamp
+        expr: sum(increase(meterd_safedeploy_orchestrator_stuck_check_missing_timestamp_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: meterd
+          family: safe_deploy
+          public_status: internal
+        annotations:
+          summary: "Canary deployments are missing canary_step_started_at"
+          description: "The orchestrator saw deployment rows without canary_step_started_at in the last 15m. Stuck detection cannot evaluate those rows, so a stuck rollout among them would not be reported."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - alert: FaasDeploymentAuditGCFailing
+        expr: sum(increase(meterd_deployment_audit_gc_failed_total[1h])) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: meterd
+          family: safe_deploy
+          public_status: internal
+        annotations:
+          summary: "The 90-day deployment audit GC is failing"
+          description: "The deployment audit retention sweep failed at least once in the last hour. Audit rows keep accumulating until it succeeds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSafeDeployRollout.md"
+      - alert: FaasWriteRedirectLeaderUnreachable
+        expr: sum by (job, instance) (rate(gatewayd_write_redirect_total{outcome="leader_unreachable"}[5m])) * 60 > 0.1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: write_redirect
+          public_status: internal
+        annotations:
+          summary: "Standby {{ $labels.instance }} cannot reach the write leader"
+          description: "Writes arriving on standby {{ $labels.instance }} are failing with leader_unreachable above 0.1/min for 5m. Customers see write errors on this node until the leader is reachable again."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - alert: FaasWriteRedirectLoopPrevented
+        expr: sum by (job, instance) (rate(gatewayd_write_redirect_total{outcome="loop_prevented"}[5m])) * 60 > 1
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: write_redirect
+          public_status: internal
+        annotations:
+          summary: "Write redirects on {{ $labels.instance }} are looping"
+          description: "The write gate on {{ $labels.instance }} refused more than one redirect loop per minute for 5m. Two nodes disagree about the leader, or a client is replaying redirects."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - alert: FaasWriteRedirectMTLSFailure
+        expr: sum by (job, instance) (increase(gatewayd_write_redirect_total{outcome="mTLS_failure"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: write_redirect
+          public_status: internal
+        annotations:
+          summary: "Write relays from {{ $labels.instance }} are failing mTLS"
+          description: "The standby write relay on {{ $labels.instance }} failed mTLS to the leader in the last 10m. Check internal certificate expiry and clock skew between the nodes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - alert: FaasWriteRedirectLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, job, instance) (rate(gatewayd_write_redirect_latency_seconds_bucket[5m]))) > 3
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: write_redirect
+          public_status: internal
+        annotations:
+          summary: "Write relay p95 on {{ $labels.instance }} is above 3s"
+          description: "Relayed writes from {{ $labels.instance }} have taken more than 3s at p95 for 10m. Above 5s the relay times out, so the overlay between nodes is degrading."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/standby-write-redirect.md"
+      - alert: FaasRouteLookupStaleServed
+        expr: sum by (job, instance) (increase(gateway_route_lookup_stale_served_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: route_lookup
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} is routing from last-known-good routes"
+          description: "Route lookups on {{ $labels.instance }} are erroring and the edge has served from its stale route tier for 5m. Routes change no faster than FAAS_GATEWAY_ROUTE_STALE_TTL allows; check Postgres reachability from this node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteLookupStaleServed.md"
+      - alert: FaasDBNotifyHubReconnects
+        expr: sum by (job, instance) (increase({__name__=~".+_db_notify_hub_reconnects_total"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: db_notify_hub
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.job }} keeps losing its LISTEN connection"
+          description: "{{ $labels.job }} on {{ $labels.instance }} reconnected its notify hub more than once per 5m for 5m. Check Postgres restarts and idle-connection reaping."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
+      - alert: FaasDBNotifyHubDropped
+        expr: sum by (job, instance, channel) (rate({__name__=~".+_db_notify_hub_dropped_total"}[5m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: platform
+          family: db_notify_hub
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.job }} is dropping {{ $labels.channel }} notifications"
+          description: "A subscriber on {{ $labels.job }} ({{ $labels.instance }}) has not drained its {{ $labels.channel }} buffer for 15m. Durable tables and safety ticks recover the work, but the consumer is falling behind."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
+      - alert: FaasDBNotifyHubDisabled
+        expr: max by (job, instance) ({__name__=~".+_db_notify_hub_conns"}) == 0 and on (job, instance) max by (job, instance) ({__name__=~".+_db_notify_hub_subscribers"}) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: platform
+          family: db_notify_hub
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.job }} runs without its notify hub"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has subscribers but no hub connection, so FAAS_DB_NOTIFY_HUB=0 is set and each subscriber holds its own LISTEN connection. Not an outage; it consumes the pre-hub connection count against max_connections."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBNotifyHub.md"
+      - alert: FaasDBPoolNearCap
+        expr: sum by (job, instance) ({__name__=~".+_db_pool_conns"}) / on (job, instance) max by (job, instance) ({__name__=~".+_db_pool_max_conns"}) > 0.9
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: db_pool
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.job }} is using over 90% of its database pool"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has held more than 90% of its pool cap (pkg/db.DaemonMaxConnections) for 10m. Callers will start waiting for connections; FaasDBPoolStarved fires once they give up."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDBPoolStarved.md"
+      - alert: FaasScheddLoopWorkDropped
+        expr: sum by (job, instance, kind) (rate(schedd_loop_work_total{outcome="dropped"}[5m])) * 60 > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: loop_work
+          public_status: internal
+        annotations:
+          summary: "schedd is dropping {{ $labels.kind }} loop work"
+          description: "schedd on {{ $labels.instance }} dropped more than one {{ $labels.kind }} task per minute for 15m. The kind slot budget is too small for the notification rate; the durable table and safety ticker still recover the work, later."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddLoopWork.md"
+      - alert: FaasScheddLoopWorkPanicked
+        expr: sum by (job, instance, kind) (increase(schedd_loop_work_total{outcome="panicked"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: schedd
+          family: loop_work
+          public_status: internal
+        annotations:
+          summary: "A schedd {{ $labels.kind }} handler panicked"
+          description: "An off-loop {{ $labels.kind }} task on {{ $labels.instance }} panicked in the last 10m. This is a handler bug, not a capacity signal; find the stack in the schedd journal."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddLoopWork.md"
+      - alert: FaasSnapshotMaterializeSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2
+        for: 15m
+        labels:
+          severity: warn
+          component: vmmd
+          family: snapshot_materialize
+          public_status: internal
+        annotations:
+          summary: "Wakes are fetching snapshot memory across the network"
+          description: "p95 time to materialize a remote snapshot memory file has exceeded 200 ms for 15m. One fetch can exceed the whole wake budget, so placement is landing away from snapshot replicas (ADR-063)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/snapshot-restore-performance.md"
+      - alert: FaasInstanceHotLoop
+        expr: max by (app, node) (schedd_instance_cpu_pct) > 90
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: instance_stats
+          public_status: internal
+        annotations:
+          summary: "App {{ $labels.app }} is pinned above 90% CPU on {{ $labels.node }}"
+          description: "An instance of {{ $labels.app }} on {{ $labels.node }} has used more than 90% CPU for 15m. A sustained ceiling usually means a hot loop in the customer app rather than load."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInstanceHotLoop.md"
+      - alert: FaasScheddInstanceStatsCollectSlow
+        expr: histogram_quantile(0.95, sum by (le, job, instance) (rate(schedd_instance_stats_collect_seconds_bucket[5m]))) > 0.2
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: instance_stats
+          public_status: internal
+        annotations:
+          summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
+          description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"

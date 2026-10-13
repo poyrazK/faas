@@ -1550,7 +1550,8 @@ The inline `onclick="return confirm(…)"` in `pkg/dashboard/templates/account.h
 control-plane schedd cluster member carries a `StandbyState` gauge
 (`warming | warm | draining`) and the standby side redirects writes to the
 active leader. The redirection rate is exposed as
-`gatewayd_internal_write_redirect_total{outcome,auth_kind}` per ADR-083
+`gatewayd_write_redirect_total{outcome,auth_kind}` (gatewayd-internal's
+OpsMetrics prefix is `gatewayd`) per ADR-083
 §"Open #2". Failure drill runbook at
 `docs/runbooks/active-passive-ha.md`; the native two-node acceptance harness
 is documented in `docs/ops/native-m9-acceptance.md`. Probe timeout bounded by
@@ -1584,19 +1585,19 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `gateway_queue_depth{app}` alert metric | plan queue cap | > 50 / 15 m (queue backlog) |
 | `daily_cost_cents` alert metric | n/a (per-app) | > 100 cents / 24 h (usage_daily RAM burn rate) |
 | `slo_burn_rate` alert metric | 99.5% API availability SLO | > 14.4x / 1 h **and** > 6x / 6 h (0.5% error budget, Google SRE multi-window) |
-| `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 sustained page (hot loop) |
+| `schedd_instance_cpu_pct{app,node}` | max over siblings | > 90 for 15 m warn (hot loop; `FaasInstanceHotLoop`, ADR-1235) |
 | `gateway_service_call_total{outcome}` | n/a (fleet) | `transport_denied` counts HTTPS-first callers rejected before endpoint lookup or wake; `woken / (woken+forwarded)` is the internal cold-start rate (ADR-196/197/248) |
 | `gateway_service_preview_to_preview_total` | increasing when sibling previews exist | none yet — the positive signal that PR traffic stayed inside its account/project/PR scope |
 | `gateway_service_preview_to_production_total` | 0 for accounts that expect preview isolation | none yet — a non-zero rate means PR traffic is exercising production services |
 | `gateway_service_wake_latency_seconds` p95 | ≤ 0.35 s (§6.3 platform wake budget) | none yet — collect before setting a threshold (ADR-196 defers `depends_on` wake-ahead on this evidence) |
-| `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page |
-| `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page |
+| `schedd_instance_rss_mb{app,node}` | sum over siblings | > plan × max_concurrency page — not implemented: needs per-app plan limits in Prometheus (ADR-1235) |
+| `schedd_instance_inflight_requests{app,node}` | sum over siblings | > max_concurrency × 2 page — not implemented: needs per-app plan limits in Prometheus (ADR-1235) |
 | `schedd_instance_stats_collect_seconds` p95 | < 0.05 s | > 0.2 s warn (dialer saturation) |
 | `schedd_instance_stats_partial_errors_total{node}` | 0 | > 5 / min page (vmmd unreachable) |
-| `gatewayd_internal_write_redirect_total{outcome,auth_kind}` rate | n/a (per-outcome) | `outcome="leader_unreachable"` > 0.1 / min page (ADR-083 §Open #2 closure); `outcome="loop_prevented"` > 1 / min page (redirect-storm DoS); `outcome="mTLS_failure"` > 0 page (cert / clock-skew); `outcome="cookie_blocked"` rate tracked (deferred, ADR-025 Tier 2 unblocks) |
-| `gatewayd_internal_write_redirect_latency_seconds` p95 | ≤ 1.5 s | > 3 s warn (overlay degradation), > 5 s page (StandbyWriteRedirectTimeoutMS fires) |
+| `gatewayd_write_redirect_total{outcome,auth_kind}` rate | n/a (per-outcome) | `outcome="leader_unreachable"` > 0.1 / min page (ADR-083 §Open #2 closure); `outcome="loop_prevented"` > 1 / min page (redirect-storm DoS); `outcome="mTLS_failure"` > 0 page (cert / clock-skew); `outcome="cookie_blocked"` rate tracked (deferred, ADR-025 Tier 2 unblocks). The three alerts ship as warn (ADR-1235) |
+| `gatewayd_write_redirect_latency_seconds` p95 | ≤ 1.5 s | > 3 s warn (overlay degradation); above 5 s StandbyWriteRedirectTimeoutMS fails the write. The 5 s page is not separate (ADR-1235) |
 | `gateway_edge_rule_apply_total{kind,result}` rate | n/a (per-kind) | per-kind `result="error"` rate > 1 / min warn (runbook `FaasEdgeRuleApplyHigh.md`) |
-| `gateway_edge_rule_compile_error_total{kind}` rate | 0 | any non-zero page (runbook `FaasEdgeRuleCompileError.md`; ADR-091 Amendment 1: compile error = correctness signal, not headroom) |
+| `gateway_edge_rule_compile_error_total{kind}` rate | 0 | any non-zero, shipped as warn (ADR-1235; runbook `FaasEdgeRuleCompileError.md`; ADR-091 Amendment 1: compile error = correctness signal, not headroom) |
 | `gateway_edge_rule_match_total{kind,outcome}` rate | n/a (per-kind) | per-kind `outcome="failed"` for kind=jwt > 5 / min warn (runbook `FaasEdgeRuleJWTFailures.md`; audit-grep `data.err` for `context deadline exceeded` separates timeout from verifier error; CORS preflight short-circuits IP+JWT gates — filter `method != "OPTIONS"` before counting) |
 | `gateway_response_cache_total{outcome}` rate | n/a (per-outcome) | global operator surface; `outcome="bypass_authed" > 5 % / 5 m` warn; `outcome="bypass_uncacheable"` is informational; `outcome="store_skipped"` rate > 50 % warn; `outcome="stale_while_revalidate_served"` reports intentional SWR serves; `outcome="stale_if_error_served"` rate > 5 % / 5 m warns that the origin is flapping (runbook `FaasResponseCache.md`) |
 | `gateway_response_cache_app_total{app,outcome}` rate | n/a (per-app) | customer hit rate is `outcome="hit" / (outcome="hit" + outcome="miss")`; bypass and stale outcomes are excluded from the ratio, and absence means no cache telemetry for the app/window |
@@ -1609,10 +1610,10 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `safedeploy_orchestrator_started_total` rate | n/a (fleet rollup) | none (PR-B's `canary_fleet_in_flight_high` alert pair) — paired with `_completed_total` / `_aborted_total` for the rollout-state panel |
 | `safedeploy_orchestrator_completed_total` rate | n/a (fleet rollup) | none — per-rollout termination is the §12.6 audit timeline |
 | `safedeploy_orchestrator_aborted_total` rate | n/a (fleet rollup) | rate > 1 / 5 m warn (runbook `FaasSafedeployAbortSurge.md` — fleet-wide abort signal, distinct from PR-B's per-rollout stuck detection) |
-| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m page (PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
-| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
+| `safedeploy_orchestrator_stuck_detected_total` rate | 0 | > 0 / 5 m, shipped as warn `FaasCanaryStuckStep` (ADR-1235; PR-B's `canary_stuck_step` alert — orchestrator detected a rollout past StuckAfterDuration at the same step) |
+| `safedeploy_orchestrator_audit_emit_failed_total` rate | 0 | > 0.1 / s for 10 m, shipped as warn `FaasSafedeployAuditEmitFailing` (ADR-1235; PR-B's `safedeploy_audit_emit_failing` alert — audit writes failing; rollout state machine advances anyway, audit trail silently broken) |
 | `safedeploy_orchestrator_stuck_check_missing_timestamp_total` rate | 0 | > 0 / 15 m warn (runbook `FaasSafedeployMissingTimestamp.md` — deployments rows landing without `canary_step_started_at`, the stuck-detection predicate becomes a no-op for that row) |
-| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m page (PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
+| `deployment_audit_emitted_total{kind,outcome}` rate | n/a (per-kind × {ok,failed}) | `outcome="failed"` rate > 0.1 / s for 10 m, warn via `FaasSafedeployAuditEmitFailing` (ADR-1235; PR-B's `safedeploy_audit_emit_failing` aggregate — single source of truth across all 13 audit emit sites, not just the orchestrator) |
 | `deployment_audit_gc_failed_total` rate | 0 | > 0 / 1 h warn (PR-B's `deployment_audit_gc_failing` alert — 90-day GC cron failing, disk-fill risk) |
 | `<daemon>_loop_stalled{loop}` gauge | 0 | == 1 for 30 s page (`FaasDaemonLoopStalled`, runbook `FaasDaemonLoopStalled.md`; ADR-190 — the daemon is up and ready but its named loop has not beaten within budget; systemd restarts the unit after `WatchdogSec`) |
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
@@ -1632,8 +1633,18 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_db_pool_acquire_wait_seconds_total` rate | ≈ 0 | none — diagnostic. Near-zero growth on a busy daemon is the positive evidence that a cap has headroom to give back |
 | `<daemon>_db_notify_hub_conns` / `_subscribers` / `_channels` gauges | conns == 1, subscribers ≫ 1 | `<daemon>_db_notify_hub_conns == 0` while subscribers > 0 warn — `FAAS_DB_NOTIFY_HUB=0` is set and the daemon is back to one parked LISTEN connection per subscriber. Not an outage: the daemon's pool budget follows the switch (`db.DaemonMaxConnectionsNotifyHubDisabled`), so it is sized for that mode. It is a capacity signal — that daemon is consuming its pre-hub connection count against the fleet's `max_connections`, and the gap between `_conns` and `_subscribers` is the headroom the hub would return |
 | `schedd_instance_divergence_total{outcome}` rate | 0 | > 0 / 15 m warn (`FaasInstanceDivergence`, runbook `FaasInstanceDivergence.md`; ADR-191 §1 — live rows the owning vmmd is not reporting, after the node-reporting, grace and confirm-twice gates. `suppressed` is report-only mode counting what enforcement would repair; promote to page in the change that sets `FAAS_SCHEDD_RECONCILE_ENFORCE=1`) |
-| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"` page (a handler bug, not a capacity signal) |
+| `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"`, shipped as warn (ADR-1235; a handler bug, not a capacity signal) |
 | `schedd_loop_work_duration_seconds{kind}` p95 | `kind="prime"` ≤ 110 s; every other kind ≤ 1 s | none (ADR-191 §2 diagnostic; the prime tail carries cold boot plus snapshot capture by design, so alert on `gateway_wake_latency_seconds` instead) |
+
+**Alert implementation (ADR-1235).** The rows above that promised an alert
+with no rule behind it now have one, in the `faas_spec12_operator_signals`
+group of `deploy/ansible/roles/prometheus/files/faas.rules.yml`, each with a
+promtool fixture. The two `schedd_instance_*` rows marked not implemented are
+the exceptions. These rules all ship at warn with `public_status: internal`,
+including rows that say page, until the paging set is triaged. The safe-deploy
+and deployment-audit counters are registered per daemon; only meterd runs the
+orchestrator, so rules and dashboards read `meterd_safedeploy_*` and
+`meterd_deployment_audit_*`.
 
 The four `schedd_instance_*` gauges (ADR-036, issue #170) are the
 new per-`(app,node)` rolled-up surfaces — max CPU, sum RSS, sum

@@ -16,6 +16,10 @@ This is the signal that did not exist on 2026-09-12, when `fsn-1` sat at 96 of
 97 connection slots with 88 of them idle and every daemon died on SQLSTATE
 53300. The only way to see it then was `pg_stat_activity` on the box.
 
+`FaasDBPoolNearCap` (warn) is the early signal for the same failure: the
+daemon has held more than 90% of its pool cap for 10 minutes, before callers
+start giving up. Treat it with the "At the cap" branch under Check.
+
 ## Symptom
 
 Requests to the affected daemon time out or return 503 while Postgres itself
