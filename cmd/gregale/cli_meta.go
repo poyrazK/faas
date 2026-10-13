@@ -774,6 +774,7 @@ var cliCommands = []cliCommand{
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
 			"gregale ai logs show <integration-id> <request-id>",
+			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
 		},
 		Subcommands: []cliSub{
 			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
@@ -785,6 +786,14 @@ var cliCommands = []cliCommand{
 				{Name: "request-log-content", Short: "also keep the first 32 KiB of each logged call's bodies for 3 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "user-daily-tokens", Short: "each end user's UTC-day token limit (X-Gregale-AI-User), or none", Value: "N"},
 				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
+			}},
+			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "payment-card", Short: "payment card numbers", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "iban", Short: "IBANs", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "secrets", Short: "API keys, tokens and private keys", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "block-term", Short: "block requests containing this term, ignoring case (repeat)", Value: "TERM"},
+				{Name: "clear-terms", Short: "remove every blocked term first", Bool: true},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},

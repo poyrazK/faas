@@ -302,6 +302,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ADR-991: guardrails run before admission; the plan carries the call's
 	// reservation into it.
 	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq, aiForm)
+	if aiPlan != nil {
+		h.observeContentPolicy(w, metricIntegrationID, aiPlan.content)
+	}
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")

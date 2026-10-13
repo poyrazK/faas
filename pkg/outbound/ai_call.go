@@ -13,6 +13,8 @@ type aiCallPlan struct {
 	facts    aiCallFacts
 	reserve  aiReservation
 	guard    AIGuardrails
+	// content is what the content policy found and redacted (ADR-997).
+	content *contentScan
 }
 
 // aiCallRejection is a guardrail refusal sent before admission.
@@ -36,6 +38,11 @@ func planAICall(r *http.Request, integration Integration, bindingAppID, path str
 		plan.guard, guarded = integration.BindingAIGuardrails[bindingAppID]
 	}
 	hasBody := r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0
+	content, rejection := applyContentPolicy(r, integration, ai, hasBody)
+	if rejection != nil {
+		return &aiCallPlan{content: content}, rejection
+	}
+	plan.content = content
 	if ai == nil && hasBody && (providerNeedsBufferedBody(integration.AIProvider) || (guarded && plan.guard.restrictsCalls())) {
 		return nil, &aiCallRejection{http.StatusRequestEntityTooLarge, "outbound_ai_request_too_large",
 			"AI request body exceeds the size the gateway can check or sign"}

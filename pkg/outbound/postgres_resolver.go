@@ -49,6 +49,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
 	var aiRequestLogEnabled, aiRequestLogContent bool
+	var contentPolicy api.OutboundAIContentPolicy
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
@@ -64,7 +65,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0),
 		       integration.ai_request_log_enabled,
 		       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
-		       integration.ai_request_log_content
+		       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
+		       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
@@ -72,7 +74,8 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
 			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
-			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent)
+			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent, &contentPolicy.Email,
+			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -206,6 +209,7 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider,
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
 		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
+		AIContentPolicy:   contentPolicy,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}

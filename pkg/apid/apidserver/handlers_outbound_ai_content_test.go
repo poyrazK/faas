@@ -61,3 +61,33 @@ func TestOutboundAIRequestContent(t *testing.T) {
 	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/outbound/integrations/"+uuid.NewString()+"/ai-requests/"+logID+"/content", nil, nil),
 		http.StatusNotFound, api.CodeNotFound)
 }
+
+// adr: 997 — an integration's content policy is set through apid and shown
+// on its offer; an active policy needs an AI provider.
+func TestOutboundAIContentPolicy(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	id := seedAIIntegration(t, e, "llm", api.OutboundAIProviderOpenAI)
+	path := "/v1/outbound/integrations/" + id + "/ai-content-policy"
+	for name, policy := range map[string]api.OutboundAIContentPolicy{
+		"action":    {Email: "mask"},
+		"duplicate": {BlockedTerms: []string{"a", "A"}},
+	} {
+		apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, policy, nil), http.StatusBadRequest, api.CodeValidation)
+		_ = name
+	}
+	set := e.Do(t, http.MethodPut, path, api.OutboundAIContentPolicy{Email: api.OutboundAIContentRedact, BlockedTerms: []string{"Falcon"}}, nil)
+	if set.Code != http.StatusNoContent {
+		t.Fatalf("set = %d %s", set.Code, set.Body.String())
+	}
+	if offer := firstOutboundOffer(t, e); offer.AIContentPolicy.Email != api.OutboundAIContentRedact || offer.AIContentPolicy.Secret != api.OutboundAIContentOff ||
+		len(offer.AIContentPolicy.BlockedTerms) != 1 {
+		t.Fatalf("offer policy = %+v", offer.AIContentPolicy)
+	}
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+uuid.NewString()+"/ai-content-policy",
+		api.OutboundAIContentPolicy{}, nil), http.StatusNotFound, api.CodeNotFound)
+	if off := e.Do(t, http.MethodPut, "/v1/outbound/integrations/"+id+"/ai", api.PutOutboundAIPolicyRequest{}, nil); off.Code != http.StatusNoContent {
+		t.Fatalf("AI off = %d %s", off.Code, off.Body.String())
+	}
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.OutboundAIContentPolicy{Secret: api.OutboundAIContentBlock}, nil),
+		http.StatusBadRequest, api.CodeValidation)
+}

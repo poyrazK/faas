@@ -67,6 +67,8 @@ type OutboundIntegrationOffer struct {
 	AIUserDailyCostLimitMillicents *int64 `json:"ai_user_daily_cost_limit_millicents"`
 	// AIRequestLogContent captures logged calls' bodies (ADR-996).
 	AIRequestLogContent bool `json:"ai_request_log_content"`
+	// AIContentPolicy is the integration's content guardrails (ADR-997).
+	AIContentPolicy OutboundAIContentPolicy `json:"ai_content_policy"`
 }
 
 // Outbound AI providers select the credential handling and the response

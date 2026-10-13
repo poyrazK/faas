@@ -40,6 +40,7 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AIUserDailyTokenLimit:          copyOutboundDailyLimit(offer.AIUserDailyTokenLimit),
 		AIUserDailyCostLimitMillicents: copyOutboundDailyLimit(offer.AIUserDailyCostLimit),
 		AIRequestLogContent:            offer.AIRequestLogContent,
+		AIContentPolicy:                offer.AIContentPolicy.Normalized(),
 	}
 }
 

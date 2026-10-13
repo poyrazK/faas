@@ -90,16 +90,18 @@ type AIRequestContent struct {
 }
 
 // aiContentCapture keeps the first bytes of a response as the gateway
-// forwards it.
+// forwards it, plus a little more so a secret cut at the limit is still
+// redacted (ADR-997).
 type aiContentCapture struct {
 	content AIRequestContent
+	seen    int
 }
 
 func newAIContentCapture(ai *aiRequest, contentType string) *aiContentCapture {
 	capture := &aiContentCapture{content: AIRequestContent{RequestTruncated: true, ResponseContentType: contentType}}
 	if ai != nil {
-		capture.content.Request = bytes.Clone(ai.body[:min(len(ai.body), api.OutboundAIRequestContentMaxBytes)])
-		capture.content.RequestTruncated = len(ai.body) > api.OutboundAIRequestContentMaxBytes
+		prefix := ai.body[:min(len(ai.body), api.OutboundAIRequestContentMaxBytes+api.OutboundAICaptureRedactSlackBytes)]
+		capture.content.Request, capture.content.RequestTruncated = redactCaptured(prefix, len(ai.body) > api.OutboundAIRequestContentMaxBytes)
 	}
 	if len(contentType) > aiContentTypeMaxBytes || strings.IndexFunc(contentType, func(r rune) bool { return r < ' ' || r > '~' }) >= 0 {
 		capture.content.ResponseContentType = ""
@@ -108,12 +110,18 @@ func newAIContentCapture(ai *aiRequest, contentType string) *aiContentCapture {
 }
 
 func (c *aiContentCapture) Write(p []byte) {
-	room := api.OutboundAIRequestContentMaxBytes - len(c.content.Response)
-	if len(p) > room {
-		p = p[:room]
-		c.content.ResponseTruncated = true
+	c.seen += len(p)
+	room := api.OutboundAIRequestContentMaxBytes + api.OutboundAICaptureRedactSlackBytes - len(c.content.Response)
+	if room <= 0 {
+		return
 	}
-	c.content.Response = append(c.content.Response, p...)
+	c.content.Response = append(c.content.Response, p[:min(len(p), room)]...)
+}
+
+// finish redacts the captured response and bounds it to the capture limit.
+func (c *aiContentCapture) finish() *AIRequestContent {
+	c.content.Response, c.content.ResponseTruncated = redactCaptured(c.content.Response, c.seen > api.OutboundAIRequestContentMaxBytes)
+	return &c.content
 }
 
 const aiContentTypeMaxBytes = 128

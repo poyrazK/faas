@@ -188,7 +188,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	if integration.AIRequestLogEnabled {
 		record.Log = newAIRequestLog(settlement, timeToFirstByte, time.Now())
 		if observer.capture != nil {
-			record.Log.Content = &observer.capture.content
+			record.Log.Content = observer.capture.finish()
 		}
 	}
 	if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
@@ -208,6 +208,25 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		return
 	}
 	h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "recorded")
+}
+
+// observeContentPolicy counts the content policy's redactions and block and
+// names the redactions to the caller (ADR-997).
+func (h *Handler) observeContentPolicy(w http.ResponseWriter, metricIntegrationID string, scan *contentScan) {
+	if scan == nil {
+		return
+	}
+	if scan.blocked != "" {
+		h.Metrics.ObserveAIContent(metricIntegrationID, scan.blocked, "blocked")
+	}
+	for kind, count := range scan.redacted {
+		for range count {
+			h.Metrics.ObserveAIContent(metricIntegrationID, string(kind), "redacted")
+		}
+	}
+	if len(scan.redacted) > 0 {
+		w.Header().Set(AIContentRedactionsHeader, formatRedactions(scan.redacted))
+	}
 }
 
 // aiSpanAttributes follows the OpenTelemetry GenAI semantic conventions for

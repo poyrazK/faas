@@ -29,7 +29,14 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		   SET ai_provider = NULLIF($3, ''), ai_daily_token_limit = $4,
 		       ai_daily_cost_limit_millicents = $5, ai_monthly_cost_limit_millicents = $6,
 		       ai_request_log_enabled = $7, ai_user_daily_token_limit = $8,
-		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10, updated_at = now()
+		       ai_user_daily_cost_limit_millicents = $9, ai_request_log_content = $10,
+		       -- ADR-997: turning AI handling off also clears the content policy.
+		       ai_content_email = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_email END,
+		       ai_content_payment_card = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_payment_card END,
+		       ai_content_iban = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_iban END,
+		       ai_content_secret = CASE WHEN $3 = '' THEN 'off' ELSE ai_content_secret END,
+		       ai_content_blocked_terms = CASE WHEN $3 = '' THEN '{}'::text[] ELSE ai_content_blocked_terms END,
+		       updated_at = now()
 		 WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer'
 		   AND provider_auth_mode = 'managed' AND enabled`,
 		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Provider, policy.DailyTokenLimit,
@@ -230,4 +237,41 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 		}
 	}
 	return mapErr(tx.Commit(ctx))
+}
+
+var _ OutboundAIContentPolicyStore = (*PgStore)(nil)
+
+// SetOutboundAIContentPolicy replaces a customer AI integration's content
+// guardrails (ADR-997). An active policy needs an AI provider. Bumping
+// updated_at gives outboundd a new policy revision.
+func (s *PgStore) SetOutboundAIContentPolicy(ctx context.Context, accountID, integrationID string, policy api.OutboundAIContentPolicy) error {
+	if !policy.Valid() {
+		return ErrInvalidArgument
+	}
+	policy = policy.Normalized()
+	var hasProvider bool
+	err := s.pool.QueryRow(ctx, `
+		UPDATE outbound_integrations
+		   SET ai_content_email = $3, ai_content_payment_card = $4, ai_content_iban = $5, ai_content_secret = $6,
+		       ai_content_blocked_terms = $7, updated_at = now()
+		 WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer' AND provider_auth_mode = 'managed' AND enabled
+		   AND (ai_provider IS NOT NULL OR NOT $8)
+		RETURNING ai_provider IS NOT NULL`,
+		mustPgUUID(accountID), mustPgUUID(integrationID), policy.Email, policy.PaymentCard, policy.IBAN, policy.Secret,
+		policy.BlockedTerms, policy.Active()).Scan(&hasProvider)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM outbound_integrations
+			                WHERE account_id = $1 AND id = $2 AND owner_kind = 'customer'
+			                  AND provider_auth_mode = 'managed' AND enabled)`,
+			mustPgUUID(accountID), mustPgUUID(integrationID)).Scan(&exists); err != nil {
+			return mapErr(err)
+		}
+		if exists {
+			return ErrInvalidArgument
+		}
+		return ErrNotFound
+	}
+	return mapErr(err)
 }

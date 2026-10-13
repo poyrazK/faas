@@ -46,6 +46,13 @@ func (c *Client) SetOutboundIntegrationAIPolicy(ctx context.Context, integration
 	return c.do(ctx, "PUT", path, policy, nil)
 }
 
+// SetOutboundAIContentPolicy replaces an integration's content guardrails
+// (ADR-997).
+func (c *Client) SetOutboundAIContentPolicy(ctx context.Context, integrationID string, policy OutboundAIContentPolicy) error {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-content-policy"
+	return c.do(ctx, "PUT", path, policy, nil)
+}
+
 // GetOutboundIntegrationAIPrices returns the price list in effect.
 func (c *Client) GetOutboundIntegrationAIPrices(ctx context.Context, integrationID string) (OutboundAIPriceListResponse, error) {
 	var out OutboundAIPriceListResponse

@@ -806,6 +806,12 @@ const (
 	// unknown length.
 	OutboundAIFormPrefixMaxBytes         = 64 << 10
 	OutboundAIAudioReserveMaxBytes int64 = 25 << 20
+	// Content guardrails (ADR-997): the blocked terms one integration may
+	// list and the longest term, and the bytes past a capture's limit that
+	// are scanned so a secret cut at the limit is still redacted.
+	OutboundAIBlockedTermsMax         = 32
+	OutboundAIBlockedTermMaxBytes     = 128
+	OutboundAICaptureRedactSlackBytes = 4 << 10
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

@@ -110,6 +110,8 @@ type Integration struct {
 	// AIRequestLogContent also keeps the start of each logged call's
 	// request and response bodies (ADR-996).
 	AIRequestLogContent bool
+	// AIContentPolicy is checked and applied before admission (ADR-997).
+	AIContentPolicy api.OutboundAIContentPolicy
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
@@ -223,6 +225,9 @@ func (i Integration) Validate() error {
 	}
 	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
 		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)
+	}
+	if !i.AIContentPolicy.Valid() || (i.AIContentPolicy.Active() && i.AIProvider == "") {
+		return fmt.Errorf("%w: the AI content policy is invalid", ErrInvalidIntegration)
 	}
 	if !api.ValidOutboundAIUserLimits(i.AIProvider, i.AIUserDailyTokenLimit, i.AIUserDailyCostLimit) {
 		return fmt.Errorf("%w: per-end-user AI limits are invalid", ErrInvalidIntegration)

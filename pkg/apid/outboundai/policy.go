@@ -173,3 +173,28 @@ func (s *Service) PutPrices(w http.ResponseWriter, r *http.Request, acct state.A
 	err := store.SetOutboundAIPrices(r.Context(), acct.ID, integrationID, req.Entries)
 	s.writeResult(w, err, "customer outbound integration not found", invalid)
 }
+
+// contentPolicyInvalidDetail explains a rejected content policy (ADR-997).
+const contentPolicyInvalidDetail = "email, payment_card, iban and secret must be off, redact or block; blocked_terms at most 32 " +
+	"distinct printable terms of 1 to 128 bytes; an active policy requires an AI provider"
+
+// PutContentPolicy replaces a customer AI integration's content guardrails
+// (ADR-997).
+func (s *Service) PutContentPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	integrationID, ok := integrationPathID(w, r)
+	if !ok {
+		return
+	}
+	var policy api.OutboundAIContentPolicy
+	if err := httpkit.DecodeJSONSized(r, &policy, 16<<10); err != nil || !policy.Valid() {
+		problem(w, http.StatusBadRequest, api.CodeValidation, contentPolicyInvalidDetail)
+		return
+	}
+	store, ok := s.Host.Store().(state.OutboundAIContentPolicyStore)
+	if !ok {
+		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "Outbound AI gateway settings are unavailable")
+		return
+	}
+	err := store.SetOutboundAIContentPolicy(r.Context(), acct.ID, integrationID, policy)
+	s.writeResult(w, err, "customer outbound integration not found", contentPolicyInvalidDetail)
+}

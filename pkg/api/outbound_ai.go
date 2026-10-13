@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ValidOutboundAICostLimits accepts optional daily and monthly cost limits
@@ -96,6 +98,79 @@ type PutOutboundAIPricesRequest struct {
 type OutboundAIPriceListResponse struct {
 	EffectiveFrom *time.Time             `json:"effective_from"`
 	Entries       []OutboundAIPriceEntry `json:"entries"`
+}
+
+// Content guardrail actions for one detector (ADR-997).
+const (
+	OutboundAIContentOff    = "off"
+	OutboundAIContentRedact = "redact"
+	OutboundAIContentBlock  = "block"
+)
+
+// OutboundAIContentPolicy is an integration's content guardrails (ADR-997).
+// Each detector is off, redacts its findings before the request reaches the
+// provider, or blocks the request. A request that contains a blocked term,
+// compared without case, is blocked. The gateway checks the string values
+// of buffered JSON bodies and the text fields of multipart forms.
+type OutboundAIContentPolicy struct {
+	Email        string   `json:"email"`
+	PaymentCard  string   `json:"payment_card"`
+	IBAN         string   `json:"iban"`
+	Secret       string   `json:"secret"`
+	BlockedTerms []string `json:"blocked_terms"`
+}
+
+// Normalized replaces empty actions with off and a nil term list with an
+// empty one.
+func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
+	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret} {
+		if *action == "" {
+			*action = OutboundAIContentOff
+		}
+	}
+	if p.BlockedTerms == nil {
+		p.BlockedTerms = []string{}
+	}
+	return p
+}
+
+// Active reports whether any detector or term is on.
+func (p OutboundAIContentPolicy) Active() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
+		if action != OutboundAIContentOff {
+			return true
+		}
+	}
+	return len(p.BlockedTerms) > 0
+}
+
+// Valid checks actions and the blocked terms: at most
+// OutboundAIBlockedTermsMax printable, trimmed terms of at most
+// OutboundAIBlockedTermMaxBytes, unique without case.
+func (p OutboundAIContentPolicy) Valid() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
+		if action != OutboundAIContentOff && action != OutboundAIContentRedact && action != OutboundAIContentBlock {
+			return false
+		}
+	}
+	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax {
+		return false
+	}
+	seen := make(map[string]struct{}, len(p.BlockedTerms))
+	for _, term := range p.BlockedTerms {
+		folded := strings.ToLower(term)
+		if term == "" || len(term) > OutboundAIBlockedTermMaxBytes || strings.TrimSpace(term) != term || !utf8.ValidString(term) ||
+			strings.IndexFunc(term, unicode.IsControl) >= 0 {
+			return false
+		}
+		if _, dup := seen[folded]; dup {
+			return false
+		}
+		seen[folded] = struct{}{}
+	}
+	return true
 }
 
 // OutboundAIPriceCatalogResponse is the built-in price catalog of one

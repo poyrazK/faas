@@ -1,7 +1,8 @@
 -- filename: 20261013110728604_outbound_ai_media_content_policy_replays.sql
 -- ADR-997: AI gateway phase 7. Price lists carry media prices (image tokens,
 -- per image, per audio minute, per million characters) and the UTC-day
--- rollup counts images, audio seconds and characters. Additive and
+-- rollup counts images, audio seconds and characters. Integrations carry a
+-- content policy: an action per detector and blocked terms. Additive and
 -- replay-safe.
 
 -- +goose Up
@@ -16,6 +17,12 @@ ALTER TABLE outbound_ai_usage_daily
     ADD COLUMN IF NOT EXISTS images bigint NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS audio_seconds bigint NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS characters bigint NOT NULL DEFAULT 0;
+ALTER TABLE outbound_integrations
+    ADD COLUMN IF NOT EXISTS ai_content_email text NOT NULL DEFAULT 'off',
+    ADD COLUMN IF NOT EXISTS ai_content_payment_card text NOT NULL DEFAULT 'off',
+    ADD COLUMN IF NOT EXISTS ai_content_iban text NOT NULL DEFAULT 'off',
+    ADD COLUMN IF NOT EXISTS ai_content_secret text NOT NULL DEFAULT 'off',
+    ADD COLUMN IF NOT EXISTS ai_content_blocked_terms text[] NOT NULL DEFAULT '{}';
 
 DO $$
 BEGIN
@@ -33,11 +40,30 @@ BEGIN
         ALTER TABLE outbound_ai_usage_daily ADD CONSTRAINT outbound_ai_usage_daily_media_chk
             CHECK (images >= 0 AND audio_seconds >= 0 AND characters >= 0);
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
+                   WHERE conname = 'outbound_integrations_ai_content_policy_chk' AND conrelid = 'outbound_integrations'::regclass) THEN
+        ALTER TABLE outbound_integrations ADD CONSTRAINT outbound_integrations_ai_content_policy_chk
+            CHECK (ai_content_email IN ('off', 'redact', 'block')
+                   AND ai_content_payment_card IN ('off', 'redact', 'block')
+                   AND ai_content_iban IN ('off', 'redact', 'block')
+                   AND ai_content_secret IN ('off', 'redact', 'block')
+                   AND cardinality(ai_content_blocked_terms) <= 32
+                   AND (ai_provider IS NOT NULL
+                        OR (ai_content_email = 'off' AND ai_content_payment_card = 'off' AND ai_content_iban = 'off'
+                            AND ai_content_secret = 'off' AND cardinality(ai_content_blocked_terms) = 0)));
+    END IF;
 END$$;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+ALTER TABLE outbound_integrations
+    DROP CONSTRAINT IF EXISTS outbound_integrations_ai_content_policy_chk,
+    DROP COLUMN IF EXISTS ai_content_blocked_terms,
+    DROP COLUMN IF EXISTS ai_content_secret,
+    DROP COLUMN IF EXISTS ai_content_iban,
+    DROP COLUMN IF EXISTS ai_content_payment_card,
+    DROP COLUMN IF EXISTS ai_content_email;
 ALTER TABLE outbound_ai_usage_daily
     DROP CONSTRAINT IF EXISTS outbound_ai_usage_daily_media_chk,
     DROP COLUMN IF EXISTS characters,

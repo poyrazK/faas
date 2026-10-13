@@ -81,9 +81,9 @@ func TestContentCaptureBounds(t *testing.T) {
 	capture.Write([]byte("ab"))
 	capture.Write(bytes.Repeat([]byte("c"), api.OutboundAIRequestContentMaxBytes))
 	capture.Write([]byte("d"))
-	if len(capture.content.Response) != api.OutboundAIRequestContentMaxBytes || !capture.content.ResponseTruncated ||
-		string(capture.content.Response[:3]) != "abc" {
-		t.Fatalf("response = %d bytes, truncated %v", len(capture.content.Response), capture.content.ResponseTruncated)
+	if finished := capture.finish(); len(finished.Response) != api.OutboundAIRequestContentMaxBytes || !finished.ResponseTruncated ||
+		string(finished.Response[:3]) != "abc" {
+		t.Fatalf("response = %d bytes, truncated %v", len(finished.Response), finished.ResponseTruncated)
 	}
 	if err := validateAIRequestLog(&AIRequestLog{Status: 200, Attempts: 1,
 		Content: &AIRequestContent{Response: make([]byte, api.OutboundAIRequestContentMaxBytes+1)}}); err == nil {
