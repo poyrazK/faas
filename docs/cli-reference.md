@@ -2818,12 +2818,19 @@ Examples:
 ```sh
 gregale apps
 gregale apps --json
-gregale apps -q my-api
+gregale apps rm my-api --dry-run
+gregale apps rm my-api --yes
 ```
 
 ### apps ls
 
 Alias for the default list action
+
+### apps rm
+
+Delete an app (alias: delete); restore it within the deletion grace window
+
+`gregale apps rm <slug>`
 
 ### apps restore
 
