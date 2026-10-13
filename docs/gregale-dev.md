@@ -29,8 +29,9 @@ Railpack and Dockerfile developer builds keep their Firecracker VM isolation
 but reuse a tenant- and workspace-scoped BuildKit dependency cache between
 syncs. When the runtime, Dockerfile, and lockfiles are unchanged, matching
 layers are restored; a dependency, build-input, or runtime change is validated
-by BuildKit and rebuilds only the invalidated layers. Cache import, export, and
-validation failures fall back to a cold build. The CLI prints whether the
+by BuildKit and rebuilds only the invalidated layers. A Railpack build whose
+plan and dependency inputs are unchanged keeps the cache instead of saving it
+again. Cache import, export, and validation failures fall back to a cold build. The CLI prints whether the
 dependency cache was restored and the total time until the new version is
 live.
 
@@ -314,43 +315,15 @@ workloads are supported so far; `--debug` cannot be combined with `--once`,
 ## Watch mode for apps with a build step
 
 Live patches (above) only apply to apps that run their source files directly.
-For an app with a build step, such as TypeScript, Next.js or Vite, every save
-otherwise waits for a full build. `gregale dev --watch` instead runs the app's
-own development server in the developer environment, so edits hot-reload in
-seconds:
+For an app with a build step, such as TypeScript, Next.js, Vite or a uv
+Python project, every save otherwise waits for a full build.
+`gregale dev --watch` instead runs the app's own development server in the
+developer environment, so edits hot-reload in seconds:
 
 ```bash
 gregale dev --watch                              # runs your dev script or framework
 gregale dev --watch-command "next dev"           # or an explicit command
-```
-
-Without `--watch-command`, `--watch` picks the command itself:
-
-| Your app | Command |
-| --- | --- |
-| a `dev` script that starts Vite, Astro, Nuxt, SvelteKit (`vite dev`), Remix (`remix vite:dev`) or React Router | `npm run dev -- --host 0.0.0.0` |
-| any other `dev` script | `npm run dev` |
-| no `dev` script: Nuxt / Astro / SvelteKit / React Router / Remix with Vite / Vite | `nuxt dev` / `astro dev` / `vite dev` / `react-router dev` / `remix vite:dev` / `vite`, each with `--host 0.0.0.0` |
-| no `dev` script: Next.js | `next dev` |
-
-`--host 0.0.0.0` is added because those servers listen on `localhost` by
-default, which the gateway cannot reach. A `dev` script that already passes
-`--host`, or that runs several commands (`&&`, `concurrently`), is used as
-written; make sure its server listens on `0.0.0.0`. The terminal prints the
-command it chose.
-
-The developer environment's hostname is available to the development server
-as `GREGALE_DEV_HOST`. Vite-based servers accept it automatically (Gregale
-sets Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`). Next.js only serves hot
-reload to origins listed in `allowedDevOrigins`, which it reads from its
-config file alone, so add the hostname there; `gregale dev --watch` reminds
-you when `next.config` does not set it:
-
-```js
-// next.config.js
-module.exports = {
-  allowedDevOrigins: process.env.GREGALE_DEV_HOST ? [process.env.GREGALE_DEV_HOST] : [],
-}
+gregale dev --all --watch                        # every app in the workspace that has one
 ```
 
 or in `gregale.yaml`:
@@ -360,21 +333,60 @@ dev:
   watch: true          # or: watch: { command: "next dev" }
 ```
 
-The developer build then installs your dependencies (development dependencies
-included) as usual, skips the production build, ships your source unchanged
-and starts the development command with `NODE_ENV=development`. Source edits
-reach the running server as live patches without restarting it, and the
-server's own watcher recompiles and reloads them. Changing `package.json`, a
-lockfile, `railpack.json` or `gregale.yaml` still triggers a full developer
-build, which reinstalls dependencies.
+Without a command, `--watch` picks one and prints it:
+
+| Your app | Command |
+| --- | --- |
+| a `dev` script in `package.json` | `npm run dev`, or `pnpm` / `yarn` / `bun run dev` when the `packageManager` field or lockfile says so |
+| no `dev` script: Nuxt / Astro / SvelteKit / React Router / Remix with Vite / Next.js / Vite | `nuxt dev` / `astro dev` / `vite dev` / `react-router dev` / `remix vite:dev` / `next dev` / `vite` |
+| Django (`manage.py`) | `python manage.py runserver` |
+| FastAPI | `uvicorn <module>:<app> --reload`, for the module that creates `FastAPI()` |
+| Flask | `flask --app <module>:<app> run --debug`, for the module that creates `Flask()` |
+
+The development server can listen wherever it likes: on `localhost` only,
+or on its own port (Vite's 5173, Astro's 4321). In a watch-mode environment
+Gregale forwards the app's port to the port the server actually opened, so no
+`--host` or `--port` flags are needed. With `gregale dev --all --watch`, apps
+for which no command can be picked keep production-shaped builds; a
+`dev.watch.command` in an app's own `gregale.yaml` is used for that app.
+
+The developer environment's hostname is available to the development server
+as `GREGALE_DEV_HOST`. Vite-based servers accept it automatically (Gregale
+sets Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`). Two frameworks need it
+in their own configuration:
+
+- **Next.js** serves hot reload only to origins listed in
+  `allowedDevOrigins`, which it reads from `next.config` alone. In a terminal,
+  `gregale dev --watch` offers to add it: it creates `next.config.mjs`, or
+  edits a config that exports a plain object, and otherwise prints the line
+  to add:
+
+  ```js
+  allowedDevOrigins: process.env.GREGALE_DEV_HOST ? [process.env.GREGALE_DEV_HOST] : [],
+  ```
+
+  The value is empty outside the developer environment.
+- **Django** answers 400 to hosts outside `ALLOWED_HOSTS`; add
+  `os.environ.get("GREGALE_DEV_HOST", "")` to it. The CLI reminds you when no
+  Python file mentions `GREGALE_DEV_HOST`.
+
+The developer build then installs your dependencies as usual, skips the
+production build, ships your source unchanged and starts the development
+command (Node.js apps with `NODE_ENV=development`; Python apps with `src/` on
+`PYTHONPATH`, because the project is not installed into the virtual
+environment). Source edits reach the running server as live patches without
+restarting it, and the server's own watcher recompiles and reloads them.
+Changing `package.json`, `pyproject.toml`, a lockfile, `railpack.json` or
+`gregale.yaml` still triggers a full developer build, which reinstalls
+dependencies; a build that changes none of them keeps the dependency cache
+instead of saving it again.
 
 Watch mode needs:
 
-- a Node.js app built without a Dockerfile (a Dockerfile owner can write a
-  development stage instead);
-- a `dev` script in `package.json`, a framework from the table above, or
-  `--watch-command`. An explicit command must start a server that listens on
-  all interfaces (for example `vite --host 0.0.0.0`);
+- a Node.js or Python app built without a Dockerfile (a Dockerfile owner can
+  write a development stage instead);
+- a command: a `dev` script, a framework from the table above, or
+  `--watch-command`;
 - at least 512 MB of RAM for the developer environment;
 - authentication on the developer environment, because development servers
   serve source maps and error overlays.

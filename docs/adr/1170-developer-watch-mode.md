@@ -85,8 +85,8 @@ Production deploys ignore the setting.
    - make the deploy image take the full local source unchanged, so the
      plan is verbatim by `ClassifyRailpackPlan`;
    - replace the start command with the development command, with
-     `NODE_ENV=development` and a host/port binding the existing port
-     normalization already forwards.
+     `NODE_ENV=development`; guest-init bridges the runtime port to the
+     development server (phase 3).
 3. The rewritten plan is what gets classified and recorded in
    `build_provenance.dev_patch`, with a new `watch: true` field. The install
    inputs (manifests, lockfiles) become `RebuildPaths` as they are today.
@@ -163,8 +163,10 @@ the builder VM. That is the only case that waits for a build.
    rebuild reason and which frameworks it comes from.
 2. **Node watch mode, explicit command.** `dev.watch.command` only; builder
    plan rewrite for Railpack Node plans; no-restart apply; RAM floor; auth
-   requirement; metrics `watch` label; metal tests. *Implemented, apart from
-   the metrics label. `TestDevWatchMetal` passed on the native KVM test node
+   requirement; metrics `watch` label; metal tests. *Implemented; the
+   metrics label followed on 2026-10-14 (every apid dev-loop series carries
+   `watch="true|false"` and the dashboard splits edit-to-live, decisions and
+   phases on it). `TestDevWatchMetal` passed on the native KVM test node
    (2026-10-11): a Node app with a build script built as a verbatim watch
    build, served `npm run dev`, and an edit reached the running development
    server as a live patch (applied in 14 ms) that `node --watch` reloaded
@@ -193,19 +195,27 @@ the builder VM. That is the only case that waits for a build.
    package's `dev` script or known frameworks (Next.js, Vite, Nuxt, Remix,
    SvelteKit). The rebuild explainer suggests `--watch`. *Implemented
    (2026-10-13):*
-   - The CLI keeps `npm run dev` when a `dev` script exists and appends
-     `-- --host 0.0.0.0` when that script is a single command starting a
-     server that listens on `localhost` by default (`vite`, `vite dev`,
-     `astro dev`, `nuxt dev`, `remix vite:dev`, `react-router dev`). Such a
-     server fails its boot with `app_loopback_bound`: the gateway reaches the
-     guest at 10.0.0.2 and port normalization only DNATs to the observed
-     port. A script that already passes `--host` is used as written; a
-     composite one (`&&`, `concurrently`) is used as written with a note.
-   - Without a `dev` script it runs the detected framework's own command:
-     Nuxt, Astro, SvelteKit, React Router, Remix with Vite and Vite with
-     `--host 0.0.0.0`, Next.js as `next dev` (which already listens on every
-     interface). Anything else still needs a `dev` script or
+   - `frameworkprofile.DevServerCommand` picks the command: the `dev` script
+     through the package manager Railpack detects for the upload
+     (`packageManager` field, else the lockfile: npm, pnpm, yarn or bun;
+     Railpack starts production apps with the same manager, so the runtime
+     image has it), else the detected framework's own command (`nuxt dev`,
+     `astro dev`, `vite dev`, `react-router dev`, `remix vite:dev`,
+     `next dev`, `vite`). Anything else still needs a `dev` script or
      `--watch-command`.
+   - The host reaches a guest on the deployment's runtime port (inferred,
+     e.g. 3000 for Node) at 10.0.0.2, but development servers listen on
+     their own port (Vite 5173, Astro 4321) and often only on localhost; the
+     first cut appended `--host 0.0.0.0`, which fixed neither the port nor a
+     composite `dev` script. Instead, in an image with `FAAS_DEV_WATCH=1`,
+     guest-init waits for the server's listeners to settle and, unless one
+     already listens on the runtime port on every interface, forwards
+     `10.0.0.2:<runtime port>` to the server's socket (loopback, IPv6 or
+     another port). Production images keep the listen-on-`$PORT` contract
+     and `app_loopback_bound`. Characterization now decodes `tcp6`
+     addresses and brackets them; before, every IPv6 listener was reported
+     as an unparsable `::1:<port>`, so a `[::1]` bind never produced
+     `app_loopback_bound`.
    - Development servers also refuse requests for hosts or origins they do
      not know: Vite 5.4.12+/6.0.9+ answers 403 to an unknown `Host`, and
      Next.js 16 blocks the HMR websocket from an origin outside
@@ -215,9 +225,13 @@ the builder VM. That is the only case that waits for a build.
      and keys the build cache on it, and the watch overlay sets
      `GREGALE_DEV_HOST` and Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`
      in the image. Next.js reads `allowedDevOrigins` only from its config
-     file, so the CLI tells Next.js developers to add
-     `process.env.GREGALE_DEV_HOST` there when `next.config` does not
-     mention it.
+     file, so with a terminal `gregale dev --watch` offers to add
+     `process.env.GREGALE_DEV_HOST` there (creating `next.config.mjs`, or
+     editing a config that exports a plain object) and otherwise prints the
+     line. Django's `ALLOWED_HOSTS` gets a printed reminder.
+   - `gregale dev --all --watch` passes `--watch` to every member with a
+     command to run; the others keep production-shaped builds, and a
+     member's own `dev.watch.command` still applies.
    - The rebuild explainer suggests `--watch`, with the command it would
      run, only when the CLI can pick one for the app.
    - Checked against the real servers (2026-10-13, local): Vite 8.3.4's
@@ -231,3 +245,12 @@ the builder VM. That is the only case that waits for a build.
      `allowedDevOrigins: [process.env.GREGALE_DEV_HOST]` opens it (101).
 4. **Python.** `uvicorn --reload` / Flask debug for uv projects, whose
    `uv sync` over the full source makes them non-verbatim today.
+   *Implemented (2026-10-14):* the overlay accepts Railpack Python plans,
+   replaces the build step's commands with `{"path": "/app/.venv/bin"}`
+   (dropping the `uv sync` that installs the project over the full source)
+   and sets `PYTHONPATH=/app/src:/app` so a `src/` layout still imports
+   itself. The pinned uv plan then classifies verbatim. Default commands:
+   `python manage.py runserver` (Django), `uvicorn <module>:<app> --reload`
+   (FastAPI) and `flask --app <module>:<app> run --debug` (Flask), found the
+   way production inference finds the app object; all three listen on
+   localhost and reach the host through the bridge.
