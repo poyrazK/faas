@@ -66,6 +66,35 @@ func TestBootWaiterWaitsForUnreachableDatabase(t *testing.T) {
 }
 
 // adr: 1237
+// TestBootWaitRecordReportsAWait: a daemon learns that it started against an
+// unavailable database (ADR-1237 §5 rule 4), and only then.
+func TestBootWaitRecordReportsAWait(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failures int
+		want     bool
+	}{
+		{"reachable at once", 0, false},
+		{"waited", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var notes []string
+			var rec BootWaitRecord
+			ping, _ := failingPing(tc.failures, syscall.ECONNREFUSED)
+			if err := testBootWaiter(true, &notes).ping(WithBootWaitRecord(context.Background(), &rec), ping); err != nil {
+				t.Fatalf("ping: %v", err)
+			}
+			if rec.Waited() != tc.want {
+				t.Fatalf("Waited() = %v, want %v", rec.Waited(), tc.want)
+			}
+		})
+	}
+	if (*BootWaitRecord)(nil).Waited() {
+		t.Fatal("nil record reports a wait")
+	}
+}
+
+// adr: 1237
 func TestBootWaiterFailsFastOutsideSystemd(t *testing.T) {
 	var notes []string
 	ping, calls := failingPing(3, syscall.ECONNREFUSED)

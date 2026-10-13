@@ -1,8 +1,9 @@
 // adr: 1237
-// store_settle_test.go pins ADR-1237 §5 rule 4: liveness verdicts that
-// compare durable heartbeat timestamps with "now" wait until this schedd has
-// read the store without interruption for a full staleness window, so a
-// store outage cannot mark the whole fleet dead.
+// store_settle_test.go pins ADR-1237 §5 rule 4: after this schedd saw the
+// store unavailable, liveness verdicts that compare durable heartbeat
+// timestamps with "now" wait until it has read the store without
+// interruption for a full staleness window, so a store outage cannot mark
+// the whole fleet dead. A schedd that saw no outage gives verdicts at once.
 
 package sched
 
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // adr: 1237
@@ -20,33 +22,47 @@ func TestStoreSettle(t *testing.T) {
 	var s storeSettle
 	t0 := time.Now()
 	window := time.Minute
-	if ok, first := s.settled(t0, window); ok || !first {
-		t.Fatalf("fresh tracker settled=%v first=%v, want false/true", ok, first)
-	}
 	s.observe(nil, t0)
-	if ok, first := s.settled(t0.Add(30*time.Second), window); ok || first {
-		t.Fatalf("mid-window settled=%v first=%v, want false/false", ok, first)
+	if ok, first := s.settled(t0, window); !ok || first {
+		t.Fatalf("no outage seen: settled=%v first=%v, want true/false", ok, first)
 	}
-	if ok, _ := s.settled(t0.Add(window), window); !ok {
-		t.Fatal("not settled after a full window of successful reads")
-	}
-	s.observe(errors.New("outage"), t0.Add(2*window))
-	if ok, first := s.settled(t0.Add(2*window), window); ok || !first {
+	s.observe(errors.New("outage"), t0.Add(window))
+	if ok, first := s.settled(t0.Add(window), window); ok || !first {
 		t.Fatalf("after error settled=%v first=%v, want false/true", ok, first)
 	}
-	s.observe(nil, t0.Add(3*window))
+	s.observe(nil, t0.Add(2*window))
+	if ok, first := s.settled(t0.Add(2*window+30*time.Second), window); ok || first {
+		t.Fatalf("mid-window settled=%v first=%v, want false/false", ok, first)
+	}
 	// A later success does not move the start of the settle period.
-	s.observe(nil, t0.Add(3*window+30*time.Second))
-	if ok, _ := s.settled(t0.Add(4*window), window); !ok {
+	s.observe(nil, t0.Add(2*window+30*time.Second))
+	if ok, _ := s.settled(t0.Add(3*window), window); !ok {
 		t.Fatal("not settled one window after recovery")
 	}
+	// An outage seen before the tracker existed holds it the same way.
+	s.hold()
+	if ok, first := s.settled(t0.Add(4*window), window); ok || !first {
+		t.Fatalf("after hold settled=%v first=%v, want false/true", ok, first)
+	}
+	s.observe(nil, t0.Add(4*window))
+	if ok, _ := s.settled(t0.Add(5*window), window); !ok {
+		t.Fatal("not settled one window after a held start")
+	}
+}
+
+// backdateSettle moves the start of the current settle period to t, as if
+// store reads had succeeded since then.
+func backdateSettle(s *storeSettle, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.since = t
 }
 
 // deadNodeListFailStore fails ListRunningInstancesOnDeadNodes while fail is
 // set, standing in for a Postgres outage seen by the dead-node sweep.
 type deadNodeListFailStore struct {
-	*state.MemStore
-	fail bool
+	MemStore *state.MemStore
+	fail     bool
 }
 
 func (s *deadNodeListFailStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold time.Time, limit int) ([]state.Instance, error) {
@@ -64,7 +80,7 @@ func (s *deadNodeListFailStore) ListRunningInstancesOnDeadNodes(ctx context.Cont
 func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 	mem := state.NewMemStore()
 	store := &deadNodeListFailStore{MemStore: mem}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	nodeID := seedStaleComputeNodeForReconcile(t, mem)
 	_, insID := seedRunningInstance(t, mem, nodeID)
 
@@ -88,7 +104,7 @@ func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 		t.Fatalf("instance state right after outage = %q, want running", ins.State)
 	}
 
-	e.deadNodeSettle.settledSince(time.Now().Add(-3 * time.Minute))
+	backdateSettle(&e.deadNodeSettle, time.Now().Add(-3*time.Minute))
 	reconciled, err = e.ReconcileDeadNodeInstances(context.Background())
 	if err != nil {
 		t.Fatalf("settled tick: %v", err)
@@ -98,11 +114,41 @@ func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 	}
 }
 
+// adr: 1237
+// TestReconcileDeadNodeInstances_StartupHoldNeedsAnOutage: a schedd that
+// started against a healthy store fails a dead node's instances on its first
+// sweep. One that saw the store unavailable before it started (a boot wait
+// or store errors as a standby) holds them for the staleness window.
+func TestReconcileDeadNodeInstances_StartupHoldNeedsAnOutage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		outage bool
+		want   int
+	}{
+		{"healthy start", false, 1},
+		{"outage before start", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := state.NewMemStore()
+			e := newEngine(t, mem, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithStoreOutageAtStartup(tc.outage)
+			nodeID := seedStaleComputeNodeForReconcile(t, mem)
+			seedRunningInstance(t, mem, nodeID)
+			reconciled, err := e.ReconcileDeadNodeInstances(context.Background())
+			if err != nil {
+				t.Fatalf("first sweep: %v", err)
+			}
+			if reconciled != tc.want {
+				t.Fatalf("first sweep reconciled=%d, want %d", reconciled, tc.want)
+			}
+		})
+	}
+}
+
 // nodeListFailStore fails NodeList while fail is set, standing in for a
 // Postgres outage seen by the stale-peer observer.
 type nodeListFailStore struct {
-	*state.MemStore
-	fail bool
+	MemStore *state.MemStore
+	fail     bool
 }
 
 func (s *nodeListFailStore) NodeList(ctx context.Context, lifecycle state.NodeLifecycle) ([]state.ComputeNode, error) {
@@ -136,7 +182,7 @@ func TestHeartbeat_StalePeerObserverWaitsForStoreToSettle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComputeNode peer: %v", err)
 	}
-	h := NewHeartbeat(store, &heartbeatFakeDialer{}, nil, nil).
+	h := NewHeartbeat(statetest.NewMem(store), &heartbeatFakeDialer{}, nil, nil).
 		WithOwnerNodeID(owner.ID).
 		WithStalePeerObserver(true)
 	h.Staleness = time.Minute

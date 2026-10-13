@@ -581,10 +581,10 @@ type Engine struct {
 	// always fresh — an operator tweak to the env var doesn't
 	// require a schedd restart (the next tick picks it up).
 	deadNodeReconcilerStalenessSeconds int
-	// deadNodeSettle holds the dead-node sweep back until this schedd has
-	// read the store without interruption for the staleness window, so a
-	// store outage cannot fail every running instance at once (ADR-1237 §5
-	// rule 4).
+	// deadNodeSettle holds the dead-node sweep back after this schedd saw
+	// the store unavailable, until it has read the store without
+	// interruption for the staleness window, so a store outage cannot fail
+	// every running instance at once (ADR-1237 §5 rule 4).
 	deadNodeSettle storeSettle
 	// recoveryArbiter (Workstream B / issue #1184 / ADR-137) is the
 	// single per-tick decision policy the migrator + deadnode
@@ -1183,6 +1183,18 @@ func (e *Engine) WithDeadNodeReconcilerStalenessSeconds(seconds int) *Engine {
 		panic(fmt.Sprintf("sched: WithDeadNodeReconcilerStalenessSeconds: seconds must be > 0, got %d", seconds))
 	}
 	e.deadNodeReconcilerStalenessSeconds = seconds
+	return e
+}
+
+// WithStoreOutageAtStartup holds the dead-node sweep for a full staleness
+// window of store access when this process saw the store unavailable before
+// the engine existed (ADR-1237 §5 rule 4): it waited for the database at
+// boot, or waited for its lease through store errors. Every heartbeat is
+// then old because nobody could write one.
+func (e *Engine) WithStoreOutageAtStartup(outage bool) *Engine {
+	if outage {
+		e.deadNodeSettle.hold()
+	}
 	return e
 }
 
@@ -5861,11 +5873,12 @@ func (e *Engine) dispatchRecovery(ctx context.Context, node state.ComputeNode, i
 // schedd itself declares a node dead. Failing sooner than schedd's own
 // verdict would terminate instances on a node that is merely slow.
 //
-// The sweep also waits until this schedd has read the store without
-// interruption for the same window (ADR-1237 §5 rule 4). After a store
-// outage longer than 120 s every node's heartbeat is old because nobody
-// could write one; failing rows then would terminate every running
-// instance in the fleet, and vmmd would destroy the healthy VMs behind them.
+// After this schedd saw the store unavailable, the sweep also waits until it
+// has read the store without interruption for the same window (ADR-1237 §5
+// rule 4). After a store outage longer than 120 s every node's heartbeat is
+// old because nobody could write one; failing rows then would terminate
+// every running instance in the fleet, and vmmd would destroy the healthy
+// VMs behind them.
 //
 // Per-row safety comes from the conditional UPDATE in
 // FailRunningInstanceOnDeadNode: it rechecks state, owner, node liveness,

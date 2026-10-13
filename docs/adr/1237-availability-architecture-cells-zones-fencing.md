@@ -427,10 +427,21 @@ The primitive is used for:
    gatewayd-public's compute inventory. apid's SSE fan-in is not covered:
    events lost there are visible to clients and need a replayable event
    log, not a reload.
-4. **No decisions from stale observation.** Liveness verdicts based on
-   heartbeat age (the stale-peer observer and the dead-node sweep) wait
-   until this process has read the store without interruption for a full
-   staleness window.
+4. **No decisions from stale observation.** Once a schedd has seen the
+   store unavailable, its liveness verdicts based on heartbeat age (the
+   stale-peer observer and the dead-node sweep) wait until it has read
+   the store without interruption for a full staleness window. The
+   evidence is:
+   - a failed store read;
+   - a boot-time wait for Postgres;
+   - store errors while it waited as a standby for the
+     central-scheduler lease.
+
+   A schedd that started against a healthy store gives verdicts at once.
+   Holding on every start would delay dead-node recovery after each
+   restart and failover with no outage to justify it. One case is left
+   open: a schedd that restarts within one heartbeat interval after an
+   outage it did not see.
 5. **Buffer, don't drop.** Gateway activity whose report fails is kept
    and retried for up to 15 minutes, longer than the longest plan idle
    timeout.
