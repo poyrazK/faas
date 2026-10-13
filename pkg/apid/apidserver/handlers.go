@@ -1,0 +1,1441 @@
+package apidserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/netip"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/meter"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+// marshalAppRetryPolicy validates and encodes the app-level retry default.
+// The same field bounds as trigger and queue policies apply; a nil policy
+// means the caller did not change the setting, while `{}` is an explicit
+// clear that is persisted as an empty object.
+func marshalAppRetryPolicy(policy *api.RetryPolicyDTO) ([]byte, *api.Problem) {
+	if policy == nil {
+		return nil, nil
+	}
+	if problem := validateTriggerRetryPolicy(policy); problem != nil {
+		return nil, problem
+	}
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		return nil, api.ErrValidation("invalid retry_policy")
+	}
+	return raw, nil
+}
+
+func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	var policy api.RetryPolicyDTO
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		return nil
+	}
+	return &policy
+}
+
+func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), acct, r))
+}
+
+// nilStringPtr returns a *string pointing at the given value, or
+// nil when s is "". Lets the create-time path stamp an
+// optional UUID onto state.App without leaking a string-shaped
+// sentinel into the column (Tier A10 / ADR-088).
+func nilStringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	cp := s
+	return &cp
+}
+
+// resolveOverflowNode resolves a wire `overflow_node` value (a
+// compute_nodes.name) to the underlying UUID. Returns the UUID
+// string (or "" when unset/empty) and a *Problem on rejection
+// (Tier A10 / ADR-088). The resolver is shared between
+// createApp + validateUpdateApp so the wire contract is one
+// source of truth.
+//
+//   - wire == nil     → ("", nil)              — no preference
+//   - wire == ""      → ("", nil) if !strict   — at PATCH time
+//     → ("", prob) if strict   — at CREATE time
+//     (no "clear" path for a fresh row)
+//   - wire non-empty  → Store.ComputeNodeByName(name)
+//     · ErrNotFound  → 422 invalid_overflow_node
+//     · active=false → 422 invalid_overflow_node
+//     · ok           → (row.ID, nil)
+func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEmpty bool) (string, *api.Problem) {
+	if wire == nil {
+		return "", nil
+	}
+	if *wire == "" {
+		if strictEmpty {
+			return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
+				"Invalid overflow_node",
+				"overflow_node = '' is not allowed at create-time; the column starts NULL. Use a real compute_node.name or omit the field to leave the preference unset.")
+		}
+		return "", nil
+	}
+	row, err := s.store.ComputeNodeByName(ctx, *wire)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return "", api.ErrInvalidOverflowNode(*wire)
+		}
+		return "", api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+			"Capacity", fmt.Sprintf("lookup overflow_node %q: %v", *wire, err))
+	}
+	if !row.Active {
+		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
+			"Invalid overflow_node",
+			fmt.Sprintf("compute_node %q exists but is active=false; pick an active peer.", *wire))
+	}
+	return row.ID, nil
+}
+
+func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list apps failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not list apps"))
+		return
+	}
+	latestByApp, err := s.store.ListLatestDeploymentPerApp(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list app deployments failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment state"))
+		return
+	}
+	liveByApp, err := s.store.ListAppsWithLiveDeployment(r.Context(), acct.ID)
+	if err != nil {
+		s.log.Error("list app live deployments failed", "account", acct.ID, "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
+		return
+	}
+	out := make([]api.AppResponse, 0, len(apps))
+	for _, a := range apps {
+		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
+		resp.DeploymentAvailability = appDeploymentAvailability(liveByApp[a.ID])
+		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
+			resp.Status = api.AppStatusUndeployed
+		}
+		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
+	if hasLive {
+		return api.AppDeploymentAvailabilityLive
+	}
+	return api.AppDeploymentAvailabilityMissing
+}
+
+func (s *server) createApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.createAppInOrg(w, r, acct, "")
+}
+
+func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct state.Account, orgID string) {
+	var req api.CreateAppRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	// Tier A10 / ADR-088: per-app overflow_node preference.
+	// Resolve the wire name → UUID server-side before buildApp
+	// runs, so the resulting state.App carries the resolved
+	// UUID (the column-shape integrity contract — the column
+	// is uuid NULL, never text). strictEmpty=true at create
+	// time because the column starts NULL and there is no
+	// "clear" path on a fresh row — PATCH is the only place
+	// where "" means "clear", and the OpenAPI
+	// minLength: 1 + DTO docstring are the contract. The
+	// resolver returns:
+	//   - (uuid, nil) on a real, active compute_node
+	//   - ("", nil)   when req.OverflowNode == nil (omit
+	//     → no preference, the A9 fallback)
+	//   - ("", prob)  on "", ErrNotFound, or active=false
+	overflowUUID, prob := s.resolveOverflowNode(r.Context(), req.OverflowNode, true /*strictEmpty: reject "" at create-time*/)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	limits := api.MustLimitsFor(acct.Plan)
+	app, prob := s.buildApp(acct, req, limits)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	// AccountID remains the creator and the current quota/billing identity;
+	// the org-scoped route stamps the workspace attribution that activity
+	// producers and timeline reads treat as canonical.
+	app.OrgID = orgID
+	// Stamp the resolved UUID (or nil) onto the App before the
+	// store layer sees it. The store writes the column verbatim
+	// — see pkg/state/pgstore.go::CreateAppIfUnderQuota +
+	// pgstore.go::CreateApp for the new overflow_node column.
+	app.OverflowNode = nilStringPtr(overflowUUID)
+	// Phase 2 / Gate A: leave node_id NULL — schedd's
+	// PlacementClaimSubscriber stamps the owner (see emitAppCreated
+	// for the full architectural rationale + docs/adr/055).
+	app.NodeID = ""
+	// Deployed-app count quota + insert happen in the same critical
+	// section inside the store (PgStore: SELECT … FOR UPDATE on the
+	// parent accounts row; MemStore: m.mu). This closes the TOCTOU the
+	// previous CountDeployedApps + CreateApp pair exposed on Free/Hobby
+	// accounts under concurrency (spec §4.2).
+	created, err := s.createAppIfUnderQuotaWithActivity(r.Context(), r, acct, app, limits)
+	if err != nil {
+		var qe *state.QuotaError
+		switch {
+		case state.ServiceCapacityProblem(err) != nil:
+			api.WriteProblem(w, state.ServiceCapacityProblem(err))
+		case errors.As(err, &qe):
+			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+		case errors.Is(err, state.ErrConflict):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
+		default:
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app"))
+		}
+		return
+	}
+	s.log.Info("app created", "app", created.ID, "slug", logsanitize.Field(created.Slug), "account", acct.ID)
+	s.audit.Emit(r.Context(), "app.created", &acct.ID, map[string]any{
+		"app_id":                   created.ID,
+		"slug":                     created.Slug,
+		"type":                     string(created.Type),
+		"ram_mb":                   created.RAMMB,
+		"cpu_millicores":           created.CPUMillicores,
+		"resource_profile":         api.ResourceProfileForResources(created.RAMMB, created.CPUMillicores),
+		"max_concurrency":          created.MaxConcurrency,
+		"runtime":                  created.Runtime,
+		"visibility":               string(created.Visibility),
+		"platform_tenant_required": created.PlatformTenantRequired,
+	})
+	s.emitAppCreated(r.Context(), created)
+	resp := s.appResponseWithContext(r.Context(), created, acct.Plan)
+	resp.Status = api.AppStatusUndeployed
+	writeJSON(w, http.StatusCreated, s.withParkedDeploymentRef(r.Context(), resp, created))
+}
+
+// buildApp applies defaults and validates a create request, returning the App to
+// persist or a *Problem describing the first violation.
+func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits api.Limits) (state.App, *api.Problem) {
+	if api.IsReservedAppSlug(req.Slug) {
+		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
+	}
+	if !validSlug(req.Slug) {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
+	}
+	typ := state.AppType(orDefault(req.Type, string(state.AppTypeApp)))
+	if typ != state.AppTypeApp && typ != state.AppTypeFunction {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid type", "type must be app or function")
+	}
+	if typ == state.AppTypeFunction && !api.ValidFunctionRuntime(req.Runtime) {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid runtime", "functions require runtime "+strings.Join(api.FunctionRuntimes, ", "))
+	}
+	visibility := api.AppVisibility(req.Visibility)
+	if visibility == "" {
+		visibility = api.AppVisibilityPublic
+	}
+	if !visibility.Valid() {
+		return state.App{}, api.ErrAppVisibilityInvalid(req.Visibility)
+	}
+	if visibility == api.AppVisibilityInternal && !acct.Plan.InternalIngressAllowed() {
+		return state.App{}, api.ErrPlanInternalIngressNotAllowed(acct.Plan)
+	}
+	if prob := validateIdleTimeout(req.IdleTimeoutS, limits); prob != nil {
+		return state.App{}, prob
+	}
+	ram := req.RAMMB
+	cpuMillicores := req.CPUMillicores
+	if req.ResourceProfile != "" {
+		profile, ok := api.ResourceProfileSpecFor(req.ResourceProfile)
+		if !ok {
+			return state.App{}, api.ErrInvalidResourceProfile(req.ResourceProfile)
+		}
+		if ram != 0 && ram != profile.MemoryMB {
+			return state.App{}, api.ErrResourceProfileConflict("ram_mb", profile.Name, profile.MemoryMB, ram)
+		}
+		if cpuMillicores != 0 && cpuMillicores != profile.CPUMillicores {
+			return state.App{}, api.ErrResourceProfileConflict("cpu_millicores", profile.Name, profile.CPUMillicores, cpuMillicores)
+		}
+		ram = profile.MemoryMB
+		cpuMillicores = profile.CPUMillicores
+	}
+	if ram == 0 {
+		ram = limits.RAMMB
+	}
+	if cpuMillicores == 0 {
+		cpuMillicores = api.DefaultAppCPUMillicores
+	}
+	if prob := api.ValidateAppCPUMillicores(cpuMillicores); prob != nil {
+		return state.App{}, prob
+	}
+	mc := req.MaxConcurrency
+	if mc == 0 {
+		mc = 1
+	}
+	if req.Profiling != nil && req.Profiling.Enabled && s.profileBackend == nil {
+		return state.App{}, api.ErrCapacity("CPU profiling is unavailable on this installation")
+	}
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+		return state.App{}, api.ErrCapacity("request tracing is unavailable on this installation")
+	}
+	lifecycle := lifecycleManifestFromCreate(req)
+	if lifecycle.PreAuthRateLimit == nil {
+		// ADR-829: protect new apps by default without changing behavior; an
+		// explicit config, including mode=off, is kept as sent.
+		lifecycle.PreAuthRateLimit = api.DefaultPreAuthRateLimit(acct.Plan)
+	}
+	// A service's desired replica count is its steady-state instance
+	// requirement. When max_concurrency is omitted, make the default large
+	// enough for that target; an explicit max_concurrency remains authoritative.
+	if req.MaxConcurrency == 0 && lifecycle.EffectiveExecutionMode() == api.ExecutionModeService && lifecycle.ServiceReplicas != nil && lifecycle.ServiceReplicas.Desired > mc {
+		mc = lifecycle.ServiceReplicas.Desired
+	}
+	if prob := api.ValidateAppConfig(limits, ram, mc, req.VCPU); prob != nil {
+		return state.App{}, prob
+	}
+	if prob := lifecycleProblem(acct.Plan, lifecycle, mc); prob != nil {
+		return state.App{}, prob
+	}
+	if prob := lifecycleObserverLinkProblem(req.Slug, lifecycle); prob != nil {
+		return state.App{}, prob
+	}
+	// Issue #1056 / ADR-074: paused warm-pool capacity is a paid-tier
+	// customer control. Zero is the default and explicit disable value;
+	// non-zero values require Hobby+ and are bounded by the app's
+	// effective max_concurrency.
+	warmPoolSize := 0
+	if req.WarmPoolSize != nil {
+		v := *req.WarmPoolSize
+		if v > 0 && !acct.Plan.WarmPoolAllowed() {
+			return state.App{}, api.NewProblem(http.StatusForbidden,
+				api.CodePlanWarmPoolNotAllowed,
+				"Warm-pool capacity is not allowed on this plan",
+				"Free tier does not support per-app warm pools; upgrade to Hobby or higher.")
+		}
+		if v < 0 || v > mc {
+			return state.App{}, api.NewProblem(http.StatusUnprocessableEntity,
+				api.CodeInvalidWarmPoolSize,
+				"Invalid warm_pool_size",
+				fmt.Sprintf("warm_pool_size must be in [0, %d] (max_concurrency); got %d", mc, v)).
+				WithLimit(int64(mc), int64(v))
+		}
+		warmPoolSize = v
+	}
+	// Issue #471 / ADR-047: per-app streaming flag. Apply the
+	// plan-level default when the request didn't carry one — a
+	// Hobby customer's brand-new app is streaming-ready without an
+	// extra PATCH round-trip. Free defaults to false (the only
+	// legal value on Free; apid rejects PATCH true with 403
+	// plan_streaming_not_allowed). The Plan accessor keeps the
+	// fail-closed contract (pkg/api/limits.go) — Free's accessor
+	// returns false just like LimitsFor(false) would.
+	//
+	// ADR-102 D5: plan-gate at create-time. A Free customer
+	// POSTing streaming_enabled=true gets 403
+	// plan_streaming_not_allowed BEFORE the App is built — same
+	// shape as the PATCH-time gate (cmd/apid/handlers_ext.go:245).
+	// Without this gate a Free customer's create request would
+	// silently land as true (bypassing the Free-tier contract that
+	// StreamingResponseAllowed is supposed to enforce). The
+	// status code 403 mirrors UpdateApp exactly so the same
+	// CodePlanStreamingNotAllowed returns the same status on
+	// POST vs PATCH — telemetry collapsing on `code` is uniform.
+	//
+	// The apps_streaming_enabled_plan_check migration is the database
+	// backstop for direct writes and restores. Keep this runtime gate as
+	// the customer-facing 403 so API callers get the same stable error.
+	if req.StreamingEnabled != nil && *req.StreamingEnabled && !acct.Plan.StreamingResponseAllowed() {
+		return state.App{}, api.NewProblem(http.StatusForbidden,
+			api.CodePlanStreamingNotAllowed,
+			"Streaming responses are not allowed on this plan",
+			"Free tier does not support per-app streaming; upgrade to Hobby or higher.")
+	}
+	streaming := acct.Plan.StreamingEnabled()
+	if req.StreamingEnabled != nil {
+		streaming = *req.StreamingEnabled
+	}
+	// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge flag.
+	// Mirrors the streaming-enabled shape above — plan-level
+	// default applied when the request didn't carry one, request
+	// override otherwise. Free stays off (a long-lived WS would
+	// pin a wake past the 30 s Free idle window); Hobby/Pro/Scale
+	// default on. The Plan.WebSocketEnabled() accessor is
+	// fail-closed — Free's accessor returns false.
+	ws := acct.Plan.WebSocketEnabled()
+	if req.WebSocketEnabled != nil {
+		ws = *req.WebSocketEnabled
+	}
+	// ADR-093: per-route observability opt-in. Mirrors the
+	// WebSocketEnabled shape above — plan-level default applied
+	// when the request didn't carry one, request override
+	// otherwise. Free stays off (per-route cardinality would not
+	// have a budget alongside the per-app rollups); Hobby/Pro/
+	// Scale default on. The Plan.RouteMetricsEnabled() accessor
+	// is fail-closed — Free's accessor returns false. The PATCH
+	// upstream gate (CodePlanRouteMetricsNotAllowed) has already
+	// rejected a Free customer trying to override the default to
+	// true on a PATCH round-trip; create-time goes through the
+	// same gate in handlers_ext.go.
+	rm := acct.Plan.RouteMetricsEnabled()
+	if req.RouteMetricsEnabled != nil {
+		rm = *req.RouteMetricsEnabled
+	}
+	// Issue #470 / ADR-055: per-app two-tier snapshot flag. Apply
+	// the plan-level default when the request didn't carry one —
+	// a Pro customer's brand-new app gets warm.snap capture
+	// without an extra PATCH round-trip. Free/Hobby default to
+	// false (the only legal value on those tiers; apid rejects
+	// PATCH-true with 403 plan_warm_snapshot_not_allowed). The
+	// per-request override on Pro/Scale lets a customer opt out
+	// (e.g. an app they know runs cold every request).
+	warmEnabled := acct.Plan.WarmSnapshotEnabled()
+	if req.WarmSnapshotEnabled != nil {
+		warmEnabled = *req.WarmSnapshotEnabled
+	}
+	// Issue #560 + issue #695 / ADR-080: per-app require_authn
+	// + public_auth_mode. The default is now per-plan — see
+	// pkg/api/limits.go (Plan.RequireAuthnDefault +
+	// Plan.PublicAuthModeDefault). Per-plan truth table:
+	// Free={false, "open"}, Hobby={true, "open"},
+	// Pro={true, "bearer"}, Scale={true, "bearer"}. Existing
+	// customers are unaffected because migration 00155
+	// grand-fathered every pre-flip row with
+	// auth_default_flipped_at and did NOT flip their
+	// require_authn / public_auth_mode values.
+	//
+	// Plan-gate at create-time: a Free/Hobby customer who POSTs
+	// require_authn=true gets 403 plan_require_authn_not_allowed
+	// BEFORE the App is built — same shape as the PATCH-time
+	// gate (handlers_ext.go:268). Without this gate a Free
+	// customer's create request would silently land as true
+	// (bypassing the Free-tier contract that RequireAuthnAllowed
+	// is supposed to enforce). Hobby unlocks the gate as a
+	// default but NOT as an opt-in: a Hobby customer can keep
+	// the default true on creation but cannot escalate back to
+	// true once they PATCH-false (the PATCH-time gate blocks it).
+	if req.RequireAuthn != nil && *req.RequireAuthn && !acct.Plan.RequireAuthnAllowed() {
+		return state.App{}, api.NewProblem(http.StatusForbidden,
+			api.CodePlanRequireAuthnNotAllowed,
+			"Per-app authentication is not allowed on this plan",
+			"Free and Hobby tiers do not support per-app require_authn; upgrade to Pro or higher.")
+	}
+	if req.PlatformTenantRequired != nil && *req.PlatformTenantRequired && acct.Plan.ConsumerKeysPerApp() == 0 {
+		return state.App{}, api.ErrPlanPlatformTenantRequiredNotAllowed(acct.Plan)
+	}
+	requireAuthn := acct.Plan.RequireAuthnDefault()
+	if req.RequireAuthn != nil {
+		requireAuthn = *req.RequireAuthn
+	}
+	// public_auth_mode has no wire-side override on
+	// CreateAppRequest today — PATCH is the only surface for
+	// it (the basic-cred sealing step requires plaintext
+	// credentials, which only makes sense on a PATCH
+	// roundtrip). The default lands here so a freshly
+	// created Hobby/Pro/Scale app inherits the gate as part
+	// of the secure-by-default flip.
+	publicAuthMode := acct.Plan.PublicAuthModeDefault()
+	// Apply the per-app threshold defaults from the plan; an
+	// explicit override on the request wins. Out-of-range values
+	// were already rejected at the JSON-decode layer
+	// (api.ValidateWarmSnapshotBounds), so the only path that
+	// produces an out-of-range value here is a buggy test or
+	// internal caller.
+	warmMinReqs := acct.Plan.WarmSnapshotMinRequestsDefault()
+	if req.WarmSnapshotMinRequests != nil {
+		warmMinReqs = *req.WarmSnapshotMinRequests
+	}
+	warmMinMs := acct.Plan.WarmSnapshotMinMsDefault()
+	if req.WarmSnapshotMinMs != nil {
+		warmMinMs = *req.WarmSnapshotMinMs
+	}
+	// ADR-124: per-app wire-protocol selector. Closed set
+	// {http1, http2, grpc} — http1 / http2 are universal;
+	// grpc is plan-gated to Hobby+/Pro/Scale (Free returns 403
+	// plan_app_protocol_grpc_not_allowed). Plan-level default
+	// applied when the request didn't carry one so a Hobby
+	// customer's brand-new app is grpc-ready without an extra
+	// PATCH round-trip; Free defaults to "http1" via the
+	// Plan.AppProtocolDefault() accessor (the only legal value
+	// on Free). The closed-set CHECK apps_app_protocol_chk
+	// (migration 00382) is the schema-level guard; the apid
+	// gate is the customer-visible 403 surface that mirrors the
+	// PATCH-time gate (handlers_ext.go). Without the apid gate
+	// a Free customer's create request would silently land as
+	// "http1" via the plan default — bypass-closed, but the
+	// error message would never reach the customer. Mirrors the
+	// streaming_enabled / require_authn shape above.
+	if req.AppProtocol != nil {
+		if !api.IsValidAppProtocol(*req.AppProtocol) {
+			return state.App{}, api.NewProblem(http.StatusBadRequest,
+				api.CodeAppProtocolInvalid,
+				"Invalid app_protocol",
+				"app_protocol must be one of: http1, http2, grpc")
+		}
+		if *req.AppProtocol == api.AppProtocolGRPC &&
+			!acct.Plan.AppProtocolAllowed(api.AppProtocolGRPC) {
+			return state.App{}, api.NewProblem(http.StatusForbidden,
+				api.CodePlanAppProtocolGrpcNotAllowed,
+				"Per-app gRPC wire protocol is not allowed on this plan",
+				"Free tier does not support app_protocol='grpc'; upgrade to Hobby or higher.")
+		}
+	}
+	appProtocol := api.AppProtocolHTTP1
+	if req.AppProtocol != nil {
+		appProtocol = *req.AppProtocol
+	}
+	if req.AppProtocol != nil {
+		appProtocol = *req.AppProtocol
+	}
+	retryPolicy, retryProblem := marshalAppRetryPolicy(req.RetryPolicy)
+	if retryProblem != nil {
+		return state.App{}, retryProblem
+	}
+	allowedCallers, callersProblem := serviceCallersForCreate(req.AllowedServiceCallers)
+	if callersProblem != nil {
+		return state.App{}, callersProblem
+	}
+	allowedCallScopes, callScopesProblem := serviceCallScopesForCreate(req.AllowedServiceCallScopes)
+	if callScopesProblem != nil {
+		return state.App{}, callScopesProblem
+	}
+	bindings, bindingsProblem := standaloneServiceBindings(req.ServiceBindingTargets, req.Slug)
+	if bindingsProblem != nil {
+		return state.App{}, bindingsProblem
+	}
+	serviceReliability, reliabilityProblem := serviceReliabilityForCreate(req.ServiceReliability, bindings)
+	if reliabilityProblem != nil {
+		return state.App{}, reliabilityProblem
+	}
+	servicePolicy, servicePolicyProblem := standaloneServicePolicy(req.ServiceBindingPolicy)
+	if servicePolicyProblem != nil {
+		return state.App{}, servicePolicyProblem
+	}
+	serviceTransport, serviceTransportProblem := standaloneServiceTransport(req.ServiceBindingTransport)
+	if serviceTransportProblem != nil {
+		return state.App{}, serviceTransportProblem
+	}
+	appManifest := stateManifestFromAPI(lifecycle)
+	appManifest.AllowedServiceCallers = allowedCallers
+	appManifest.AllowedServiceCallScopes = allowedCallScopes
+	appManifest.ServiceBindings = bindings
+	appManifest.ServiceReliability = serviceReliability
+	appManifest.ServiceBindingPolicy = servicePolicy
+	appManifest.ServiceBindingTransport = serviceTransport
+	appManifest.Env = api.ServiceBindingEnvForTransport(appManifest.Env, bindings, serviceTransport)
+	return state.App{
+		AccountID: acct.ID, Slug: req.Slug, Type: typ, Runtime: req.Runtime,
+		Visibility: visibility,
+		RAMMB:      ram, CPUMillicores: cpuMillicores, MaxConcurrency: mc, IdleTimeoutS: req.IdleTimeoutS, Status: state.AppActive,
+		StreamingEnabled: streaming,
+		WebSocketEnabled: ws,
+		// ADR-093: per-route observability opt-in (plan-level
+		// default applied via the block above). Mirrors the
+		// WebSocketEnabled shape — the per-plan default is
+		// applied here at create time so the row round-trips
+		// the same value a future PATCH would land on.
+		RouteMetricsEnabled: rm,
+		// ADR-091 amendment / §4.1.2.0: coarse-gate per-app
+		// maintenance flag. Default false (mirrors the
+		// apps.maintenance_mode column DEFAULT). Customers may
+		// PATCH true to put the whole app into 503 maintenance;
+		// there's no plan gate (Free and above may opt in) —
+		// coarse maintenance is a customer-experience feature,
+		// not an abuse vector.
+		MaintenanceMode:     req.MaintenanceMode != nil && *req.MaintenanceMode,
+		WarmSnapshotEnabled: warmEnabled,
+		// Issue #560 + issue #695 / ADR-080: see the
+		// plan-default block above. Default is per-plan
+		// (Plan.RequireAuthnDefault + Plan.PublicAuthModeDefault);
+		// the per-plan RequireAuthnAllowed gate is enforced
+		// at create-time too (see the rejection branch above)
+		// AND at PATCH-time (handlers_ext.go:268) so a Free
+		// customer's escalation surfaces as 403
+		// plan_require_authn_not_allowed before any SQL
+		// write. State layer is the canonical source
+		// (apps.require_authn + apps.public_auth_mode columns);
+		// the DTO surfaces the same values.
+		RequireAuthn:           requireAuthn,
+		PublicAuthMode:         publicAuthMode,
+		PlatformTenantRequired: req.PlatformTenantRequired != nil && *req.PlatformTenantRequired,
+		// Coerce to the plan minimums when the request asked for a
+		// warm config but the plan says warm-snapshot is off: the
+		// store ignores them anyway (the cold-boot path doesn't
+		// read min_requests / min_ms), and the apid response
+		// projects the plan defaults so dashboards stay consistent.
+		WarmSnapshotMinRequests: warmMinReqs,
+		WarmSnapshotMinMs:       warmMinMs,
+		WarmPoolSize:            warmPoolSize,
+		// ADR-124: per-app wire-protocol selector. Plan-default
+		// applied above (Free → "http1", Hobby/Pro/Scale →
+		// "http1" but customer may opt in to http2 / grpc via
+		// the request body). The store's CreateApp floor
+		// (pgstore.go) coerces an empty value to "http1" so
+		// hand-built App{}s land safely; this branch never
+		// reaches the floor in practice because every exit
+		// path above assigns appProtocol explicitly.
+		AppProtocol:     appProtocol,
+		RetryPolicyJSON: retryPolicy,
+		Manifest:        appManifest,
+	}, nil
+}
+
+func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	// DeployedApps is enforced at app-create time; the active-app
+	// gate lives in store.CreateDeployment (returns ErrNotFound on a
+	// soft-deleted app, which we surface as 404 here). Multipart
+	// uploads go down the createDeploymentMultipart branch; the
+	// JSON branch is the rest of this handler. Extracted to
+	// loadAppAndPreflight so createDeployment stays under the
+	// CLAUDE.md 50-line handler cap.
+	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
+	if !ok {
+		return
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		// Cap upload size at the plan's SourceTarballMaxMB before any
+		// multipart parsing — MaxBytesReader returns a *MaxBytesError on
+		// overflow which createDeploymentMultipart maps to 413.
+		max := int64(limits.SourceTarballMaxMB) * 1024 * 1024
+		r.Body = http.MaxBytesReader(w, r.Body, max)
+		s.createDeploymentMultipart(w, r, acct, app, false)
+		return
+	}
+	var req api.CreateDeploymentRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	s.createImageDeployment(w, r, acct, app, limits, req, false)
+}
+
+// createImageDeployment keeps published-image triggers on normal deployment
+// admission and notification behavior. Only triggers assign a durable identity.
+func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, limits api.Limits, req api.CreateDeploymentRequest, published bool) {
+	if p := validateReviewedStage(req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	app, reviewedSettings, reviewProblem := s.reviewedEnvironmentApp(w, r, acct, app, req)
+	if reviewProblem != nil {
+		api.WriteProblem(w, reviewProblem)
+		return
+	}
+	if req.NativeRollout != "" && app.Manifest.ExecutionMode != req.NativeRollout {
+		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed target execution mode"))
+		return
+	}
+	var publishedPrevious state.Deployment
+	if published {
+		image, p := validatePublishedImage(app, req.Image)
+		if p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+		req.Image = image
+		if req.Scope != "" {
+			if p := api.ValidateScope(req.Scope); p != nil {
+				api.WriteProblem(w, p)
+				return
+			}
+		}
+		if s.replyPublishedImageReplay(w, r, app, req) {
+			return
+		}
+		publishedPrevious, p = s.preparePublishedImage(r.Context(), app, &req)
+		if p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
+	if len(req.Workflows) > 0 {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
+	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := validateDeploymentRollbackOptions(&req, acct.Plan); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if !isDigestPinned(req.Image) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
+			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
+		return
+	}
+	// Pre-CreateDeployment validation gates (#472 / #460 / #463).
+	// Gate order matters (signature → override → sidecar); each
+	// helper short-circuits only on its own failure.
+	if p := enforceSignatureGate(r.Context(), s, acct, app, &req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := s.enforceSecurityPostureGate(r.Context(), app); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	overrides, p := validateOverrides(&req, limits, acct.Plan)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	if p := s.validateAndPlanSidecars(&req, acct, limits); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	// ADR-091 / PR-D: per-deployment env scope validation. The
+	// schema CHECK (deployments_scope_shape) would reject on the
+	// INSERT — surfacing the violation here gives the customer a
+	// clean 400 with the right RFC 7807 code instead of letting
+	// the SQLSTATE 23514 bubble up to a generic 500. Empty
+	// request scope is fine (handled: defaulted to
+	// api.DefaultEnvScope in buildDeploymentForInsert), so we
+	// only validate when the field is present.
+	if req.Scope != "" {
+		if p := api.ValidateScope(req.Scope); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
+	// Issue #977 / ADR-116: validate the annotation surface from
+	// the JSON wire. The same helper covers all three deploy paths
+	// (image JSON here, source-tarball multipart, source-ref
+	// JSON). Pointer fields map to zero (no annotation) when
+	// absent; a present-but-empty string is accepted (the column
+	// is nullable and "no annotation" == "").
+	jsonAnn := annotationForm{
+		Reason:     strFromPtr(req.Reason),
+		Tag:        strFromPtr(req.Tag),
+		DeployedBy: strFromPtr(req.DeployedBy),
+		PRNumber:   intFromPtr(req.PRNumber),
+	}
+	if p := validateAnnotationForm(jsonAnn); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
+	dep, sErr := buildDeploymentForInsert(app, &req, overrides, limits, acct.Plan)
+	if sErr != nil {
+		api.WriteProblem(w, sErr)
+		return
+	}
+	if published {
+		dep.ID = publishedImageDeploymentID(app.ID, dep.Scope, req.Image)
+		dep.ReleaseCommand = append([]string(nil), publishedPrevious.ReleaseCommand...)
+		dep.ReleaseCommandShell = publishedPrevious.ReleaseCommandShell
+	}
+	if !s.admitCanaryDeployment(w, r, dep) {
+		return
+	}
+	// Capture the current predecessor for audit. It remains live until the
+	// replacement passes readiness and MarkDeploymentLive cuts traffic over.
+	prev, _ := s.store.LatestDeployment(r.Context(), app.ID)
+	if published {
+		prev = publishedPrevious
+	}
+	// Issue #606 / SAFE-RELEASES-E.1: server-side actor
+	// attribution. Stamped AFTER buildDeploymentForInsert so the
+	// pure-struct helper stays free of HTTP context (the helper
+	// is the single source of truth for "given everything we
+	// validated, what row lands in the store?" — touching it for
+	// every new HTTP-derived field would balloon the function's
+	// signature). The three fields stamped here are
+	// server-resolved and never client-supplied; the
+	// closed-set CHECK on deployed_via (migration 00303) rejects
+	// any out-of-set value the helper chain might emit.
+	dep.ExpectedReview = req.ExpectedReview
+	dep.ReviewedRolloutMode = req.NativeRollout
+	dep.ReviewedSettings = reviewedSettings
+	stampDeploymentActor(&dep, acct, r)
+	if !s.admitAccountDeploy(w, r, acct) {
+		return
+	}
+	activity := s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{
+		"source": "image", "scope": dep.Scope, "supersedes": prev.ID, "has_overrides": req.Overrides != nil,
+	})
+	var d state.Deployment
+	var activityOutboxID int64
+	var err error
+	if activity != nil {
+		if activityStore, ok := s.store.(state.OrgActivityDeploymentMutationStore); ok {
+			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(r.Context(), dep, *activity)
+		} else {
+			d, err = s.store.CreateDeployment(r.Context(), dep)
+		}
+	} else {
+		d, err = s.store.CreateDeployment(r.Context(), dep)
+	}
+	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
+		if published && errors.Is(err, state.ErrConflict) && s.replyPublishedImageReplay(w, r, app, req) {
+			return
+		}
+		// ADR-091 / PR-D: per-deployment scope collision. mapErr
+		// wraps state.ErrConflict with the constraint name —
+		// detect deployments_app_scope_live_uniq here and surface a
+		// dedicated 409 deployment_scope_collision code instead of
+		// the generic 503/500 path. The substring match is
+		// defensive: mapErr's format is "ErrConflict: constraint"
+		// and ErrConflict may wrap a chain of similar errors on
+		// multi-statement tx failure paths.
+		if errors.Is(err, state.ErrConflict) && strings.Contains(err.Error(), "deployments_app_scope_live_uniq") {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeDeploymentScopeCollision,
+				"Scope already live",
+				"a live deployment already targets this scope on this app; supersede it before creating another"))
+			return
+		}
+		s.writeDeploymentCreateError(w, err)
+		return
+	}
+	if activityOutboxID > 0 {
+		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
+	}
+	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
+	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
+}
+
+// handleDevSourceDeploy is the developer-only delta transport. Keeping it on
+// a distinct route makes compatibility safe: an older apid returns 404, so the
+// CLI can retry the complete archive through the canonical deploy endpoint
+// instead of an old server accidentally treating a delta as complete source.
+func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
+	if !ok {
+		return
+	}
+	if app.PreviewOfSlug == "" || app.PreviewPrNumber != 0 {
+		s.notFound(w, "no such developer environment")
+		return
+	}
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
+		return
+	}
+	max := int64(limits.SourceTarballMaxMB)*1024*1024 + api.DevSourceMetadataMaxBytes
+	r.Body = http.MaxBytesReader(w, r.Body, max)
+	s.createDeploymentMultipart(w, r, acct, app, true)
+}
+
+// loadAppAndPreflight resolves the app from the URL slug, enforces
+// IDOR (app.AccountID == acct.ID), and hoists the per-plan limits.
+// On any failure path, writes the appropriate error response and
+// returns ok=false; on success returns (app, true, limits).
+//
+// Extracted from createDeployment (handlers.go) so the handler stays
+// under the CLAUDE.md 50-line cap. The IDOR check is identical to
+// loadApp in auth_facade.go; the difference is we ALSO return the
+// per-plan limits, which createDeployment needs both for the
+// multipart-source-tarball cap and the override / sidecar
+// validators.
+func (s *server) loadAppAndPreflight(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool, api.Limits) {
+	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil || app.AccountID != acct.ID {
+		s.notFound(w, "no such app")
+		return state.App{}, false, api.Limits{}
+	}
+	return app, true, api.MustLimitsFor(acct.Plan)
+}
+
+// appResponse converts a state.App row into the wire DTO using a background
+// context for compatibility with non-request callers and older tests.
+func (s *server) appResponse(a state.App, plan api.Plan) api.AppResponse {
+	return s.appResponseWithContext(context.Background(), a, plan)
+}
+
+// appResponseWithContext converts a state.App row into the wire DTO. The plan
+// is threaded through so the DTO can surface plan-derived caps
+// (issue #559: ConcurrencyPerVMBound) without re-looking-up the account store.
+// Request handlers should use the request context so the optional canonical
+// domain lookup is cancelled with the request.
+func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan api.Plan) api.AppResponse {
+	var allowedCallers *[]string
+	if a.Manifest.AllowedServiceCallers != nil {
+		copyOfNames := append([]string{}, (*a.Manifest.AllowedServiceCallers)...)
+		allowedCallers = &copyOfNames
+	}
+	var allowedCallScopes *api.ServiceCallerScopes
+	if a.Manifest.AllowedServiceCallScopes != nil {
+		copyOfScopes := make(api.ServiceCallerScopes, len(*a.Manifest.AllowedServiceCallScopes))
+		for caller, scope := range *a.Manifest.AllowedServiceCallScopes {
+			copyOfScopes[caller] = api.ServiceCallScope{
+				Methods:      append([]string(nil), scope.Methods...),
+				PathPrefixes: append([]string(nil), scope.PathPrefixes...),
+			}
+		}
+		allowedCallScopes = &copyOfScopes
+	}
+	consumerAuthMode := string(a.ConsumerAuthMode)
+	if consumerAuthMode == "" {
+		consumerAuthMode = api.ConsumerAuthModeOptional
+	}
+	platformURL := appURLForDomain(a.Slug, s.domain)
+	canonicalURL, defaultDomain := platformURL, ""
+	if resolver, ok := s.store.(state.DefaultCustomDomainStore); ok {
+		if domain, err := resolver.DefaultCustomDomain(ctx, a.ID); err == nil && domain != "" {
+			defaultDomain = domain
+			canonicalURL = "https://" + domain
+		}
+	}
+	// EgressAllowlist is materialised as a non-nil empty slice so
+	// the JSON shape is `[]` (never `null`) regardless of plan /
+	// pre-PATCH state. prefix.String() is the canonical form
+	// ("1.2.3.0/24", "fe80::/10"); validateUpdateApp has already
+	// rewritten any "::ffff:" v4-mapped entry to its v4 form by
+	// the time it lands in the store, so we never see one here.
+	ea := egressStringList(a.EgressAllowlist)
+	return api.AppResponse{
+		ID: a.ID, Slug: a.Slug, Type: string(a.Type), WorkloadClass: string(a.WorkloadClass), Runtime: a.Runtime,
+		Visibility: string(api.NormalizeAppVisibility(a.Visibility)),
+		RAMMB:      a.RAMMB, VCPU: api.VCPUPerPlan[plan], CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		ResourceProfile: api.ResourceProfileForResources(a.RAMMB, effectiveAppCPUMillicores(a, plan)),
+		MaxConcurrency:  a.MaxConcurrency, IdleTimeoutS: a.IdleTimeoutS,
+		RequestTimeoutS: a.Manifest.RequestTimeoutS,
+		// Issue #559: platform-advertised per-VM concurrency cap
+		// for the customer's plan. Distinct from MaxConcurrency
+		// (the per-app instance cap above). Unknown plans fall
+		// through the accessor to 0 — same fail-closed contract
+		// as MaxMinInstances.
+		ConcurrencyPerVMBound: plan.ConcurrencyPerVMBound(),
+		EffectiveLimits:       appEffectiveLimits(a, plan),
+		ConfiguredResources: api.AppConfiguredResources{
+			MemoryMB: a.RAMMB, CPUMillicores: effectiveAppCPUMillicores(a, plan),
+		},
+		// ux_spec §6.5: per-app floor the reaper honors when
+		// parking idle instances. Pro/Scale only (apid gates).
+		MinInstances: a.MinInstances,
+		Status:       string(a.Status), DeletedAt: a.DeletedAt,
+		DeleteGraceUntil: a.DeleteGraceUntil,
+		URL:              platformURL,
+		CanonicalURL:     canonicalURL,
+		DefaultDomain:    defaultDomain,
+		PreviewOfSlug:    a.PreviewOfSlug,
+		PreviewPRNumber:  a.PreviewPrNumber,
+		PreviewPRState:   a.PreviewPrState,
+		PreviewExpiresAt: a.PreviewExpiresAt,
+		Manifest: api.AppManifest{
+			Entrypoint:                   a.Manifest.Entrypoint,
+			Env:                          a.Manifest.Env,
+			WorkingDir:                   a.Manifest.WorkingDir,
+			Port:                         a.Manifest.Port,
+			Ports:                        append([]api.WorkloadPort(nil), a.Manifest.Ports...),
+			Healthz:                      a.Manifest.Healthz,
+			User:                         a.Manifest.User,
+			ExecutionMode:                a.Manifest.ExecutionMode,
+			RestartPolicy:                a.Manifest.RestartPolicy,
+			StopSignal:                   a.Manifest.StopSignal,
+			StopGracePeriod:              time.Duration(a.Manifest.StopGracePeriodS) * time.Second,
+			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
+			AfterRestore:                 a.Manifest.AfterRestore,
+			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Profiling:                    a.Manifest.Profiling,
+			Tracing:                      a.Manifest.Tracing,
+			StartupDeadlineS:             a.Manifest.StartupDeadlineS,
+			MaxRetries:                   a.Manifest.MaxRetries,
+			RequestTimeoutS:              a.Manifest.RequestTimeoutS,
+			ServiceReplicas:              apiManifestFromState(a.Manifest).ServiceReplicas,
+			Favicon:                      append([]byte(nil), a.Manifest.Favicon...),
+			RobotsTxt:                    a.Manifest.RobotsTxt,
+			HeadWakes:                    a.Manifest.HeadWakes,
+			CrawlerPolicy:                a.Manifest.EffectiveCrawlerPolicy(),
+			PreAuthRateLimit:             a.Manifest.PreAuthRateLimit,
+			HealthPath:                   effectiveHealthPath(a.Manifest.HealthPath),
+			HealthPathWakes:              a.Manifest.HealthPathWakes,
+			SessionAffinity:              a.Manifest.SessionAffinity,
+			VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
+			VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
+			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
+		},
+		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
+		ServiceReliability:        a.Manifest.ServiceReliability,
+		ServiceBindingPolicy:      a.Manifest.EffectiveServiceBindingPolicy(),
+		ServiceBindingTransport:   a.Manifest.EffectiveServiceBindingTransport(),
+		PreviewServiceCallsPolicy: a.Manifest.EffectivePreviewServiceCallsPolicy(),
+		AllowedServiceCallers:     allowedCallers,
+		AllowedServiceCallScopes:  allowedCallScopes,
+		EgressAllowlist:           ea,
+		EgressPorts:               append([]int{}, a.EgressPorts...),
+		// Issue #169 / #172: per-app reactive scale-up trigger
+		// targets. 0 = "disabled" (no autoscale rule). Reactive
+		// scale-up runs in pkg/sched/scaleup; the trigger reads
+		// these columns every tick.
+		AutoscaleTargetRPS:    a.AutoscaleTargetRPS,
+		AutoscaleTargetCPUPct: a.AutoscaleTargetCPUPct,
+		// Issue #471 / ADR-047: per-app streaming flag. Surfaced so
+		// dashboards can show "streaming on / off" alongside the
+		// egress-allowlist flag.
+		StreamingEnabled: a.StreamingEnabled,
+		// Issue #676 / ADR-080: per-app raw-bytes Upgrade bridge
+		// flag. Surfaced so dashboards can show "websocket on / off"
+		// alongside the streaming pill.
+		WebSocketEnabled:             a.WebSocketEnabled,
+		SessionAffinity:              a.Manifest.SessionAffinity,
+		VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
+		VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
+		RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
+		// ADR-093: per-route observability opt-in (DB round-trip).
+		// Surfaced so dashboards can show "per-route metrics on /
+		// off" alongside the streaming + websocket pills and so a
+		// customer can verify their PATCH landed without a second
+		// round-trip.
+		RouteMetricsEnabled: a.RouteMetricsEnabled,
+		// Only-allow-declared-routes contract. Explicit route declarations
+		// are returned so clients can verify the gateway policy that will be
+		// applied before a request can wake the app.
+		OnlyAllowDeclaredRoutes: a.OnlyAllowDeclaredRoutes,
+		DeclaredRoutes:          declaredRouteResponses(a.DeclaredRoutes),
+		// ADR-124: per-app wire-protocol selector (DB
+		// round-trip). Surfaced so dashboards can show
+		// "protocol: http1 / http2 / grpc" alongside the
+		// streaming + websocket + route-metrics pills and so
+		// the customer can verify their PATCH landed
+		// without a second round-trip. The schema's NOT NULL
+		// DEFAULT 'http1' guarantee means a plain string
+		// copy is safe (no coalesce needed).
+		AppProtocol: a.AppProtocol,
+		// Issue #560: per-app require_authn flag. Surfaced so
+		// dashboards can show "auth required on / off" alongside
+		// the streaming + require_signed pills, and so a customer
+		// can verify their PATCH landed without a second
+		// round-trip. The token-scope enforcement (cross-account
+		// 403) lives in gatewayd-internal, not here.
+		RequireAuthn:           a.RequireAuthn,
+		ConsumerAuthMode:       consumerAuthMode,
+		PlatformTenantRequired: a.PlatformTenantRequired,
+		// Issue #477 / ADR-079: per-app public-URL auth.
+		// Surfaced so dashboards can show "public auth: open /
+		// bearer / basic" alongside the require_authn pill and
+		// so a customer can verify their PATCH landed without
+		// a second round-trip. The plaintext creds NEVER
+		// appear here — they live in app_secrets (ADR-045).
+		//
+		// IPAllowlistEntryCount (ADR-118 / MED-1
+		// review-fix): gated by mode so a stale column
+		// after a flip to a different mode doesn't
+		// mis-render. After PATCH ip_allowlist → basic
+		// the column retains the prior CIDRs (the Set
+		// bit only fires when the new mode is
+		// ip_allowlist) — returning len() unconditionally
+		// would surface "5" on a basic-mode app. The
+		// OpenAPI docstring at api/openapi.yaml
+		// documents "Always 0 when mode != 'ip_allowlist'"
+		// — this matches. HasBasicCreds is the
+		// analogous gating concern: only meaningful in
+		// basic-mode context, but the field is owned by
+		// the secretbox blob presence which is mode-
+		// intrinsic, so no extra gate needed there.
+		PublicAuth: api.PublicAuthStatus{
+			Mode:          a.PublicAuthMode,
+			HasBasicCreds: len(a.PublicAuthBasicSealed) > 0,
+			IPAllowlistEntryCount: func() int {
+				if a.PublicAuthMode != api.AppPublicAuthModeIPAllowlist {
+					return 0
+				}
+				return len(a.PublicAuthIPAllowlist)
+			}(),
+		},
+		// Issue #695 / ADR-080: grand-father marker. Set by
+		// migration 00155 on every pre-flip row; null on
+		// apps created after the flip. Surfaced so the
+		// dashboard banner query + `faas apps list`
+		// annotation can render the "since YYYY-MM-DD"
+		// suffix on grandfathered rows.
+		AuthDefaultFlippedAt: a.AuthDefaultFlippedAt,
+		// Issue #462 / ADR-058 / PR-A: per-app scaling policy. nil
+		// = legacy row (projected from min_instances / max_concurrency
+		// by the read path). Non-nil = customer-authored policy.
+		// The state layer is the canonical source; the DTO carries
+		// the same shape so the dashboard / CLI surface one
+		// consistent struct.
+		ScalingPolicy:  statePolicyToDTO(a.ScalingPolicy),
+		RetryPolicy:    retryPolicyDTOFromJSON(a.RetryPolicyJSON),
+		LastScaleOutAt: a.LastScaleOutAt,
+		LastScaleInAt:  a.LastScaleInAt,
+		// Issue #472 / ADR-054: per-app signature-enforcement flag.
+		// Surfaced so dashboards can show "signature required" alongside
+		// the streaming flag, and so a customer can verify their
+		// PATCH landed without a second round-trip.
+		RequireSigned: a.RequireSigned,
+		// Issue #470 / ADR-055: per-app two-tier-snapshot flag +
+		// thresholds. Surfaced so dashboards can show "warm snapshot
+		// on / off" alongside the streaming + require_signed pills,
+		// and so a customer can verify the per-app override values
+		// they PATCHed.
+		WarmSnapshotEnabled:     a.WarmSnapshotEnabled,
+		WarmSnapshotMinRequests: a.WarmSnapshotMinRequests,
+		WarmSnapshotMinMs:       a.WarmSnapshotMinMs,
+		WarmPoolSize:            a.WarmPoolSize,
+		// Tier A10 / ADR-088: resolved UUID of the per-app
+		// overflow_node preference. NULL on the wire when the
+		// customer has not pinned a spill target — the
+		// `omitempty` on the DTO drops the field so dashboards
+		// can branch on field-absence rather than a sentinel
+		// string. Server-side resolution (wire name → UUID)
+		// happens at create/PATCH time in handlers.go /
+		// handlers_ext.go, so the value is always UUID-shaped
+		// (never the operator-readable name).
+		OverflowNode: a.OverflowNode,
+		// CORS improvements D1: per-app default CORS opt-in +
+		// allowlist. Projected from the apps row so a customer
+		// can verify their PATCH landed without a second
+		// round-trip. The store-layer field is already *bool
+		// so the three-state shape (nil = schema default,
+		// *false = explicit opt-out, *true = opt-in)
+		// flows through unchanged. CORSDefaultOrigins is
+		// materialised as a non-nil slice so the JSON shape
+		// is `[]` (never `null`) for the same ergonomic
+		// reasons as EgressAllowlist above.
+		CORSDefaultEnabled: a.CORSDefaultEnabled,
+		CORSDefaultOrigins: cORSOriginsList(a.CORSDefaultOrigins),
+		// ADR-091 amendment: surface the persisted coarse maintenance
+		// gate on create, get, list, and PATCH responses. The store already
+		// writes and reads this column; omitting it here made a successful
+		// PATCH appear to remain false to API clients.
+		MaintenanceMode: a.MaintenanceMode,
+	}
+}
+
+func declaredRouteResponses(routes []state.DeclaredRoute) []api.DeclaredRoute {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]api.DeclaredRoute, len(routes))
+	for i, route := range routes {
+		out[i] = api.DeclaredRoute{Path: route.Path, Methods: append([]string(nil), route.Methods...)}
+	}
+	return out
+}
+
+func appEffectiveLimits(a state.App, plan api.Plan) api.AppEffectiveLimits {
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return api.AppEffectiveLimits{MemoryLimitMB: a.RAMMB, CPULimitMillicores: effectiveAppCPUMillicores(a, plan), MaxInstances: a.MaxConcurrency, RequestBodyMaxBytes: plan.MaxRequestBodyBytes()}
+	}
+	queueDepth, queueWait, _ := api.ConcurrencyQueueDefaultsForPlan(plan)
+	if a.ScalingPolicy != nil {
+		if a.ScalingPolicy.MaxQueueDepth > 0 {
+			queueDepth = a.ScalingPolicy.MaxQueueDepth
+		}
+		if a.ScalingPolicy.MaxQueueWaitMS > 0 {
+			queueWait = time.Duration(a.ScalingPolicy.MaxQueueWaitMS) * time.Millisecond
+		}
+	}
+	maxInstances := a.MaxConcurrency
+	if a.ScalingPolicy != nil && a.ScalingPolicy.MaxInstances > 0 {
+		maxInstances = a.ScalingPolicy.MaxInstances
+	}
+	cpuMillicores := effectiveAppCPUMillicores(a, plan)
+	requestRateRPS, requestRateBurst := appRequestRateLimits(a, plan)
+	planCPUMaxMillicores := int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	return api.AppEffectiveLimits{
+		MemoryLimitMB: a.RAMMB, PlanMemoryMaxMB: limits.RAMMB,
+		EphemeralDiskMaxMB: limits.EphemeralDiskMaxMB(),
+		GuestVCPUs:         limits.VCPU, CPULimitMillicores: cpuMillicores, PlanCPUMaxMillicores: planCPUMaxMillicores, CPUWeight: limits.CPUWeight,
+		MaxInstances: maxInstances, ConcurrencyPerInstance: limits.ConcurrencyPerVMBound,
+		ConcurrencyQueueDepth: queueDepth, ConcurrencyQueueWaitMS: queueWait.Milliseconds(),
+		AppRequestRateRPS: requestRateRPS, AppRequestBurst: requestRateBurst,
+		AccountRequestRateRPM: limits.RateLimitPerAccountRPM,
+		RequestBudgetMS:       limits.RequestBudgetForType(string(a.Type)).Milliseconds(),
+		RequestBudgetMaxMS:    limits.RequestBudgetMaxDuration().Milliseconds(),
+		ResponseWriteTimeoutS: int64(plan.ResponseWriteTimeout().Seconds()),
+		RequestBodyMaxBytes:   plan.MaxRequestBodyBytes(),
+	}
+}
+
+func appRequestRateLimits(a state.App, plan api.Plan) (rps, burst int) {
+	rpsOverride, burstOverride := 0, 0
+	if a.RequestRateLimitRPS != nil {
+		rpsOverride = *a.RequestRateLimitRPS
+	}
+	if a.RequestRateLimitBurst != nil {
+		burstOverride = *a.RequestRateLimitBurst
+	}
+	return api.EffectiveAppRequestRateLimits(plan, rpsOverride, burstOverride)
+}
+
+func effectiveAppCPUMillicores(a state.App, plan api.Plan) int {
+	if a.CPUMillicores > 0 {
+		return a.CPUMillicores
+	}
+	if limits, ok := api.LimitsFor(plan); ok && limits.CPUQuotaUS > 0 && limits.CPUPeriodUS > 0 {
+		return int(int64(limits.CPUQuotaUS) * 1000 / int64(limits.CPUPeriodUS))
+	}
+	return api.DefaultAppCPUMillicores
+}
+
+// cORSOriginsList materialises the text[] column as a non-nil slice.
+// A nil column (legacy row, never configured) projects as an empty
+// slice on the wire so dashboards can render an empty origin list
+// without a special-case for null.
+func cORSOriginsList(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// withParkedDeploymentRef (issue #554 / ADR-079 follow-up, AC #3
+// wire) attaches the latest parked deployment reference to an
+// AppResponse. Returns the same struct (with ParkedDeployment
+// populated) on success; on a store error the ParkedDeployment
+// field stays nil and the error is logged at warn — the apid
+// surface still renders the rest of the app, just without the
+// parked-deployment reference. The closed-set reason
+// (liveness_exhausted | lifecycle_park | admin_park |
+// security_scan_regressed) is enforced
+// at the schema layer (migration 00157), so this helper never
+// needs to validate.
+func (s *server) withParkedDeploymentRef(ctx context.Context, resp api.AppResponse, app state.App) api.AppResponse {
+	d, err := s.store.LatestParkedDeploymentForApp(ctx, app.ID)
+	if err != nil {
+		if !errors.Is(err, state.ErrNotFound) {
+			s.log.Warn("apid: parked deployment ref lookup", "app", app.ID, "err", err)
+		}
+		return resp
+	}
+	resp.ParkedDeployment = &api.ParkedDeploymentRef{
+		ID:           d.ID,
+		ParkedReason: d.ParkedReason,
+		ParkedAt:     d.ParkedAt,
+	}
+	return resp
+}
+
+// statePolicyToDTO converts the state-layer `*state.ScalingPolicy`
+// to the wire DTO `*api.ScalingPolicy`. Returns nil when the input
+// is nil so legacy rows project as a JSON `null` (the pre-#462
+// contract). Target is pointer-to-pointer so a customer-authored
+// `Target: {metric: "rps", value: 0}` round-trips through the read
+// path with the metric intact (the pre-fix path dropped Target when
+// Value==0, which the DTO upgrade to pointer-Target preserves).
+func statePolicyToDTO(p *state.ScalingPolicy) *api.ScalingPolicy {
+	if p == nil {
+		return nil
+	}
+	out := &api.ScalingPolicy{
+		MinInstances:            p.MinInstances,
+		MaxInstances:            p.MaxInstances,
+		ScaleOutCooldownS:       p.ScaleOutCooldownS,
+		ScaleInCooldownS:        p.ScaleInCooldownS,
+		ConcurrencyOverflow:     p.ConcurrencyOverflow,
+		MaxQueueWaitMS:          p.MaxQueueWaitMS,
+		MaxQueueDepth:           p.MaxQueueDepth,
+		WakeMaxQueueDepth:       p.WakeMaxQueueDepth,
+		WakeMaxQueueWaitSeconds: p.WakeMaxQueueWaitSeconds,
+	}
+	if p.Target != nil {
+		out.Target = &api.ScalingTarget{
+			Metric: p.Target.Metric,
+			Value:  p.Target.Value,
+			Name:   p.Target.Name,
+		}
+	}
+	// ADR-194 targets, ADR-195 schedules — the read half of the same gap
+	// policyPtrFromReq had. A customer could not see what they had
+	// configured even once the write path carried it.
+	for _, t := range p.Targets {
+		out.Targets = append(out.Targets, api.ScalingTarget{
+			Metric: t.Metric, Value: t.Value, Name: t.Name,
+		})
+	}
+	out.Timezone = p.Timezone
+	for _, sched := range p.Schedules {
+		out.Schedules = append(out.Schedules, api.ScalingSchedule{
+			Cron: sched.Cron, DurationS: sched.DurationS, MinInstances: sched.MinInstances,
+		})
+	}
+	return out
+}
+
+// accountResponse builds the AccountResponse DTO, populating Limits
+// (plan caps), AppCount (deployed apps), and UsageGBHours (current
+// calendar month). Errors from store reads are swallowed — best
+// effort; the dashboard renders the row even when the meter is
+// temporarily unavailable (meterd republishes every minute).
+//
+// GitHubInstall is best-effort: expose the durable installation id when the
+// account has completed the GitHub App handshake; omit it on a miss or
+// transient read failure so account reads still succeed.
+func accountAbuseHoldView(acct state.Account) *api.AccountAbuseHold {
+	if !acct.AbuseHeld() {
+		return nil
+	}
+	return &api.AccountAbuseHold{Reason: acct.AbuseHoldReason, HeldAt: *acct.AbuseHoldAt}
+}
+
+func (s *server) accountResponse(ctx context.Context, acct state.Account, r *http.Request) api.AccountResponse {
+	l := api.MustLimitsFor(acct.Plan)
+	resp := api.AccountResponse{
+		ID:             acct.ID,
+		Email:          acct.Email,
+		EmailVerified:  acct.EmailVerified(),
+		Plan:           string(acct.Plan),
+		Status:         string(acct.Status),
+		BusinessName:   acct.BusinessName,
+		BillingAddress: acct.BillingAddress,
+		TaxID:          acct.TaxID,
+		AbuseHold:      accountAbuseHoldView(acct),
+		Limits: api.AccountLimits{
+			Plan:                        string(acct.Plan),
+			RAMMB:                       l.RAMMB,
+			VCPU:                        l.VCPU,
+			MaxConcurrency:              l.MaxConcurrency,
+			DeployedApps:                l.DeployedApps,
+			PreviewApps:                 l.PreviewApps,
+			DeploysPerHour:              l.DeploysPerHour,
+			DeveloperApps:               l.DeveloperApps,
+			IncludedGBHours:             int64(l.IncludedGBHours),
+			AppLayerMaxMB:               l.AppLayerMaxMB,
+			EphemeralDiskMaxMB:          l.EphemeralDiskMaxMB(),
+			TriggersAllowed:             l.TriggersAllowed,
+			TriggerKinds:                acct.Plan.AllowedTriggerKinds(),
+			TriggerLimitPerApp:          l.TriggerLimitPerApp,
+			TriggerLimitPerAccount:      l.TriggerLimitPerAccount,
+			TriggerBatchSizeMax:         l.TriggerBatchSizeMax,
+			TriggerBatchWindowMaxMs:     l.TriggerBatchWindowMaxSec * 1000,
+			TriggerMaxAttemptsMax:       l.TriggerMaxAttemptsMax,
+			TriggerPayloadMaxBytes:      l.TriggerPayloadMaxBytes,
+			TriggerTLSSkipVerifyAllowed: l.TLSSkipVerifyAllowed,
+		},
+	}
+	if !acct.EmailVerified() {
+		graceEnds := acct.CreatedAt.Add(emailVerificationGrace)
+		resp.EmailVerificationGraceEndsAt = &graceEnds
+	}
+	if inst, err := s.store.GitHubInstallForAccount(ctx, acct.ID); err == nil {
+		resp.GitHubInstall = strconv.FormatInt(inst.InstallationID, 10)
+	}
+	if r != nil {
+		if n, err := s.store.CountDeployedApps(ctx, acct.ID); err == nil {
+			resp.AppCount = n
+		}
+		if n, err := s.store.CountDeveloperApps(ctx, acct.ID); err == nil {
+			resp.DeveloperAppCount = n
+		}
+		month := time.Now().UTC()
+		if rows, err := s.store.UsageByMonth(ctx, acct.ID, month); err == nil {
+			var mbSec int64
+			for _, u := range rows {
+				mbSec += u.MBSeconds
+			}
+			resp.UsageGBHours = meter.GBHours(mbSec)
+		}
+	}
+	return resp
+}
+
+func validSlug(s string) bool { return api.ValidAppSlug(s) }
+
+// digestPinnedRE matches a digest-pinned OCI reference end-to-end:
+//
+//	<host>[/<repo-path>]/<name>@sha256:<64 lowercase hex>
+//
+// Where:
+//
+//	host     = RFC 1123 hostname (alnum + '-', dot-separated labels,
+//	           optional :<port>)
+//	repo     = alnum + '_-' + '.' + '/' (the OCI repository path grammar)
+//
+// The whole-ref anchoring is load-bearing: parseImageDigest feeds
+// apid.createDeployment's slog log of req.Image (CodeQL go/log-injection),
+// so a substring-search validator that only verifies the digest tail would
+// let any non-OCI prefix through (including control chars / whitespace /
+// extra @-separators). The host charset forbids control chars and
+// whitespace explicitly, so the entire accepted string is printable OCI.
+// parseImageDigest requires a digest-pinned reference (spec gap G1: public
+// registries, digest-pinned) and returns the digest portion (sha256:...).
+func parseImageDigest(ref string) (string, bool) {
+	return api.DeploymentImageDigest(ref)
+}
+
+// isDigestPinned reports whether ref is a digest-pinned reference (the form
+// the deploy contract requires). Use this for input validation; consumers
+// parse the full ref via oci.ParseReference so they can dial the right
+// registry host.
+func isDigestPinned(ref string) bool {
+	return api.ValidDeploymentImage(ref)
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// egressStringList renders a stored []netip.Prefix to its canonical
+// string form ("1.2.3.0/24", "fe80::/10"). The empty case returns a
+// non-nil zero-length slice so the JSON shape is `[]` (never `null`)
+// regardless of the plan / pre-PATCH state. validateUpdateApp has
+// already rewritten any "::ffff:" v4-mapped entry to its v4 form by
+// the time it lands in the store, so we never see one here. Reused by
+// the audit emit (handlers_ext.go::updateApp) so the wire shape and
+// the audit row agree on the canonical form.
+func egressStringList(prefixes []netip.Prefix) []string {
+	out := make([]string, 0, len(prefixes))
+	for _, p := range prefixes {
+		out = append(out, p.String())
+	}
+	return out
+}
+
+// emitAppCreated fires the Phase 2 / Gate A placement-claim notify
+// that schedd's PlacementClaimSubscriber consumes (migration 00084 +
+// ADR-055). The subscriber filters by payload.kind=="created", reads
+// apps.row.node_id == NULL (newly inserted), and runs
+// Engine.ClaimUnplaced to stamp the owner. The conditional UPDATE in
+// Store.SetAppNodeID serialises N schedds into exactly one winner;
+// losers drop silently.
+//
+// Failure here is best-effort: the cold-start sweep at schedd boot
+// (cmd/schedd/main.go's ListUnplacedApps + ClaimUnplaced pass)
+// reconciles an unplaced app on next restart, so a transient
+// Postgres notify outage is bounded to "reboot picks it up" rather
+// than "app never gets owned".
+//
+// Both fields are server-validated before persist (validSlug regex,
+// server-generated app.ID UUID), so the JSON interpolation is safe
+// even without explicit escaping — the team's pattern, mirrored from
+// the existing updateApp emit (handlers_ext.go).
+func (s *server) emitAppCreated(ctx context.Context, created state.App) {
+	if s.notif == nil {
+		return
+	}
+	// codeql[go/log-injection] false-positive: created.Slug passes
+	// validSlug's regex (^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$) at
+	// buildApp() before INSERT; created.ID is a server-generated
+	// UUID. The interpolation cannot reach a control character
+	// or quote. Suppression placed at column 1 per the team's
+	// pattern (memory: codeql-suppression-column1).
+	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"created","slug":"%s","app_id":"%s"}`, created.Slug, created.ID))
+}

@@ -21,10 +21,42 @@ import (
 
 func cmdAutomations(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale automations <init|check|diff|list|get|health|runs|diagnose|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume>", "automations")
+		PrintUsage(os.Stderr, "usage: gregale automations <init|check|diff|list|get|health|history|report|runs|diagnose|recovery-preview|recover|recovery-plan|recovery-start|recovery-retry-plan|event-recovery-plan|event-recovery-start|event-recover|pause|resume|revisions|restore|delete|validate|simulate|apply|publish|publish-policy|failure-policy|failure-resume|recovery-health|recovery-cancel-preview|recovery-cancel|recovery-response-plan|recovery-response-preview|recovery-response-apply|recovery-response-status|recovery-policy|recovery-policy-evaluate|recovery-policy-reviews|recovery-suppress>", "automations")
 		return 1
 	}
 	switch args[0] {
+	case "recovery-policy-evaluate":
+		return cmdAutomationsRecoveryPolicyEvaluate(args[1:])
+	case "recovery-policy":
+		return cmdAutomationsRecoveryPolicy(args[1:])
+	case "recovery-suppress":
+		return cmdAutomationsRecoverySuppress(args[1:])
+	case "recovery-policy-reviews":
+		return cmdAutomationsRecoveryPolicyReviews(args[1:])
+	case "recovery-response-plan":
+		return cmdAutomationsResponsePlan(args[1:])
+	case "recovery-response-preview":
+		return cmdAutomationsResponseExecute(args[1:], "preview")
+	case "recovery-response-apply":
+		return cmdAutomationsResponseExecute(args[1:], "apply")
+	case "recovery-response-status":
+		return cmdAutomationsResponseExecute(args[1:], "status")
+	case "recovery-retry-plan":
+		return cmdAutomationsRecoveryRetryPlan(args[1:])
+	case "recovery-start":
+		return cmdAutomationsRecoveryStart(args[1:])
+	case "event-recovery-start":
+		return cmdAutomationsEventRecoveryStart(args[1:])
+	case "event-recovery-plan":
+		return cmdAutomationsEventRecoveryPlan(args[1:])
+	case "event-recover":
+		return cmdAutomationsEventRecover(args[1:])
+	case "recovery-plan":
+		return cmdAutomationsRecoveryPlan(args[1:])
+	case "recover":
+		return cmdAutomationsRecover(args[1:])
+	case "recovery-preview":
+		return cmdAutomationsRecoveryPreview(args[1:])
 	case "failure-policy":
 		return cmdAutomationsFailurePolicy(args[1:])
 	case "failure-resume":
@@ -45,8 +77,18 @@ func cmdAutomations(args []string) int {
 		return cmdAutomationsRuns(args[1:])
 	case "diagnose":
 		return cmdAutomationsDiagnose(args[1:])
+	case "recovery-health":
+		return cmdAutomationsRecoveryHealth(args[1:])
+	case "recovery-cancel-preview":
+		return cmdAutomationsRecoveryCancellation(args[1:], true)
+	case "recovery-cancel":
+		return cmdAutomationsRecoveryCancellation(args[1:], false)
 	case "health":
 		return cmdAutomationsHealth(args[1:])
+	case "report":
+		return cmdAutomationsReport(args[1:])
+	case "history":
+		return cmdAutomationsHistory(args[1:])
 	case "pause":
 		return cmdAutomationsPause(args[1:])
 	case "resume":
@@ -111,14 +153,24 @@ func cmdAutomationsHealth(args []string) int {
 	fs := newFlagSet("automations health", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug")
 	name := fs.String("name", "", "automation name")
+	stallAfter := fs.Int("stall-after-seconds", api.WorkflowRecoveryHealthDefaultStallSeconds, "app recovery worker evaluation threshold")
 	createdAfter := fs.String("created-after", "", "inclusive RFC3339 window start")
 	createdBefore := fs.String("created-before", "", "inclusive RFC3339 window end")
 	if err := fs.Parse(args); err != nil || rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" {
-		PrintUsage(os.Stderr, "usage: gregale automations health --app <slug> --name <name> [--created-after RFC3339] [--created-before RFC3339]", "automations")
+	if strings.TrimSpace(*app) == "" {
+		PrintUsage(os.Stderr, "usage: gregale automations health --app <slug> [--stall-after-seconds N] | --app <slug> --name <name> [--created-after RFC3339] [--created-before RFC3339]", "automations")
 		return 1
+	}
+	if strings.TrimSpace(*name) == "" {
+		if *createdAfter != "" || *createdBefore != "" {
+			return printErr("Invalid recovery health options", errors.New("time windows require --name"))
+		}
+		return printAutomationRecoveryHealth(*app, *stallAfter)
+	}
+	if *stallAfter != api.WorkflowRecoveryHealthDefaultStallSeconds {
+		return printErr("Invalid health options", errors.New("stall threshold requires app-wide health without --name"))
 	}
 	options, err := parseAutomationHealthOptions(*createdAfter, *createdBefore, time.Now().UTC())
 	if err != nil {

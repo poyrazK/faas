@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +86,9 @@ func cmdPostgresAttach(args []string) int {
 		resolvedScope = api.DefaultEnvScope
 	}
 	*scope = resolvedScope
+	if invalidPostgresChoice("postgres attach", "access", *access) {
+		return 1
+	}
 	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" ||
 		api.ValidateScope(*scope) != nil || api.ValidateEnvKey(*environmentKey) != nil || !postgresAccessOK(*access) {
 		PrintUsage(os.Stderr, "usage: gregale postgres attach DATABASE APP_SLUG [--scope SCOPE] [--env KEY] [--access read_write|read_only|migration|data_api]", "postgres")
@@ -102,18 +106,23 @@ func cmdPostgresAttach(args []string) int {
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
 	}
+	bindingIsNew := postgresBindingIsNew(context.Background(), client, database.ID, app.ID, *scope, *environmentKey)
 	binding, err := client.CreateManagedPostgresBinding(context.Background(), database.ID, api.CreateManagedPostgresBindingRequest{
 		AppID: app.ID, Scope: *scope, EnvironmentKey: *environmentKey, Access: *access,
 	})
 	if err != nil {
 		return printErr("Could not attach managed PostgreSQL database", err)
 	}
+	ensurePostgresEgress(context.Background(), client, app)
 	if jsonOutput {
 		return jsonOut(writeJSON(binding))
 	}
 	renderPostgresBinding(osStdout, binding)
 	if binding.State == "ready" {
 		_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s.\n", database.Name, app.Slug, binding.EnvironmentKey)
+		if bindingIsNew {
+			printPostgresBindingDelivery(osStdout, app.Slug, binding.EnvironmentKey, binding.Access)
+		}
 	}
 	return 0
 }
@@ -183,11 +192,48 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  fresh:                        %t\n", result.Fresh)
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
 	_, _ = fmt.Fprintf(osStdout, "  ready_databases:              %d / %d\n", result.ReadyDatabases, result.DatabaseLimit)
-	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d\n", result.ComputeUnitSeconds)
+	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d (%s)\n", result.ComputeUnitSeconds, formatComputeUnitHours(result.ComputeUnitSeconds))
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
-	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d\n", result.HistoryByteSeconds)
-	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d\n", result.EgressBytes)
+	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
+	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
+	_, _ = fmt.Fprintf(osStdout, "  egress_bytes:                 %d (%s)\n", result.EgressBytes, formatIECBytes(result.EgressBytes))
 	return 0
+}
+
+// postgresBillingMonthSeconds matches the 31-day month apid uses to turn the
+// plan storage entitlement into a byte-second ceiling, so that ceiling reads
+// as a whole number of GiB-months.
+const postgresBillingMonthSeconds = 31 * 24 * 60 * 60
+
+// formatGiBMonths renders a byte-second meter readably; raw byte-seconds
+// on the canary ran to nineteen digits. Small readings step down to
+// GiB-hours or MiB-hours so a fresh database does not print 0.00.
+func formatGiBMonths(byteSeconds int64) string {
+	gibSeconds := float64(byteSeconds) / float64(int64(1)<<30)
+	switch {
+	case byteSeconds == 0 || gibSeconds/postgresBillingMonthSeconds >= 0.01:
+		return fmt.Sprintf("%.2f GiB-months", gibSeconds/postgresBillingMonthSeconds)
+	case gibSeconds/3600 >= 0.01:
+		return fmt.Sprintf("%.2f GiB-hours", gibSeconds/3600)
+	default:
+		return fmt.Sprintf("%.2f MiB-hours", gibSeconds*1024/3600)
+	}
+}
+
+func formatComputeUnitHours(seconds int64) string {
+	return fmt.Sprintf("%.2f CU-hours", float64(seconds)/3600)
+}
+
+func formatIECBytes(value int64) string {
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	if value < 1024 {
+		return fmt.Sprintf("%d B", value)
+	}
+	size, unit := float64(value)/1024, 0
+	for size >= 1024 && unit < len(units)-1 {
+		size, unit = size/1024, unit+1
+	}
+	return fmt.Sprintf("%.1f %s", size, units[unit])
 }
 
 func formatPostgresObservedAt(observedAt *time.Time) string {
@@ -238,6 +284,9 @@ func cmdPostgresCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if invalidPostgresChoice("postgres create", "class", *serviceClass, "availability", *availability) {
+		return 1
+	}
 	if fs.NArg() != 1 || *region == "" {
 		PrintUsage(os.Stderr, "usage: gregale postgres create NAME --region REGION [--postgres-major N] [--class development|burstable|production] [--availability single_zone|high_availability] [--scale-to-zero[=BOOL]] [--storage-bytes N] [--restore-window-seconds N]", "postgres")
 		return 1
@@ -274,6 +323,10 @@ func cmdPostgresGet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	id, err = postgresDatabaseID(context.Background(), client, id)
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
 	result, err := client.GetManagedPostgresDatabase(context.Background(), id)
 	if err != nil {
 		return printErr("Could not load managed PostgreSQL database", err)
@@ -293,6 +346,10 @@ func cmdPostgresDelete(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	id, err = postgresDatabaseID(context.Background(), client, id)
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
 	}
 	result, err := client.DeleteManagedPostgresDatabase(context.Background(), id)
 	if err != nil {
@@ -321,7 +378,11 @@ func cmdPostgresRestore(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	result, err := client.RestoreManagedPostgresDatabase(context.Background(), fs.Arg(0), api.RestoreManagedPostgresDatabaseRequest{Name: *name, PointInTime: *pointInTime})
+	sourceID, err := postgresDatabaseID(context.Background(), client, fs.Arg(0))
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
+	result, err := client.RestoreManagedPostgresDatabase(context.Background(), sourceID, api.RestoreManagedPostgresDatabaseRequest{Name: *name, PointInTime: *pointInTime})
 	if err != nil {
 		return printErr("Could not restore managed PostgreSQL database", err)
 	}
@@ -363,6 +424,10 @@ func cmdPostgresBindingsList(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	databaseID, err = postgresDatabaseID(context.Background(), client, databaseID)
+	if err != nil {
+		return printErr("Could not find managed PostgreSQL database", err)
+	}
 	resp, err := client.ListManagedPostgresBindings(context.Background(), databaseID)
 	if err != nil {
 		return printErr("Could not list PostgreSQL bindings", err)
@@ -388,6 +453,9 @@ func cmdPostgresBindingsCreate(args []string) int {
 	environmentKey := fs.String("environment-key", "", "environment variable name (required)")
 	access := fs.String("access", "read_write", "backend-supported credential access: read_write|read_only|migration|data_api")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if invalidPostgresChoice("postgres bindings create", "access", *access) {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
@@ -515,21 +583,37 @@ func normalizePostgresArgs(args []string) []string {
 	return append(append([]string(nil), args[1:]...), args[0])
 }
 
+// postgresFlagVocab is the closed vocabulary of each enumerated postgres flag.
+var postgresFlagVocab = map[string][]string{
+	"class":        {"development", "burstable", "production"},
+	"availability": {"single_zone", "high_availability"},
+	"access":       {"read_write", "read_only", "migration", "data_api"},
+}
+
 func postgresServiceClassOK(value string) bool {
-	switch value {
-	case "development", "burstable", "production":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(postgresFlagVocab["class"], value)
 }
 
 func postgresAvailabilityOK(value string) bool {
-	return value == "single_zone" || value == "high_availability"
+	return slices.Contains(postgresFlagVocab["availability"], value)
 }
 
 func postgresAccessOK(value string) bool {
-	return value == "read_write" || value == "read_only" || value == "migration" || value == "data_api"
+	return slices.Contains(postgresFlagVocab["access"], value)
+}
+
+// invalidPostgresChoice names the first enumerated flag whose value is outside
+// its vocabulary and reports whether it found one. Pairs are flag name then
+// value. A bare usage line left `--class prod` looking like a syntax error.
+func invalidPostgresChoice(command string, flagValues ...string) bool {
+	for i := 0; i+1 < len(flagValues); i += 2 {
+		name, value := flagValues[i], flagValues[i+1]
+		if vocab := postgresFlagVocab[name]; !slices.Contains(vocab, value) {
+			printCommandValidation(os.Stderr, "gregale %s: invalid --%s %q (want %s)\n", command, name, value, strings.Join(vocab, "|"))
+			return true
+		}
+	}
+	return false
 }
 
 func formatPostgresStorage(bytes int64) string {

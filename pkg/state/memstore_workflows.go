@@ -45,6 +45,7 @@ func (m *MemStore) insertWorkflowRunLocked(r *WorkflowRun) error {
 	stored.Output = cloneWorkflowJSON(r.Output)
 	stored.DefinitionSnapshot = cloneWorkflowJSON(r.DefinitionSnapshot)
 	m.workflowRuns[r.ID] = stored
+	m.captureWorkflowFailureLocked(stored, now)
 	return nil
 }
 
@@ -1087,7 +1088,12 @@ func (m *MemStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepNam
 	step.Error = &stepErr
 	m.workflowSteps[runID][stepName] = step
 
-	run.Status = WorkflowRunStatusPending
+	// A for_each item's retry leaves its running run to the pass that holds
+	// the lease, which parks it at the earliest wake once the batch is done;
+	// see the PgStore twin (H9-155). Any other retry parks the run.
+	if run.Status != WorkflowRunStatusRunning || step.ForEachParent == nil {
+		run.Status = WorkflowRunStatusPending
+	}
 	run.CurrentStep = &stepName
 	run.ScheduledFor = wakeAt
 	run.UpdatedAt = now
@@ -1494,6 +1500,7 @@ func (m *MemStore) SweepExpiredWorkflowRuns(_ context.Context, olderThan time.Du
 	for id, r := range m.workflowRuns {
 		_, retainedByOperation := m.operationForWorkflowLocked(id)
 		if r.FinishedAt != nil && !r.FinishedAt.After(threshold) && !retainedByOperation {
+			m.captureWorkflowRecoveryResultLocked(r, time.Now().UTC())
 			delete(m.workflowRuns, id)
 			delete(m.workflowSteps, id)
 			delete(m.workflowEvents, id)

@@ -35,6 +35,12 @@ const (
 	// appLogDrainRequestTimeout matches logdrain's default per-request
 	// timeout, which only applies when the sender builds its own client.
 	appLogDrainRequestTimeout = 5 * time.Second
+
+	// appLogDrainRetryWindow is how long a record keeps retrying while the
+	// customer's endpoint is unavailable before it is dead-lettered. The
+	// durable outbox holds later records meanwhile (production-us hunt #9,
+	// H9-109: the old 0.3 s budget lost every record of a brief outage).
+	appLogDrainRetryWindow = 10 * time.Minute
 )
 
 type appLogDrainStore interface {
@@ -266,6 +272,7 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		TargetURL:    spec.TargetURL,
 		AuthHeader:   authHeader,
 		DurableQueue: durableQueue,
+		RetryWindow:  appLogDrainRetryWindow,
 		HTTPClient:   m.httpClient,
 		OnDropped: func(logdrain.Record) {
 			m.metrics.IncLogDrainDropped(spec.AppID, string(spec.Kind))
@@ -322,7 +329,15 @@ func (m *appLogDrainManager) startWorkerLocked(parent context.Context, spec stat
 		},
 		OnRetry: func(_ logdrain.Record, _ int) {
 			m.metrics.ObserveLogDrainRetry(spec.AppID, string(spec.Kind))
-			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) { health.RetriesTotal++ })
+			m.updateHealth(spec.ID, func(health *state.AppLogDrainHealth) {
+				health.RetriesTotal++
+				// A record can now retry for minutes; health must not read
+				// healthy while delivery is stalled behind it.
+				if health.Active {
+					health.Status = appLogDrainHealthDegraded
+				}
+				health.LastError = "endpoint unavailable; retrying delivery"
+			})
 		},
 		OnDeliveredLatency: func(_ logdrain.Record, latency time.Duration) {
 			m.metrics.ObserveLogDrainDeliveryLatency(spec.AppID, string(spec.Kind), latency)

@@ -100,7 +100,15 @@ func runExecutionGuest(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = ln.Close() }()
-	serveErr := serveExecutionOnceWithBroker(context.Background(), ln, executor.NewWithProfile(manifest.Profile).HandleWithBroker)
+	runExecutor := executor.NewWithProfile(manifest.Profile)
+	// ADR-990: Runs stream outbound calls through the loopback relay when
+	// vmmd advertises it per request; the broker helper stays the fallback.
+	if err := startOutboundRelay(log); err != nil {
+		log.Warn("execution outbound relay unavailable", "err", err)
+	} else {
+		runExecutor.WithOutboundRelay(OutboundRelayEndpoint)
+	}
+	serveErr := serveExecutionOnceWithBroker(context.Background(), ln, runExecutor.HandleWithBroker)
 	if serveErr != nil {
 		log.Warn("execution guest exchange failed", "err", serveErr)
 	}

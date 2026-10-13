@@ -17,8 +17,8 @@ reproducible Node installs.
 
 ## Decision
 
-Provide an explicit stateless Streamable HTTP profile, a Node starter, and
-`gregale mcp init|deploy|doctor|tools|call|config`. Deploy delegates to the existing
+Provide an explicit stateless Streamable HTTP profile, Node, Go, and Python
+starters, and `gregale mcp init|deploy|doctor|tools|call|config`. Deploy delegates to the existing
 application control plane and verifies the MCP endpoint after readiness.
 `gregale-mcp.json` ships alongside `gregale.yaml`; it describes the application
 protocol, not guest resources, and remains compatible with existing apid hosts.
@@ -51,19 +51,32 @@ handles with `mcp task-get` and `mcp task-cancel`; `--wait` polls using the
 server's interval, handles bounded form input when explicitly enabled, and sends
 a cooperative cancellation request if its timeout expires. `mcp task-wait`
 resumes polling a saved task handle and can answer supported form requests.
-The starter can optionally produce durable Tasks for task-aware clients when a
-PostgreSQL binding and stable encryption key are configured. By default, the
-HTTP process also claims work. Operators can run a separate worker app using
-Gregale's existing worker lifecycle; both apps must share the database, owner
-key, and explicit task namespace. The worker recovers expired leases. Gregale's
-worker custom metrics can read aggregate depth through the starter publisher.
-An in-process publisher needs a nonzero worker floor; ADR-638 adds an external
-read-only observer for worker scale from zero. Tasks remain disabled by default. Custom task handlers can persist
-client input requests and resume through `tasks/update`; embedded elicitation,
+All three starters can optionally create durable `build_report` Tasks for
+task-aware clients when a PostgreSQL binding and stable encryption key are
+configured. Go and Python also support task reads, cancellation, and the task
+resource, `tasks/update`, and can share Node's version-1 and version-2 queue
+rows. Go and Python also support separate web and worker roles, queue metric
+publishers, and a read-only observer for scale-to-zero. All three starters
+support bounded task and registered-resource subscriptions over SSE, plus
+tool/resource/prompt list-change subscriptions. Task resources use shared
+PostgreSQL notifications and bounded snapshot polling for recovery; application
+resource updates use a publisher adapter, process-local by default and
+replaceable with shared pub/sub. Go and Python also reconcile caller-visible
+catalog snapshots on that poll.
+By default, each starter's HTTP process also claims work. Split deployments
+share the database, owner key, and explicit task namespace; Go and Python use
+`MCP_TASKS_ROLE` to select the process role. Workers recover expired leases.
+The observer needs no owner key and verifies that its database role cannot
+write tasks or create schemas. Gregale's worker custom metrics read aggregate
+depth through the starter publishers. An in-process publisher needs a nonzero
+worker floor; the read-only observer can keep metrics fresh when workers scale
+to zero. Tasks remain disabled by default. The Go and Python `build_report`
+example persists a client approval request and resumes through `tasks/update`;
+custom Node task handlers can persist client input requests and resume. Embedded elicitation,
 sampling, and roots requests are limited to capabilities declared by the
 original client. The starter has no built-in sampling, roots, URL elicitation,
-stateful sessions. Task and task-resource subscriptions use bounded
-request-scoped streams.
+stateful sessions. Task and resource subscriptions use bounded request-scoped
+streams.
 Doctor discovers tools without invoking them; an explicit call or stream probe
 authorizes execution. Preserve lockfiles and suppress entropy only for valid
 dependency-integrity digests while retaining provider credential detection.

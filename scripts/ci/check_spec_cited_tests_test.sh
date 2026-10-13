@@ -76,6 +76,14 @@ git -C "$adr_case" commit -q -m 'test(sched): pin wake admission'
 make_event "$adr_case"
 expect_pass 'ADR citation' "$adr_case"
 
+four_case="$test_root/four-digit-adr"
+git_init "$four_case"
+printf 'package sched\n\n// adr: 1000\nfunc TestWake(t *testing.T) {}\n' > "$four_case/pkg/sched/wake_test.go"
+git -C "$four_case" add pkg/sched/wake_test.go
+git -C "$four_case" commit -q -m 'test(sched): pin four-digit ADR citation'
+make_event "$four_case"
+expect_pass 'four-digit ADR citation' "$four_case"
+
 # A citation near the start of a file larger than the pipe buffer must pass.
 # The checker used to pipe `git show` into `grep -q` under pipefail; grep's
 # early exit sent SIGPIPE to git and turned this valid citation into a failure.

@@ -30,6 +30,8 @@ share the database without opening it to the public interface.
      best-effort `rclone` push (reload)
    - `max_wal_senders = 3` (reload)
    - Creates `/var/lib/pgsql/archive` owned `postgres:postgres 0750`.
+   - `jit = off` (reload): LLVM compilation of high-cost plans took longer
+     than the queries on the 2-vCPU control plane (H9-159).
 8. Hands connection sizing to the adjacent `postgres_capacity` role. The
    bootstrap and node-join playbooks both run that role so capacity follows
    the complete compute inventory before admission continues.

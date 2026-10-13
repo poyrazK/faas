@@ -44,6 +44,12 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if spec.BindingDailyRequestLimit != nil && spec.BindingAppID == "" {
 		return Decision{}, fmt.Errorf("%w: binding daily request limit requires an app ID", ErrInvalidIntegration)
 	}
+	if spec.DailyAITokenLimit != nil && (*spec.DailyAITokenLimit < 1 || *spec.DailyAITokenLimit > api.MaxOutboundAITokensPerDay) {
+		return Decision{}, fmt.Errorf("%w: daily token limit is outside the supported range", ErrInvalidIntegration)
+	}
+	if err := validateAIAdmissionSpec(spec); err != nil {
+		return Decision{}, err
+	}
 	if !api.ValidOutboundCircuitBreakerPolicy(spec.CircuitBreakerFailureThreshold, spec.CircuitBreakerOpenSeconds) {
 		return Decision{}, fmt.Errorf("%w: circuit-breaker policy is invalid", ErrInvalidIntegration)
 	}
@@ -72,7 +78,10 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	// binding before the integration row, matching binding-policy writes and
 	// preventing a stale resolver snapshot from bypassing a completed update.
 	var plan, ownerKind string
-	var storedDailyRequestLimit int64
+	var storedDailyRequestLimit, storedDailyAITokenLimit int64
+	var storedDailyAICostLimit, storedMonthlyAICostLimit, storedBindingAITokenLimit int64
+	var storedBindingRequestsPerMinute, storedBindingTokensPerMinute int64
+	var storedUserTokenLimit, storedUserCostLimit int64
 	var requestPolicy api.OutboundRequestPolicy
 	err = tx.QueryRow(ctx, `
 		SELECT account.plan
@@ -99,10 +108,12 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		}
 		var storedBindingDailyRequestLimit int64
 		err = tx.QueryRow(ctx, `
-			SELECT COALESCE(daily_request_limit, 0)
+			SELECT COALESCE(daily_request_limit, 0), COALESCE(ai_daily_token_limit, 0),
+			       COALESCE(ai_requests_per_minute, 0), COALESCE(ai_tokens_per_minute, 0)
 			  FROM outbound_app_bindings
 			 WHERE integration_id = $1 AND app_id = $2
-			 FOR SHARE`, integrationID, bindingAppID).Scan(&storedBindingDailyRequestLimit)
+			 FOR SHARE`, integrationID, bindingAppID).Scan(&storedBindingDailyRequestLimit, &storedBindingAITokenLimit,
+			&storedBindingRequestsPerMinute, &storedBindingTokensPerMinute)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Decision{Reason: ReasonAppNotAttached}, nil
 		}
@@ -123,14 +134,19 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(daily_request_limit, 0), rate_per_second, burst,
 		       max_in_flight, request_timeout_ms, max_retries, response_cache_ttl_seconds,
-		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind
+		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind,
+		       COALESCE(ai_daily_token_limit, 0),
+		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
+		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
 		  FROM outbound_integrations
 		 WHERE id = $1
 		 FOR SHARE`, integrationID).
 		Scan(&storedDailyRequestLimit, &requestPolicy.RatePerSecond, &requestPolicy.Burst,
 			&requestPolicy.MaxInFlight, &requestPolicy.RequestTimeoutMS, &requestPolicy.MaxRetries,
 			&requestPolicy.ResponseCacheTTLSeconds, &requestPolicy.CircuitBreakerFailureThreshold,
-			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind)
+			&requestPolicy.CircuitBreakerOpenSeconds, &requestPolicy.RetryBudgetPerMinute, &ownerKind,
+			&storedDailyAITokenLimit, &storedDailyAICostLimit, &storedMonthlyAICostLimit,
+			&storedUserTokenLimit, &storedUserCostLimit)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -171,7 +187,8 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	var tokens float64
 	var lastRefill time.Time
 	var usageDate time.Time
-	var dailyRequestCount int64
+	var dailyRequestCount, dailyAITokenCount, dailyAICost, monthlyAICost int64
+	var usageMonth time.Time
 	var circuitFailureCount int
 	var circuitOpenUntil pgtype.Timestamptz
 	var circuitProbeLeaseID pgtype.UUID
@@ -183,13 +200,15 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		SELECT tokens, last_refill, daily_usage_date, daily_request_count,
 		       circuit_failure_count, circuit_open_until, circuit_probe_lease_id,
 		       circuit_policy_failure_threshold, circuit_policy_open_seconds,
-		       retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute
+		       retry_budget_tokens, retry_budget_refilled_at, retry_budget_policy_per_minute,
+		       daily_ai_token_count, daily_ai_cost_millicents, monthly_usage_month, monthly_ai_cost_millicents
 		FROM outbound_admission_state
 		WHERE integration_id = $1
 		FOR UPDATE`, integrationID).Scan(&tokens, &lastRefill, &usageDate, &dailyRequestCount,
 		&circuitFailureCount, &circuitOpenUntil, &circuitProbeLeaseID,
 		&circuitPolicyThreshold, &circuitPolicyOpenSeconds,
-		&retryBudgetTokens, &retryBudgetRefilledAt, &retryBudgetPolicyPerMinute); err != nil {
+		&retryBudgetTokens, &retryBudgetRefilledAt, &retryBudgetPolicyPerMinute,
+		&dailyAITokenCount, &dailyAICost, &usageMonth, &monthlyAICost); err != nil {
 		return Decision{}, err
 	}
 	if circuitPolicyThreshold != spec.CircuitBreakerFailureThreshold || circuitPolicyOpenSeconds != spec.CircuitBreakerOpenSeconds {
@@ -215,24 +234,67 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	if !usageDate.UTC().Truncate(24 * time.Hour).Equal(today) {
 		usageDate = today
 		dailyRequestCount = 0
+		dailyAITokenCount = 0
+		dailyAICost = 0
 	}
-	var bindingDailyRequestCount int64
+	thisMonth := time.Date(utcNow.Year(), utcNow.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if !usageMonth.UTC().Equal(thisMonth) {
+		monthlyAICost = 0
+	}
+	var bindingDailyRequestCount, bindingAITokenCount int64
+	var minute aiMinuteState
+	minuteWindow := utcNow.Truncate(time.Minute)
 	if bindingAppID != uuid.Nil {
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO outbound_app_binding_usage (integration_id, app_id, daily_usage_date, daily_request_count)
-			VALUES ($1, $2, $3, 0)
+			INSERT INTO outbound_app_binding_usage (integration_id, app_id, daily_usage_date, daily_request_count, minute_window_start)
+			VALUES ($1, $2, $3, 0, $4)
 			ON CONFLICT (integration_id, app_id) DO UPDATE
 			   SET daily_usage_date = EXCLUDED.daily_usage_date,
 			       daily_request_count = CASE
 			           WHEN outbound_app_binding_usage.daily_usage_date <> EXCLUDED.daily_usage_date THEN 0
 			           ELSE outbound_app_binding_usage.daily_request_count
-			       END
-			RETURNING daily_request_count`, integrationID, bindingAppID, today).Scan(&bindingDailyRequestCount); err != nil {
+			       END,
+			       daily_ai_token_count = CASE
+			           WHEN outbound_app_binding_usage.daily_usage_date <> EXCLUDED.daily_usage_date THEN 0
+			           ELSE outbound_app_binding_usage.daily_ai_token_count
+			       END,
+			       minute_request_count = CASE
+			           WHEN outbound_app_binding_usage.minute_window_start IS DISTINCT FROM EXCLUDED.minute_window_start THEN 0
+			           ELSE outbound_app_binding_usage.minute_request_count
+			       END,
+			       minute_ai_token_count = CASE
+			           WHEN outbound_app_binding_usage.minute_window_start IS DISTINCT FROM EXCLUDED.minute_window_start THEN 0
+			           ELSE outbound_app_binding_usage.minute_ai_token_count
+			       END,
+			       minute_window_start = EXCLUDED.minute_window_start
+			RETURNING daily_request_count, daily_ai_token_count, minute_request_count, minute_ai_token_count`,
+			integrationID, bindingAppID, today, minuteWindow).
+			Scan(&bindingDailyRequestCount, &bindingAITokenCount, &minute.requests, &minute.tokens); err != nil {
 			return Decision{}, err
 		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM outbound_admission_leases WHERE integration_id = $1 AND expires_at <= $2`, integrationID, now); err != nil {
 		return Decision{}, err
+	}
+	// ADR-991: live leases hold their calls' AI reservations.
+	var inflightTokens, inflightBindingTokens, inflightCost int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(sum(ai_reserved_tokens), 0)::bigint,
+		       COALESCE(sum(ai_reserved_tokens) FILTER (WHERE binding_app_id = $2), 0)::bigint,
+		       COALESCE(sum(ai_reserved_cost_millicents), 0)::bigint
+		  FROM outbound_admission_leases WHERE integration_id = $1`, integrationID, bindingAppID).
+		Scan(&inflightTokens, &inflightBindingTokens, &inflightCost); err != nil {
+		return Decision{}, err
+	}
+	minute.inflightTokens = inflightBindingTokens
+	var userLimits aiBudgetLimits
+	var user aiBudgetState
+	if spec.AIEndUser != "" && (storedUserTokenLimit > 0 || storedUserCostLimit > 0) {
+		// ADR-994: the end user's settled day and live reservations.
+		userLimits.userTokens, userLimits.userCost = positiveLimit(storedUserTokenLimit), positiveLimit(storedUserCostLimit)
+		if user, err = postgresAIUserState(ctx, tx, integrationID, today, spec.AIEndUser); err != nil {
+			return Decision{}, err
+		}
 	}
 	if circuitProbeLeaseID.Valid {
 		var probeExpiresAt time.Time
@@ -258,10 +320,13 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		SET tokens = $2, last_refill = $3, daily_usage_date = $4, daily_request_count = $5,
 		    circuit_failure_count = $6, circuit_open_until = $7, circuit_probe_lease_id = $8,
 		    circuit_policy_failure_threshold = $9, circuit_policy_open_seconds = $10,
-		    retry_budget_tokens = $11, retry_budget_refilled_at = $12, retry_budget_policy_per_minute = $13
+		    retry_budget_tokens = $11, retry_budget_refilled_at = $12, retry_budget_policy_per_minute = $13,
+		    daily_ai_token_count = $14, daily_ai_cost_millicents = $15,
+		    monthly_usage_month = $16, monthly_ai_cost_millicents = $17
 		WHERE integration_id = $1`, integrationID, tokens, lastRefill, today, dailyRequestCount,
 		circuitFailureCount, circuitOpenUntil, circuitProbeLeaseID, circuitPolicyThreshold, circuitPolicyOpenSeconds,
-		retryBudgetTokens, retryBudgetRefilledAt, retryBudgetPolicyPerMinute); err != nil {
+		retryBudgetTokens, retryBudgetRefilledAt, retryBudgetPolicyPerMinute, dailyAITokenCount,
+		dailyAICost, thisMonth, monthlyAICost); err != nil {
 		return Decision{}, err
 	}
 	var inFlight int
@@ -314,10 +379,47 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		}
 		return Decision{RetryAfter: retry, Reason: ReasonDailyLimit, RequestTimeout: ttl}, nil
 	}
+	// Tokens and cost settle after each response (ADR-988, ADR-990); live
+	// reservations make the stored limits hard caps (ADR-991).
+	reserve := aiReservationFromSpec(spec)
+	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
+		dailyTokens: dailyAITokenCount, bindingTokens: bindingAITokenCount,
+		dailyCost: dailyAICost, monthlyCost: monthlyAICost,
+		inflightTokens: inflightTokens, inflightBindingTokens: inflightBindingTokens, inflightCost: inflightCost,
+		userTokens: user.userTokens, userCost: user.userCost,
+		inflightUserTokens: user.inflightUserTokens, inflightUserCost: user.inflightUserCost,
+		userUntracked: user.userUntracked,
+	}, aiBudgetLimits{
+		dailyTokens: positiveLimit(storedDailyAITokenLimit), bindingTokens: positiveLimit(storedBindingAITokenLimit),
+		dailyCost: positiveLimit(storedDailyAICostLimit), monthlyCost: positiveLimit(storedMonthlyAICostLimit),
+		userTokens: userLimits.userTokens, userCost: userLimits.userCost,
+	}, reserve); limited {
+		if err := tx.Commit(ctx); err != nil {
+			return Decision{}, err
+		}
+		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+	}
+	if bindingAppID != uuid.Nil {
+		if reason, retry, limited := aiMinuteExhausted(utcNow, minute, positiveLimit(storedBindingRequestsPerMinute),
+			positiveLimit(storedBindingTokensPerMinute), reserve); limited {
+			if err := tx.Commit(ctx); err != nil {
+				return Decision{}, err
+			}
+			return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+		}
+	}
 	tokens--
 	dailyRequestCount++
 	leaseID := uuid.New()
-	if _, err := tx.Exec(ctx, `INSERT INTO outbound_admission_leases (lease_id, integration_id, expires_at) VALUES ($1, $2, $3)`, leaseID, integrationID, now.Add(ttl)); err != nil {
+	var leaseBindingApp *uuid.UUID
+	if bindingAppID != uuid.Nil {
+		leaseBindingApp = &bindingAppID
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO outbound_admission_leases
+		    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`, leaseID, integrationID, now.Add(ttl), leaseBindingApp,
+		reserve.tokens, reserve.cost, spec.AIEndUser); err != nil {
 		return Decision{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE outbound_admission_state
@@ -327,7 +429,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}
 	if bindingAppID != uuid.Nil {
 		result, err := tx.Exec(ctx, `UPDATE outbound_app_binding_usage
-			SET daily_request_count = daily_request_count + 1
+			SET daily_request_count = daily_request_count + 1, minute_request_count = minute_request_count + 1
 			WHERE integration_id = $1 AND app_id = $2 AND daily_usage_date = $3`, integrationID, bindingAppID, today)
 		if err != nil {
 			return Decision{}, err

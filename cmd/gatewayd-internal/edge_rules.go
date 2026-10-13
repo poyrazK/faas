@@ -1897,13 +1897,15 @@ func compileThrottleRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleThrott
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
-		// Clamp rps/burst to the minimum-useful positive values.
-		// A 0/0 from a direct-DB write would let the limiter build
-		// a bucket that always-deny (burst=0 means every AllowToken
-		// call consumes a token that was never refilled), and a
-		// negative value would panic the limiter. Floor at {1, 1}.
+		// Replace non-positive rps/burst from a direct-DB write with
+		// {1, 1}: a 0/0 rule would build a bucket that always denies
+		// (burst=0 means every AllowToken call consumes a token that was
+		// never refilled), and a negative value would panic the limiter.
+		// A fractional rps is a real policy that apid accepts (0.1 = one
+		// request per 10 s, e.g. a login throttle) and both limiters refill
+		// fractionally, so it is kept as configured.
 		rps := r.Action.Throttle.RequestsPerSecond
-		if rps < 1 {
+		if !(rps > 0) {
 			rps = 1
 		}
 		burst := r.Action.Throttle.Burst
@@ -1998,12 +2000,13 @@ func compileBudgetRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleBudgetRe
 			continue
 		}
 		// Clamp the budget to the platform ceiling. Non-positive or
-		// > ceiling → api.RequestBudgetMaxMs (a 0 budget would
+		// > ceiling → api.RequestBudgetPlanMax (a 0 budget would
 		// 504 every request, which is worse than the platform
 		// default; the same defence-in-depth posture as
-		// compileLimitRules silently dropping malformed caps).
+		// compileLimitRules silently dropping malformed caps). The
+		// plan's own ceiling clamps again at request time.
 		budgetMs := r.Action.Budget.BudgetMs
-		maxBudgetMs := int(api.RequestBudgetMax.Milliseconds())
+		maxBudgetMs := int(api.RequestBudgetPlanMax.Milliseconds())
 		if budgetMs <= 0 || budgetMs > maxBudgetMs {
 			budgetMs = maxBudgetMs
 		}

@@ -505,3 +505,60 @@ func TestDevBridgeControlPlaneIngressStreamsDuplex(t *testing.T) {
 		t.Fatalf("status=%d bytes=%d err=%v", response.StatusCode, len(body), err)
 	}
 }
+
+// TestControlPlaneProxyTransportsApidGatewayErrorsAcrossWorker pins H9-134:
+// a sync invoke that outlived apid's 25 s wait answered 504 long_poll_timeout,
+// but the CLI saw Cloudflare's generic "Gateway Timeout" because only the
+// runtime proxy carried 502/504 across the Worker hop as 409 + marker.
+func TestControlPlaneProxyTransportsApidGatewayErrorsAcrossWorker(t *testing.T) {
+	const problem = `{"code":"long_poll_timeout","status":504}`
+	status := http.StatusGatewayTimeout
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// An upstream must not be able to forge the private marker.
+		w.Header().Set("X-Faas-Edge-Original-Status", "200")
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(problem))
+	}))
+	t.Cleanup(controlPlane.Close)
+	handler, err := newControlPlaneProxy(controlPlane.URL, http.NotFoundHandler(), slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		upstream   int
+		worker     bool
+		restorable string
+		wantStatus int
+		wantMarker string
+	}{
+		{name: "504 behind the Worker", upstream: http.StatusGatewayTimeout, worker: true, wantStatus: http.StatusConflict, wantMarker: "504"},
+		{name: "502 behind a 502-aware Worker", upstream: http.StatusBadGateway, worker: true, restorable: "502,504", wantStatus: http.StatusConflict, wantMarker: "502"},
+		{name: "502 behind an older Worker", upstream: http.StatusBadGateway, worker: true, wantStatus: http.StatusBadGateway},
+		{name: "504 without the Worker", upstream: http.StatusGatewayTimeout, wantStatus: http.StatusGatewayTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status = tc.upstream
+			req := httptest.NewRequest(http.MethodPost, "https://api.gregale.dev/v1/apps/demo/invoke", nil)
+			if tc.worker {
+				req.Header.Set("CF-Worker", "gregale.dev")
+			}
+			if tc.restorable != "" {
+				req.Header.Set("X-Faas-Edge-Restorable", tc.restorable)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if got := rec.Header().Get("X-Faas-Edge-Original-Status"); got != tc.wantMarker {
+				t.Fatalf("marker = %q, want %q", got, tc.wantMarker)
+			}
+			if got := rec.Body.String(); got != problem {
+				t.Fatalf("body = %q, want apid's problem", got)
+			}
+		})
+	}
+}

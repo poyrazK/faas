@@ -140,11 +140,12 @@ type ServiceReplicas struct {
 
 // WorkerScaling is the queue-driven autoscaling policy for worker-mode apps.
 type WorkerScaling struct {
-	Min    int     `json:"min" yaml:"min"`
-	Max    int     `json:"max" yaml:"max"`
-	Metric string  `json:"metric,omitempty" yaml:"metric,omitempty"`
-	Name   string  `json:"name,omitempty" yaml:"name,omitempty"`
-	Target float64 `json:"target,omitempty" yaml:"target,omitempty"`
+	Min             int     `json:"min" yaml:"min"`
+	Max             int     `json:"max" yaml:"max"`
+	Metric          string  `json:"metric,omitempty" yaml:"metric,omitempty"`
+	Name            string  `json:"name,omitempty" yaml:"name,omitempty"`
+	Target          float64 `json:"target,omitempty" yaml:"target,omitempty"`
+	ObserverAppSlug string  `json:"observer_app_slug,omitempty" yaml:"observer_app_slug,omitempty"`
 }
 
 // AppManifest is the /etc/faas/app.json contract: the single handoff from the
@@ -904,6 +905,17 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 			}
 		} else if problem := ValidateScalingTargets("worker_replicas", []ScalingTarget{{Metric: r.Metric, Name: r.Name, Value: r.Target}}); problem != nil {
 			return fmt.Errorf("app manifest: %s", problem.Detail)
+		}
+		if r.ObserverAppSlug != "" {
+			if !ValidAppSlug(r.ObserverAppSlug) {
+				return fmt.Errorf("app manifest: worker_replicas.observer_app_slug is not a valid app slug")
+			}
+			if r.Metric != ScalingMetricCustom || r.Name != "mcp_tasks_outstanding" {
+				return fmt.Errorf("app manifest: worker_replicas.observer_app_slug requires the mcp_tasks_outstanding custom metric")
+			}
+		}
+		if r.Min == 0 && r.Metric == ScalingMetricCustom && r.Name == "mcp_tasks_outstanding" && r.ObserverAppSlug == "" {
+			return fmt.Errorf("app manifest: worker_replicas.observer_app_slug is required to scale MCP task workers to zero")
 		}
 		if r.Max > limits.WorkerReplicasMax {
 			return fmt.Errorf("app manifest: worker_replicas.max %d exceeds plan %q cap %d", r.Max, plan, limits.WorkerReplicasMax)

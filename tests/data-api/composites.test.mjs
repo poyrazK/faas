@@ -159,5 +159,23 @@ export async function exercise(url:string, token:string) {
     const [code] = await once(diff, 'exit')
     assert.equal(code, 1, output)
     assert.ok(JSON.parse(output).changes.some(c => c.path === 'api.location.postcode' && c.breaking))
+    // Use the actual restricted PostgreSQL snapshot and native generated types,
+    // rather than fabricated type text, for the unified CI check.
+    const check = async (current, expectedExit) => {
+      const child = spawn(process.env.DATA_API_DEV_CLI, ['--json', 'data-api', 'check', '--baseline', join(directory, 'before.json'), '--current', join(directory, current + '.json'), '--types', join(directory, 'database.types.ts')], { stdio: ['ignore', 'pipe', 'pipe'] })
+      let report = '', diagnostic = ''; child.stdout.on('data', b => { report += b }); child.stderr.on('data', b => { diagnostic += b })
+      const [exit] = await once(child, 'exit')
+      assert.equal(exit, expectedExit, diagnostic || report)
+      return JSON.parse(report)
+    }
+    assert.equal((await check('before', 0)).types.status, 'current')
+    const stale = await check('after', 1)
+    assert.equal(stale.types.status, 'stale')
+    assert.ok(stale.changes.some(c => c.path === 'api.location.postcode' && c.breaking))
+    await writeFile(join(directory, 'database.types.ts'), generate(next))
+    const updated = await check('after', 1)
+    assert.equal(updated.types.status, 'current')
+    assert.ok(updated.unapproved > 0, 'regenerated types must not waive a breaking composite change')
+
   }
 })

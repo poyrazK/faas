@@ -122,3 +122,22 @@ func TestLimiterHasConsumerTokenDoesNotConsume(t *testing.T) {
 		t.Fatal("peeking consumed a token")
 	}
 }
+
+func TestRouteThrottleRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		rps  float64
+		want int
+	}{
+		{rps: 50, want: 1},
+		{rps: 1, want: 1},
+		{rps: 0.5, want: 2},
+		{rps: 0.3, want: 4},
+		{rps: 0.1, want: 10},
+		{rps: 0, want: 1},
+		{rps: -2, want: 1},
+	} {
+		if got := routeThrottleRetryAfter(tc.rps); got != tc.want {
+			t.Errorf("routeThrottleRetryAfter(%g) = %d, want %d", tc.rps, got, tc.want)
+		}
+	}
+}

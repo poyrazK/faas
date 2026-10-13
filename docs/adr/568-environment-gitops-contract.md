@@ -970,6 +970,9 @@ environment or one that manages only environment configuration; a missing or
 null map is rejected. Removing the last workload produces the same reviewed
 prune candidates as any other removal, preserves unmanaged resources and
 other managers, and remains blocked by the workload pruning adapter gate.
+An initially configuration-only environment may converge when no Git-managed
+deployment is serving in its scope. An active managed release or live-scope
+fallback keeps the empty revision pending until reviewed pruning is available.
 
 Source and Dockerfile preparation now persists the exact approved source commit
 separately from its directory/Dockerfile parameters. A commit-only change therefore
@@ -4225,6 +4228,12 @@ weights and retained-route traffic still match the receipt. If candidate weights
 drift, reconciliation repairs them under the current lease, creates new route
 generations and requires fresh gateway acknowledgements; old acks cannot survive
 a traffic change.
+
+PostgreSQL serving completion also compares the receipt roster with the current
+registered serving gateways and requires exact acknowledgement names for each
+route. The preparation transaction rejects a caller's stale roster. A registry
+change therefore cannot complete a pending receipt merely because old and new
+rosters have equal cardinality; the next preparation resets route generations.
 
 Request/service graphs without queue bindings, push-worker graphs and request
 graphs for HTTP functions with reviewed push bindings can enter this phase.

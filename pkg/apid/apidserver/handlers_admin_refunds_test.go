@@ -1,0 +1,189 @@
+package apidserver_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/billing/polar"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+func newAdminRefundProvider(t *testing.T, handler http.Handler) *polar.Provider {
+	t.Helper()
+	providerServer := httptest.NewServer(handler)
+	t.Cleanup(providerServer.Close)
+	provider, err := polar.NewProvider(polar.Config{
+		APIKey:  "polar_test_token",
+		BaseURL: providerServer.URL,
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("create Polar provider: %v", err)
+	}
+	return provider
+}
+
+func seedPaidPolarInvoice(t *testing.T, e apidserver.TestEnv, status string, accountID string) state.Invoice {
+	t.Helper()
+	invoice := state.Invoice{
+		ID:                "00000000-0000-0000-0000-000000000123",
+		AccountID:         accountID,
+		Provider:          "polar",
+		ProviderInvoiceID: "order-1",
+		Status:            status,
+		TotalCents:        1000,
+		AmountPaidCents:   1000,
+		Currency:          "eur",
+	}
+	(*e.Store()).SeedInvoiceForTest(invoice)
+	return invoice
+}
+
+func TestAdminRefund_HappyPathForwardsIdempotencyAndAudits(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	invoice := seedPaidPolarInvoice(t, e, "paid", (*e.Acct()).ID)
+	var gotKey, gotHeader string
+	var gotBody struct {
+		OrderID  string            `json:"order_id"`
+		Amount   int64             `json:"amount"`
+		Reason   string            `json:"reason"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	provider := newAdminRefundProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Polar ignores Idempotency-Key, so the adapter lists the
+		// order's refunds before its single POST and carries the key in
+		// metadata (pkg/billing/polar refund_test.go pins the contract).
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/refunds" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"items":[],"pagination":{"total_count":0,"max_page":1}}`)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/refunds" {
+			t.Errorf("provider request = %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		gotHeader = r.Header.Get("Idempotency-Key")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode provider body: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		gotKey = gotBody.Metadata["faas_idempotency_key"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"refund-1","amount":500,"currency":"eur","status":"succeeded"}`)
+	}))
+	(*e.S()).WithBillingProvider(provider)
+
+	key := "operator-refund-1"
+	rec := e.DoAdmin(t, http.MethodPost, "/v1/admin/accounts/"+(*e.Acct()).ID+"/refunds", map[string]any{
+		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
+	}, map[string]string{"Idempotency-Key": key})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body)
+	}
+	if gotKey != key {
+		t.Errorf("provider metadata idempotency key = %q, want %q", gotKey, key)
+	}
+	if gotHeader != "" {
+		t.Errorf("refund POST must not carry Idempotency-Key (net/http replays it), got %q", gotHeader)
+	}
+	if gotBody.OrderID != invoice.ProviderInvoiceID || gotBody.Amount != 500 || gotBody.Reason != "customer_request" {
+		t.Errorf("provider body = %+v", gotBody)
+	}
+	var resp api.AdminRefundResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, rec.Body)
+	}
+	if resp.ProviderRefundID != "refund-1" || resp.InvoiceID != invoice.ID || resp.AmountCents != 500 {
+		t.Errorf("response = %+v", resp)
+	}
+	events, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 50)
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	var found bool
+	for _, event := range events {
+		if event.Kind == "refund.requested" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("refund.requested audit event missing")
+	}
+}
+
+func TestAdminRefund_RejectsMissingIdempotencyKey(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	seedPaidPolarInvoice(t, e, "paid", (*e.Acct()).ID)
+	(*e.S()).WithBillingProvider(newAdminRefundProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("provider must not be called without an idempotency key")
+		w.WriteHeader(http.StatusInternalServerError)
+	})))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/accounts/"+(*e.Acct()).ID+"/refunds", strings.NewReader(`{"invoice_id":"00000000-0000-0000-0000-000000000123","amount_cents":500,"reason":"customer request"}`))
+	e.AddAdminSession(t, req)
+	rec := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(rec, req)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+}
+
+func TestAdminRefund_BindsInvoiceToAccountAndPaidState(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	other, err := (*e.Store()).CreateAccount(context.Background(), "other@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	invoice := seedPaidPolarInvoice(t, e, "paid", other.ID)
+	called := false
+	(*e.S()).WithBillingProvider(newAdminRefundProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusInternalServerError)
+	})))
+
+	rec := e.DoAdmin(t, http.MethodPost, "/v1/admin/accounts/"+(*e.Acct()).ID+"/refunds", map[string]any{
+		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
+	}, map[string]string{"Idempotency-Key": "operator-refund-2"})
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	if called {
+		t.Fatal("provider was called for an invoice owned by another account")
+	}
+
+	invoice.AccountID = (*e.Acct()).ID
+	invoice.Status = "open"
+	(*e.Store()).SeedInvoiceForTest(invoice)
+	rec = e.DoAdmin(t, http.MethodPost, "/v1/admin/accounts/"+(*e.Acct()).ID+"/refunds", map[string]any{
+		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
+	}, map[string]string{"Idempotency-Key": "operator-refund-3"})
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+}
+
+func TestAdminRefund_ProviderFailureIsBadGateway(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	invoice := seedPaidPolarInvoice(t, e, "paid", (*e.Acct()).ID)
+	(*e.S()).WithBillingProvider(newAdminRefundProvider(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, `{"detail":"refund rejected"}`)
+	})))
+
+	rec := e.DoAdmin(t, http.MethodPost, "/v1/admin/accounts/"+(*e.Acct()).ID+"/refunds", map[string]any{
+		"invoice_id": invoice.ID, "amount_cents": 500, "reason": "customer request",
+	}, map[string]string{"Idempotency-Key": "operator-refund-4"})
+	apidserver.AssertProblem(t, rec, http.StatusBadGateway, "billing_refund_failed")
+	if strings.Contains(rec.Body.String(), "operator-refund-4") {
+		t.Error("problem response must not echo the idempotency key")
+	}
+}

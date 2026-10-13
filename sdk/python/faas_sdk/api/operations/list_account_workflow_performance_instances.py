@@ -10,8 +10,20 @@ from ...client import AuthenticatedClient, Client
 from ...models.list_account_workflow_performance_instances_cohort import (
     ListAccountWorkflowPerformanceInstancesCohort,
 )
+from ...models.list_account_workflow_performance_instances_condition_evidence_status import (
+    ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus,
+)
+from ...models.list_account_workflow_performance_instances_condition_result import (
+    ListAccountWorkflowPerformanceInstancesConditionResult,
+)
 from ...models.list_account_workflow_performance_instances_dimension import (
     ListAccountWorkflowPerformanceInstancesDimension,
+)
+from ...models.list_account_workflow_performance_instances_gap_status import (
+    ListAccountWorkflowPerformanceInstancesGapStatus,
+)
+from ...models.list_account_workflow_performance_instances_kind import (
+    ListAccountWorkflowPerformanceInstancesKind,
 )
 from ...models.operation_workflow_performance_instances_response import OperationWorkflowPerformanceInstancesResponse
 from ...models.problem import Problem
@@ -26,6 +38,8 @@ def _get_kwargs(
     tenant_id: UUID | Unset = UNSET,
     cohort: ListAccountWorkflowPerformanceInstancesCohort,
     dimension: ListAccountWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListAccountWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -33,6 +47,17 @@ def _get_kwargs(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListAccountWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
+    condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -52,6 +77,14 @@ def _get_kwargs(
     json_dimension: str = dimension
     params["dimension"] = json_dimension
 
+    params["baseline_token"] = baseline_token
+
+    json_gap_status: str | Unset = UNSET
+    if not isinstance(gap_status, Unset):
+        json_gap_status = gap_status
+
+    params["gap_status"] = json_gap_status
+
     params["contract_version"] = contract_version
 
     params["state"] = state
@@ -65,6 +98,40 @@ def _get_kwargs(
     params["unassigned"] = unassigned
 
     params["cohort_token"] = cohort_token
+
+    json_kind: str | Unset = UNSET
+    if not isinstance(kind, Unset):
+        json_kind = kind
+
+    params["kind"] = json_kind
+
+    params["decision_code"] = decision_code
+
+    params["rule_id"] = rule_id
+
+    params["rule_version"] = rule_version
+
+    params["group_id"] = group_id
+
+    params["path_id"] = path_id
+
+    params["condition_id"] = condition_id
+
+    params["condition_description"] = condition_description
+
+    json_condition_evidence_status: str | Unset = UNSET
+    if not isinstance(condition_evidence_status, Unset):
+        json_condition_evidence_status = condition_evidence_status
+
+    params["condition_evidence_status"] = json_condition_evidence_status
+
+    json_condition_result: str | Unset = UNSET
+    if not isinstance(condition_result, Unset):
+        json_condition_result = condition_result
+
+    params["condition_result"] = json_condition_result
+
+    params["outcome_code"] = outcome_code
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -143,6 +210,8 @@ def sync_detailed(
     tenant_id: UUID | Unset = UNSET,
     cohort: ListAccountWorkflowPerformanceInstancesCohort,
     dimension: ListAccountWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListAccountWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -150,6 +219,17 @@ def sync_detailed(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListAccountWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
+    condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
     """List ranked contributors to a workflow performance group.
 
@@ -163,7 +243,69 @@ def sync_detailed(
     require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every
     matching eligible contributor up to 100 sorted by observed duration descending with stable identity
     ties. No cursor is supported. Current blockers can differ from historical contributing groups;
-    pending verification previews are bounded independently of exact counts.
+    pending verification previews are bounded independently of exact counts. Decision dimensions require
+    completed cohort and cohort_token, an exact kind/contract_version/outcome_code and
+    decision_code/rule_id/rule_version for decision groups. Path groups additionally require
+    group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group
+    must be present in the bounded decision_outcomes summary. Decision dimensions reject
+    state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision
+    fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions
+    also require completed cohort and cohort_token and an exact returned condition_outcomes group
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         slug (str):
@@ -172,6 +314,8 @@ def sync_detailed(
         tenant_id (UUID | Unset):
         cohort (ListAccountWorkflowPerformanceInstancesCohort):
         dimension (ListAccountWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListAccountWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -179,6 +323,18 @@ def sync_detailed(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListAccountWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
+        condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,6 +351,8 @@ def sync_detailed(
         tenant_id=tenant_id,
         cohort=cohort,
         dimension=dimension,
+        baseline_token=baseline_token,
+        gap_status=gap_status,
         contract_version=contract_version,
         state=state,
         operation=operation,
@@ -202,6 +360,17 @@ def sync_detailed(
         owner=owner,
         unassigned=unassigned,
         cohort_token=cohort_token,
+        kind=kind,
+        decision_code=decision_code,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        group_id=group_id,
+        path_id=path_id,
+        condition_id=condition_id,
+        condition_description=condition_description,
+        condition_evidence_status=condition_evidence_status,
+        condition_result=condition_result,
+        outcome_code=outcome_code,
     )
 
     response = client.get_httpx_client().request(
@@ -220,6 +389,8 @@ def sync(
     tenant_id: UUID | Unset = UNSET,
     cohort: ListAccountWorkflowPerformanceInstancesCohort,
     dimension: ListAccountWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListAccountWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -227,6 +398,17 @@ def sync(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListAccountWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
+    condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
     """List ranked contributors to a workflow performance group.
 
@@ -240,7 +422,69 @@ def sync(
     require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every
     matching eligible contributor up to 100 sorted by observed duration descending with stable identity
     ties. No cursor is supported. Current blockers can differ from historical contributing groups;
-    pending verification previews are bounded independently of exact counts.
+    pending verification previews are bounded independently of exact counts. Decision dimensions require
+    completed cohort and cohort_token, an exact kind/contract_version/outcome_code and
+    decision_code/rule_id/rule_version for decision groups. Path groups additionally require
+    group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group
+    must be present in the bounded decision_outcomes summary. Decision dimensions reject
+    state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision
+    fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions
+    also require completed cohort and cohort_token and an exact returned condition_outcomes group
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         slug (str):
@@ -249,6 +493,8 @@ def sync(
         tenant_id (UUID | Unset):
         cohort (ListAccountWorkflowPerformanceInstancesCohort):
         dimension (ListAccountWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListAccountWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -256,6 +502,18 @@ def sync(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListAccountWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
+        condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -273,6 +531,8 @@ def sync(
         tenant_id=tenant_id,
         cohort=cohort,
         dimension=dimension,
+        baseline_token=baseline_token,
+        gap_status=gap_status,
         contract_version=contract_version,
         state=state,
         operation=operation,
@@ -280,6 +540,17 @@ def sync(
         owner=owner,
         unassigned=unassigned,
         cohort_token=cohort_token,
+        kind=kind,
+        decision_code=decision_code,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        group_id=group_id,
+        path_id=path_id,
+        condition_id=condition_id,
+        condition_description=condition_description,
+        condition_evidence_status=condition_evidence_status,
+        condition_result=condition_result,
+        outcome_code=outcome_code,
     ).parsed
 
 
@@ -292,6 +563,8 @@ async def asyncio_detailed(
     tenant_id: UUID | Unset = UNSET,
     cohort: ListAccountWorkflowPerformanceInstancesCohort,
     dimension: ListAccountWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListAccountWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -299,6 +572,17 @@ async def asyncio_detailed(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListAccountWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
+    condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceInstancesResponse | Problem]:
     """List ranked contributors to a workflow performance group.
 
@@ -312,7 +596,69 @@ async def asyncio_detailed(
     require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every
     matching eligible contributor up to 100 sorted by observed duration descending with stable identity
     ties. No cursor is supported. Current blockers can differ from historical contributing groups;
-    pending verification previews are bounded independently of exact counts.
+    pending verification previews are bounded independently of exact counts. Decision dimensions require
+    completed cohort and cohort_token, an exact kind/contract_version/outcome_code and
+    decision_code/rule_id/rule_version for decision groups. Path groups additionally require
+    group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group
+    must be present in the bounded decision_outcomes summary. Decision dimensions reject
+    state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision
+    fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions
+    also require completed cohort and cohort_token and an exact returned condition_outcomes group
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         slug (str):
@@ -321,6 +667,8 @@ async def asyncio_detailed(
         tenant_id (UUID | Unset):
         cohort (ListAccountWorkflowPerformanceInstancesCohort):
         dimension (ListAccountWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListAccountWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -328,6 +676,18 @@ async def asyncio_detailed(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListAccountWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
+        condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -344,6 +704,8 @@ async def asyncio_detailed(
         tenant_id=tenant_id,
         cohort=cohort,
         dimension=dimension,
+        baseline_token=baseline_token,
+        gap_status=gap_status,
         contract_version=contract_version,
         state=state,
         operation=operation,
@@ -351,6 +713,17 @@ async def asyncio_detailed(
         owner=owner,
         unassigned=unassigned,
         cohort_token=cohort_token,
+        kind=kind,
+        decision_code=decision_code,
+        rule_id=rule_id,
+        rule_version=rule_version,
+        group_id=group_id,
+        path_id=path_id,
+        condition_id=condition_id,
+        condition_description=condition_description,
+        condition_evidence_status=condition_evidence_status,
+        condition_result=condition_result,
+        outcome_code=outcome_code,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -367,6 +740,8 @@ async def asyncio(
     tenant_id: UUID | Unset = UNSET,
     cohort: ListAccountWorkflowPerformanceInstancesCohort,
     dimension: ListAccountWorkflowPerformanceInstancesDimension,
+    baseline_token: str | Unset = UNSET,
+    gap_status: ListAccountWorkflowPerformanceInstancesGapStatus | Unset = UNSET,
     contract_version: int | Unset = UNSET,
     state: str | Unset = UNSET,
     operation: str | Unset = UNSET,
@@ -374,6 +749,17 @@ async def asyncio(
     owner: str | Unset = UNSET,
     unassigned: bool | Unset = UNSET,
     cohort_token: str | Unset = UNSET,
+    kind: ListAccountWorkflowPerformanceInstancesKind | Unset = UNSET,
+    decision_code: str | Unset = UNSET,
+    rule_id: str | Unset = UNSET,
+    rule_version: str | Unset = UNSET,
+    group_id: str | Unset = UNSET,
+    path_id: str | Unset = UNSET,
+    condition_id: str | Unset = UNSET,
+    condition_description: str | Unset = UNSET,
+    condition_evidence_status: ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus | Unset = UNSET,
+    condition_result: ListAccountWorkflowPerformanceInstancesConditionResult | Unset = UNSET,
+    outcome_code: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceInstancesResponse | Problem | None:
     """List ranked contributors to a workflow performance group.
 
@@ -387,7 +773,69 @@ async def asyncio(
     require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every
     matching eligible contributor up to 100 sorted by observed duration descending with stable identity
     ties. No cursor is supported. Current blockers can differ from historical contributing groups;
-    pending verification previews are bounded independently of exact counts.
+    pending verification previews are bounded independently of exact counts. Decision dimensions require
+    completed cohort and cohort_token, an exact kind/contract_version/outcome_code and
+    decision_code/rule_id/rule_version for decision groups. Path groups additionally require
+    group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group
+    must be present in the bounded decision_outcomes summary. Decision dimensions reject
+    state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision
+    fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions
+    also require completed cohort and cohort_token and an exact returned condition_outcomes group
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result and outcome_code. They reject
+    kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed
+    results can produce overlapping groups. The earliest qualifying fact and all results observed for
+    that exact identity are returned. Missing conditions are not classified as unknown. Active condition
+    dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity
+    selected by contract_version and decision_code/rule_id/rule_version and
+    condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner
+    selectors are rejected. They use latest explicit decision snapshots in the current contract, return
+    evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration.
+    Metadata-only reports preserve evidence; explicit condition omission clears prior results. The
+    optional condition_evidence_status selector restricts active contributors to within_budget, overdue
+    or no_budget. Status counters partition each returned group and the chosen status must have
+    contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report
+    age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort
+    and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly
+    one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and
+    decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and
+    include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the
+    preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing
+    cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at
+    least one overdue selected condition once, across all refresh owners. The former ranks by oldest
+    overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow
+    identity breaks ties. These overall rankings remain available with zero contributors and are
+    independent of condition and owner display caps. Each contributor includes refresh_priority with the
+    oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus
+    the bounded condition preview. Age ranking does not mean most past deadline or highest business
+    severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner
+    dimension requires ongoing cohort and cohort_token and an exact returned
+    condition_coverage.missing_groups row selected by contract_version, current state and exactly one of
+    owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors
+    are rejected. Counts and eligibility use full condition coverage before previews. Each workflow
+    appears once in its selected group and ranks by full observed workflow blocked duration with stable
+    identity ties. Missing evidence has no report timestamp and is not failed verification; expectations
+    come from the latest reporting Operation pinned definition. Missing condition entries and pinned
+    guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner
+    dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The
+    baseline must not be later than the current token evaluation. Select an exact returned
+    new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of
+    owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner
+    and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews;
+    each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence
+    and pinned guidance. Current report comparisons permit contract boundaries while baseline history
+    must be continuous within its contract; ranking uses full observed report-only blocked intervals
+    without changing eligibility for existing duration groups. Generic duration coverage remains
+    separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing
+    cohort and both cohort_token and baseline_token with the same comparison scope and baseline time
+    rules. It returns each eligible workflow once, independent of displayed group caps. Optional
+    gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be
+    omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty
+    results are valid. Each contributor includes gap_queue_priority with all category counts, sorted
+    assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking
+    explanation before filters or previews. gap_progress counts and previews contain only filtered gaps.
+    Ranking measures observed report-only blocked intervals, omitting intervals spanning contract
+    boundaries, with stable workflow identity ties.
 
     Args:
         slug (str):
@@ -396,6 +844,8 @@ async def asyncio(
         tenant_id (UUID | Unset):
         cohort (ListAccountWorkflowPerformanceInstancesCohort):
         dimension (ListAccountWorkflowPerformanceInstancesDimension):
+        baseline_token (str | Unset):
+        gap_status (ListAccountWorkflowPerformanceInstancesGapStatus | Unset):
         contract_version (int | Unset):
         state (str | Unset):
         operation (str | Unset):
@@ -403,6 +853,18 @@ async def asyncio(
         owner (str | Unset):
         unassigned (bool | Unset):
         cohort_token (str | Unset):
+        kind (ListAccountWorkflowPerformanceInstancesKind | Unset):
+        decision_code (str | Unset):
+        rule_id (str | Unset):
+        rule_version (str | Unset):
+        group_id (str | Unset):
+        path_id (str | Unset):
+        condition_id (str | Unset):
+        condition_description (str | Unset):
+        condition_evidence_status (ListAccountWorkflowPerformanceInstancesConditionEvidenceStatus
+            | Unset):
+        condition_result (ListAccountWorkflowPerformanceInstancesConditionResult | Unset):
+        outcome_code (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -421,6 +883,8 @@ async def asyncio(
             tenant_id=tenant_id,
             cohort=cohort,
             dimension=dimension,
+            baseline_token=baseline_token,
+            gap_status=gap_status,
             contract_version=contract_version,
             state=state,
             operation=operation,
@@ -428,5 +892,16 @@ async def asyncio(
             owner=owner,
             unassigned=unassigned,
             cohort_token=cohort_token,
+            kind=kind,
+            decision_code=decision_code,
+            rule_id=rule_id,
+            rule_version=rule_version,
+            group_id=group_id,
+            path_id=path_id,
+            condition_id=condition_id,
+            condition_description=condition_description,
+            condition_evidence_status=condition_evidence_status,
+            condition_result=condition_result,
+            outcome_code=outcome_code,
         )
     ).parsed

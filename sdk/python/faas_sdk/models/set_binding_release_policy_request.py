@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from ..models.set_binding_release_policy_request_mode import (
     check_set_binding_release_policy_request_mode,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+
 
 T = TypeVar("T", bound="SetBindingReleasePolicyRequest")
 
@@ -24,6 +28,10 @@ class SetBindingReleasePolicyRequest:
 
     mode: SetBindingReleasePolicyRequestMode
     expected_revision: int
+    object_storage_requirements: ObjectStorageReleaseRequirements | Unset = UNSET
+    """Managed environment prefix to required canary mode in the selected scope. Prefixes match
+    ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require
+    successful cleanup. No implicit probes or writes."""
     max_verification_age: str | Unset = "10m"
     """Whole-second Go duration between 1s and 24h."""
     require_application_ack: bool | Unset = False
@@ -35,6 +43,10 @@ class SetBindingReleasePolicyRequest:
         mode: str = self.mode
 
         expected_revision = self.expected_revision
+
+        object_storage_requirements: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.object_storage_requirements, Unset):
+            object_storage_requirements = self.object_storage_requirements.to_dict()
 
         max_verification_age = self.max_verification_age
 
@@ -50,6 +62,8 @@ class SetBindingReleasePolicyRequest:
                 "expected_revision": expected_revision,
             }
         )
+        if object_storage_requirements is not UNSET:
+            field_dict["object_storage_requirements"] = object_storage_requirements
         if max_verification_age is not UNSET:
             field_dict["max_verification_age"] = max_verification_age
         if require_application_ack is not UNSET:
@@ -61,10 +75,19 @@ class SetBindingReleasePolicyRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+
         d = dict(src_dict)
         mode = check_set_binding_release_policy_request_mode(d.pop("mode"))
 
         expected_revision = d.pop("expected_revision")
+
+        _object_storage_requirements = d.pop("object_storage_requirements", UNSET)
+        object_storage_requirements: ObjectStorageReleaseRequirements | Unset
+        if isinstance(_object_storage_requirements, Unset):
+            object_storage_requirements = UNSET
+        else:
+            object_storage_requirements = ObjectStorageReleaseRequirements.from_dict(_object_storage_requirements)
 
         max_verification_age = d.pop("max_verification_age", UNSET)
 
@@ -75,6 +98,7 @@ class SetBindingReleasePolicyRequest:
         set_binding_release_policy_request = cls(
             mode=mode,
             expected_revision=expected_revision,
+            object_storage_requirements=object_storage_requirements,
             max_verification_age=max_verification_age,
             require_application_ack=require_application_ack,
             reason=reason,

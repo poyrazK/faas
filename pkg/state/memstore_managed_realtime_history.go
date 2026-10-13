@@ -27,9 +27,11 @@ type managedRealtimeDurableCursorKey struct {
 }
 
 type managedRealtimeDurableCursorState struct {
-	gapReported bool
-	sequence    int64
-	updatedAt   time.Time
+	acknowledgedSequence *int64
+	acknowledgedAt       *time.Time
+	gapReported          bool
+	sequence             int64
+	updatedAt            time.Time
 }
 
 func (m *MemStore) LoadManagedRealtimeDurableCursor(ctx context.Context, endpointID, principal, subscription, channel string, initialSequence int64) (int64, error) {
@@ -95,6 +97,10 @@ func (m *MemStore) AdvanceManagedRealtimeDurableCursor(ctx context.Context, endp
 	}
 	if sequence > cursor.sequence {
 		cursor.sequence = sequence
+		now := time.Now().UTC()
+		cursor.acknowledgedSequence = &sequence
+		cursor.acknowledgedAt = &now
+		m.enqueueRealtimeCheckpointWebhookLocked(key, cursor)
 	}
 	cursor.updatedAt = time.Now().UTC()
 	m.managedRealtimeDurableCursors[key] = cursor
@@ -135,6 +141,8 @@ func (m *MemStore) ResetManagedRealtimeDurableCursor(ctx context.Context, endpoi
 		return 0, ErrManagedRealtimeDurableCursorExpired
 	}
 	cursor.sequence = sequence
+	cursor.acknowledgedSequence = nil
+	cursor.acknowledgedAt = nil
 	cursor.updatedAt = time.Now().UTC()
 	m.managedRealtimeDurableCursors[key] = cursor
 	return cursor.sequence, nil
@@ -279,7 +287,7 @@ func (m *MemStore) appendManagedRealtimeChannel(ctx context.Context, endpointID,
 	if idempotencyKey != "" {
 		for _, existing := range state.messages {
 			if existing.TargetMessageID == idempotencyKey {
-				if !equalRealtimeMetadata(existing.Metadata, metadata) || existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) {
+				if existing.TTLSeconds != realtimeMessageTTL(ctx) || !equalRealtimeMetadata(existing.Metadata, metadata) || existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) {
 					return ManagedRealtimeChannelMessage{}, ErrConflict
 				}
 				return cloneManagedRealtimeChannelMessage(existing), nil
@@ -309,11 +317,17 @@ func (m *MemStore) appendManagedRealtimeChannel(ctx context.Context, endpointID,
 		Data: append([]byte(nil), data...), Binary: binary,
 		IdempotencyKey: idempotencyKey, CreatedAt: time.Now().UTC(),
 	}
+	message.TTLSeconds = realtimeMessageTTL(ctx)
+	if message.TTLSeconds > 0 {
+		expiry := message.CreatedAt.Add(time.Duration(message.TTLSeconds) * time.Second)
+		message.ExpiresAt = &expiry
+	}
 	reducer, err := m.prepareReducerLocked(endpointID, channel, []ManagedRealtimeChannelMessage{message})
 	if err != nil {
 		return ManagedRealtimeChannelMessage{}, err
 	}
 	state.messages = append(state.messages, message)
+	m.enqueueRealtimeChannelWebhookLocked(message)
 	m.saveReducerLocked(reducer)
 	if schedule != nil {
 		row := m.managedRealtimeSchedules[scheduleKey(*schedule)]
@@ -420,6 +434,10 @@ func (m *MemStore) PruneExpiredManagedRealtimeChannelMessages(_ context.Context,
 }
 
 func cloneManagedRealtimeChannelMessage(message ManagedRealtimeChannelMessage) ManagedRealtimeChannelMessage {
+	if message.ExpiresAt != nil {
+		expiry := *message.ExpiresAt
+		message.ExpiresAt = &expiry
+	}
 	message.Data = append([]byte(nil), message.Data...)
 	message.Metadata = cloneRealtimeMetadata(message.Metadata)
 	return message

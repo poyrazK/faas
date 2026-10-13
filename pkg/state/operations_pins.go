@@ -102,6 +102,12 @@ func retireLiveDeploymentSiblingsTx(ctx context.Context, tx pgx.Tx, appID, scope
 	if err != nil {
 		return err
 	}
+	if err := checkMCPTaskCompatibilityCutoverTx(ctx, tx, appID, scope, deploymentID); err != nil {
+		return err
+	}
+	if err := consumeMCPTaskMigrationOverrideTx(ctx, tx, deploymentID); err != nil {
+		return err
+	}
 	_, err = sqlc.New().RetireLiveDeploymentSiblings(ctx, tx, sqlc.RetireLiveDeploymentSiblingsParams{
 		AppID: app, Scope: normalizedDeploymentScope(scope), DeploymentID: deployment})
 	return err

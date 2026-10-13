@@ -26,7 +26,7 @@ tests:
         alertname: BillingReconciliationUnavailable
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: meterd
               family: billing_drift
               public_status: internal

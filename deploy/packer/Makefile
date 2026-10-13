@@ -122,7 +122,7 @@ image-list: ## List every tagged image across clouds (operator readout)
 # ---------------------------------------------------------------------------
 .PHONY: image-test-first-boot
 image-test-first-boot: ## e2e: boot image + assert first-boot user-data + role templating (PR #930 + ADR-112)
-	@test -n "$(IMAGE_TAG)" || { echo "IMAGE_TAG required (e.g. gregale-compute-fc1.7.0-kernel6.1.134-g1234567 — note: NO role segment, ADR-112)" >&2; exit 1; }
+	@test -n "$(IMAGE_TAG)" || { echo "IMAGE_TAG required (e.g. gregale-compute-fc1.17.0-kernel6.18.54-g1234567 — note: NO role segment, ADR-112)" >&2; exit 1; }
 	@test -n "$(ROLE)" || { echo "ROLE required (control-plane|compute-only) — operator supplies via cloud-init user-data, not image tag" >&2; exit 1; }
 	cd $(PKR_DIR)../.. && go test -tags=e2eimage -run TestImageFirstBoot -count=1 ./cmd/e2e/...
 

@@ -100,7 +100,7 @@ func TestApplyLayerGzForAppDropsGuestRuntimeMountpoints(t *testing.T) {
 		{name: "app/server", body: "customer binary"},
 		{name: "etc/mtab", typeflag: tar.TypeSymlink, linkname: "../proc/mounts"},
 	})
-	if err := applyLayerGzForApp(dst, layer); err != nil {
+	if err := applyLayerGzForApp(dst, layer, nil); err != nil {
 		t.Fatalf("applyLayerGzForApp: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(dst, "app", "server")); err != nil || string(got) != "customer binary" {

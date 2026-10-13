@@ -4,9 +4,36 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// AccountHandler is an HTTP handler that runs after authentication has
+// resolved the caller's account. cmd/apid's accountHandler aliases it.
+type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Account)
+
+// APIKeyCarriesScope reports whether key was granted want verbatim.
+func APIKeyCarriesScope(key state.APIKey, want string) bool {
+	for _, scope := range key.Scopes {
+		if scope == want {
+			return true
+		}
+	}
+	return false
+}
+
+// PlatformTenantSelfID returns the downstream tenant a platform-tenant token
+// was issued for. Any other caller gets a 403 written to w and ok=false.
+func PlatformTenantSelfID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	principal, ok := PrincipalFrom(r)
+	if !ok || principal.Key == nil || principal.Key.PlatformTenantID == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"Platform tenant token required", "use a token issued for this downstream tenant"))
+		return "", false
+	}
+	return principal.Key.PlatformTenantID, true
+}
 
 // Principal is the authenticated caller. Key is nil when the caller
 // authenticated via the dashboard session cookie (in which case the

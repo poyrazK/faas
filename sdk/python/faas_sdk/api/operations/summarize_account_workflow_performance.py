@@ -18,6 +18,7 @@ def _get_kwargs(
     scope: str,
     workflow: str,
     tenant_id: UUID | Unset = UNSET,
+    baseline_token: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -30,6 +31,8 @@ def _get_kwargs(
     if not isinstance(tenant_id, Unset):
         json_tenant_id = str(tenant_id)
     params["tenant_id"] = json_tenant_id
+
+    params["baseline_token"] = baseline_token
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -101,6 +104,7 @@ def sync_detailed(
     scope: str,
     workflow: str,
     tenant_id: UUID | Unset = UNSET,
+    baseline_token: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceSummary | Problem]:
     """Summarize business workflow performance across retained instances.
 
@@ -118,6 +122,7 @@ def sync_detailed(
         scope (str):
         workflow (str):
         tenant_id (UUID | Unset):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,6 +137,7 @@ def sync_detailed(
         scope=scope,
         workflow=workflow,
         tenant_id=tenant_id,
+        baseline_token=baseline_token,
     )
 
     response = client.get_httpx_client().request(
@@ -148,6 +154,7 @@ def sync(
     scope: str,
     workflow: str,
     tenant_id: UUID | Unset = UNSET,
+    baseline_token: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceSummary | Problem | None:
     """Summarize business workflow performance across retained instances.
 
@@ -165,6 +172,7 @@ def sync(
         scope (str):
         workflow (str):
         tenant_id (UUID | Unset):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,6 +188,7 @@ def sync(
         scope=scope,
         workflow=workflow,
         tenant_id=tenant_id,
+        baseline_token=baseline_token,
     ).parsed
 
 
@@ -190,6 +199,7 @@ async def asyncio_detailed(
     scope: str,
     workflow: str,
     tenant_id: UUID | Unset = UNSET,
+    baseline_token: str | Unset = UNSET,
 ) -> Response[OperationWorkflowPerformanceSummary | Problem]:
     """Summarize business workflow performance across retained instances.
 
@@ -207,6 +217,7 @@ async def asyncio_detailed(
         scope (str):
         workflow (str):
         tenant_id (UUID | Unset):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -221,6 +232,7 @@ async def asyncio_detailed(
         scope=scope,
         workflow=workflow,
         tenant_id=tenant_id,
+        baseline_token=baseline_token,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -235,6 +247,7 @@ async def asyncio(
     scope: str,
     workflow: str,
     tenant_id: UUID | Unset = UNSET,
+    baseline_token: str | Unset = UNSET,
 ) -> OperationWorkflowPerformanceSummary | Problem | None:
     """Summarize business workflow performance across retained instances.
 
@@ -252,6 +265,7 @@ async def asyncio(
         scope (str):
         workflow (str):
         tenant_id (UUID | Unset):
+        baseline_token (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -268,5 +282,6 @@ async def asyncio(
             scope=scope,
             workflow=workflow,
             tenant_id=tenant_id,
+            baseline_token=baseline_token,
         )
     ).parsed

@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type qualificationGraphVMM struct {
@@ -240,7 +241,7 @@ func TestEnvironmentQualificationGraphRejectsIncompleteOrForgedCohortBeforeEffec
 	}
 }
 
-type qualificationUnsupportedProtocolStore struct{ *state.MemStore }
+type qualificationUnsupportedProtocolStore struct{ MemStore *state.MemStore }
 
 func (s qualificationUnsupportedProtocolStore) AppByID(ctx context.Context, id string) (state.App, error) {
 	app, err := s.MemStore.AppByID(ctx, id)
@@ -251,7 +252,7 @@ func (s qualificationUnsupportedProtocolStore) AppByID(ctx context.Context, id s
 func TestEnvironmentQualificationGraphRejectsUnsupportedProtocolBeforeEffects(t *testing.T) {
 	store, requests := claimedQualificationGraphFixture(t)
 	v := newQualificationRuntimeVMM(&fakeVMM{})
-	e := newEngine(t, qualificationUnsupportedProtocolStore{store}, v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
+	e := newEngine(t, statetest.NewMem(qualificationUnsupportedProtocolStore{store}), v, &fakeNotifier{}, "test-fc").WithEnvironmentQualificationServiceProxy(func(context.Context, string) (string, error) { return "http://10.100.0.1:10081", nil })
 	err := e.WithEnvironmentQualificationGraphRuntimes(t.Context(), requests, func(context.Context, map[string]state.Instance) error {
 		t.Fatal("HTTP1 graph bridge reached a gRPC target")
 		return nil

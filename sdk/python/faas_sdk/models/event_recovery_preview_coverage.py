@@ -1,10 +1,13 @@
 from typing import Literal
 
-EventRecoveryPreviewCoverage = Literal["captured_application_recipients", "retained_application_executions"]
+EventRecoveryPreviewCoverage = Literal[
+    "captured_application_recipients", "retained_application_executions", "reviewed_workflow_runs"
+]
 
 EVENT_RECOVERY_PREVIEW_COVERAGE_VALUES: set[EventRecoveryPreviewCoverage] = {
     "captured_application_recipients",
     "retained_application_executions",
+    "reviewed_workflow_runs",
 }
 
 

@@ -5,6 +5,20 @@ migration connections. The Procfile release command creates the notes schema
 before activation; serving instances use a small connection pool and perform
 no schema changes on startup.
 
+The included `gregale.yaml` declares a two-second `after_restore` hook. Before
+readiness, its loopback-only callback closes captured SQL sessions, opens a new
+pool, and reads the existing notes table within a 1.5-second budget. A failure
+rejects snapshot restoration so Gregale can cold-boot the deployment. Cold boot
+uses `/healthz`; an empty notes table is valid, a missing schema is not. Existing
+apps must deploy the new source and lifecycle configuration to adopt this hook.
+
+Requests have a five-second SQL deadline and bounded pool admission. HTTP
+disconnects cancel unfinished transactions; idle and active connection errors
+discard the failed session. Writes are never automatically replayed. Cancellation observed
+before COMMIT rolls back; a connection failure during COMMIT may leave an
+uncertain result, so applications needing retry-safe writes must add their own
+idempotency keys. The example does not promise exactly-once writes.
+
 ## Deploy with Gregale managed PostgreSQL
 
 Use an existing database from Gregale's qualified Neon-backed preview, or create
@@ -34,7 +48,8 @@ undo committed schema changes; use migrations compatible with the previous app.
 An ordinary secret named `MIGRATION_DATABASE_URL` does not acquire the managed
 binding's delivery restrictions. Keep an external schema-owner connection on
 your operator machine. Run `MIGRATION_DATABASE_URL=... npm run migrate` locally,
-then remove the `release:` line from the Procfile. Grant your runtime login
+then remove the `release:` line from the Procfile and the `release` section from
+`gregale.yaml`. Grant your runtime login
 SELECT/INSERT/UPDATE/DELETE on notes and USAGE/SELECT on its sequence. Deploy
 only the runtime connection:
 
@@ -49,17 +64,35 @@ gregale secrets set --app <slug> DATABASE_URL='postgres://runtime:password@host/
 For an already reserved app, use `gregale deploy --name <slug> --secrets-file ...`.
 Use TLS with certificate verification for remote PostgreSQL. This scaffold does
 not run a PostgreSQL server inside the application VM.
+`sslmode=require`, `verify-ca`, and `verify-full` all retain certificate and
+hostname verification. For a private CA, use `NODE_EXTRA_CA_CERTS` pointing at
+your deployed CA bundle. Certificate/key paths in the URL and opportunistic TLS
+modes and alternative URL SSL overrides are rejected. Explicit `sslmode=disable`
+is available for local development.
+Serving refuses `MIGRATION_DATABASE_URL`; run migrations in a separate process.
 
 ## Run and test locally
 
 ```sh
-npm install --ignore-scripts
+npm ci --ignore-scripts
 # Set MIGRATION_DATABASE_URL to the direct schema-owner connection.
 npm run migrate
+# Remove MIGRATION_DATABASE_URL from the serving environment.
+unset MIGRATION_DATABASE_URL
 # Set DATABASE_URL to the restricted runtime connection.
 npm start
 npm test
 ```
+
+The real SQL regression suite is explicit and destructive within its fixture:
+set `GREGALE_POSTGRES_STARTER_TEST_DISPOSABLE=1` and
+`GREGALE_POSTGRES_STARTER_TEST_URL` to an empty disposable database administrator
+URL, trust its TLS certificate, then run `npm run test:postgres`. It creates and
+removes only its notes workload and two temporary logins, and tests HTTP writes,
+session termination, restore readiness, cancellation and credential retirement.
+Missing fixture inputs fail the suite. The repository's Go wrapper materializes
+this exact starter into a private directory and gives it a private database;
+both PR CI and full CI run it against TLS/SCRAM PostgreSQL.
 
 ## Try it
 

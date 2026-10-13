@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -44,10 +44,9 @@ var FS embed.FS
 const GoToolchainVersion = "1.26.9"
 
 // Names is the canonical template list, kept here so the CLI can
-// validate --template before touching the embed FS. The seven
-// "hello/function" scaffolds ship with `gregale deploy`; the
-// stateless-contract and event-driven scaffolds are scaffolded by
-// `gregale init` (commands_init.go). Names must stay in
+// validate --template before touching the embed FS. The hello/function and
+// stateless-contract scaffolds ship with `gregale deploy`; `gregale init`
+// (commands_init.go) can materialize every template. Names must stay in
 // lockstep with the //go:embed directive above — adding a template
 // means a new entry in BOTH places.
 var Names = []string{
@@ -60,9 +59,11 @@ var Names = []string{
 	"function-go",
 	"function-node24",
 	"function-python313",
+	"function-rust",
 	"event-worker",
 	"queue-worker",
 	"s3-uploader",
+	"object-storage-node",
 	"slack-bot",
 	"rest-api-postgres",
 	"cron-worker",
@@ -78,12 +79,21 @@ var Names = []string{
 	"customer-operation-workflow-export",
 	"data-api",
 	"data-api-starter",
+	"durable-entity-node",
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
+	"object-storage-node": {
+		".gitignore":     "node_modules/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore": "/test/\n/node_modules/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
+	"durable-entity-node": {
+		".gitignore":     "node_modules/\n.env\n.env.*\nlocal-checkpoint.json\n.session-frame.json\n",
+		".gregaleignore": "/dev.mjs\n/tools/\n/test/\n/tsconfig.json\n/local-checkpoint.json\n/.session-frame.json\n/.env\n/.env.*\n",
+	},
 	"data-api-starter": {
 		".gitignore":     "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
 		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/.gregale/\n/data-api-artifacts.json\n/data-api.dev.json\n/data-api.requests.json\n/data-api.requests.json.*.tmp\n",
@@ -104,13 +114,7 @@ var generatedDotfiles = map[string]map[string]string{
 // package after materialization, but its source must not be compiled as part
 // of Gregale's repository module.
 var generatedTemplateFiles = map[string]map[string]string{
-	"mcp-go": {
-		"main.go.tmpl":      "main.go",
-		"main_test.go.tmpl": "main_test.go",
-		"auth.go.tmpl":      "auth.go",
-		"tasks.go.tmpl":     "tasks.go",
-	},
-}
+	"mcp-go": {"main_test.go.tmpl": "main_test.go"}}
 
 // mcpGoModuleRequirements mirrors the Go SDK's pruned module graph so a fresh
 // mcp-go starter can run without a preliminary `go mod tidy`.
@@ -161,8 +165,9 @@ var generatedTemplateCopies = map[string]map[string]string{
 // Share the runtime catalog implementation with the owner-side permission tool.
 var sharedTemplateCopies = map[string]map[string]string{
 	"data-api-starter": {
-		"migrations/rpc-runtime/types.mjs":  "data-api/types.mjs",
-		"migrations/rpc-runtime/config.mjs": "data-api/config.mjs",
+		"migrations/rpc-runtime/types.mjs":       "data-api/types.mjs",
+		"migrations/rpc-runtime/type-render.mjs": "data-api/type-render.mjs",
+		"migrations/rpc-runtime/config.mjs":      "data-api/config.mjs",
 	},
 }
 
@@ -395,30 +400,34 @@ func NameIsValid(name string) bool {
 // order. Recognised categories:
 //
 //	"hello"              — first-touch smoke tests (3)
-//	"function"           — generic runtimes the customer customises (6)
+//	"function"           — generic runtimes the customer customises (7)
 //	"stateless-contract" — managed-service scaffolds that BYO credentials (7)
 //	"event-driven"       — internal event and queue worker starters (2)
 //	"ai"                 — LLM-facing scaffolds that BYO keys (1)
+//	"mcp"                — stateless MCP server starters (3)
 //	""                   — unknown / not in Names
 //
 // The grouping mirrors the template sections in the public docs site:
 // hello/function are the "just run it" tier, stateless-contract
-// scaffolds are the "BYO managed service" tier, ai is the LLM tier.
+// scaffolds are the "BYO managed service" tier, ai is the LLM tier,
+// and mcp contains the protocol-specific language starters.
 // Adding a template means a new entry in BOTH Names AND this switch.
 func CategoryFor(name string) string {
 	switch name {
 	case "hello-node", "hello-python", "hello-go":
 		return "hello"
-	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example":
+	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "cron-example":
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
+	case "s3-uploader", "object-storage-node", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"
+	case "durable-entity-node":
+		return "durable-entities"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
 		return "operations"
 	}
@@ -427,4 +436,4 @@ func CategoryFor(name string) string {
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp", "operations"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp", "operations", "durable-entities"}

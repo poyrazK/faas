@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestNodePresenceTrackerRequiresDistinctFreshReports(t *testing.T) {
@@ -351,8 +352,8 @@ func TestNodeInventoryDoesNotRepairAnotherSchedulersApp(t *testing.T) {
 }
 
 type failingInventoryStore struct {
-	*state.MemStore
-	fail bool
+	MemStore *state.MemStore
+	fail     bool
 }
 
 func (s *failingInventoryStore) FailRunningInstanceIfOwnedByNode(ctx context.Context, id, nodeID string, terminalAt time.Time) error {
@@ -366,7 +367,7 @@ func TestNodeInventoryDatabaseFailureRetriesWithoutReleasingCapacity(t *testing.
 	t.Setenv(NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
 	store := &failingInventoryStore{MemStore: f.store, fail: true}
-	f.engine.store = store
+	f.engine.store = statetest.NewMem(store)
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)
@@ -394,7 +395,7 @@ func TestNodeInventoryUnavailableCleanupDoesNotReleaseCapacity(t *testing.T) {
 }
 
 type restartingInventoryStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	startedAt time.Time
 }
 
@@ -407,7 +408,7 @@ func (s *restartingInventoryStore) InstanceByID(ctx context.Context, id string) 
 func TestNodeInventoryRereadProtectsRestartedInstance(t *testing.T) {
 	t.Setenv(NodeInventoryEnforceEnv, "1")
 	f := newInventoryFixture(t, false)
-	f.engine.store = &restartingInventoryStore{MemStore: f.store, startedAt: f.now.Add(-time.Second)}
+	f.engine.store = statetest.NewMem(&restartingInventoryStore{MemStore: f.store, startedAt: f.now.Add(-time.Second)})
 	f.report(true)
 	f.report(true)
 	f.assertState(t, state.StateRunning)

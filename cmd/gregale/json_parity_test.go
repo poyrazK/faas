@@ -23,6 +23,7 @@ var nonJSONAllowList = map[string]string{
 	"cmdCompletion": "shell scripts and completion values are text; interactive installation rejects JSON",
 	"cmdAccount":    "delegate leaves; cmdAccountStatus is the only JSON leaf (covered)",
 	"cmdLogin":      "interactive paste-code flow",
+	"cmdMenu":       "terminal-only action launcher; rejects JSON and delegates to existing guided commands",
 	"cmdMfa":        "enroll is the only JSON leaf (covered); others are write-only",
 	"cmdOverageCap": "side-effect (set/clear both write-only)",
 	"cmdRestore":    "side-effect only; no body",

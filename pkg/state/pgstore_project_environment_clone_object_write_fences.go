@@ -133,7 +133,7 @@ func (s *PgStore) AbandonProjectEnvironmentCloneObjectWriteFences(ctx context.Co
 	if err != nil {
 		return err
 	}
-	if op.Status != CloneOperationCompensating {
+	if op.Status != CloneOperationCompensating || len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint" {
 		return ErrConflict
 	}
 	fences, err := cloneObjectWriteFencesTx(ctx, tx, op)

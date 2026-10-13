@@ -38,13 +38,30 @@ func requestBudgetExpired(ctx context.Context) bool {
 // reached the app (production-us hunt #4, H4-66: a warm app that was simply
 // slow used to be told "while capacity was becoming ready").
 func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request) {
-	writeRequestBudgetExceeded(w, r, requestBudgetDetailForward)
+	writeRequestBudgetExceeded(w, r, requestBudgetForwardDetail(r))
+}
+
+// requestBudgetSourceKey carries the stampRequestBudget source tag so the
+// timeout names the setting that produced the budget. Production-us hunt #9
+// (H9-80): an app whose own request timeout expired was told to add a
+// kind=budget edge rule.
+type requestBudgetSourceKey struct{}
+
+func requestBudgetForwardDetail(r *http.Request) string {
+	if r != nil {
+		switch source, _ := r.Context().Value(requestBudgetSourceKey{}).(string); source {
+		case "app", "plan_default":
+			return requestBudgetDetailForwardApp
+		}
+	}
+	return requestBudgetDetailForward
 }
 
 // Budget-exceeded details by phase.
 const (
-	requestBudgetDetailCapacity = "the request exceeded its wall-clock budget while capacity was becoming ready"
-	requestBudgetDetailForward  = "the request exceeded its wall-clock budget while the app was handling it; respond sooner, or raise the budget with a kind=budget edge rule"
+	requestBudgetDetailCapacity   = "the request exceeded its wall-clock budget while capacity was becoming ready"
+	requestBudgetDetailForward    = "the request exceeded its wall-clock budget while the app was handling it; respond sooner, or raise the budget with a kind=budget edge rule"
+	requestBudgetDetailForwardApp = "the request exceeded its wall-clock budget while the app was handling it; respond sooner, or raise the app's request timeout with `gregale app <slug> scale --request-timeout SEC`"
 )
 
 func writeRequestBudgetExceeded(w http.ResponseWriter, r *http.Request, detail string) {

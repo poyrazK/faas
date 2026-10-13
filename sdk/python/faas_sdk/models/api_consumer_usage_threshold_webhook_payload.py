@@ -13,8 +13,9 @@ T = TypeVar("T", bound="APIConsumerUsageThresholdWebhookPayload")
 
 @_attrs_define
 class APIConsumerUsageThresholdWebhookPayload:
-    """Data delivered with consumer.usage_threshold when a consumer crosses a plan alert threshold. alert_id is stable across
-    retries.
+    """Data delivered with consumer.usage_threshold when a consumer crosses a plan alert threshold. alert_id is stable
+    across retries.
+
     """
 
     alert_id: UUID

@@ -235,6 +235,9 @@ func frameworkForRuntime(runtime string) framework {
 		return fwPython
 	case runtimeGo124, "go124-alpine":
 		return fwGo
+	case runtimeBinary:
+		// ADR-987: built from the function's Dockerfile.
+		return fwDocker
 	default:
 		return fwUnknown
 	}
@@ -322,6 +325,7 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 			return printErr("Could not encode diff", err)
 		}
 	} else {
+		renderDeployReadiness(osStderr, opts, d)
 		deploydiff.RenderText(osStdout, d)
 	}
 
@@ -605,6 +609,7 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 			return printErr("Could not encode diff", err)
 		}
 	} else {
+		renderDeployReadiness(osStderr, opts, synthetic)
 		deploydiff.RenderText(osStdout, synthetic)
 	}
 	if resp.Blocking && !opts.Lenient {

@@ -1,0 +1,47 @@
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'schedd_recovery_event_emitted_total{kind="failed",instance="cp"}'
+        values: '0x10 1 2 3x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasComputeNodeFlapping
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasComputeNodeFlapping
+        exp_alerts:
+          - exp_labels: { severity: page, component: schedd, family: compute_node_failover, public_status: internal }
+            exp_annotations:
+              summary: "Compute nodes keep failing over"
+              description: "Schedd marked compute nodes unavailable at least three times in 30 minutes. Each failover parks every instance on the node. On production-us a starved control plane did this about 22 times per node while the nodes were healthy (hunt #9, H9-171)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeFlapping.md"
+  - interval: 1m
+    input_series:
+      - series: 'schedd_recovery_event_emitted_total{kind="failed",instance="cp"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasComputeNodeFlapping
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'schedd_recreate_decisions_total{outcome="succeeded",instance="compute-1"}'
+        values: '0x10 2x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasInstancesRecreatedByRecovery
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: FaasInstancesRecreatedByRecovery
+        exp_alerts:
+          - exp_labels: { severity: warn, component: schedd, family: compute_node_failover, public_status: internal }
+            exp_annotations:
+              summary: "The recovery arbiter parked running instances"
+              description: "Running instances were parked because their node was marked unavailable. Their customers lost in-memory state, and if the node was alive the VMs may still be running behind parked rows."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeFlapping.md"
+      - eval_time: 30m
+        alertname: FaasInstancesRecreatedByRecovery
+        exp_alerts: []

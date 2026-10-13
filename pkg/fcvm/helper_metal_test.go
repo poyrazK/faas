@@ -34,6 +34,10 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 	}
 	v := NewJailerVMM(JailChrootBase, timeout)
 	v.mountHelperPath = path
+	// adr: 907 — FAAS_TEST_FREE_PAGE_REPORTING=1 runs the metal suite with
+	// the free-page-reporting balloon on every cold boot, as production
+	// vmmd does on Firecracker 1.14+.
+	v.freePageReporting = os.Getenv("FAAS_TEST_FREE_PAGE_REPORTING") == "1"
 	// Retain rings before failure cleanup unregisters them; report the bounded
 	// console tail when a metal test fails instead of losing the boot diagnosis.
 	stop, stopped := make(chan struct{}), make(chan struct{})

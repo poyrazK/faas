@@ -1,126 +1,57 @@
-import asyncio
+"""Public HTTP regression contracts for the modern stateless starter."""
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
-
-import server
-from server import add, greet, is_exact_origin, load_config, origin_allowed
-
+from urllib.request import Request,urlopen
+from urllib.error import HTTPError
+from server import DrainingHTTPServer,MCPHandler,load_config
+from auth import Authenticator,AuthConfigurationError
 
 class MCPStarterTests(unittest.TestCase):
-    def test_sample_tools(self):
-        self.assertEqual(greet("Ada"), "Hello, Ada!")
-        self.assertEqual(add(2.5, 3), 5.5)
-        with self.assertRaises(ValueError):
-            greet("  ")
-
-    def test_origin_policy_is_exact(self):
-        self.assertTrue(origin_allowed("", []))
-        self.assertTrue(origin_allowed("https://trusted.example", ["https://trusted.example"]))
-        self.assertFalse(origin_allowed("https://evil.example", []))
-        self.assertFalse(origin_allowed("https://trusted.example.attacker.invalid", ["https://trusted.example"]))
-        self.assertTrue(is_exact_origin("https://trusted.example"))
-        self.assertFalse(is_exact_origin("https://trusted.example/path"))
-        self.assertFalse(is_exact_origin("https://trusted.example:bad"))
-        self.assertFalse(is_exact_origin("https://trusted.example:"))
-        self.assertFalse(is_exact_origin("https://trusted.example\n.evil"))
-
-    def test_config_accepts_the_starter_contract(self):
-        config = {
-            "version": 1,
-            "endpoint": "/mcp",
-            "transport": "streamable-http",
-            "mode": "stateless",
-            "allowed_origins": [],
-            "auth": {"mode": "open"},
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "gregale-mcp.json"
-            path.write_text(json.dumps(config), encoding="utf-8")
-            self.assertEqual(load_config(path), config)
-
-    def test_external_oauth_requires_complete_configuration(self):
-        config = {
-            "version": 1,
-            "endpoint": "/mcp",
-            "transport": "streamable-http",
-            "mode": "stateless",
-            "allowed_origins": [],
-            "auth": {"mode": "external-oauth"},
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "gregale-mcp.json"
-            path.write_text(json.dumps(config), encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "auth.issuer"):
-                load_config(path)
-
-    def test_legacy_and_health_route_collision_fail_closed(self):
-        for change in (
-            {"legacy": True},
-            {"endpoint": "/healthz"},
-        ):
-            config = {
-                "version": 1,
-                "endpoint": "/mcp",
-                "transport": "streamable-http",
-                "mode": "stateless",
-                "allowed_origins": [],
-                "auth": {"mode": "open"},
-                **change,
-            }
+    def setUp(self):
+        self.config=json.loads(Path("gregale-mcp.json").read_text())
+        self.config["allowed_origins"]=["https://trusted.example"]
+        self.http=DrainingHTTPServer(("127.0.0.1",0),MCPHandler)
+        self.http.app_config=self.config;self.http.authenticator=Authenticator(self.config);self.http.task_runtime=None;self.http.expected_catalog_sha256=""
+        self.http.daemon_threads=True
+        self.thread=threading.Thread(target=self.http.serve_forever,daemon=True);self.thread.start()
+        self.base="http://127.0.0.1:"+str(self.http.server_address[1])
+    def tearDown(self):
+        self.http.shutdown();self.http.server_close();self.thread.join(timeout=2)
+    def test_tools_round_trip(self):
+        for name,args,want in [("greet",{"name":"Ada"},"Ada"),("add",{"a":2.5,"b":3},"5.5")]:
+            body={"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}
+            headers={"Content-Type":"application/json","Accept":"application/json","MCP-Protocol-Version":"2026-07-28","Mcp-Method":"tools/call","Mcp-Name":name}
+            with urlopen(Request(self.base+"/mcp",data=json.dumps(body).encode(),headers=headers),timeout=3) as response:
+                self.assertEqual(response.status,200);self.assertIn(want,response.read().decode())
+    def test_catalog_result_metadata(self):
+        for version in ["2026-07-28", "2025-11-25"]:
+            body={"jsonrpc":"2.0","id":1,"method":"tools/list"}
+            headers={"Content-Type":"application/json","MCP-Protocol-Version":version,"Mcp-Method":"tools/list"}
+            with urlopen(Request(self.base+"/mcp",data=json.dumps(body).encode(),headers=headers),timeout=3) as response:
+                result=json.load(response)["result"]
+            if version=="2026-07-28":
+                self.assertEqual(result["resultType"],"complete")
+                self.assertEqual(result["ttlMs"],0)
+                self.assertEqual(result["cacheScope"],"private")
+            else:self.assertNotIn("resultType",result)
+    def test_origin_and_health(self):
+        for origin in [None,"https://trusted.example"]:
+            with urlopen(Request(self.base+"/healthz",headers={} if origin is None else {"Origin":origin}),timeout=3) as response:
+                self.assertTrue(json.load(response)["ok"])
+        with self.assertRaises(HTTPError) as failure:
+            urlopen(Request(self.base+"/healthz",headers={"Origin":"https://untrusted.example"}),timeout=3)
+        self.assertEqual(failure.exception.code,403)
+    def test_draining_rejects_new_work(self):
+        self.http.draining.set()
+        with self.assertRaises(HTTPError) as failure:urlopen(self.base+"/healthz",timeout=3)
+        self.assertEqual(failure.exception.code,503)
+    def test_config_fails_closed(self):
+        for change in [{"endpoint":"/healthz"},{"allowed_origins":["https://trusted.example:bad"]},{"allowed_origins":["https://trusted.example:"]},{"allowed_origins":["https://trusted.example/path"]}]:
             with tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "gregale-mcp.json"
-                path.write_text(json.dumps(config), encoding="utf-8")
-                with self.assertRaises(RuntimeError):
-                    load_config(path)
+                path=Path(directory)/"gregale-mcp.json";path.write_text(json.dumps({**self.config,**change}))
+                with self.assertRaises(AuthConfigurationError):load_config(path)
 
-    def test_non_object_config_fails_closed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "gregale-mcp.json"
-            path.write_text("[]", encoding="utf-8")
-            with self.assertRaisesRegex(RuntimeError, "one object"):
-                load_config(path)
-
-    def test_health_route_and_origin_guard(self):
-        async def request(headers):
-            messages = []
-            delivered = False
-
-            async def receive():
-                nonlocal delivered
-                if not delivered:
-                    delivered = True
-                    return {"type": "http.request", "body": b"", "more_body": False}
-                return {"type": "http.disconnect"}
-
-            async def send(message):
-                messages.append(message)
-
-            path = "/healthz"
-            scope = {
-                "type": "http",
-                "asgi": {"version": "3.0", "spec_version": "2.3"},
-                "http_version": "1.1",
-                "method": "GET",
-                "scheme": "http",
-                "path": path,
-                "raw_path": path.encode(),
-                "query_string": b"",
-                "root_path": "",
-                "headers": headers,
-                "client": ("127.0.0.1", 1),
-                "server": ("127.0.0.1", 8080),
-            }
-            await server.app(scope, receive, send)
-            return messages
-
-        health = asyncio.run(request([]))
-        self.assertEqual(health[0]["status"], 200)
-        self.assertEqual(health[1]["body"], b'{"ok":true}')
-        blocked = asyncio.run(request([(b"origin", b"https://untrusted.example")]))
-        self.assertEqual(blocked[0]["status"], 403)
-
-
-if __name__ == "__main__":
-    unittest.main()
+if __name__=="__main__":unittest.main()

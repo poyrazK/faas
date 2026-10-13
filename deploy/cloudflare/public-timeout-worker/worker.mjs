@@ -13,6 +13,12 @@ const ERROR_CODE_HEADER = "X-Faas-Error-Code";
 const REQUEST_ID_HEADER = "X-Faas-Request-Id";
 const ORIGINAL_STATUS_HEADER = "X-Faas-Edge-Original-Status";
 const ORIGIN_504_TRANSPORT_STATUS = 409;
+// Statuses this Worker can restore from the 409 transport. The gateway
+// encodes 504 for every Worker subrequest and 502 only when the Worker
+// advertises it here, so a Worker that predates 502 support never receives a
+// transported 502 it would hand to customers as a raw 409.
+const RESTORABLE_HEADER = "X-Faas-Edge-Restorable";
+const RESTORABLE_STATUSES = "502,504";
 const PROBLEM_CONTENT_TYPE = "application/problem+json";
 const PROBLEM_TYPE = "https://gregale.dev/docs/errors/request-budget-exceeded";
 const DEFAULT_FRONTEND_HOSTNAME = "gregale.dev";
@@ -133,7 +139,9 @@ export async function handleRequest(request, env, fetchImpl = globalThis.fetch) 
   try {
     // resolveOverride changes only DNS resolution; the original URL/Host is
     // preserved so gatewayd-internal still routes by the customer hostname.
-    upstream = await fetchImpl(request, {
+    const headers = new Headers(request.headers);
+    headers.set(RESTORABLE_HEADER, RESTORABLE_STATUSES);
+    upstream = await fetchImpl(new Request(request, { headers }), {
       cf: { resolveOverride: originHost },
     });
   } catch (_) {
@@ -145,9 +153,23 @@ export async function handleRequest(request, env, fetchImpl = globalThis.fetch) 
     });
   }
 
-  const encodedOrigin504 =
-    upstream.status === ORIGIN_504_TRANSPORT_STATUS &&
-    upstream.headers.get(ORIGINAL_STATUS_HEADER) === "504";
+  const transportedStatus =
+    upstream.status === ORIGIN_504_TRANSPORT_STATUS
+      ? upstream.headers.get(ORIGINAL_STATUS_HEADER)
+      : null;
+  if (transportedStatus === "502") {
+    // A platform "App connection failed" problem or an app's own 502.
+    // Recreating the response keeps Cloudflare from substituting its generic
+    // 502 page, so API clients keep the problem body and request id.
+    const headers = removeHopByHopHeaders(new Headers(upstream.headers));
+    headers.delete(ORIGINAL_STATUS_HEADER);
+    return new Response(await upstream.text(), {
+      status: 502,
+      statusText: "Bad Gateway",
+      headers,
+    });
+  }
+  const encodedOrigin504 = transportedStatus === "504";
   if (upstream.status !== 504 && !encodedOrigin504) {
     return upstream;
   }

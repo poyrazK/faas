@@ -54,7 +54,7 @@ func TestMetalRestoreUserspaceRNGDiffers(t *testing.T) {
 	}{
 		{
 			name: "node", rootfsEnv: "FAAS_TEST_RNG_NODE_ROOTFS", file: "srv/rng-app.js", script: rngNodeApp,
-			entrypoint: []string{"/usr/local/bin/node", "/srv/rng-app.js"}, replayed: []string{"uuid", "bytes", "math"},
+			entrypoint: []string{"/usr/local/bin/node", "/srv/rng-app.js"}, replayed: []string{"uuid", "int", "bytes", "math"},
 		},
 		{
 			name: "python", rootfsEnv: "FAAS_TEST_RNG_PYTHON_ROOTFS", file: "srv/rng-app.py", script: rngPythonApp,
@@ -251,11 +251,12 @@ func buildRuntimeBaseExt4(dst, repoRoot, tarball, file, script string, entrypoin
 // generator state is in the snapshot, then report fresh draws per request.
 const rngNodeApp = `const http = require("http");
 const crypto = require("crypto");
-crypto.randomUUID(); crypto.randomBytes(16); Math.random();
+crypto.randomUUID(); crypto.randomInt(0, 0xffffffffff); crypto.randomBytes(16); Math.random();
 http.createServer((req, res) => {
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify({
     uuid: crypto.randomUUID(),
+    int: crypto.randomInt(0, 0xffffffffff),
     bytes: crypto.randomBytes(16).toString("hex"),
     math: Math.random(),
     pid: process.pid,

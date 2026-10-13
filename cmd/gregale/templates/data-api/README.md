@@ -76,3 +76,10 @@ subjects, database credentials and bodies are excluded. Upstream errors are
 classified by HTTP status without inspecting their bodies. Canceled requests
 use `aborted` and a null status if no headers were sent. IDs identify a gateway
 request; these logs do not provide distributed tracing or platform wake timing.
+
+For coordinated schema updates, the owner can install the private barrier with
+`MIGRATION_DATABASE_URL` and `node refresh.mjs install BINDING_ROLE`, then deploy
+all serving runtimes with `DATA_API_COORDINATED_REFRESH=1`. The same tool provides
+`pause`/`resume`; resume needs the CLI-provided verified fingerprint. Keep owner
+credentials and the private refresh token out of the deployed/public client.
+See `docs/data-api.md` for the complete coordinated sync and recovery workflow.

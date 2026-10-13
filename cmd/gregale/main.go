@@ -35,7 +35,7 @@ func topLevelUsage(showAdvanced bool) string {
 		b.WriteString("  help                   Show this help message\n")
 	} else {
 		b.WriteString("Get started:\n")
-		for _, name := range []string{"start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
+		for _, name := range []string{"menu", "start", "login", "init", "deploy", "dev", "apps", "logs", "inspect", "doctor", "status", "openapi"} {
 			command, _ := lookupCliCommand(name)
 			fmt.Fprintf(&b, "  %-22s %s\n", command.Name, command.Short)
 		}
@@ -233,6 +233,8 @@ func run(args []string) (status int) {
 		return cmdDeployTarball(args[1:])
 	case "start":
 		return cmdStart(args[1:])
+	case "menu":
+		return cmdMenu(args[1:])
 	case "diff":
 		return environmentDiff(args[1:])
 	case "dev":
@@ -475,6 +477,9 @@ func run(args []string) (status int) {
 		// list|set|rm dispatcher shape; cmdRegistry lives in
 		// commands_registry.go.
 		return cmdRegistry(args[1:])
+	case "ai":
+		// ADR-988/989/990/991 — AI gateway settings, prices, usage and routes.
+		return cmdAI(args[1:])
 	case "webhooks":
 		// Issue #476 / ADR-076 — outbound webhook subscriptions
 		// and delivery ledger. Mirrors the crons surface (list /
@@ -529,6 +534,10 @@ func run(args []string) (status int) {
 	case "run":
 		// ADR-171: execute untrusted source in a fresh, networkless
 		// disposable microVM and tear it down after the terminal result.
+		// ADR-1161: --image runs one command from an OCI image instead.
+		if runImageRequested(args[1:]) {
+			return cmdRunImage(args[1:])
+		}
 		return cmdRun(args[1:])
 	case "runs":
 		// ADR-171 lifecycle reads/cancellation for disposable runs.
@@ -537,6 +546,8 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "entities":
+		return cmdEntities(args[1:])
 	case "customer-operations":
 		return cmdCustomerOperations(args[1:])
 	case "operations":

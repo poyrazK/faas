@@ -32,6 +32,7 @@ type Manager struct {
 	Identities        []*age.X25519Identity
 	Policy            commitwork.NetworkPolicy
 	AcceptedRetention time.Duration
+	RealtimeEnabled   bool
 	// Open is injectable for isolated acceptance environments. Production uses
 	// the policy-enforcing TLS dialer. Each pool is closed after its bounded tick.
 	Open   func(context.Context, string, commitwork.NetworkPolicy) (*pgxpool.Pool, error)
@@ -102,7 +103,7 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	if err := commitwork.QualifySource(ctx, pool, src.ID); err != nil {
 		return 0, "source_binding_unqualified", nil
 	}
-	relay := commitwork.Relay{SourceID: src.ID, Pool: pool, Acceptor: &acceptor{store: m.Store, source: src}}
+	relay := commitwork.Relay{ContractVersion: src.ContractVersion, SourceID: src.ID, Pool: pool, Acceptor: &acceptor{store: m.Store, source: src}}
 	replays, replayErr := m.Store.PendingCommitReplays(ctx, src.AccountID, src.ID)
 	if replayErr != nil {
 		return 0, "replay_pending", nil
@@ -125,6 +126,16 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	}
 	if _, cleanupErr := relay.Cleanup(ctx, time.Now().UTC().Add(-retention), 32); cleanupErr != nil {
 		return count, "cleanup_pending", nil
+	}
+	var realtimeBacklog *commitwork.Backlog
+	if m.RealtimeEnabled {
+		n, observed, realtimeErr := m.tickRealtime(ctx, pool, src)
+		count += n
+		realtimeBacklog = observed
+		err = errors.Join(err, realtimeErr)
+		if realtimeErr != nil && observed == nil {
+			return count, "status_unavailable", nil
+		}
 	}
 	rows, blockedErr := pool.Query(ctx, `SELECT event_id::text,left(event_type,256),
  CASE WHEN blocked_code IN ('invalid_event','invalid_routing','identity_conflict','destination_unqualified','payload_too_large','acceptance_rejected') THEN blocked_code ELSE 'blocked' END,created_at
@@ -150,6 +161,13 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 		return count, "blocked_status_pending", nil
 	}
 	backlog, backlogErr := relay.Backlog(ctx)
+	if realtimeBacklog != nil {
+		backlog.Pending += realtimeBacklog.Pending
+		backlog.Blocked += realtimeBacklog.Blocked
+		if realtimeBacklog.OldestPending != nil && (backlog.OldestPending == nil || realtimeBacklog.OldestPending.Before(*backlog.OldestPending)) {
+			backlog.OldestPending = realtimeBacklog.OldestPending
+		}
+	}
 	var snapshot *commitwork.Backlog
 	if backlogErr == nil {
 		snapshot = &backlog
@@ -191,6 +209,17 @@ type acceptor struct {
 
 func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.Receipt, error) {
 	if err := e.Validate(); err != nil {
+		return commitwork.Receipt{}, &commitwork.PermanentError{Code: "invalid_event"}
+	}
+	if a.source.Destination == "event" {
+		publisher, ok := a.store.(state.CommitPublicationStore)
+		if !ok {
+			return commitwork.Receipt{}, errors.New("commit: publication store unavailable")
+		}
+		r, err := publisher.AcceptCommitPublication(ctx, a.source.AccountID, a.source.ID, e)
+		return convert(r, err)
+	}
+	if e.SchemaVersion != "" {
 		return commitwork.Receipt{}, &commitwork.PermanentError{Code: "invalid_event"}
 	}
 	// Recover receipt before current version/plan checks. Content comparison is
@@ -248,8 +277,11 @@ func convert(r state.CommitReceipt, err error) (commitwork.Receipt, error) {
 	if errors.Is(err, state.ErrConflict) || errors.Is(err, exclusivework.ErrIdentityConflict) {
 		err = &commitwork.PermanentError{Code: "identity_conflict"}
 	}
+	if errors.Is(err, state.ErrEventSchemaRequired) || errors.Is(err, state.ErrEventSchemaUnknown) || errors.Is(err, state.ErrEventDataInvalid) {
+		err = &commitwork.PermanentError{Code: "event_schema_rejected"}
+	}
 	if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrNotFound) {
 		err = &commitwork.PermanentError{Code: "destination_unqualified"}
 	}
-	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID, OperationID: r.OperationID}, err
+	return commitwork.Receipt{ID: r.ID, InvocationID: r.InvocationID, OperationID: r.OperationID, Publication: r.Publication}, err
 }

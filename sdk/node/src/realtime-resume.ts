@@ -1,3 +1,4 @@
+import { notifyRealtimeMessageExpiry, type RealtimeMessageExpiryObserver, type RealtimeInboxMessageExpiryObserver } from './realtime-expiry.js';
 import { createRealtimeActivityTracker, type RealtimeActivity, type RealtimeActivityTracker } from './realtime-activity.js';
 
 /** Client-held cursor consumer for the opt-in managed realtime v2 protocol. */
@@ -13,6 +14,8 @@ export interface RealtimeCursorStore {
 }
 
 export interface RealtimeMessage {
+  /** Original server delivery deadline; does not retract previously delivered events. */
+  expiresAt?: string;
   metadata?: Record<string,string>;
   /** Stable publisher ID; channel messages without a key cannot be edited. */
   targetMessageId?: string;
@@ -36,6 +39,7 @@ export interface RealtimeDirectMessage {
 
 /** A retained principal notification, replayed until this device acknowledges it. */
 export interface RealtimeInboxMessage {
+  expiresAt?: string;
   /** Stable publisher ID; channel messages without a key cannot be edited. */
   targetMessageId?: string;
   version: number;
@@ -113,6 +117,8 @@ export function realtimeWebPushRegistration(subscription: {
 }
 
 export interface RealtimeInboxConsumerOptions {
+  /** Best-effort payload-free observations; checkpoints do not invoke onMessage. */
+  onMessageExpired?: RealtimeInboxMessageExpiryObserver;
   onNotificationPreferences?(preferences: RealtimeNotificationPreferences): void | Promise<void>;
   onNotificationPreferencesError?(code: string): void | Promise<void>;
   onPushActions?(actions: RealtimePushActions): void | Promise<void>;
@@ -185,6 +191,8 @@ export interface RealtimeSocket {
 }
 
 export interface RealtimeChannelConsumerOptions {
+  /** Best-effort synchronous diagnostics; expiry checkpoints never reach onMessage. */
+  onMessageExpired?: RealtimeMessageExpiryObserver;
   /** Exact-match AND filter; use a new cursor/subscription identity when changing it. */
   filter?: Record<string,string>;
   onReadProgress?(progress: RealtimeReadProgress): void | Promise<void>;
@@ -449,9 +457,10 @@ function decodeMessage(frame: Record<string, unknown>, channel: string, after: n
       (frame.binary !== undefined && typeof frame.binary !== 'boolean')) {
     throw new RealtimeProtocolError('invalid or out-of-order realtime message');
   }
+  if (frame.expires_at != null && (typeof frame.expires_at !== "string" || frame.expires_at.length > 64 || !Number.isFinite(Date.parse(frame.expires_at)))) throw new RealtimeProtocolError("invalid message expiry");
   validateRealtimeMetadata(frame.metadata);
   return {
-    metadata: frame.metadata as Record<string,string> | undefined, ...messageMutation(frame), channel, sequence: next, messageId: frame.message_id,
+    expiresAt: frame.expires_at as string | undefined, metadata: frame.metadata as Record<string,string> | undefined, ...messageMutation(frame), channel, sequence: next, messageId: frame.message_id,
     data: Uint8Array.from(atob(frame.data_base64 ?? ''), (byte) => byte.charCodeAt(0)),
     binary: frame.binary ?? false,
   };
@@ -884,13 +893,24 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
               if (!inboxSubscribed || typeof frame.code !== 'string') throw new RealtimeProtocolError('invalid push registration error');
               await inbox.onPushError?.(frame.code);
               break;
+            case 'inbox_checkpoint': {
+              if (!inboxSubscribed || frame.code !== 'message_expired') throw new RealtimeProtocolError('invalid inbox checkpoint');
+              const next = sequence(frame.sequence, 'inbox checkpoint sequence');
+              if (next !== inboxAfter + 1) throw new RealtimeProtocolError('inbox checkpoint gap');
+              notifyRealtimeMessageExpiry(inbox.onMessageExpired, {code: 'message_expired', consumer: inbox.consumerId, sequence: String(next), transport: 'websocket', inbox: true});
+              inboxAfter = next;
+              try { socket.send(JSON.stringify({type: 'inbox_ack', consumer: inbox.consumerId, sequence: next})); }
+              catch { throw new SocketSendError(); }
+              break;
+            }
             case 'inbox_message': {
               if (!inboxSubscribed) throw new RealtimeProtocolError('inbox message before subscription');
               const next = sequence(frame.sequence, 'inbox sequence');
               if (next !== inboxAfter + 1) throw new RealtimeProtocolError('invalid inbox sequence');
               const message = decodeDirectMessage({ ...frame, receipt_requested: true });
               if (!message.messageId) throw new RealtimeProtocolError('inbox message has no ID');
-              await inbox.onMessage({ ...messageMutation(frame), messageId: message.messageId, sequence: next, data: message.data, binary: message.binary });
+              if (frame.expires_at != null && (typeof frame.expires_at !== "string" || frame.expires_at.length > 64 || !Number.isFinite(Date.parse(frame.expires_at)))) throw new RealtimeProtocolError("invalid inbox expiry");
+              await inbox.onMessage({ expiresAt: frame.expires_at == null ? undefined : frame.expires_at as string, ...messageMutation(frame), messageId: message.messageId, sequence: next, data: message.data, binary: message.binary });
               inboxAfter = next;
               try { socket.send(JSON.stringify({ type: 'inbox_ack', consumer: inbox.consumerId, sequence: next })); }
               catch { throw new SocketSendError(); }
@@ -989,9 +1009,10 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
             break;
           }
           case 'checkpoint': {
-            if (!state.subscribed || !state.options.filter || Object.keys(state.options.filter).length === 0) throw new RealtimeProtocolError('unexpected filter checkpoint');
+            if (!state.subscribed || (frame.code !== 'message_expired' && (!state.options.filter || Object.keys(state.options.filter).length === 0))) throw new RealtimeProtocolError('unexpected checkpoint');
             const next = sequence(frame.sequence, 'checkpoint sequence');
             if (next !== state.after + 1) throw new RealtimeProtocolError('filter checkpoint gap');
+            if (frame.code === 'message_expired') notifyRealtimeMessageExpiry(state.options.onMessageExpired, {code: 'message_expired', channel, sequence: String(next), transport: 'websocket'});
             await state.options.cursorStore?.save(next);
             state.after = next;
             try { socket.send(JSON.stringify({ type: 'ack', channel, sequence: next })); }

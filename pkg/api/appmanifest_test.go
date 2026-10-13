@@ -284,6 +284,26 @@ func TestManifestValidate(t *testing.T) {
 			ExecutionMode:  ExecutionModeWorker,
 			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
 		}, true},
+		{"worker_replicas scale-to-zero MCP tasks require observer", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4},
+		}, false},
+		{"worker_replicas scale-to-zero MCP tasks with observer valid", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 0, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4, ObserverAppSlug: "mcp-observer"},
+		}, true},
+		{"worker_replicas observer requires MCP task metric", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: "queue_lag", Target: 4, ObserverAppSlug: "mcp-observer"},
+		}, false},
+		{"worker_replicas observer slug validated", AppManifest{
+			Entrypoint:     []string{"x"},
+			ExecutionMode:  ExecutionModeWorker,
+			WorkerReplicas: &WorkerScaling{Min: 1, Max: 5, Metric: ScalingMetricCustom, Name: "mcp_tasks_outstanding", Target: 4, ObserverAppSlug: "invalid_slug"},
+		}, false},
 		{"worker_replicas custom requires name", AppManifest{
 			Entrypoint:     []string{"x"},
 			ExecutionMode:  ExecutionModeWorker,

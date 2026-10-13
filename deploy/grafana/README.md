@@ -31,6 +31,22 @@ Companion alerts at `deploy/ansible/roles/prometheus/files/bridge.rules.yml`
 under `family: bridge` (FaasBridgeFramingMismatch + FaasBridgeRollbackStuck).
 Runbook: `docs/ops/h2c-rollback.md`.
 
+## `dev-loop.json` (ADR-740)
+
+The `gregale dev` inner loop. Headline stats: syncs, the share within the
+CLI's edit-to-live target, the share of syncs eligible for a live patch, and
+failed patches. Latency panels compare CLI-reported edit-to-live on the
+rebuild path (`apid_dev_sync_edit_to_live_seconds`) with patch publication to
+first instance acknowledgement on the live-patch path
+(`vmmd_dev_patch_delivery_seconds`). Decision panels show live-patch outcomes
+and the top ineligibility reasons (`apid_dev_patch_plans_total{outcome,reason}`),
+the input for widening live-patch coverage; `delivery_disabled` counts
+eligible syncs while `FAAS_DEV_PATCH_DELIVERY` is off. Per-phase p95
+(`apid_dev_sync_phase_seconds`) and acknowledgement results
+(`vmmd_dev_patch_acks_total{result}`) complete it. UID `faas-dev-loop-adr-740`.
+Enable delivery with `faas_dev_patch_delivery_enabled: true` on both the
+control plane and vmmd hosts.
+
 ## `warm-snapshot.json` (issue #470 / PR C / ADR-074)
 
 Four-panel dashboard for the warm-snapshot tier ops surface: warm-capture
@@ -196,6 +212,17 @@ The fleet dashboard also includes request- and wake-latency heatmaps with
 `gv_trace_exemplar_url` with a trace-viewer URL containing Grafana's escaped
 `$${__value.raw}` macro. The metrics and heatmaps remain useful when no trace
 backend is configured; the runbook documents the observer-endpoint fallback.
+
+## `ai-gateway.json` (ADR-991)
+
+Eight-panel dashboard for the outboundd AI gateway:
+- AI calls by usage outcome, tokens by kind, and customer-priced cost in euros per hour;
+- time to first byte;
+- budget and guardrail rejections and the 80% / 100% budget alerts;
+- route fallbacks and OpenAI-format translations;
+- provider key pool cooldowns and rotations.
+
+UID `faas-ai-gateway`. Mirror at `deploy/ansible/roles/grafana/files/ai-gateway.json` (byte-identical; `make grafana-mirror-check` enforces the contract). The operator guide is `docs/ops/outbound-integrations.md`.
 
 ## `loki-pipeline.json` (issue #274 follow-up)
 

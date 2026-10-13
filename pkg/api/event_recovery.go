@@ -12,8 +12,10 @@ import (
 )
 
 type EventRecoveryRequest struct {
-	ParentJobID string `json:"parent_job_id,omitempty"`
-	RequestID   string `json:"request_id,omitempty"`
+	WorkflowRuns    *WorkflowRunRecoveryPlan   `json:"workflow_runs,omitempty"`
+	WorkflowRouting *EventWorkflowRecoveryPlan `json:"workflow_routing,omitempty"`
+	ParentJobID     string                     `json:"parent_job_id,omitempty"`
+	RequestID       string                     `json:"request_id,omitempty"`
 
 	ProtectReceipts     bool   `json:"protect_receipts,omitempty"`
 	Reason              string `json:"reason,omitempty"`
@@ -29,28 +31,41 @@ type EventRecoveryRequest struct {
 }
 
 func (r EventRecoveryRequest) Validate() error {
+	if r.WorkflowRuns != nil {
+		if err := r.validateWorkflowRuns(); err != nil {
+			return err
+		}
+	}
+	if r.WorkflowRouting != nil {
+		if err := r.validateWorkflowRouting(); err != nil {
+			return err
+		}
+	}
+	if r.Mode == "workflow" && r.WorkflowRuns == nil {
+		return fmt.Errorf("workflow mode requires workflow_runs")
+	}
 	if r.ParentJobID != "" {
 		if _, err := uuid.Parse(r.ParentJobID); err != nil {
 			return fmt.Errorf("parent_job_id must be a UUID")
 		}
-		if r.Mode != "execution" {
-			return fmt.Errorf("parent_job_id requires execution mode")
+		if r.Mode != "execution" && r.WorkflowRuns == nil {
+			return fmt.Errorf("parent_job_id requires execution mode or workflow_runs")
 		}
 	}
 	if r.RequestID != "" {
 		if _, err := uuid.Parse(r.RequestID); err != nil {
 			return fmt.Errorf("request_id must be a UUID")
 		}
-		if r.ParentJobID == "" {
-			return fmt.Errorf("request_id requires parent_job_id")
+		if r.ParentJobID == "" && r.WorkflowRouting == nil && r.WorkflowRuns == nil {
+			return fmt.Errorf("request_id requires parent_job_id or a workflow recovery plan")
 		}
 	}
 
 	if err := (EventRecoveryControlRequest{Reason: r.Reason}).Validate(); err != nil {
 		return err
 	}
-	if r.Mode != "" && r.Mode != "routing" && r.Mode != "execution" {
-		return fmt.Errorf("mode must be routing or execution")
+	if r.Mode != "" && r.Mode != "routing" && r.Mode != "execution" && r.Mode != "workflow" {
+		return fmt.Errorf("mode must be routing, execution or workflow")
 	}
 	if r.Mode == "execution" {
 		if r.Outcome != "" && r.Outcome != "failed" && r.Outcome != "dead_letter" {
@@ -102,8 +117,10 @@ type EventRecoveryExecutionSummary struct {
 	Unknown      int64     `json:"unknown"`
 }
 type EventRecoveryItem struct {
-	ParentJobID    string `json:"parent_job_id,omitempty"`
-	ParentPosition *int64 `json:"parent_position,omitempty"`
+	WorkflowRunID       string `json:"workflow_run_id,omitempty"`
+	ExpectedResumeCount *int   `json:"expected_resume_count,omitempty"`
+	ParentJobID         string `json:"parent_job_id,omitempty"`
+	ParentPosition      *int64 `json:"parent_position,omitempty"`
 
 	ReplayInvocationID string                  `json:"replay_invocation_id,omitempty"`
 	ReplayGeneration   *int64                  `json:"replay_generation,omitempty"`

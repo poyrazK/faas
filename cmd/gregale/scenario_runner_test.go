@@ -187,6 +187,17 @@ func TestExpandTestSecretValue(t *testing.T) {
 	}
 }
 
+func TestScenarioWorkloadSecretsUseInternalServiceURLs(t *testing.T) {
+	urls := scenarioInternalServiceURLs(map[string]string{"back": "dev-h9c-back-1", "export-api": "dev-export-api-1"})
+	got, err := expandTestSecretValue("${service.back.url}/x", urls, nil, nil, "run-123", "secret-456")
+	if err != nil || got != "http://back.svc.gregale:10081/x" {
+		t.Fatalf("expanded = (%q, %v), want the in-platform service URL", got, err)
+	}
+	if urls["export-api"] != "http://export-api.svc.gregale:10081" {
+		t.Fatalf("primary workload URL = %q", urls["export-api"])
+	}
+}
+
 func TestMaterializeScenarioDeliverySinkIsDeployableSource(t *testing.T) {
 	dir, cleanup, err := materializeScenarioFixture(testDeliverySinkFixture)
 	if err != nil {

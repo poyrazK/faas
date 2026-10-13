@@ -27,20 +27,22 @@ type envPushPreviewFinding struct {
 }
 
 type envPushPreview struct {
-	App            string                  `json:"app_slug"`
-	Scope          string                  `json:"scope"`
-	DryRun         bool                    `json:"dry_run"`
-	CanPush        bool                    `json:"can_push"`
-	Changes        []envPushPreviewChange  `json:"changes"`
-	Findings       []envPushPreviewFinding `json:"scan_findings"`
-	Blockers       []string                `json:"blockers"`
-	CurrentCount   int                     `json:"current_secret_count"`
-	ProjectedCount int                     `json:"projected_secret_count"`
-	Quota          int                     `json:"secret_quota"`
-	ApplyMode      string                  `json:"apply_mode"`
+	App                 string                  `json:"app_slug"`
+	Scope               string                  `json:"scope"`
+	DryRun              bool                    `json:"dry_run"`
+	CanPush             bool                    `json:"can_push"`
+	Changes             []envPushPreviewChange  `json:"changes"`
+	Findings            []envPushPreviewFinding `json:"scan_findings"`
+	Blockers            []string                `json:"blockers"`
+	CurrentCount        int                     `json:"current_secret_count"`
+	ProjectedCount      int                     `json:"projected_secret_count"`
+	Quota               int                     `json:"secret_quota"`
+	ApplyMode           string                  `json:"apply_mode"`
+	WaitForAckRequested bool                    `json:"wait_for_ack_requested,omitempty"`
+	WaitTimeout         string                  `json:"wait_timeout,omitempty"`
 }
 
-func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode secretScanMode, restart bool) int {
+func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode secretScanMode, restart bool, waitOptions ...secretSetWaitOptions) int {
 	if !api.ValidAppSlug(app) {
 		return printErr("Invalid app", errors.New("pass a valid app slug"))
 	}
@@ -72,6 +74,10 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 		Changes: []envPushPreviewChange{}, Findings: []envPushPreviewFinding{}, Blockers: []string{},
 		CurrentCount: list.Count, ProjectedCount: list.Count, Quota: limits.SecretCountMax,
 		ApplyMode: "next_cold_wake"}
+	if len(waitOptions) > 0 && waitOptions[0].enabled {
+		preview.WaitForAckRequested = true
+		preview.WaitTimeout = waitOptions[0].timeout.String()
+	}
 	if restart {
 		preview.ApplyMode = "fresh_restart_after_upload"
 	}
@@ -152,6 +158,9 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 			PrintProgress(osStdout, "Apply after upload: fresh app restart.")
 		} else {
 			PrintProgress(osStdout, "Apply after upload: next cold wake; use --restart to apply to running instances.")
+		}
+		if preview.WaitForAckRequested {
+			PrintProgress(osStdout, "After upload: wait for application acknowledgements for uploaded keys (shared timeout %s).", preview.WaitTimeout)
 		}
 		for _, blocker := range preview.Blockers {
 			PrintFail(osStdout, "%s", blocker)

@@ -35,6 +35,31 @@ func journalTestLease(id string, slot int) Lease {
 	return l
 }
 
+func TestResourceJournalNativeTransitionRequiresEmptyLockedJournal(t *testing.T) {
+	path := t.TempDir()
+	j := openTestResourceJournal(t, path)
+	if err := j.RequireEmptyForNativeRecovery(); err != nil {
+		t.Fatal(err)
+	}
+	lease := journalTestLease("legacy-survivor", 1)
+	if err := j.begin(lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RequireEmptyForNativeRecovery(); err == nil || !strings.Contains(err.Error(), "legacy lease records") {
+		t.Fatalf("native transition accepted a legacy survivor: %v", err)
+	}
+	if second, err := OpenResourceJournal(path); err == nil {
+		_ = second.Close()
+		t.Fatal("native transition released the legacy daemon exclusion lock")
+	}
+	if err := j.forget(lease); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.RequireEmptyForNativeRecovery(); err != nil {
+		t.Fatalf("retired legacy lease still blocks native transition: %v", err)
+	}
+}
+
 func TestResourceJournalExclusiveDurableAndConcurrent(t *testing.T) {
 	path := t.TempDir()
 	j := openTestResourceJournal(t, path)
@@ -400,5 +425,37 @@ func TestResourceJournalReopenedLeaseIgnoresProcessGeneration(t *testing.T) {
 	records, err = final.snapshot()
 	if err != nil || len(records) != 0 {
 		t.Fatalf("retired record survived reopen: %+v, %v", records, err)
+	}
+}
+
+// adr: 005 — production-us hunt #9 (H9-83): beginProcessAttempt restamps the
+// private profileStartedAt for the cold boot that replaces a failed restore.
+// The journal compared it as durable identity, so every fallback cold boot
+// failed with "launch lease mismatch" and the instance went FAILED; cold boot
+// must always work.
+func TestResourceJournalAcceptsColdBootFallbackAttempt(t *testing.T) {
+	journal := openTestResourceJournal(t, t.TempDir())
+	m := &Manager{}
+	restore := m.beginProcessAttempt(journalTestLease("instance-fallback", 3))
+	if err := journal.begin(restore); err != nil {
+		t.Fatal(err)
+	}
+	v := NewJailerVMM(t.TempDir(), 0)
+	v.SetResourceJournal(journal)
+	if err := v.prepareJournalLaunch(restore); err != nil {
+		t.Fatalf("restore attempt: %v", err)
+	}
+	fallback := m.beginProcessAttempt(restore)
+	if fallback.profileStartedAt.Equal(restore.profileStartedAt) && fallback.processGeneration == restore.processGeneration {
+		t.Fatal("fallback did not start a new process attempt")
+	}
+	if err := v.prepareJournalLaunch(fallback); err != nil {
+		t.Fatalf("cold-boot fallback rejected: %v", err)
+	}
+	if !sameNativePhysicalLease(restore, fallback) {
+		t.Fatal("native lease identity changed across process attempts")
+	}
+	if err := journal.forget(fallback); err != nil {
+		t.Fatalf("fallback owner cannot retire its record: %v", err)
 	}
 }

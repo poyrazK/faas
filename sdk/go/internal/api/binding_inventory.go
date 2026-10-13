@@ -68,6 +68,7 @@ type AppBindingInventoryItem struct {
 // resident application's acknowledgement. Check details contain stable status
 // values only; task output, provider errors and credential material are absent.
 type BindingVerification struct {
+	ObjectStorageMode    string                     `json:"object_storage_mode,omitempty"`
 	Result               string                     `json:"result"`
 	Reason               string                     `json:"reason,omitempty"`
 	Source               string                     `json:"source"`
@@ -179,38 +180,41 @@ type BindingCheckFinding struct {
 }
 
 type BindingCheckBindingResult struct {
-	Type                string                      `json:"type"`
-	Name                string                      `json:"name"`
-	Binding             string                      `json:"binding,omitempty"`
-	Scope               string                      `json:"scope"`
-	Status              string                      `json:"status"`
-	Reason              string                      `json:"reason,omitempty"`
-	VerificationStatus  string                      `json:"verification_status,omitempty"`
-	CheckedAt           *time.Time                  `json:"checked_at,omitempty"`
-	RefreshStatus       string                      `json:"refresh_status,omitempty"`
-	ApplicationAdoption *BindingApplicationAdoption `json:"application_adoption,omitempty"`
+	RequiredObjectStorageMode string                      `json:"required_object_storage_mode,omitempty"`
+	ObjectStorageMode         string                      `json:"object_storage_mode,omitempty"`
+	Type                      string                      `json:"type"`
+	Name                      string                      `json:"name"`
+	Binding                   string                      `json:"binding,omitempty"`
+	Scope                     string                      `json:"scope"`
+	Status                    string                      `json:"status"`
+	Reason                    string                      `json:"reason,omitempty"`
+	VerificationStatus        string                      `json:"verification_status,omitempty"`
+	CheckedAt                 *time.Time                  `json:"checked_at,omitempty"`
+	RefreshStatus             string                      `json:"refresh_status,omitempty"`
+	ApplicationAdoption       *BindingApplicationAdoption `json:"application_adoption,omitempty"`
 }
 
 // Report.Passed means the declared policy passed at CheckedAt. Optional
 // application acknowledgements are self-attestations, not independent proof
 // of readiness or credential use. Coverage is complete, partial, or none.
 type BindingCheckReport struct {
-	ExpectedDeploymentID  string                      `json:"expected_deployment_id,omitempty"`
-	App                   string                      `json:"app"`
-	Scope                 string                      `json:"scope"`
-	DeploymentID          string                      `json:"deployment_id"`
-	CheckedAt             time.Time                   `json:"checked_at"`
-	InventoryGeneratedAt  time.Time                   `json:"inventory_generated_at"`
-	MaxVerificationAge    string                      `json:"max_verification_age"`
-	AllowUnsupported      bool                        `json:"allow_unsupported"`
-	RequireApplicationAck bool                        `json:"require_application_ack"`
-	Passed                bool                        `json:"passed"`
-	Coverage              string                      `json:"coverage"`
-	Bindings              []BindingCheckBindingResult `json:"bindings"`
-	Runtime               []BindingRuntimeDeployment  `json:"runtime"`
-	Issues                []BindingInventoryIssue     `json:"issues"`
-	Blockers              []BindingCheckFinding       `json:"blockers"`
-	Warnings              []BindingCheckFinding       `json:"warnings"`
+	ObjectStorageRequirements map[string]string           `json:"object_storage_requirements,omitempty"`
+	ExpectedDeploymentID      string                      `json:"expected_deployment_id,omitempty"`
+	App                       string                      `json:"app"`
+	Scope                     string                      `json:"scope"`
+	DeploymentID              string                      `json:"deployment_id"`
+	CheckedAt                 time.Time                   `json:"checked_at"`
+	InventoryGeneratedAt      time.Time                   `json:"inventory_generated_at"`
+	MaxVerificationAge        string                      `json:"max_verification_age"`
+	AllowUnsupported          bool                        `json:"allow_unsupported"`
+	RequireApplicationAck     bool                        `json:"require_application_ack"`
+	Passed                    bool                        `json:"passed"`
+	Coverage                  string                      `json:"coverage"`
+	Bindings                  []BindingCheckBindingResult `json:"bindings"`
+	Runtime                   []BindingRuntimeDeployment  `json:"runtime"`
+	Issues                    []BindingInventoryIssue     `json:"issues"`
+	Blockers                  []BindingCheckFinding       `json:"blockers"`
+	Warnings                  []BindingCheckFinding       `json:"warnings"`
 }
 
 // BindingPromotionRequest requires passed binding evidence for this promotion.
