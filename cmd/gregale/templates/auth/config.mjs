@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144 })
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
 
@@ -96,7 +96,7 @@ export function runtimeConfig(env) {
     // Request logs would carry verification tokens from /verify query strings.
     GOTRUE_LOG_LEVEL: 'warn',
   }
-  return { external, api, gotrueEnv, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects) }
+  return { external, api, gotrueEnv, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email: emailConfig(env), app: new URL(site).host }
 }
 
 // AUTH_AUTHZ declares custom roles and policies; gregale_auth.apply_authz
@@ -108,6 +108,21 @@ export function authzConfig(value) {
   try { parsed = JSON.parse(value) } catch { throw new Error('Invalid AUTH_AUTHZ') }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('AUTH_AUTHZ must be a JSON object')
   return JSON.stringify(parsed)
+}
+
+// AUTH_EMAIL_* select the HTTPS email provider. Without them, flows that send
+// email fail with email_provider_unconfigured instead of trying SMTP.
+export function emailConfig(env) {
+  const provider = env.AUTH_EMAIL_PROVIDER ?? ''
+  if (provider === '') {
+    if (env.AUTH_EMAIL_API_KEY || env.AUTH_EMAIL_FROM) throw new Error('AUTH_EMAIL_PROVIDER is required with AUTH_EMAIL_API_KEY or AUTH_EMAIL_FROM')
+    return null
+  }
+  if (!['resend', 'postmark'].includes(provider)) throw new Error('AUTH_EMAIL_PROVIDER must be resend or postmark')
+  if (typeof env.AUTH_EMAIL_API_KEY !== 'string' || env.AUTH_EMAIL_API_KEY.length < 8 || /\s/.test(env.AUTH_EMAIL_API_KEY)) throw new Error('AUTH_EMAIL_API_KEY is required')
+  const from = env.AUTH_EMAIL_FROM ?? ''
+  if (!/^([^<>\r\n]{1,100} <[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+>|[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+)$/.test(from)) throw new Error('AUTH_EMAIL_FROM must be an address or "Name <address>"')
+  return { provider, apiKey: env.AUTH_EMAIL_API_KEY, from }
 }
 
 // Browsers call /authz/v1 from the application's own origins.

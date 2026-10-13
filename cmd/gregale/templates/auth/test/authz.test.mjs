@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'] } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -131,4 +131,30 @@ test('allows browser calls only from the application origins', async t => {
   assert.equal(denied.status, 403)
   const plain = await call('GET', '/orgs', { headers: { Origin: 'https://evil.example.test' } })
   assert.equal(plain.headers.get('access-control-allow-origin'), null)
+})
+
+test('emails invitations through the provider and withholds the token', async t => {
+  const sent = []
+  const pool = fakePool((sql, args) => ({ rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] }))
+  const call = await serve(t, pool, { invitations: { mailer: { send: async (m, key) => { sent.push({ m, key }) } }, external: 'https://shop-auth.gregale.app', app: 'shop.example.test' } })
+  const response = await call('POST', `/orgs/${org}/invitations`, { body: { email: 'bob@example.test', role: 'member' } })
+  assert.equal(response.status, 201)
+  assert.equal(response.body.delivered, true)
+  assert.equal(response.body.token, undefined)
+  assert.equal(response.body.org_name, undefined)
+  assert.equal(sent[0].m.to, 'bob@example.test')
+  assert.match(sent[0].m.text, /^https:\/\/shop-auth\.gregale\.app\/ui\/invitation#token=[A-Za-z0-9_-]{43}$/m)
+  // The email goes out before the invitation commits.
+  const order = pool.log.map(entry => entry.sql)
+  assert.ok(order.indexOf('COMMIT') > order.findIndex(sql => sql.includes('gregale_auth.invite(')))
+})
+
+test('a failed invitation email rolls the invitation back', async t => {
+  const pool = fakePool((sql, args) => ({ rows: [{ id: member, email: args[1], role: args[2], expires_at: 'later', org_name: 'Acme' }] }))
+  const { EmailError } = await import('../email.mjs')
+  const call = await serve(t, pool, { invitations: { mailer: { send: async () => { throw new EmailError(503, 'email_provider_unavailable') } }, external: 'https://x.test', app: 'x' } })
+  const response = await call('POST', `/orgs/${org}/invitations`, { body: { email: 'bob@example.test', role: 'member' } })
+  assert.deepEqual(response.body, { status: 503, code: 'email_provider_unavailable' })
+  assert.ok(pool.log.some(entry => entry.sql === 'ROLLBACK'))
+  assert.ok(!pool.log.some(entry => entry.sql === 'COMMIT'))
 })

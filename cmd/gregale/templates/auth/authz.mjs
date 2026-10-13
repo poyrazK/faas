@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
+import { EmailError, invitationMessage } from './email.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -72,6 +73,7 @@ async function inSession(pool, claims, work) {
 
 function sqlError(err) {
   if (err instanceof HTTPError) return err
+  if (err instanceof EmailError) return new HTTPError(err.status, err.code)
   const status = codes.get(err?.code)
   if (status) return new HTTPError(status, stableMessages.has(err.message) ? err.message : 'invalid_request')
   return new HTTPError(500, 'internal_error')
@@ -89,7 +91,7 @@ function requireString(body, name, max) {
 }
 
 // routes returns [status, body] for one authenticated request.
-export async function route(pool, claims, method, path, body) {
+export async function route(pool, claims, method, path, body, invitations = {}) {
   const parts = path.split('/').filter(Boolean)
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
@@ -119,9 +121,17 @@ export async function route(pool, claims, method, path, body) {
         const ttl = body?.expires_in ?? limits.invitationSeconds
         if (!Number.isInteger(ttl)) throw new HTTPError(400, 'invalid_expires_in')
         const { token, hash } = newInvitationToken()
-        const [invitation] = await rows('SELECT id, email, role, expires_at FROM gregale_auth.invite($1, $2, $3, $4, $5)', [org, requireString(body, 'email', 320), requireString(body, 'role', 32), hash, ttl])
-        // The token is returned once and stored only as a hash.
-        return [201, { ...invitation, token }]
+        const args = [org, requireString(body, 'email', 320), requireString(body, 'role', 32), hash, ttl]
+        // The token is stored only as a hash. With an email provider it goes
+        // only to the invited address, sent before the invitation commits so
+        // a failed send leaves nothing behind; otherwise the inviter gets it once.
+        const created = await run(async c => {
+          const { rows: [invitation] } = await c.query('SELECT i.id, i.email, i.role, i.expires_at, o.name AS org_name FROM gregale_auth.invite($1, $2, $3, $4, $5) i JOIN gregale_auth.organizations o ON o.id = i.org_id', args)
+          const { org_name: orgName, ...fields } = invitation
+          if (invitations.mailer) await invitations.mailer.send(invitationMessage(fields.email, { external: invitations.external, app: invitations.app, orgName, token }), `invitation-${fields.id}`)
+          return fields
+        })
+        return [201, invitations.mailer ? { ...created, delivered: true } : { ...created, delivered: false, token }]
       }
     }
     if (parts[2] === 'invitations' && parts.length === 4 && method === 'DELETE') {
@@ -155,7 +165,7 @@ function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [] }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {} }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -171,7 +181,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [] }) {
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body)
+      const [status, payload] = await route(pool, claims, req.method, path, body, invitations)
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

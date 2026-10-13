@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
+import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
 import { gotrue, limits, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
@@ -73,12 +74,17 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
 // the instance so the platform restarts both together.
 export function start(env = process.env) {
   const config = runtimeConfig(env)
-  const child = spawn(gotrue.binary, ['serve'], { env: config.gotrueEnv, stdio: ['ignore', 'inherit', 'inherit'] })
+  const secret = newHookSecret()
+  const mailer = createMailer(config.email)
+  const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app })
+  hooks.listen(hookAddress.port, hookAddress.host)
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret) }, stdio: ['ignore', 'inherit', 'inherit'] })
   // Short idle lifetime: a parked or restored instance must not reuse a
   // connection that the database closed while it slept.
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
   pool.on('error', () => {})
-  const server = createServer({ authz: createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins }) })
+  const invitations = { mailer, external: config.external, app: config.app }
+  const server = createServer({ authz: createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations }) })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()
