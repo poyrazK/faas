@@ -279,6 +279,13 @@ export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflow
 export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
 export type { ConsumedCreditRow } from './models/ConsumedCreditRow.js';
 export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js';
+export type { ConsumerBillingDay } from './models/ConsumerBillingDay.js';
+export type { ConsumerBillingInvoice } from './models/ConsumerBillingInvoice.js';
+export type { ConsumerBillingPlan } from './models/ConsumerBillingPlan.js';
+export type { ConsumerBillingStatement } from './models/ConsumerBillingStatement.js';
+export type { ConsumerBillingStatementsResponse } from './models/ConsumerBillingStatementsResponse.js';
+export type { ConsumerBillingSummaryResponse } from './models/ConsumerBillingSummaryResponse.js';
+export type { ConsumerBillingUsageResponse } from './models/ConsumerBillingUsageResponse.js';
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './models/ConsumerKeyResponse.js';
 export type { ControlWorkflowRecoveryPolicyRequest } from './models/ControlWorkflowRecoveryPolicyRequest.js';

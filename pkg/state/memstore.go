@@ -25433,7 +25433,7 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 	// SQLSTATE 23514. Pin the surface here so pg ↔ memstore agree.
 	for _, s := range scopes {
 		switch s {
-		case "read", "write", "admin":
+		case "read", "write", "admin", "billing":
 			// ok
 		default:
 			return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: scope %q is not in the closed-set {read, write, admin} (00329 vocab CHECK)", s)

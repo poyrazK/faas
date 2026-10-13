@@ -214,8 +214,8 @@ func buildConsumerKeyRequest(f consumerFlags) (api.CreateConsumerKeyRequest, err
 	}
 	for _, scope := range strings.Split(f.scopes, ",") {
 		scope = strings.TrimSpace(scope)
-		if scope != "read" && scope != "write" && scope != "admin" {
-			return req, fmt.Errorf("unknown scope %q; use read, write, or admin", scope)
+		if scope != "read" && scope != "write" && scope != "admin" && scope != api.ConsumerScopeBilling {
+			return req, fmt.Errorf("unknown scope %q; use read, write, admin, or billing", scope)
 		}
 		req.Scopes = append(req.Scopes, scope)
 	}

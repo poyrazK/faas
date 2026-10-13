@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
@@ -861,6 +862,7 @@ func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runt
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) Store() *state.Store                           { return &r.store }
 func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
 func (r *server) WorkflowRuntimeEnabled() *bool                 { return &r.workflowRuntimeEnabled }

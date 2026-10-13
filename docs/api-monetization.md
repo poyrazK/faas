@@ -324,6 +324,31 @@ gregale account billing-run schedule-set --export stripe --delay-hours 6
 Gregale emails you when a run finishes with held or failed customers, and
 after every scheduled run.
 
+## Let customers see their own billing
+
+Give a customer a key with the `billing` scope, and it can read its own usage,
+month-to-date spend and invoices. Use this to build a billing page in your
+product, or let customers script it:
+
+```bash
+gregale consumers key-create my-api CONSUMER_ID --name billing --scopes read,billing
+curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billing/my-api
+curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billing/my-api/usage
+curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billing/my-api/statements
+```
+
+- **Month to date.** The summary prices this month's usage the same way the
+  next statement will, and shows the plan's monthly cap. Late usage can still
+  change it.
+- **Statements.** The latest finalized statements include each invoice's
+  payment status and Stripe's hosted invoice page, where your customer can
+  pay.
+- **Own data only.** A key reads only its own consumer, never other customers
+  or your rate cards. A key with only the `billing` scope cannot call your
+  app.
+- **Limits.** Each key may make 60 requests a minute. A usage request covers
+  at most 31 days.
+
 ## Customers across several apps
 
 To bill one customer across several apps, link their consumers to a
@@ -376,8 +401,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-975](adr/975-platform-tenant-allowances-and-tiers.md),
 [ADR-1300](adr/1300-stripe-statement-invoice-exports.md),
 [ADR-1301](adr/1301-month-end-billing-runs.md),
-[ADR-1302](adr/1302-statement-invoice-payment-status.md), and
-[ADR-1303](adr/1303-usage-durable-before-response-completes.md) for the billing rules.
+[ADR-1302](adr/1302-statement-invoice-payment-status.md),
+[ADR-1303](adr/1303-usage-durable-before-response-completes.md), and
+[ADR-1304](adr/1304-consumer-billing-self-service.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

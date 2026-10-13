@@ -231,9 +231,9 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 	seen := make(map[string]struct{}, len(req.Scopes))
 	for i, scope := range req.Scopes {
 		req.Scopes[i] = strings.TrimSpace(scope)
-		if req.Scopes[i] != "read" && req.Scopes[i] != "write" && req.Scopes[i] != "admin" {
+		if req.Scopes[i] != "read" && req.Scopes[i] != "write" && req.Scopes[i] != "admin" && req.Scopes[i] != api.ConsumerScopeBilling {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-				"Invalid consumer key scope", "scopes must contain only read, write, or admin"))
+				"Invalid consumer key scope", "scopes must contain only read, write, admin, or billing"))
 			return
 		}
 		if _, ok := seen[req.Scopes[i]]; ok {

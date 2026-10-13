@@ -3,6 +3,7 @@ package apidserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -207,7 +208,7 @@ func (s *server) getAPIConsumerRateCard(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	app, cardsStore, ok := s.apiConsumerRateCardStore(w, r, acct)
+	app, _, ok := s.apiConsumerRateCardStore(w, r, acct)
 	if !ok {
 		return
 	}
@@ -221,37 +222,9 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, windowErr)
 		return
 	}
-	usageStore, ok := s.store.(state.ConsumerUsageStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrInternal("consumer usage ledger is unavailable"))
-		return
-	}
-	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), acct.ID, app.ID)
-	if err == nil {
-		cards, err = s.consumerPriceHistory(r.Context(), cards, acct.ID, app.ID, consumer.ID)
-	}
+	quote, err := s.quoteConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, since, until)
 	if err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
-		return
-	}
-	// Earlier usage in since's month consumes the monthly allowance (ADR-950).
-	// A same-day window on the 1st snaps to an empty one, which the ledger
-	// rejects; it has no usage to price (hunt #9 H9-57).
-	var usage []state.APIConsumerUsageBucket
-	if until.After(billing.MonthStart(since)) {
-		usage, err = usageStore.ListAPIConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until)
-		if err != nil {
-			s.log.ErrorContext(r.Context(), "list api consumer usage for quote", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
-			api.WriteProblem(w, api.ErrInternal("could not load API consumer usage"))
-			return
-		}
-	}
-	if usage, err = s.weightConsumerUsage(r.Context(), cards, usage, acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until); err != nil {
-		api.WriteProblem(w, api.ErrInternal("could not load API consumer route usage"))
-		return
-	}
-	quote, err := billing.QuoteAPIConsumerUsageFrom(cards, usage, since)
-	if err != nil {
+		s.log.ErrorContext(r.Context(), "quote api consumer usage", "app_id", app.ID, "consumer_id", consumer.ID, "err", err)
 		api.WriteProblem(w, api.ErrInternal("could not calculate API consumer usage quote"))
 		return
 	}
@@ -273,6 +246,37 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// quoteConsumerUsage prices a consumer's usage in [since, until) exactly as
+// statements do (ADR-950–953): earlier usage in since's month consumes the
+// monthly allowance first. The quote endpoint and consumer billing
+// self-service (ADR-1304) share it.
+func (s *server) quoteConsumerUsage(ctx context.Context, accountID, appID, consumerID string, since, until time.Time) (billing.APIConsumerUsageQuote, error) {
+	usageStore, okUsage := s.store.(state.ConsumerUsageStore)
+	cardsStore, okCards := s.store.(state.APIConsumerRateCardStore)
+	if !okUsage || !okCards {
+		return billing.APIConsumerUsageQuote{}, errors.New("consumer pricing is unavailable")
+	}
+	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(ctx, accountID, appID)
+	if err == nil {
+		cards, err = s.consumerPriceHistory(ctx, cards, accountID, appID, consumerID)
+	}
+	if err != nil {
+		return billing.APIConsumerUsageQuote{}, fmt.Errorf("load rate cards: %w", err)
+	}
+	// A same-day window on the 1st snaps to an empty one, which the ledger
+	// rejects; it has no usage to price (hunt #9 H9-57).
+	var usage []state.APIConsumerUsageBucket
+	if until.After(billing.MonthStart(since)) {
+		if usage, err = usageStore.ListAPIConsumerUsage(ctx, accountID, appID, consumerID, billing.MonthStart(since), until); err != nil {
+			return billing.APIConsumerUsageQuote{}, fmt.Errorf("list usage: %w", err)
+		}
+	}
+	if usage, err = s.weightConsumerUsage(ctx, cards, usage, accountID, appID, consumerID, billing.MonthStart(since), until); err != nil {
+		return billing.APIConsumerUsageQuote{}, fmt.Errorf("weight route usage: %w", err)
+	}
+	return billing.QuoteAPIConsumerUsageFrom(cards, usage, since)
 }
 
 func isUpperASCIICurrency(currency string) bool {

@@ -7316,7 +7316,7 @@ Issue a consumer API key (secret shown once)
 | Flag | Meaning | |
 |---|---|---|
 | `--name <TEXT>` | key display name | required |
-| `--scopes <LIST>` | comma-separated scopes: read, write, admin (default write) |  |
+| `--scopes <LIST>` | comma-separated scopes: read, write, admin, billing (default write); billing lets the customer read its own usage and invoices |  |
 | `--expires <RFC3339>` | key expiry |  |
 
 ### consumers key-revoke

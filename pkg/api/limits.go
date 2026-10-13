@@ -212,6 +212,17 @@ const (
 	StatementInvoiceListMax     = 200
 )
 
+// Consumer billing self-service (ADR-1304).
+const (
+	// Requests per minute and burst allowed per consumer key prefix.
+	ConsumerBillingRequestsPerMinute = 60
+	ConsumerBillingBurst             = 20
+	// The usage endpoint returns at most this many days per call.
+	ConsumerBillingUsageMaxDays = 31
+	// The statements endpoint returns at most this many finalized statements.
+	ConsumerBillingStatementsMax = 24
+)
+
 type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int

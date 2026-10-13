@@ -2645,7 +2645,7 @@ var cliCommands = []cliCommand{
 			{Name: "keys", Short: "List a consumer's API keys", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "key-create", Short: "Issue a consumer API key (secret shown once)", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "name", Short: "key display name", Value: "TEXT", Req: true},
-				{Name: "scopes", Short: "comma-separated scopes: read, write, admin (default write)", Value: "LIST"},
+				{Name: "scopes", Short: "comma-separated scopes: read, write, admin, billing (default write); billing lets the customer read its own usage and invoices", Value: "LIST"},
 				{Name: "expires", Short: "key expiry", Value: "RFC3339"},
 			}},
 			{Name: "key-revoke", Short: "Revoke one consumer API key", Positionals: []string{"<slug>", "<consumer-id>", "<key-id>"}},

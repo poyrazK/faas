@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -79,6 +80,7 @@ type server struct {
 	flagsWorkloadVerifier                  *workloadidentity.Verifier
 	statementInvoices                      statementinvoices.Service // ADR-1300; Host wired in newServer
 	billingRuns                            billingruns.Service       // ADR-1301; Host wired in newServer
+	consumerBilling                        consumerbilling.Service   // ADR-1304; Host wired in newServer
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
 	objectStorage                 *objectstorage.Registry
@@ -1197,6 +1199,7 @@ func newServerWithDeps(
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
 	s.billingRuns.Host = billingRunsHost{s}
+	s.consumerBilling.Host = consumerBillingHost{s}
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -4107,6 +4110,11 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	// ADR-1304: an app's customer reads its own billing with its consumer
+	// key; no account credential is involved.
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}", s.consumerBilling.Summary)
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}/usage", s.consumerBilling.Usage)
+	mux.HandleFunc("GET /v1/consumer-billing/{slug}/statements", s.consumerBilling.Statements)
 	mux.HandleFunc("GET /v1/status/incidents/{public_id}", s.publicStatusIncidentHandler)
 	mux.HandleFunc("POST /v1/admin/status/incidents", s.authLimited(s.requireAdminMutation(s.createAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))

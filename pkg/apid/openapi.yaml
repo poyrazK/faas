@@ -1366,6 +1366,115 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublicStatusOverview' }
 
+  /v1/consumer-billing/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose consumer key authenticates the request.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerBillingSummary
+      summary: Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+      description: |
+        For an app's customers, not operators. Authenticate with a consumer
+        key that carries the billing scope. The amount is priced like the
+        next statement, but late usage can still change it.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The consumer's month to date.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingSummaryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: The key exceeded 60 billing requests per minute (`consumer_billing_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/usage:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose usage is read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerBillingUsage
+      summary: Read your own daily usage with your consumer key.
+      security:
+        - consumerKey: []
+      parameters:
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339 start (default the start of the current UTC month).
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          required: false
+          description: RFC 3339 end, at most 31 days after since (default now).
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Requests and billable units per UTC day.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingUsageResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: This consumer key has no billing scope.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many billing requests for this key.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/statements:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose statements are read.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: listConsumerBillingStatements
+      summary: Read your own finalized statements and invoice status with your consumer key.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The latest 24 finalized statements, newest first, each with its invoice's payment status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingStatementsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: A consumer key without the billing scope cannot list statements.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Statement reads for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/preflight:
     get:
       tags: [status]
@@ -43829,6 +43938,11 @@ paths:
 components:
 
   securitySchemes:
+    consumerKey:
+      type: http
+      scheme: bearer
+      bearerFormat: ck_<prefix>_<secret>
+      description: An app's consumer key with the billing scope (ADR-1304); only the consumer billing endpoints accept it.
     jobOperationCapability:
       type: apiKey
       in: header
@@ -57143,7 +57257,8 @@ components:
         scopes:
           type: array
           minItems: 1
-          items: { type: string, enum: [read, write, admin] }
+          items: { type: string, enum: [read, write, admin, billing] }
+          description: "read allows GET, write and admin allow every method; billing lets the consumer read its own billing (ADR-1304) and grants no app access."
         expires_at: { type: [string, "null"], format: date-time }
 
     ConsumerKeyResponse:
@@ -57157,7 +57272,7 @@ components:
         prefix: { type: string, description: "Public lookup prefix; not secret." }
         scopes:
           type: array
-          items: { type: string, enum: [read, write, admin] }
+          items: { type: string, enum: [read, write, admin, billing] }
         created_at: { type: string, format: date-time }
         expires_at: { type: [string, "null"], format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
@@ -79123,6 +79238,88 @@ components:
           type: array
           items: { $ref: '#/components/schemas/StatementInvoiceExportResponse' }
         next_cursor: { type: string, description: "Pass as cursor for the next invoice page; absent on the last page." }
+
+    ConsumerBillingPlan:
+      description: "The consumer's current plan and its monthly unit cap."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        max_units_per_month: { type: integer, format: int64, minimum: 1 }
+
+    ConsumerBillingSummaryResponse:
+      description: "A consumer's own month to date (ADR-1304), priced like its next statement."
+      type: object
+      required: [consumer_id, external_ref, name, app, month, billable_units, unpriced_units, amount_millicents, priced, as_of]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        name: { type: string }
+        app: { type: string, description: "The app's slug." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        unpriced_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64, minimum: 0, description: "Month-to-date amount; 100000 millicents is 1.00." }
+        priced: { type: boolean, description: "False while some usage has no effective rate card." }
+        plan: { $ref: '#/components/schemas/ConsumerBillingPlan' }
+        as_of: { type: string, format: date-time }
+
+    ConsumerBillingDay:
+      description: "One UTC day of a consumer's usage."
+      type: object
+      required: [date, requests, billable_units]
+      properties:
+        date: { type: string, format: date }
+        requests: { type: integer, format: int64, minimum: 0 }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+
+    ConsumerBillingUsageResponse:
+      description: "A consumer's daily usage over at most 31 days."
+      type: object
+      required: [since, until, days]
+      properties:
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        days:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerBillingDay' }
+
+    ConsumerBillingInvoice:
+      description: "The customer-facing view of a statement's Stripe invoice (ADR-1302)."
+      type: object
+      required: [amount_minor]
+      properties:
+        payment_status: { type: string, enum: [draft, open, paid, void, uncollectible, deleted] }
+        amount_minor: { type: integer, format: int64 }
+        amount_remaining_minor: { type: integer, format: int64, minimum: 0 }
+        due_at: { type: string, format: date-time }
+        paid_at: { type: string, format: date-time }
+        hosted_invoice_url: { type: string, format: uri, description: "Stripe's page where the customer views and pays the invoice." }
+
+    ConsumerBillingStatement:
+      description: "One finalized statement as its consumer sees it."
+      type: object
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      properties:
+        id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        revision: { type: integer, minimum: 1 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billable_units: { type: integer, format: int64, minimum: 0 }
+        amount_millicents: { type: integer, format: int64 }
+        finalized_at: { type: string, format: date-time }
+        invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
+
+    ConsumerBillingStatementsResponse:
+      description: "A consumer's latest finalized statements, newest first."
+      type: object
+      required: [statements]
+      properties:
+        statements:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerBillingStatement' }
 
     CreateBillingRunRequest:
       description: "A month-end billing run (ADR-1301). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."

@@ -1238,6 +1238,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
 		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1300 Stripe statement invoice exports
 		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1301 month-end billing runs
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1304 consumer billing self-service
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listeners.go"),
 		filepath.Join(root, "pkg", "api", "tcp_listener_tls.go"),

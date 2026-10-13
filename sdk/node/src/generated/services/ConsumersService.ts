@@ -19,6 +19,9 @@ import type { APIConsumerUsageStatementListResponse } from '../models/APIConsume
 import type { APIConsumerUsageStatementResponse } from '../models/APIConsumerUsageStatementResponse.js';
 import type { AssignAPIConsumerPlanRequest } from '../models/AssignAPIConsumerPlanRequest.js';
 import type { ClaimAPIConsumerUsageStatementRequest } from '../models/ClaimAPIConsumerUsageStatementRequest.js';
+import type { ConsumerBillingStatementsResponse } from '../models/ConsumerBillingStatementsResponse.js';
+import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSummaryResponse.js';
+import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
 import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPlanRequest.js';
@@ -33,6 +36,103 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ConsumersService {
+  /**
+   * Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+   * For an app's customers, not operators. Authenticate with a consumer
+   * key that carries the billing scope. The amount is priced like the
+   * next statement, but late usage can still change it.
+   *
+   * @returns ConsumerBillingSummaryResponse The consumer's month to date.
+   * @throws ApiError
+   */
+  public static getConsumerBillingSummary({
+    slug,
+  }: {
+    /**
+     * The app whose consumer key authenticates the request.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerBillingSummaryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `The consumer key lacks the billing scope.`,
+        429: `The key exceeded 60 billing requests per minute (\`consumer_billing_rate_limited\`).`,
+      },
+    });
+  }
+  /**
+   * Read your own daily usage with your consumer key.
+   * @returns ConsumerBillingUsageResponse Requests and billable units per UTC day.
+   * @throws ApiError
+   */
+  public static getConsumerBillingUsage({
+    slug,
+    since,
+    until,
+  }: {
+    /**
+     * The app whose usage is read.
+     */
+    slug: string,
+    /**
+     * RFC 3339 start (default the start of the current UTC month).
+     */
+    since?: string,
+    /**
+     * RFC 3339 end, at most 31 days after since (default now).
+     */
+    until?: string,
+  }): CancelablePromise<ConsumerBillingUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/usage',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `This consumer key has no billing scope.`,
+        429: `Too many billing requests for this key.`,
+      },
+    });
+  }
+  /**
+   * Read your own finalized statements and invoice status with your consumer key.
+   * @returns ConsumerBillingStatementsResponse The latest 24 finalized statements, newest first, each with its invoice's payment status.
+   * @throws ApiError
+   */
+  public static listConsumerBillingStatements({
+    slug,
+  }: {
+    /**
+     * The app whose statements are read.
+     */
+    slug: string,
+  }): CancelablePromise<ConsumerBillingStatementsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/consumer-billing/{slug}/statements',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `A consumer key without the billing scope cannot list statements.`,
+        429: `Statement reads for this key are rate limited.`,
+      },
+    });
+  }
   /**
    * List stable API consumer identities for an app.
    * @returns APIConsumerListResponse Consumer identities (never includes credentials).
