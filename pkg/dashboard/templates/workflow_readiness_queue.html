@@ -92,12 +92,24 @@
 <noscript><p>Enable JavaScript to read the timeline, or use the API and SDKs.</p></noscript>
 </section>
 
-<section class="card" id="readiness-followups" data-url="{{.Data.FollowUpsURL}}" data-subscriptions-url="{{.Data.SubscriptionsURL}}" data-queue-url="{{.Data.QueueURL}}" data-list-url="{{.Data.ListURL}}">
+<section class="card" id="readiness-followups" data-app-id="{{.Data.Options.AppID}}" data-url="{{.Data.FollowUpsURL}}" data-subscriptions-url="{{.Data.SubscriptionsURL}}" data-queue-url="{{.Data.QueueURL}}" data-list-url="{{.Data.ListURL}}">
 <h2>Next-action work queue</h2>
 <p role="status" aria-live="polite">Due reminders for these filters: <strong id="readiness-due-reminder-count">Checking…</strong></p>
 <button type="button" id="readiness-show-reminders">Show due reminders</button>
 <p>Due reminders are published periodically and stay with their original notification. Reschedule or clear the follow-up to retire its reminder.</p>
 <p>Find current next actions across workflow cases by responsible team, workflow, action type and deadline. Shared actions appear once with their matching cases. Switch to follow-ups for business-priority triage and due reminders; current readiness still requires application evidence.</p>
+<div id="readiness-team-views">
+<h3>Saved team views</h3>
+<p>Save named next-action filters in this browser for this application. Share a link so teammates can open the same filters with their own access. Each open reads current work; task results are never saved.</p>
+<label>Saved view <select id="readiness-team-view"><option value="">Choose a view</option></select></label>
+<button type="button" id="readiness-team-view-open">Open saved view</button>
+<button type="button" id="readiness-team-view-delete">Delete saved view</button>
+<label>View name <input id="readiness-team-view-name" maxlength="80" placeholder="e.g. Payments team overdue work"></label>
+<button type="button" id="readiness-team-view-save">Save current filters</button>
+<button type="button" id="readiness-team-view-link">Create share link</button>
+<label id="readiness-team-view-link-label" hidden>Shareable view link <input id="readiness-team-view-url" type="url" readonly></label>
+<p id="readiness-team-view-status" role="status" aria-live="polite"></p>
+</div>
 <form id="readiness-work-form">
 <label>View <select name="view"><option value="next_actions">Next actions across workflow cases</option><option value="follow_ups">Follow-ups and reminders</option></select></label>
 <label>Action type <select name="action_kind"><option value="">All actions</option><option value="response_check_in">response check in</option><option value="decision_revalidation">decision revalidation</option><option value="handoff_acceptance">handoff acceptance</option><option value="handoff_reassignment">handoff reassignment</option><option value="escalation_acknowledgment">escalation acknowledgment</option><option value="coordinator_completion">coordinator completion</option><option value="scheduled_evidence_check">scheduled evidence check</option><option value="coordinator_evidence_review">coordinator evidence review</option><option value="coordinator_revision">coordinator revision</option><option value="dependency_review">dependency review</option><option value="follow_up">follow up</option></select></label>
@@ -790,7 +802,7 @@
   catch(error){if(epoch===generation)message.textContent=error.message;}
   finally{loading=false;submit.disabled=false;more.disabled=false;if(refreshPending){refreshPending=false;void refresh();}}
  };
- const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();summary.replaceChildren();more.hidden=true;await read();};
+ const refresh=async()=>{if(loading){generation++;offset=0;ids.clear();list.replaceChildren();summary.replaceChildren();more.hidden=true;message.textContent='Reading current work…';refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();summary.replaceChildren();more.hidden=true;await read();};
  form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;syncView();const selectors=formValues();if(selectors.has('impact_code')&&!selectors.has('impact_kind')){message.textContent='Choose Milestone or Outcome when filtering by a result code.';return;}applied=selectors;void refresh();});
 
  more.addEventListener('click',()=>{void read();});
@@ -805,6 +817,32 @@
  window.addEventListener('gregale-business-impact-queue',event=>{if(loading)return;for(const field of form.elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=false;else field.value=event.detail[field.name]||(field.name==='view'?'follow_ups':field.name==='due'?'all':field.name==='sort'?'business_impact':field.name==='limit'?'20':'');}panel.scrollIntoView();form.requestSubmit();});
  window.setInterval(()=>{void refreshCount();},30000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshCount();});
+ const savedSelect=document.getElementById('readiness-team-view'), savedName=document.getElementById('readiness-team-view-name'), savedStatus=document.getElementById('readiness-team-view-status');
+ const savedOpen=document.getElementById('readiness-team-view-open'), savedDelete=document.getElementById('readiness-team-view-delete'), savedURL=document.getElementById('readiness-team-view-url'), savedURLLabel=document.getElementById('readiness-team-view-link-label');
+ const savedKey='gregale:next-action-views:v1:'+window.location.origin+':'+panel.dataset.appId+':'+new URL(panel.dataset.url,window.location.href).pathname;
+ const filterNames=['view','scope','tenant_id','owner','workflow','due','action_kind','action_trigger','limit'];
+ const validateFilters=(raw)=>{
+  if(typeof raw!=='string'||raw.length>4096)throw new Error('Saved filters are invalid or too large.');
+  const q=new URLSearchParams(raw);
+  for(const [key,value] of q){if(!filterNames.includes(key)||q.getAll(key).length!==1||!value||/[\u0000-\u001f\u007f-\u009f]/.test(value))throw new Error('Saved filters contain unsupported or duplicate fields.');const field=form.elements.namedItem(key);if(!field)throw new Error('These filters are unavailable in this application.');if(field.tagName==='SELECT'&&![...field.options].some(option=>option.value===value))throw new Error('A saved filter choice is no longer supported.');if(field.maxLength>0&&value.length>field.maxLength)throw new Error('A saved filter exceeds its length limit.');}
+  if(q.get('view')!=='next_actions'||!q.get('scope')||!q.get('scope').trim())throw new Error('Choose the next-action view and an environment before saving or sharing.');
+  const canonical=new URLSearchParams();for(const key of filterNames)if(q.has(key))canonical.set(key,q.get(key));if(!canonical.has('due'))canonical.set('due','all');if(!canonical.has('limit'))canonical.set('limit','20');return canonical;
+ };
+ const currentFilters=()=>{syncView();if(!form.reportValidity())throw new Error('Complete the queue filters before saving or sharing.');return validateFilters(formValues().toString());};
+ const validName=(value)=>typeof value==='string'&&value.trim()===value&&value.length>0&&value.length<=80&&!/[\u0000-\u001f\u007f-\u009f]/.test(value);
+ const readSaved=()=>{const raw=localStorage.getItem(savedKey);if(!raw)return [];if(raw.length>100000)throw new Error('Saved views are too large to read.');const data=JSON.parse(raw);if(data?.version!==1||!Array.isArray(data.views)||data.views.length>20)throw new Error('Saved views have an unsupported format.');const names=new Set();for(const view of data.views){if(!validName(view.name)||names.has(view.name))throw new Error('Saved views contain invalid names.');names.add(view.name);validateFilters(view.filters);}return data.views;};
+ const writeSaved=(views)=>localStorage.setItem(savedKey,JSON.stringify({version:1,views}));
+ const showSaved=(preferred=savedSelect.value)=>{try{const views=readSaved();savedSelect.replaceChildren();const blank=document.createElement('option');blank.value='';blank.textContent=views.length?'Choose a view':'No saved views in this browser';savedSelect.append(blank);for(const view of views){const option=document.createElement('option');option.value=view.name;option.textContent=view.name;savedSelect.append(option);}if(views.some(view=>view.name===preferred))savedSelect.value=preferred;savedOpen.disabled=savedDelete.disabled=!savedSelect.value;}catch(error){savedOpen.disabled=savedDelete.disabled=true;savedStatus.textContent='Browser-saved views are unavailable: '+error.message+' You can still create a share link.';}};
+ const openFilters=(q)=>{savedURLLabel.hidden=true;for(const field of form.elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=false;else field.value=q.get(field.name)||(field.name==='view'?'next_actions':field.name==='due'?'all':field.name==='limit'?'20':field.name==='sort'?'due':'');}syncView();applied=new URLSearchParams(q);void refresh();panel.scrollIntoView();};
+ savedSelect.addEventListener('change',()=>{savedOpen.disabled=savedDelete.disabled=!savedSelect.value;if(savedSelect.value)savedName.value=savedSelect.value;});
+ document.getElementById('readiness-team-view-save').addEventListener('click',()=>{try{const q=currentFilters(),name=savedName.value.trim();if(!validName(name))throw new Error('Enter a view name of 1–80 characters without control characters.');const views=readSaved(),index=views.findIndex(view=>view.name===name),view={name,filters:q.toString()};if(index<0){if(views.length>=20)throw new Error('This browser already has 20 saved views. Delete a view before adding another.');views.push(view);}else views[index]=view;writeSaved(views);savedName.value=name;showSaved(name);savedStatus.textContent='Saved '+name+' in this browser. The same name updates its filters; opening it will read current work.';}catch(error){savedStatus.textContent=error.message;}});
+ savedOpen.addEventListener('click',()=>{try{const view=readSaved().find(view=>view.name===savedSelect.value);if(!view)throw new Error('Select an available saved view.');openFilters(validateFilters(view.filters));savedStatus.textContent='Opened '+view.name+'; reading current work with these filters.';}catch(error){savedStatus.textContent=error.message;}});
+ savedDelete.addEventListener('click',()=>{try{const name=savedSelect.value;if(!name)throw new Error('Choose a saved view to delete.');writeSaved(readSaved().filter(view=>view.name!==name));showSaved('');savedStatus.textContent='Deleted '+name+' from this browser. Current work and shared links are unchanged.';}catch(error){savedStatus.textContent=error.message;}});
+ document.getElementById('readiness-team-view-link').addEventListener('click',()=>{try{const q=currentFilters(),url=new URL(panel.dataset.queueUrl,window.location.href);if(url.origin!==window.location.origin)throw new Error('The application view URL is unavailable.');url.search='';url.searchParams.set('scope',q.get('scope'));if(q.has('tenant_id'))url.searchParams.set('tenant_id',q.get('tenant_id'));const shared=new URLSearchParams(q);shared.set('context_app_id',panel.dataset.appId);url.hash='readiness-work?'+shared.toString();savedURL.value=url.href;savedURLLabel.hidden=false;savedURL.focus();savedURL.select();savedStatus.textContent='Copy or bookmark this link. It contains filters only and requires the recipient’s existing access to this application.';}catch(error){savedStatus.textContent=error.message;}});
+ form.addEventListener('input',()=>{savedURLLabel.hidden=true;if(savedSelect.value)savedStatus.textContent='Filters edited. Save the same name to update this browser’s preset.';});
+ window.addEventListener('storage',event=>{if(event.key===savedKey||event.key===null)showSaved();});
+ let openedHash='';const openSharedView=()=>{const hash=window.location.hash;if(!hash.startsWith('#readiness-work?')){openedHash='';return;}if(hash===openedHash)return;try{if(hash.length>8192)throw new Error('The shared view link is too large.');const shared=new URLSearchParams(hash.slice('#readiness-work?'.length));if(shared.getAll('context_app_id').length!==1||shared.get('context_app_id')!==panel.dataset.appId)throw new Error('This shared view belongs to a different application. Open it using the correct account and application.');shared.delete('context_app_id');const q=validateFilters(shared.toString());openedHash=hash;openFilters(q);savedSelect.value='';savedName.value='';savedOpen.disabled=savedDelete.disabled=true;savedStatus.textContent='Shared filters opened; reading current work. Enter a name to save them in this browser.';}catch(error){savedStatus.textContent='Shared view could not be opened: '+error.message;}};
+ window.addEventListener('hashchange',openSharedView);showSaved();openSharedView();
  void refreshCount();
 })();
 
