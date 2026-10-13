@@ -67,12 +67,16 @@ func lineageControlHistoryResult(controls []api.EventExecutionLineageRetryJobCon
 	return out
 }
 
-func (s *PgStore) ListEventExecutionLineageRetryJobControls(ctx context.Context, account, app, sub, id string, expected time.Time, after int64, limit int) (api.EventExecutionLineageRetryJobControls, error) {
+func (s *PgStore) ListEventExecutionLineageRetryJobControls(ctx context.Context, account, app, sub, id string, expected time.Time, after int64, limit int, filters ...api.EventExecutionLineageRetryJobControlFilters) (api.EventExecutionLineageRetryJobControls, error) {
 	out := api.EventExecutionLineageRetryJobControls{Controls: []api.EventExecutionLineageRetryJobControlReceipt{}}
 	if err := validLineageJobCancellation(account, app, sub, id, api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: expected}); err != nil {
 		return out, err
 	}
-	limit, err := lineageControlHistoryLimit(after, limit)
+	filter, err := lineageControlHistoryFilters(filters)
+	if err != nil {
+		return out, err
+	}
+	limit, err = lineageControlHistoryLimit(after, limit)
 	if err != nil {
 		return out, err
 	}
@@ -99,7 +103,7 @@ func (s *PgStore) ListEventExecutionLineageRetryJobControls(ctx context.Context,
 	if !timeFromPgtype(job.CreatedAt).Equal(expected) {
 		return out, ErrConflict
 	}
-	rows, err := q.ListEventExecutionLineageRetryControlReceipts(ctx, tx, sqlc.ListEventExecutionLineageRetryControlReceiptsParams{AccountID: job.AccountID, AppID: job.AppID, SubscriptionID: job.SubscriptionID, JobRequestID: job.RequestID, ExpectedCreatedAt: job.CreatedAt, AfterSequence: after, PageLimit: int32(limit + 1)})
+	rows, err := q.ListEventExecutionLineageRetryControlReceipts(ctx, tx, sqlc.ListEventExecutionLineageRetryControlReceiptsParams{AccountID: job.AccountID, AppID: job.AppID, SubscriptionID: job.SubscriptionID, JobRequestID: job.RequestID, ExpectedCreatedAt: job.CreatedAt, AfterSequence: after, PageLimit: int32(limit + 1), ActionFilter: filter.Action, ActorIDFilter: filter.ActorID, CredentialTypeFilter: filter.CredentialType})
 	if err != nil {
 		return out, err
 	}
@@ -115,7 +119,7 @@ func (s *PgStore) ListEventExecutionLineageRetryJobControls(ctx context.Context,
 	}
 	return lineageControlHistoryResult(out.Controls, limit), nil
 }
-func (m *MemStore) ListEventExecutionLineageRetryJobControls(ctx context.Context, account, app, sub, id string, expected time.Time, after int64, limit int) (api.EventExecutionLineageRetryJobControls, error) {
+func (m *MemStore) ListEventExecutionLineageRetryJobControls(ctx context.Context, account, app, sub, id string, expected time.Time, after int64, limit int, filters ...api.EventExecutionLineageRetryJobControlFilters) (api.EventExecutionLineageRetryJobControls, error) {
 	out := api.EventExecutionLineageRetryJobControls{Controls: []api.EventExecutionLineageRetryJobControlReceipt{}}
 	if err := ctx.Err(); err != nil {
 		return out, err
@@ -123,7 +127,11 @@ func (m *MemStore) ListEventExecutionLineageRetryJobControls(ctx context.Context
 	if err := validLineageJobCancellation(account, app, sub, id, api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: expected}); err != nil {
 		return out, err
 	}
-	limit, err := lineageControlHistoryLimit(after, limit)
+	filter, err := lineageControlHistoryFilters(filters)
+	if err != nil {
+		return out, err
+	}
+	limit, err = lineageControlHistoryLimit(after, limit)
 	if err != nil {
 		return out, err
 	}
@@ -141,10 +149,30 @@ func (m *MemStore) ListEventExecutionLineageRetryJobControls(ctx context.Context
 		return out, ErrConflict
 	}
 	for _, receipt := range coverage.controlReceipts[canonicalMemUUID(id)] {
-		if receipt.Sequence > after {
+		if receipt.Sequence > after && matchesLineageControlHistory(receipt, filter) {
 			out.Controls = append(out.Controls, receipt)
 		}
 	}
 	sort.Slice(out.Controls, func(i, j int) bool { return out.Controls[i].Sequence < out.Controls[j].Sequence })
 	return lineageControlHistoryResult(out.Controls, limit), nil
+}
+
+func lineageControlHistoryFilters(filters []api.EventExecutionLineageRetryJobControlFilters) (api.EventExecutionLineageRetryJobControlFilters, error) {
+	var out api.EventExecutionLineageRetryJobControlFilters
+	if len(filters) > 1 {
+		return out, ErrInvalidArgument
+	}
+	if len(filters) == 1 {
+		out = filters[0]
+	}
+	normalized, err := out.Normalize()
+	if err != nil {
+		return out, ErrInvalidArgument
+	}
+	return normalized, nil
+}
+func matchesLineageControlHistory(receipt api.EventExecutionLineageRetryJobControlReceipt, filter api.EventExecutionLineageRetryJobControlFilters) bool {
+	return (filter.Action == "" || receipt.Action == filter.Action) &&
+		(filter.ActorID == "" || receipt.ActorID == filter.ActorID) &&
+		(filter.CredentialType == "" || receipt.CredentialType == filter.CredentialType)
 }

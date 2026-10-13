@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -235,9 +238,58 @@ type EventExecutionLineageRetryJobControls struct {
 	NextAfter int64                                         `json:"next_after,omitempty"`
 }
 
-func (c *Client) ListEventExecutionLineageRetryJobControls(ctx context.Context, app, sub, id string, expected time.Time, after int64, limit int) (EventExecutionLineageRetryJobControls, error) {
+// EventExecutionLineageRetryJobControlFilters combines exact history filters with AND.
+type EventExecutionLineageRetryJobControlFilters struct {
+	Action         string `json:"action,omitempty"`
+	ActorID        string `json:"actor_id,omitempty"`
+	CredentialType string `json:"credential_type,omitempty"`
+}
+
+func (f EventExecutionLineageRetryJobControlFilters) Normalize() (EventExecutionLineageRetryJobControlFilters, error) {
+	switch f.Action {
+	case "", "pause", "resume", "cancel":
+	default:
+		return f, fmt.Errorf("action must be pause, resume or cancel")
+	}
+	switch f.CredentialType {
+	case "", "session", "api_key", "deploy_token", "platform_tenant_token", "internal":
+	default:
+		return f, fmt.Errorf("invalid credential_type")
+	}
+	if f.ActorID != "" && f.ActorID != "store" {
+		id := strings.ToLower(f.ActorID)
+		if len(id) != 36 || id[8] != '-' || id[13] != '-' || id[18] != '-' || id[23] != '-' {
+			return f, fmt.Errorf("actor_id must be a nonzero hyphenated UUID or store")
+		}
+		compact := strings.ReplaceAll(id, "-", "")
+		decoded, err := hex.DecodeString(compact)
+		if err != nil || len(decoded) != 16 || compact == "00000000000000000000000000000000" {
+			return f, fmt.Errorf("actor_id must be a nonzero hyphenated UUID or store")
+		}
+		f.ActorID = id
+	}
+	return f, nil
+}
+
+// An omitted filter preserves unfiltered history; supply at most one filter object.
+func (c *Client) ListEventExecutionLineageRetryJobControls(ctx context.Context, app, sub, id string, expected time.Time, after int64, limit int, filters ...EventExecutionLineageRetryJobControlFilters) (EventExecutionLineageRetryJobControls, error) {
 	var out EventExecutionLineageRetryJobControls
-	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(id)+"/controls?expected_created_at="+url.QueryEscape(expected.Format(time.RFC3339Nano))+"&after="+strconv.FormatInt(after, 10)+"&limit="+strconv.Itoa(limit), nil, &out)
+	if len(filters) > 1 {
+		return out, fmt.Errorf("supply at most one history filter")
+	}
+	query := url.Values{"expected_created_at": {expected.Format(time.RFC3339Nano)}, "after": {strconv.FormatInt(after, 10)}, "limit": {strconv.Itoa(limit)}}
+	if len(filters) == 1 {
+		f, err := filters[0].Normalize()
+		if err != nil {
+			return out, err
+		}
+		for key, value := range map[string]string{"action": f.Action, "actor_id": f.ActorID, "credential_type": f.CredentialType} {
+			if value != "" {
+				query.Set(key, value)
+			}
+		}
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(id)+"/controls?"+query.Encode(), nil, &out)
 	return out, err
 }
 

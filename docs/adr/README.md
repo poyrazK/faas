@@ -492,6 +492,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1161 | [Idempotent bulk lineage control receipts](1161-idempotent-bulk-lineage-control-receipts.md) | accepted | Atomic UUID-keyed acknowledgments, bounded metadata history and no repeated state transition |
 | 1162 | [Idempotent bulk lineage cancellation receipts](1162-idempotent-bulk-lineage-cancellation-receipts.md) | accepted | Cancellation shares atomic command receipts, terminal acknowledgments and bounded history |
 | 1163 | [Trusted lineage control actor attribution](1163-trusted-lineage-control-actor-attribution.md) | accepted | Immutable server-derived account or credential identity in retained command receipts |
+| 1164 | [Filtered lineage control history](1164-filtered-lineage-control-history.md) | accepted | Exact action and original actor filters before sequence pagination |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

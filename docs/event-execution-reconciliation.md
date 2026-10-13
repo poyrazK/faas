@@ -548,6 +548,32 @@ guards 409. Pagination observes live appended receipts and does not reserve futu
 commands or extend retention. Legacy controls without command IDs and failed
 requests are absent; this is not a complete historical audit.
 
+History accepts optional exact `action` (`pause`, `resume`, `cancel`), `actor_id`
+(nonzero hyphenated UUID, casing normalized, or `store` for internal calls), and
+`credential_type` (`session`, `api_key`, `deploy_token`, `platform_tenant_token`,
+`internal`). Empty filters mean all values; nonempty filters combine with AND
+before the page limit. Invalid filters return 400. These identify the original
+recorded command actor, independently of the authorized caller reading history.
+Older unattributed receipts remain visible without attribution filters and can
+match an action filter; they cannot match nonempty actor or credential filters.
+
+```sh
+gregale --json events subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --action cancel --credential-type api_key
+gregale --json events subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --action cancel --credential-type api_key --after NEXT_AFTER
+# Start a separate selection from the beginning:
+gregale --json events subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --actor-id ORIGINAL_ACTOR_UUID
+```
+
+Cursors always refer to original per-job sequences, so gaps in filtered results
+are normal. `next_after` exists only when another matching receipt was observed.
+Keep the same filters on every page; restart at `after=0` when changing filters to
+inspect the complete new selection. A matching page can be empty even though the
+job has other receipts. Filtering does not freeze the live append-only history,
+reserve future matches or change retention. No schema migration is required.
+The Go method accepts an optional `EventExecutionLineageRetryJobControlFilters`
+argument (at most one); existing calls without it retain unfiltered behavior.
+Node/Python operations accept matching optional query parameters.
+
 Go exposes `ListEventExecutionLineageRetryJobControls`; Node and Python expose the
 corresponding events operation. Pause/resume/cancel SDK bodies accept command_id and job
 responses expose optional control_receipt. Without command_id, the previous

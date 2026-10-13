@@ -536,3 +536,4 @@ type ControlEventExecutionLineageRetryJobRequest = api.ControlEventExecutionLine
 
 type EventExecutionLineageRetryJobControlReceipt = api.EventExecutionLineageRetryJobControlReceipt
 type EventExecutionLineageRetryJobControls = api.EventExecutionLineageRetryJobControls
+type EventExecutionLineageRetryJobControlFilters = api.EventExecutionLineageRetryJobControlFilters

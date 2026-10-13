@@ -409,3 +409,4 @@ export type { ControlEventExecutionLineageRetryJobRequest } from './generated/mo
 
 export type { EventExecutionLineageRetryJobControlReceipt } from './generated/models/EventExecutionLineageRetryJobControlReceipt.js';
 export type { EventExecutionLineageRetryJobControls } from './generated/models/EventExecutionLineageRetryJobControls.js';
+export type { EventExecutionLineageRetryJobControlFilters } from './generated/models/EventExecutionLineageRetryJobControlFilters.js';

@@ -1215,17 +1215,23 @@ WHERE account_id=$1::uuid AND app_id=$2::uuid
  AND subscription_id=$3::uuid AND job_request_id=$4::uuid
  AND expected_created_at=$5::timestamptz AND retain_until>statement_timestamp()
  AND sequence>$6::bigint
-ORDER BY sequence LIMIT $7::integer
+ AND ($7::text='' OR action=$7::text)
+ AND ($8::text='' OR result->>'actor_id'=$8::text)
+ AND ($9::text='' OR result->>'credential_type'=$9::text)
+ORDER BY sequence LIMIT $10::integer
 `
 
 type ListEventExecutionLineageRetryControlReceiptsParams struct {
-	AccountID         pgtype.UUID
-	AppID             pgtype.UUID
-	SubscriptionID    pgtype.UUID
-	JobRequestID      pgtype.UUID
-	ExpectedCreatedAt pgtype.Timestamptz
-	AfterSequence     int64
-	PageLimit         int32
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	SubscriptionID       pgtype.UUID
+	JobRequestID         pgtype.UUID
+	ExpectedCreatedAt    pgtype.Timestamptz
+	AfterSequence        int64
+	ActionFilter         string
+	ActorIDFilter        string
+	CredentialTypeFilter string
+	PageLimit            int32
 }
 
 func (q *Queries) ListEventExecutionLineageRetryControlReceipts(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryControlReceiptsParams) ([]EventExecutionLineageRetryControlReceipt, error) {
@@ -1236,6 +1242,9 @@ func (q *Queries) ListEventExecutionLineageRetryControlReceipts(ctx context.Cont
 		arg.JobRequestID,
 		arg.ExpectedCreatedAt,
 		arg.AfterSequence,
+		arg.ActionFilter,
+		arg.ActorIDFilter,
+		arg.CredentialTypeFilter,
 		arg.PageLimit,
 	)
 	if err != nil {

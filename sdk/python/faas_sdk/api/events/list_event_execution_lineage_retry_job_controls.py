@@ -9,6 +9,12 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.event_execution_lineage_retry_job_controls import EventExecutionLineageRetryJobControls
+from ...models.list_event_execution_lineage_retry_job_controls_action import (
+    ListEventExecutionLineageRetryJobControlsAction,
+)
+from ...models.list_event_execution_lineage_retry_job_controls_credential_type import (
+    ListEventExecutionLineageRetryJobControlsCredentialType,
+)
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -21,6 +27,9 @@ def _get_kwargs(
     expected_created_at: datetime.datetime,
     after: int | Unset = 0,
     limit: int | Unset = 50,
+    action: ListEventExecutionLineageRetryJobControlsAction | Unset = UNSET,
+    actor_id: str | Unset = UNSET,
+    credential_type: ListEventExecutionLineageRetryJobControlsCredentialType | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -31,6 +40,20 @@ def _get_kwargs(
     params["after"] = after
 
     params["limit"] = limit
+
+    json_action: str | Unset = UNSET
+    if not isinstance(action, Unset):
+        json_action = action
+
+    params["action"] = json_action
+
+    params["actor_id"] = actor_id
+
+    json_credential_type: str | Unset = UNSET
+    if not isinstance(credential_type, Unset):
+        json_credential_type = credential_type
+
+    params["credential_type"] = json_credential_type
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -111,6 +134,9 @@ def sync_detailed(
     expected_created_at: datetime.datetime,
     after: int | Unset = 0,
     limit: int | Unset = 50,
+    action: ListEventExecutionLineageRetryJobControlsAction | Unset = UNSET,
+    actor_id: str | Unset = UNSET,
+    credential_type: ListEventExecutionLineageRetryJobControlsCredentialType | Unset = UNSET,
 ) -> Response[EventExecutionLineageRetryJobControls | Problem]:
     """List retained immutable bulk retry control receipts.
 
@@ -120,10 +146,13 @@ def sync_detailed(
     a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
     credential_type; older receipts omit attribution. Repeats preserve the original actor even under
     another authorized credential. Receipts are immutable metadata observations, expire with the
-    original job and cascade on job deletion. Pagination is a live append-only listing, not a
-    reservation; timestamps are informational and sequence defines order. An existing retained job with
-    no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
-    guards return 409.
+    original job and cascade on job deletion. Optional action, actor_id and credential_type filters
+    combine with AND before pagination. Sequence cursors retain their original per-job meaning and may
+    have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts
+    remain in unfiltered history and match action filters but not nonempty attribution filters.
+    Pagination is a live append-only listing, not a reservation; timestamps are informational and
+    sequence defines order. An existing retained job with no receipts returns an empty controls array.
+    Expired/missing jobs return 404 and stale creation guards return 409.
 
     Args:
         slug (str):
@@ -132,6 +161,9 @@ def sync_detailed(
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        action (ListEventExecutionLineageRetryJobControlsAction | Unset):
+        actor_id (str | Unset):
+        credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -148,6 +180,9 @@ def sync_detailed(
         expected_created_at=expected_created_at,
         after=after,
         limit=limit,
+        action=action,
+        actor_id=actor_id,
+        credential_type=credential_type,
     )
 
     response = client.get_httpx_client().request(
@@ -166,6 +201,9 @@ def sync(
     expected_created_at: datetime.datetime,
     after: int | Unset = 0,
     limit: int | Unset = 50,
+    action: ListEventExecutionLineageRetryJobControlsAction | Unset = UNSET,
+    actor_id: str | Unset = UNSET,
+    credential_type: ListEventExecutionLineageRetryJobControlsCredentialType | Unset = UNSET,
 ) -> EventExecutionLineageRetryJobControls | Problem | None:
     """List retained immutable bulk retry control receipts.
 
@@ -175,10 +213,13 @@ def sync(
     a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
     credential_type; older receipts omit attribution. Repeats preserve the original actor even under
     another authorized credential. Receipts are immutable metadata observations, expire with the
-    original job and cascade on job deletion. Pagination is a live append-only listing, not a
-    reservation; timestamps are informational and sequence defines order. An existing retained job with
-    no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
-    guards return 409.
+    original job and cascade on job deletion. Optional action, actor_id and credential_type filters
+    combine with AND before pagination. Sequence cursors retain their original per-job meaning and may
+    have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts
+    remain in unfiltered history and match action filters but not nonempty attribution filters.
+    Pagination is a live append-only listing, not a reservation; timestamps are informational and
+    sequence defines order. An existing retained job with no receipts returns an empty controls array.
+    Expired/missing jobs return 404 and stale creation guards return 409.
 
     Args:
         slug (str):
@@ -187,6 +228,9 @@ def sync(
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        action (ListEventExecutionLineageRetryJobControlsAction | Unset):
+        actor_id (str | Unset):
+        credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,6 +248,9 @@ def sync(
         expected_created_at=expected_created_at,
         after=after,
         limit=limit,
+        action=action,
+        actor_id=actor_id,
+        credential_type=credential_type,
     ).parsed
 
 
@@ -216,6 +263,9 @@ async def asyncio_detailed(
     expected_created_at: datetime.datetime,
     after: int | Unset = 0,
     limit: int | Unset = 50,
+    action: ListEventExecutionLineageRetryJobControlsAction | Unset = UNSET,
+    actor_id: str | Unset = UNSET,
+    credential_type: ListEventExecutionLineageRetryJobControlsCredentialType | Unset = UNSET,
 ) -> Response[EventExecutionLineageRetryJobControls | Problem]:
     """List retained immutable bulk retry control receipts.
 
@@ -225,10 +275,13 @@ async def asyncio_detailed(
     a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
     credential_type; older receipts omit attribution. Repeats preserve the original actor even under
     another authorized credential. Receipts are immutable metadata observations, expire with the
-    original job and cascade on job deletion. Pagination is a live append-only listing, not a
-    reservation; timestamps are informational and sequence defines order. An existing retained job with
-    no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
-    guards return 409.
+    original job and cascade on job deletion. Optional action, actor_id and credential_type filters
+    combine with AND before pagination. Sequence cursors retain their original per-job meaning and may
+    have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts
+    remain in unfiltered history and match action filters but not nonempty attribution filters.
+    Pagination is a live append-only listing, not a reservation; timestamps are informational and
+    sequence defines order. An existing retained job with no receipts returns an empty controls array.
+    Expired/missing jobs return 404 and stale creation guards return 409.
 
     Args:
         slug (str):
@@ -237,6 +290,9 @@ async def asyncio_detailed(
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        action (ListEventExecutionLineageRetryJobControlsAction | Unset):
+        actor_id (str | Unset):
+        credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -253,6 +309,9 @@ async def asyncio_detailed(
         expected_created_at=expected_created_at,
         after=after,
         limit=limit,
+        action=action,
+        actor_id=actor_id,
+        credential_type=credential_type,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -269,6 +328,9 @@ async def asyncio(
     expected_created_at: datetime.datetime,
     after: int | Unset = 0,
     limit: int | Unset = 50,
+    action: ListEventExecutionLineageRetryJobControlsAction | Unset = UNSET,
+    actor_id: str | Unset = UNSET,
+    credential_type: ListEventExecutionLineageRetryJobControlsCredentialType | Unset = UNSET,
 ) -> EventExecutionLineageRetryJobControls | Problem | None:
     """List retained immutable bulk retry control receipts.
 
@@ -278,10 +340,13 @@ async def asyncio(
     a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and
     credential_type; older receipts omit attribution. Repeats preserve the original actor even under
     another authorized credential. Receipts are immutable metadata observations, expire with the
-    original job and cascade on job deletion. Pagination is a live append-only listing, not a
-    reservation; timestamps are informational and sequence defines order. An existing retained job with
-    no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation
-    guards return 409.
+    original job and cascade on job deletion. Optional action, actor_id and credential_type filters
+    combine with AND before pagination. Sequence cursors retain their original per-job meaning and may
+    have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts
+    remain in unfiltered history and match action filters but not nonempty attribution filters.
+    Pagination is a live append-only listing, not a reservation; timestamps are informational and
+    sequence defines order. An existing retained job with no receipts returns an empty controls array.
+    Expired/missing jobs return 404 and stale creation guards return 409.
 
     Args:
         slug (str):
@@ -290,6 +355,9 @@ async def asyncio(
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        action (ListEventExecutionLineageRetryJobControlsAction | Unset):
+        actor_id (str | Unset):
+        credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -308,5 +376,8 @@ async def asyncio(
             expected_created_at=expected_created_at,
             after=after,
             limit=limit,
+            action=action,
+            actor_id=actor_id,
+            credential_type=credential_type,
         )
     ).parsed

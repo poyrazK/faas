@@ -33987,7 +33987,7 @@ paths:
       tags: [events]
       operationId: listEventExecutionLineageRetryJobControls
       summary: List retained immutable bulk retry control receipts.
-      description: Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+      description: Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Optional action, actor_id and credential_type filters combine with AND before pagination. Sequence cursors retain their original per-job meaning and may have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts remain in unfiltered history and match action filters but not nonempty attribution filters. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -34013,6 +34013,18 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 0, maximum: 200, default: 50, description: Zero selects the default page size. }
+        - name: action
+          in: query
+          description: Exact action filter; empty means all actions.
+          schema: { type: string, enum: ['', pause, resume, cancel] }
+        - name: actor_id
+          in: query
+          description: Exact original actor UUID or store for internal calls. UUIDs must use hyphenated form; casing is normalized. Empty means all actors. Attribution-free legacy receipts do not match a nonempty actor filter.
+          schema: { type: string }
+        - name: credential_type
+          in: query
+          description: Exact original credential type; empty means all types. Attribution-free legacy receipts do not match a nonempty filter.
+          schema: { type: string, enum: ['', session, api_key, deploy_token, platform_tenant_token, internal] }
       responses:
         '200':
           description: Immutable command receipts, oldest sequence first.
@@ -34020,7 +34032,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJobControls' }
         '400':
-          description: Invalid identifier, creation guard or pagination.
+          description: Invalid identifier, creation guard, pagination or history filter.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -63279,6 +63291,13 @@ components:
         job_updated_at: { type: string, format: date-time }
         recorded_at: { type: string, format: date-time }
         retain_until: { type: string, format: date-time }
+    EventExecutionLineageRetryJobControlFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        action: { type: string, enum: ['', pause, resume, cancel] }
+        actor_id: { type: string, description: Exact actor UUID in hyphenated form or store for an internal caller. Empty means no filter. }
+        credential_type: { type: string, enum: ['', session, api_key, deploy_token, platform_tenant_token, internal] }
     EventExecutionLineageRetryJobControls:
       type: object
       additionalProperties: false

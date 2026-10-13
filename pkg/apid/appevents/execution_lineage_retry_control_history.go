@@ -28,7 +28,8 @@ func (s *Service) ListEventExecutionLineageRetryJobControls(w http.ResponseWrite
 		writeLineageCaseError(w, state.ErrInvalidArgument)
 		return
 	}
-	out, err := store.ListEventExecutionLineageRetryJobControls(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.PathValue("requestID"), expected, after, limit)
+	filter := api.EventExecutionLineageRetryJobControlFilters{Action: r.URL.Query().Get("action"), ActorID: r.URL.Query().Get("actor_id"), CredentialType: r.URL.Query().Get("credential_type")}
+	out, err := store.ListEventExecutionLineageRetryJobControls(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.PathValue("requestID"), expected, after, limit, filter)
 	if !writeLineageControlHistoryError(w, err) {
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
@@ -45,7 +46,7 @@ func writeLineageControlHistoryError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(409, "event_lineage_retry_job_changed", "Lineage retry job changed", "refresh the job and use its original creation timestamp"))
 	case errors.Is(err, context.DeadlineExceeded):
-		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Control history timed out", "repeat the read with the same creation guard and sequence cursor"))
+		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Control history timed out", "repeat the read with the same creation guard, sequence cursor and filters"))
 	default:
 		return writeLineageCaseError(w, err)
 	}

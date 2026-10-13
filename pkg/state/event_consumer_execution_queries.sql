@@ -370,4 +370,7 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
  AND subscription_id=sqlc.arg(subscription_id)::uuid AND job_request_id=sqlc.arg(job_request_id)::uuid
  AND expected_created_at=sqlc.arg(expected_created_at)::timestamptz AND retain_until>statement_timestamp()
  AND sequence>sqlc.arg(after_sequence)::bigint
+ AND (sqlc.arg(action_filter)::text='' OR action=sqlc.arg(action_filter)::text)
+ AND (sqlc.arg(actor_id_filter)::text='' OR result->>'actor_id'=sqlc.arg(actor_id_filter)::text)
+ AND (sqlc.arg(credential_type_filter)::text='' OR result->>'credential_type'=sqlc.arg(credential_type_filter)::text)
 ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;

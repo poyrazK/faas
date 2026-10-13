@@ -1119,6 +1119,11 @@ from .event_execution_lineage_case_backfill_status import EventExecutionLineageC
 from .event_execution_lineage_case_status import EventExecutionLineageCaseStatus
 from .event_execution_lineage_cases import EventExecutionLineageCases
 from .event_execution_lineage_retry_job import EventExecutionLineageRetryJob
+from .event_execution_lineage_retry_job_control_filters import EventExecutionLineageRetryJobControlFilters
+from .event_execution_lineage_retry_job_control_filters_action import EventExecutionLineageRetryJobControlFiltersAction
+from .event_execution_lineage_retry_job_control_filters_credential_type import (
+    EventExecutionLineageRetryJobControlFiltersCredentialType,
+)
 from .event_execution_lineage_retry_job_control_receipt import EventExecutionLineageRetryJobControlReceipt
 from .event_execution_lineage_retry_job_control_receipt_action import EventExecutionLineageRetryJobControlReceiptAction
 from .event_execution_lineage_retry_job_control_receipt_actor_kind import (
@@ -1699,6 +1704,10 @@ from .list_durable_entity_registry_response_200 import ListDurableEntityRegistry
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
+from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
+from .list_event_execution_lineage_retry_job_controls_credential_type import (
+    ListEventExecutionLineageRetryJobControlsCredentialType,
+)
 from .list_event_execution_lineage_retry_jobs_status import ListEventExecutionLineageRetryJobsStatus
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
@@ -5166,6 +5175,9 @@ __all__ = (
     "EventExecutionLineageCases",
     "EventExecutionLineageCaseStatus",
     "EventExecutionLineageRetryJob",
+    "EventExecutionLineageRetryJobControlFilters",
+    "EventExecutionLineageRetryJobControlFiltersAction",
+    "EventExecutionLineageRetryJobControlFiltersCredentialType",
     "EventExecutionLineageRetryJobControlReceipt",
     "EventExecutionLineageRetryJobControlReceiptAction",
     "EventExecutionLineageRetryJobControlReceiptActorKind",
@@ -5722,6 +5734,8 @@ __all__ = (
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
+    "ListEventExecutionLineageRetryJobControlsAction",
+    "ListEventExecutionLineageRetryJobControlsCredentialType",
     "ListEventExecutionLineageRetryJobsStatus",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",

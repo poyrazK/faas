@@ -2390,12 +2390,15 @@ Submit a reviewed fixed lineage retry selection
 
 ### events subscription-lineage-retry-job-controls
 
-List retained immutable pause/resume command receipts
+List retained immutable bulk retry command receipts
 
-`gregale events subscription-lineage-retry-job-controls [--expected-created-at <TIMESTAMP>] [--limit <N>] [--after <SEQUENCE>] <app> <subscription-id> <request-id>`
+`gregale events subscription-lineage-retry-job-controls [--action <ACTION>] [--actor-id <UUID_OR_STORE>] [--credential-type <TYPE>] [--expected-created-at <TIMESTAMP>] [--limit <N>] [--after <SEQUENCE>] <app> <subscription-id> <request-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--action <ACTION>` | exact action: pause, resume or cancel |  |
+| `--actor-id <UUID_OR_STORE>` | exact original actor identity |  |
+| `--credential-type <TYPE>` | exact original credential type |  |
 | `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
 | `--limit <N>` | page size (default 50, maximum 200) |  |
 | `--after <SEQUENCE>` | exclusive recorded command sequence |  |

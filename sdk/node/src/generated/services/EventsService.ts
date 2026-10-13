@@ -1866,7 +1866,7 @@ export class EventsService {
   }
   /**
    * List retained immutable bulk retry control receipts.
-   * Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+   * Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. New receipts include server-derived actor_kind, actor_id and credential_type; older receipts omit attribution. Repeats preserve the original actor even under another authorized credential. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Optional action, actor_id and credential_type filters combine with AND before pagination. Sequence cursors retain their original per-job meaning and may have gaps; keep filters unchanged across pages or restart at after=0. Legacy unattributed receipts remain in unfiltered history and match action filters but not nonempty attribution filters. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
    * @returns EventExecutionLineageRetryJobControls Immutable command receipts, oldest sequence first.
    * @throws ApiError
    */
@@ -1877,6 +1877,9 @@ export class EventsService {
     expectedCreatedAt,
     after,
     limit = 50,
+    action,
+    actorId,
+    credentialType,
   }: {
     slug: string,
     subscriptionId: string,
@@ -1887,6 +1890,18 @@ export class EventsService {
     expectedCreatedAt: string,
     after?: number,
     limit?: number,
+    /**
+     * Exact action filter; empty means all actions.
+     */
+    action?: '' | 'pause' | 'resume' | 'cancel',
+    /**
+     * Exact original actor UUID or store for internal calls. UUIDs must use hyphenated form; casing is normalized. Empty means all actors. Attribution-free legacy receipts do not match a nonempty actor filter.
+     */
+    actorId?: string,
+    /**
+     * Exact original credential type; empty means all types. Attribution-free legacy receipts do not match a nonempty filter.
+     */
+    credentialType?: '' | 'session' | 'api_key' | 'deploy_token' | 'platform_tenant_token' | 'internal',
   }): CancelablePromise<EventExecutionLineageRetryJobControls> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1900,9 +1915,12 @@ export class EventsService {
         'expected_created_at': expectedCreatedAt,
         'after': after,
         'limit': limit,
+        'action': action,
+        'actor_id': actorId,
+        'credential_type': credentialType,
       },
       errors: {
-        400: `Invalid identifier, creation guard or pagination.`,
+        400: `Invalid identifier, creation guard, pagination or history filter.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
