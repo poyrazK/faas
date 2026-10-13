@@ -23,8 +23,30 @@ func TestObjectStoragePlanLimitsTightenOperatorPolicy(t *testing.T) {
 	operator := ObjectStoragePolicy{MaxAccountBytes: 100, MaxMonthlyRequests: 200, MaxMonthlyEgressBytes: 300, MaxBucketBytes: 50}
 	plan := ObjectStoragePlanLimits{MaxAccountBytes: 10, MaxMonthlyRequests: 500, MaxMonthlyEgressBytes: 30}
 	got := plan.Policy(operator)
-	if got.MaxAccountBytes != 10 || got.MaxMonthlyRequests != 200 || got.MaxMonthlyEgressBytes != 30 || got.MaxBucketBytes != 50 {
-		t.Fatalf("policy = %+v, want the tighter positive value per ceiling and other fields untouched", got)
+	if got.MaxAccountBytes != 10 || got.MaxMonthlyRequests != 200 || got.MaxMonthlyEgressBytes != 30 || got.MaxBucketBytes != 10 {
+		t.Fatalf("policy = %+v, want the tighter positive value per ceiling and the bucket cap held under the account", got)
+	}
+	if got := (ObjectStoragePlanLimits{MaxAccountBytes: 80}).Policy(operator); got.MaxBucketBytes != 50 {
+		t.Fatalf("bucket cap = %d, want the operator's 50 while the account ceiling stays above it", got.MaxBucketBytes)
+	}
+}
+
+func TestObjectStoragePlanLimitsKeepPolicyValid(t *testing.T) {
+	operator := ObjectStoragePolicy{
+		MaxAccountBytes: 1 << 40, MaxBucketBytes: 1 << 39, MaxAccountKeys: 1_000, MaxMonthlyRequests: 1 << 20,
+		MaxMonthlyEgressBytes: 1 << 40, MaxMonthlyAuthorizations: 1_000, MaxMonthlyCostMillicents: 1_000, MaxReportAgeSeconds: 3600,
+	}
+	if !operator.Valid() {
+		t.Fatalf("test operator policy is invalid: %+v", operator)
+	}
+	for _, plan := range []ObjectStoragePlanLimits{
+		{MaxAccountBytes: 1 << 30},
+		{MaxAccountBytes: 1, MaxMonthlyRequests: 1, MaxMonthlyEgressBytes: 1},
+		{MaxAccountBytes: MaxObjectStoragePolicyValue, MaxMonthlyRequests: MaxObjectStoragePolicyValue},
+	} {
+		if got := plan.Policy(operator); !got.Valid() {
+			t.Fatalf("plan %+v made a valid operator policy invalid: %+v", plan, got)
+		}
 	}
 }
 

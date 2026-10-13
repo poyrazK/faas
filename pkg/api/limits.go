@@ -1438,8 +1438,11 @@ const ObjectStorageBillingHoursPerMonth int64 = 730
 
 // Policy returns the operator safety policy tightened by the plan's ceilings.
 // The tighter positive value wins; a zero plan ceiling keeps the operator's.
+// No bucket may exceed the account, so the bucket cap follows a tighter
+// account ceiling and a valid operator policy stays valid.
 func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePolicy {
 	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
+	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
 	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
 	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
 	return p

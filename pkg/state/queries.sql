@@ -4625,6 +4625,9 @@ ORDER BY node_id, is_origin DESC;
 -- name: ObjectUsageLockAccount :one
 SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
 
+-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1;
+
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
 

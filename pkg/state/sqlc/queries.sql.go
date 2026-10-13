@@ -54120,6 +54120,17 @@ func (q *Queries) ObjectUploadRoutesList(ctx context.Context, db DBTX, arg Objec
 	return items, nil
 }
 
+const objectUsageAccountPlan = `-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1
+`
+
+func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlan, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
 SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_start=$2
 `
