@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/singleton"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -740,7 +741,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
-func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr error) {
+	// ADR-1152 §4: a meterd that lost its lease must exit with an error so
+	// systemd restarts it as a standby (meterd_lease.go).
+	var meterdHold *singleton.Holding
+	stopStandbyWatchdog := func() {}
+	defer func() {
+		if meterdHold != nil && meterdHold.Lost() && runErr == nil {
+			runErr = fmt.Errorf("meterd: %w; exiting to restart as a standby", singleton.ErrLeaseLost)
+		}
+	}()
 	// DEPLOY-1 / ADR-075 capdecl gate. meterd is unprivileged —
 	// no Allow, no Deny. The sampler, quota, stripe ticks and
 	// the age-sealed secret reads all run inside the unit's
@@ -825,6 +835,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	store := state.NewPgStore(pool)
+	// ADR-1152 §4: only one meterd runs per cell. Wait here as a standby
+	// until this process holds the meterd lease; all work below then stops
+	// when the lease is lost.
+	if meterdLeaseEnabled(deps.getenv, meterdLeaseEnv) {
+		hold, stop, err := acquireMeterdLease(ctx, store, log)
+		if err != nil {
+			return fmt.Errorf("meterd: acquire meterd lease: %w", err)
+		}
+		meterdHold, stopStandbyWatchdog = hold, stop
+		defer hold.Release()
+		defer stop()
+		ctx = hold.Context()
+	}
 	pn := db.PoolNotifier{Pool: pool}
 
 	// Resolve the schedd socket: env wins over the TOML default so the
@@ -1397,6 +1420,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, meterdProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// The daemon's own watchdog now runs; a former standby stops its
+	// unconditional feed.
+	stopStandbyWatchdog()
 
 	select {
 	case <-ctx.Done():
