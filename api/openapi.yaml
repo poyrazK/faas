@@ -49427,11 +49427,11 @@ components:
           items: { $ref: '#/components/schemas/RouteAdviceSuggestion' }
     RouteAdviceSuggestion:
       type: object
-      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname)."
+      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is empty and setting carries the proposal."
       required: [id, kind, method, route, title, rationale, evidence, impact, rules]
       properties:
         id: {"type": "string", "description": "Stable for the same kind, method and route."}
-        kind: {"type": "string", "enum": ["cache", "async", "throttle"]}
+        kind: {"type": "string", "enum": ["cache", "async", "throttle", "wake_ahead", "priority"]}
         method: {"type": "string"}
         route: {"type": "string", "description": "Observed route template, for example /users/{id}."}
         title: {"type": "string"}
@@ -49444,6 +49444,16 @@ components:
         rules:
           type: array
           items: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+        setting: { $ref: '#/components/schemas/RouteAdviceSetting' }
+    RouteAdviceSetting:
+      type: object
+      description: "The app setting a wake_ahead or priority suggestion proposes; apply it through PUT /v1/apps/{slug}/service-wake-ahead or PUT /v1/apps/{slug}/route-priorities."
+      properties:
+        wake_ahead: {"type": "boolean", "description": "Turn service wake-ahead on."}
+        route_priorities:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
     RouteAdviceEvidence:
       type: object
       description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
@@ -49478,6 +49488,32 @@ components:
         slug: {"type": "string"}
         enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
         updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
+        learned: { $ref: '#/components/schemas/ServiceWakeAheadLearned' }
+    ServiceWakeAheadLearned:
+      type: object
+      description: "What the gateways measured for this caller app (ADR-1152): its top service edges and what wake-ahead did over the evidence window. Present on GET; source is unavailable when gateway metrics cannot be read."
+      required: [source, window, caller_wakes, targets]
+      properties:
+        source: {"type": "string", "enum": ["live", "unavailable"]}
+        window: {"type": "string", "description": "Window of the outcome counts, for example 24h."}
+        caller_wakes: {"type": "integer", "format": "int64", "description": "Cold wakes of this app the evidence covers (older wakes decay)."}
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceWakeAheadTarget' }
+    ServiceWakeAheadTarget:
+      type: object
+      description: "One measured caller-to-service edge and its wake-ahead outcomes."
+      required: [app_id, slug, call_share, cold_share, qualifies, started, used, unused, failed]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        slug: {"type": "string"}
+        call_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of cold wakes followed by a call to this service."}
+        cold_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of those calls that found it parked or woken ahead."}
+        qualifies: {"type": "boolean", "description": "The edge meets the wake-ahead thresholds."}
+        started: {"type": "integer", "format": "int64"}
+        used: {"type": "integer", "format": "int64"}
+        unused: {"type": "integer", "format": "int64"}
+        failed: {"type": "integer", "format": "int64"}
     SetServiceWakeAheadRequest:
       type: object
       description: "Turns service wake-ahead on or off for one app."
@@ -49505,6 +49541,27 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RoutePriorityRule' }
         updated_at: {"type": "string", "format": "date-time", "description": "When saved rules last changed; omitted for the route-health default."}
+        queue: { $ref: '#/components/schemas/RoutePriorityQueueStats' }
+    RoutePriorityQueueStats:
+      type: object
+      description: "How the app's warm-capacity queue behaved per priority class over the evidence window (ADR-1152). Present on GET; source is unavailable when gateway metrics cannot be read."
+      required: [source, window, classes]
+      properties:
+        source: {"type": "string", "enum": ["live", "unavailable"]}
+        window: {"type": "string", "description": "Window of the counts, for example 24h."}
+        classes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutePriorityQueueClass' }
+    RoutePriorityQueueClass:
+      type: object
+      description: "Queue outcomes for one priority class."
+      required: [class, queued, displacing, displaced, rejected]
+      properties:
+        class: {"type": "string", "enum": ["critical", "normal", "bulk"]}
+        queued: {"type": "integer", "format": "int64", "description": "Requests that waited for capacity."}
+        displacing: {"type": "integer", "format": "int64", "description": "Requests that took a lower class's queue place."}
+        displaced: {"type": "integer", "format": "int64", "description": "Requests that lost their place to a higher class."}
+        rejected: {"type": "integer", "format": "int64", "description": "Requests turned away because the queue was full."}
     SetRoutePrioritiesRequest:
       type: object
       description: "Replaces the saved route priorities; an empty list saves none."

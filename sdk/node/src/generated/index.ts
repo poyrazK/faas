@@ -1728,6 +1728,7 @@ export type { RotateOrgAPIKeyResponse } from './models/RotateOrgAPIKeyResponse.j
 export type { RouteAdviceEvidence } from './models/RouteAdviceEvidence.js';
 export type { RouteAdviceImpact } from './models/RouteAdviceImpact.js';
 export type { RouteAdviceResponse } from './models/RouteAdviceResponse.js';
+export type { RouteAdviceSetting } from './models/RouteAdviceSetting.js';
 export type { RouteAdviceSuggestion } from './models/RouteAdviceSuggestion.js';
 export type { RouteAssignedCheck } from './models/RouteAssignedCheck.js';
 export type { RouteAssignment } from './models/RouteAssignment.js';
@@ -1816,6 +1817,8 @@ export type { RoutePolicyPlanRequest } from './models/RoutePolicyPlanRequest.js'
 export type { RoutePolicyReceipt } from './models/RoutePolicyReceipt.js';
 export type { RoutePolicyRuleUsage } from './models/RoutePolicyRuleUsage.js';
 export type { RoutePrioritiesResponse } from './models/RoutePrioritiesResponse.js';
+export type { RoutePriorityQueueClass } from './models/RoutePriorityQueueClass.js';
+export type { RoutePriorityQueueStats } from './models/RoutePriorityQueueStats.js';
 export type { RoutePriorityRule } from './models/RoutePriorityRule.js';
 export type { RoutePublicException } from './models/RoutePublicException.js';
 export type { RouteRemovalApproval } from './models/RouteRemovalApproval.js';
@@ -1877,7 +1880,9 @@ export type { ServiceReplicas } from './models/ServiceReplicas.js';
 export type { ServiceRolloutBindingGate } from './models/ServiceRolloutBindingGate.js';
 export type { ServiceRolloutHandoffResponse } from './models/ServiceRolloutHandoffResponse.js';
 export type { ServiceRolloutRecoveryReceipt } from './models/ServiceRolloutRecoveryReceipt.js';
+export type { ServiceWakeAheadLearned } from './models/ServiceWakeAheadLearned.js';
 export type { ServiceWakeAheadResponse } from './models/ServiceWakeAheadResponse.js';
+export type { ServiceWakeAheadTarget } from './models/ServiceWakeAheadTarget.js';
 export type { SessionInfo } from './models/SessionInfo.js';
 export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';
