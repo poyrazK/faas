@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {startDemo} from '../demo.mjs'
-import {validateActions,permissions} from '../actions.mjs'
+import {validateActions,permissions,actionInput} from '../actions.mjs'
 import {seal,unseal} from '../auth.mjs'
 async function login(demo,agent){
  const start=await fetch(demo.url+'/auth/login',{redirect:'manual'}),cookie=start.headers.getSetCookie()[0].split(';')[0],url=new URL(start.headers.get('location'));url.searchParams.set('agent',agent)
@@ -11,6 +11,7 @@ async function login(demo,agent){
 test('approved support actions preview, require signed permission and origin, reject stale versions and retry idempotently',async t=>{
  const demo=await startDemo({port:0});t.after(demo.close);const a=await login(demo,'a'),b=await login(demo,'b')
  const post=(path,body,cookie=a,origin=demo.url)=>fetch(demo.url+'/api/actions/'+path,{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)})
+ assert.throws(()=>actionInput({action:'add_reply',keys:['x'.repeat(257),1],body:'reply'},{gregale_support_actions:['add_reply']},demo.definition))
  const input={action:'add_reply',keys:['shop-a',1],body:'Customer follow-up'}
  assert.equal((await post('preview',input,b)).status,403)
  assert.equal((await post('preview',input,a,'https://foreign.example')).status,403)
