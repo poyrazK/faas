@@ -1,0 +1,20 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+export type BulkIssueLifecycleAction = {
+  action: 'assign' | 'resolve' | 'ignore' | 'reopen';
+  /**
+   * Only for assign; omit or empty to unassign.
+   */
+  assignee_account_id?: string;
+  /**
+   * Required only for resolve.
+   */
+  fixed_deployment_id?: string;
+  /**
+   * Required only for ignore; future and within 90 days.
+   */
+  ignored_until?: string;
+};
+

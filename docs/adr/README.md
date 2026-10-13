@@ -901,3 +901,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1202: Labeled Issues grouping evaluation](1202-issue-grouping-evaluation-corpus.md)
 - [1203: Bounded operational context for Issues](1203-bounded-issue-operational-context.md)
+
+- [ADR-1204: Observed release comparison and atomic bulk issue triage](1204-issue-release-comparison-and-bulk-triage.md)

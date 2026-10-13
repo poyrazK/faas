@@ -153,3 +153,15 @@ func (c *Client) ListIssuesByTag(ctx context.Context, slug, tag, cursor string) 
 	err := c.do(ctx, http.MethodGet, issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
 	return out, err
 }
+
+func (c *Client) CompareIssueReleases(ctx context.Context, slug, baseline, candidate, environment string) (IssueReleaseComparison, error) {
+	q := url.Values{"baseline": {baseline}, "candidate": {candidate}, "environment": {environment}}
+	var out IssueReleaseComparison
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-release-comparison?"+q.Encode(), nil, &out)
+	return out, err
+}
+func (c *Client) BulkActOnIssues(ctx context.Context, slug string, in BulkIssueActionRequest) (BulkIssueActionResponse, error) {
+	var out BulkIssueActionResponse
+	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/bulk-actions", in, &out)
+	return out, err
+}

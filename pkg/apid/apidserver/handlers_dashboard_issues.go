@@ -24,6 +24,10 @@ const dashboardIssueAction = "issue_action"
 const dashboardIssueCookie = "faas_csrf_issue_action"
 
 type dashboardIssuesData struct {
+	ReleaseComparison    *dashboard.IssueReleaseComparisonView
+	BaselineDeployment   string
+	CandidateDeployment  string
+	BulkActionSaved      bool
 	SplitPreviewCanApply bool
 	SplitRuleSaved       bool
 	SplitUndo            *dashboardIssueSplitUndo
@@ -87,6 +91,7 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	data := dashboardIssuesData{AppSlug: slug, CurrentAccountID: acct.ID}
+	data.BulkActionSaved = r.URL.Query().Get("bulk_action") == "updated"
 	data.SplitRuleSaved = r.URL.Query().Get("split_rule") == "updated"
 	data.ImpactAlertSaved = r.URL.Query().Get("impact_alert") == "updated"
 	data.OwnershipRulesSaved = r.URL.Query().Get("ownership_rules") == "updated"
@@ -130,6 +135,9 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	s.populateIssueDashboardChoices(r.Context(), app, acct, &data)
+	if !s.populateIssueReleaseComparison(w, r, acct, app, &data) {
+		return
+	}
 	populateIssueDashboardOwnerLabels(&data)
 	s.populateIssueDashboardReplay(r.Context(), app, acct, r, &data)
 	count, _ := s.store.CountDeployedApps(r.Context(), acct.ID)

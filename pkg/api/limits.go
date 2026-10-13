@@ -10428,3 +10428,6 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// IssueBulkActionMax bounds one atomic triage transaction.
+const IssueBulkActionMax = 50

@@ -335,6 +335,8 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/execution-artifact-grants/{id}":                                "RevokeExecutionArtifactGrant",
 	"POST /v1/apps/{slug}/issue-events":                                        "IngestIssueEvent",
 	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":                          "IngestIssueOTLP",
+	"GET /v1/apps/{slug}/issue-release-comparison":                             "CompareIssueReleases",
+	"POST /v1/apps/{slug}/issues/bulk-actions":                                 "BulkActOnIssues",
 	"PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "PublishIssueSourceMaps",
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",

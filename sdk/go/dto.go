@@ -530,3 +530,10 @@ type IssueSymbolicationResult = api.IssueSymbolicationResult
 
 // IssueBreadcrumb is bounded reported operational context.
 type IssueBreadcrumb = api.IssueBreadcrumb
+
+type IssueReleaseHealth = api.IssueReleaseHealth
+type IssueReleaseComparison = api.IssueReleaseComparison
+type BulkIssueActionRequest = api.BulkIssueActionRequest
+type BulkIssueActionResponse = api.BulkIssueActionResponse
+
+type BulkIssueLifecycleAction = api.BulkIssueLifecycleAction

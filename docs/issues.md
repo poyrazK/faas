@@ -796,3 +796,28 @@ Allowed operational tag keys are `component`, `operation`, `feature_flag`, `feat
 Use `gregale issues list --app payments --tag component=payments`, or the list API's `tag=component%3Dpayments` query, to find groups with matching retained occurrences in a fixed 24-hour window. Pagination preserves the filter and window. Impact and event totals still describe the whole issue, rather than the filtered tag segment.
 
 OTLP exception records can report tags as string attributes named `gregale.issue.tag.<key>`, breadcrumbs as a JSON array in the string attribute `gregale.issue.breadcrumbs`, and a decimal counter in `gregale.issue.breadcrumbs_dropped`. The same server validation and sanitation apply.
+
+## Compare deployment health
+
+Choose two deployments in the Issues dashboard, or run:
+
+```sh
+gregale issues compare-releases --app payments --baseline BASELINE_UUID --candidate CANDIDATE_UUID --environment application
+```
+
+`GET /v1/apps/{slug}/issue-release-comparison?baseline=UUID&candidate=UUID&environment=application` compares the same last-24-hour window in one database snapshot. Both deployments must belong to the app. It reports weighted observed requests, HTTP 5xx responses and their observed rate, retained issue events, distinct current issue groups, groups with recorded creation/regression activity, verified distinct customers, and unattributed events. The rate delta is candidate minus baseline as a fraction; dashboard/CLI display percentage points.
+
+No observed requests means **unknown** health: the rate and any dependent delta are null. Request counts cover retained traffic for each deployment across environments; issue signals use the selected environment. Telemetry weights count requests represented by aggregated rows. Do not divide issue event totals by request counts: exceptions, workers, and HTTP requests are different populations. Retention, sampling, ingestion delay, and unequal traffic exposure can affect the comparison. This does not measure crash-free sessions or establish that a deployment caused a regression. Creation/regression activity can remain after detailed occurrences expire; merges/splits change current canonical group counts.
+
+## Triage selected issues together
+
+Select issues in the dashboard and apply assign, resolve, ignore, or reopen. CLI selection is explicit:
+
+```sh
+gregale issues bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action assign --assignee ACCOUNT_UUID
+gregale issues bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action resolve --deployment FIXED_DEPLOYMENT_UUID
+```
+
+`POST /v1/apps/{slug}/issues/bulk-actions` accepts `{ "issue_ids": ["UUID", "UUID"], "action": { "action": "reopen" } }`. It supports 1–50 distinct nonzero UUIDs. Merged aliases update once and return one canonical issue in `items`. The complete batch commits together; a missing issue, disallowed assignee, or deployment outside an issue's environment rolls everything back. Each changed group retains its existing lifecycle activity and webhook behavior. Unchanged state is a no-op. Regrouping is excluded. Use the standard `Idempotency-Key` header when retrying API mutations. Permissions, session MFA, and dashboard CSRF match individual triage.
+
+Go exposes `CompareIssueReleases` and `BulkActOnIssues`; generated Node and Python app clients expose the matching operations. Saved views and additional team routing/integrations remain future increments.

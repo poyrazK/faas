@@ -458,6 +458,10 @@ from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
 from .build_response_status import BuildResponseStatus
+from .bulk_issue_action_request import BulkIssueActionRequest
+from .bulk_issue_action_response import BulkIssueActionResponse
+from .bulk_issue_lifecycle_action import BulkIssueLifecycleAction
+from .bulk_issue_lifecycle_action_action import BulkIssueLifecycleActionAction
 from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
@@ -1618,6 +1622,9 @@ from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
 from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
+from .issue_release_comparison import IssueReleaseComparison
+from .issue_release_health import IssueReleaseHealth
+from .issue_release_health_request_coverage import IssueReleaseHealthRequestCoverage
 from .issue_source_map_artifact import IssueSourceMapArtifact
 from .issue_source_map_manifest import IssueSourceMapManifest
 from .issue_source_map_manifest_version import IssueSourceMapManifestVersion
@@ -4530,6 +4537,10 @@ __all__ = (
     "BuildResponseFailureClass",
     "BuildResponseKind",
     "BuildResponseStatus",
+    "BulkIssueActionRequest",
+    "BulkIssueActionResponse",
+    "BulkIssueLifecycleAction",
+    "BulkIssueLifecycleActionAction",
     "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
@@ -5656,6 +5667,9 @@ __all__ = (
     "IssueOwnershipRules",
     "IssueOwnershipRuleSourceKind",
     "IssueRelease",
+    "IssueReleaseComparison",
+    "IssueReleaseHealth",
+    "IssueReleaseHealthRequestCoverage",
     "IssueSourceMapArtifact",
     "IssueSourceMapManifest",
     "IssueSourceMapManifestVersion",

@@ -23,6 +23,8 @@ import type { AppWakeResponse } from '../models/AppWakeResponse.js';
 import type { AppWakeTimelineResponse } from '../models/AppWakeTimelineResponse.js';
 import type { AutomaticRouteCheck } from '../models/AutomaticRouteCheck.js';
 import type { BindingReleasePolicy } from '../models/BindingReleasePolicy.js';
+import type { BulkIssueActionRequest } from '../models/BulkIssueActionRequest.js';
+import type { BulkIssueActionResponse } from '../models/BulkIssueActionResponse.js';
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckProfileRegressionRequest } from '../models/CheckProfileRegressionRequest.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
@@ -58,6 +60,7 @@ import type { IssueEventResponse } from '../models/IssueEventResponse.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
+import type { IssueReleaseComparison } from '../models/IssueReleaseComparison.js';
 import type { IssueSourceMapsMetadata } from '../models/IssueSourceMapsMetadata.js';
 import type { IssueSplitMatcher } from '../models/IssueSplitMatcher.js';
 import type { IssueSplitPreview } from '../models/IssueSplitPreview.js';
@@ -2475,6 +2478,88 @@ export class AppsService {
         402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare observed release request health and issue signals over the last 24 hours.
+   * Request counts expand telemetry row weights and span all traffic for each deployment. Issue signals use the selected environment. These are independent retained observations, not complete traffic, crash-free sessions, or a controlled experiment. Unknown request rates and deltas are null.
+   * @returns IssueReleaseComparison Both deployment observations from one consistent database snapshot.
+   * @throws ApiError
+   */
+  public static compareIssueReleases({
+    slug,
+    baseline,
+    candidate,
+    environment = 'application',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    baseline: string,
+    candidate: string,
+    environment?: string,
+  }): CancelablePromise<IssueReleaseComparison> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-release-comparison',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'baseline': baseline,
+        'candidate': candidate,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Atomically assign, resolve, ignore, or reopen selected issue groups.
+   * Requires deploy-write permission and session MFA. Up to 50 distinct issue UUIDs; merged aliases are acted on once and return one canonical issue. Any missing issue or invalid action rolls back the entire batch. Regrouping is excluded. Supports the standard Idempotency-Key header.
+   * @returns BulkIssueActionResponse Canonical issue groups after the complete batch commits.
+   * @throws ApiError
+   */
+  public static bulkActOnIssues({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: BulkIssueActionRequest,
+  }): CancelablePromise<BulkIssueActionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/bulk-actions',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Idempotency conflict.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

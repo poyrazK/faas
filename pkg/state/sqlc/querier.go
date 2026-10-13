@@ -1632,6 +1632,8 @@ type Querier interface {
 	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
 	IssueReadSourceMaps(ctx context.Context, db DBTX, arg IssueReadSourceMapsParams) (IssueSourceMapArtifact, error)
+	// Independent aggregates avoid multiplying request weights by issue occurrences.
+	IssueReleaseHealth(ctx context.Context, db DBTX, arg IssueReleaseHealthParams) (IssueReleaseHealthRow, error)
 	IssueReopenGroup(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueReparentGroup(ctx context.Context, db DBTX, arg IssueReparentGroupParams) error
 	IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error)

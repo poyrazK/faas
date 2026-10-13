@@ -22,6 +22,8 @@ import (
 var issueEnvironmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func (s *server) registerIssueRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-release-comparison", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.compareIssueReleases)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/bulk-actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.bulkActOnIssues)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishIssueSourceMaps))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSourceMaps)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retireIssueSourceMaps))))

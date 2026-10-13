@@ -13419,6 +13419,68 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issue-release-comparison:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: compareIssueReleases
+      summary: Compare observed release request health and issue signals over the last 24 hours.
+      description: Request counts expand telemetry row weights and span all traffic for each deployment. Issue signals use the selected environment. These are independent retained observations, not complete traffic, crash-free sessions, or a controlled experiment. Unknown request rates and deltas are null.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: baseline
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: candidate
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: environment
+          in: query
+          schema: { type: string, default: application, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      responses:
+        '200':
+          description: Both deployment observations from one consistent database snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueReleaseComparison' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/bulk-actions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: bulkActOnIssues
+      summary: Atomically assign, resolve, ignore, or reopen selected issue groups.
+      description: Requires deploy-write permission and session MFA. Up to 50 distinct issue UUIDs; merged aliases are acted on once and return one canonical issue. Any missing issue or invalid action rolls back the entire batch. Regrouping is excluded. Supports the standard Idempotency-Key header.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkIssueActionRequest' }
+      responses:
+        '200':
+          description: Canonical issue groups after the complete batch commits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkIssueActionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Idempotency conflict. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -81976,6 +82038,69 @@ components:
       properties:
         enabled: { type: boolean }
 
+    IssueReleaseHealth:
+      type: object
+      required: [deployment_id, commit_sha, created_at, observed_requests, http_5xx_requests, http_5xx_rate, request_coverage, observed_issue_events, observed_issue_groups, new_issue_groups, regressed_issue_groups, identified_customers, unattributed_events]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        commit_sha: { type: string }
+        created_at: { type: string, format: date-time }
+        observed_requests: { type: integer, format: int64, minimum: 0 }
+        http_5xx_requests: { type: integer, format: int64, minimum: 0 }
+        http_5xx_rate: { type: number, format: double, nullable: true, minimum: 0, maximum: 1 }
+        request_coverage: { type: string, enum: [observed, unknown] }
+        observed_issue_events: { type: integer, format: int64, minimum: 0 }
+        observed_issue_groups: { type: integer, format: int64, minimum: 0 }
+        new_issue_groups: { type: integer, format: int64, minimum: 0 }
+        regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
+        identified_customers: { type: integer, format: int64, minimum: 0 }
+        unattributed_events: { type: integer, format: int64, minimum: 0 }
+    IssueReleaseComparison:
+      type: object
+      required: [window_start, window_end, environment, baseline, candidate, http_5xx_rate_delta]
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        environment: { type: string }
+        baseline: { $ref: '#/components/schemas/IssueReleaseHealth' }
+        candidate: { $ref: '#/components/schemas/IssueReleaseHealth' }
+        http_5xx_rate_delta:
+          type: number
+          format: double
+          nullable: true
+          minimum: -1
+          maximum: 1
+          description: Candidate minus baseline observed HTTP 5xx rate, expressed as a fraction. Null if either has no observed requests.
+    BulkIssueLifecycleAction:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [assign, resolve, ignore, reopen] }
+        assignee_account_id: { type: string, format: uuid, description: Only for assign; omit or empty to unassign. }
+        fixed_deployment_id: { type: string, format: uuid, description: Required only for resolve. }
+        ignored_until: { type: string, format: date-time, description: Required only for ignore; future and within 90 days. }
+    BulkIssueActionRequest:
+      type: object
+      additionalProperties: false
+      required: [issue_ids, action]
+      properties:
+        issue_ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        action:
+          $ref: '#/components/schemas/BulkIssueLifecycleAction'
+    BulkIssueActionResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Issue' }
     IssueActionRequest:
       description: "Desired ownership, lifecycle, or reversible regrouping action within the app. Merge adopts the destination owner/state; split opens one linked original group. Merge/split responses identify the remaining canonical issue."
       type: object

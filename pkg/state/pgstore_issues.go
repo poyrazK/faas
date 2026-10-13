@@ -747,6 +747,14 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 	if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
 		return api.Issue{}, mapErr(err)
 	}
+	out, err := actOnIssueTx(ctx, q, tx, app, id, actor, in, now)
+	if err != nil {
+		return api.Issue{}, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func actOnIssueTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, app, id, actor string, in api.IssueActionRequest, now time.Time) (api.Issue, error) {
 	canonical, err := q.IssueCanonicalID(ctx, tx, sqlc.IssueCanonicalIDParams{AppID: issueUUID(app), ID: issueUUID(id)})
 	if err != nil {
 		return api.Issue{}, mapErr(err)
@@ -764,7 +772,7 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 		if err != nil {
 			return api.Issue{}, err
 		}
-		return issueRow(row), tx.Commit(ctx)
+		return issueRow(row), nil
 	}
 	p := sqlc.IssueUpdateActionParams{ID: row.ID, State: row.State, Assignee: row.AssigneeAccountID, ResolvedAt: row.ResolvedAt, FixedDeploymentID: row.FixedDeploymentID, FixedDeploymentCreatedAt: row.FixedDeploymentCreatedAt, IgnoredUntil: row.IgnoredUntil}
 	details := map[string]string{}
@@ -845,7 +853,7 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 	if err = issueActivity(ctx, q, tx, row, action, actor, details, now); err != nil {
 		return api.Issue{}, err
 	}
-	return issueRow(row), tx.Commit(ctx)
+	return issueRow(row), nil
 }
 
 // MaintainIssues is a bounded sweep, independent of whether an app receives
