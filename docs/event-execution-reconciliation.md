@@ -473,12 +473,13 @@ them first. The migration does not resume work on its own.
 
 ## Repeat a control safely after a lost response
 
-Choose a fresh command UUID for each deliberate pause/resume action and preserve
+Choose a fresh command UUID for each deliberate pause/resume/cancel action and preserve
 it with the job's original creation guard:
 
 ```sh
 gregale events subscription-lineage-retry-job-pause APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id PAUSE_COMMAND_UUID
 gregale events subscription-lineage-retry-job-resume APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id RESUME_COMMAND_UUID
+gregale events subscription-lineage-retry-job-cancel APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id CANCEL_COMMAND_UUID
 # A repeat of the original pause UUID acknowledges that command without pausing again:
 gregale --json events subscription-lineage-retry-job-pause APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id PAUSE_COMMAND_UUID
 ```
@@ -502,7 +503,9 @@ The receipt contains metadata only and is not saved in the current job snapshot.
 At most 128 receipts are retained per job. Successful new-UUID no-ops also record
 a receipt and consume a slot; repeats of an existing UUID do not. New UUIDs beyond
 the cap return 429 `event_lineage_retry_control_limit` without changing the job.
-Existing UUID repeats, legacy controls and cancellation remain available. Failed
+Existing UUID repeats and controls without command IDs remain available, including
+cancellation. A new UUID-keyed cancellation shares the cap and returns 429 when
+full; omit command_id to cancel without recording another receipt. Failed
 requests create no receipt. Receipts expire with the job's unchanged original
 retention deadline and are deleted when that job is pruned. Old creation guards
 prevent commands targeting a replacement after physical pruning and UUID reuse.
@@ -527,13 +530,23 @@ commands or extend retention. Legacy controls without command IDs and failed
 requests are absent; this is not a complete historical audit.
 
 Go exposes `ListEventExecutionLineageRetryJobControls`; Node and Python expose the
-corresponding events operation. Pause/resume SDK bodies accept command_id and job
+corresponding events operation. Pause/resume/cancel SDK bodies accept command_id and job
 responses expose optional control_receipt. Without command_id, the previous
 response shape and desired-state semantics remain. After a timeout with a command
 UUID, repeat the same UUID/action/guard; without one, read current state first.
 Apply the receipt migration and upgrade API writers before using this field.
 Downgrade refuses while receipts remain; stop UUID-keyed controls and expire/prune
 their parent jobs first to avoid discarding live deduplication evidence.
+
+Cancellation receipts use the same journal and history endpoint. A new cancel
+command on an already completed or cancelled job records an acknowledgment of
+that terminal state, preserving the update time and evaluated count. The receipt
+result_status can therefore be completed or cancelled. New pause/resume commands
+on terminal jobs still return 409. Failed cancellations record no receipt.
+Apply the cancellation-receipt action migration before API writers accept this
+field. Upgrade SDKs that use closed receipt action/state enums before reading
+cancellation history. Downgrade refuses while cancellation receipts remain; stop
+UUID-keyed cancellations and expire/prune their parent jobs first.
 
 ## Cancel a bulk retry job
 
@@ -552,7 +565,9 @@ The API uses POST `execution-reconciliation/retry-jobs/{requestID}/cancel` with:
 ```
 
 Use the actual original creation timestamp from the reviewed job, not the example.
-Cancellation requires deploy/write scope and returns 200 with the terminal job.
+Cancellation requires deploy/write scope and MFA and returns 200 with the terminal
+job. Supply optional command_id (CLI --command-id) to record an immutable receipt;
+preserve that command UUID alongside the original creation guard when repeating.
 Go exposes `CancelEventExecutionLineageRetryJob`, with matching Node and Python
 operations. The creation guard prevents a delayed cancellation from targeting a
 replacement after expiry and request-UUID reuse. A mismatched guard returns 409

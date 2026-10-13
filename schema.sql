@@ -56951,7 +56951,7 @@ CREATE TABLE event_execution_lineage_retry_control_receipts (
  job_request_id uuid NOT NULL,
  command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),
  account_id uuid NOT NULL, app_id uuid NOT NULL,
- action text NOT NULL CHECK(action IN ('pause','resume')),
+ action text NOT NULL CHECK(action IN ('pause','resume','cancel')),
  expected_created_at timestamptz NOT NULL,
  sequence bigint NOT NULL CHECK(sequence>0),
  result jsonb NOT NULL CHECK(jsonb_typeof(result)='object'),

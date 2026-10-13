@@ -8,12 +8,12 @@ export type EventExecutionLineageRetryJobControlReceipt = {
   job_request_id: string;
   subscription_id: string;
   app_id: string;
-  action: 'pause' | 'resume';
+  action: 'pause' | 'resume' | 'cancel';
   expected_created_at: string;
   /**
    * Immutable job state observed by the original command.
    */
-  result_status: 'pending' | 'paused';
+  result_status: 'pending' | 'paused' | 'completed' | 'cancelled';
   processed: number;
   selected: number;
   job_updated_at: string;

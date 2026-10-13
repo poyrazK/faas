@@ -1866,7 +1866,7 @@ export class EventsService {
   }
   /**
    * List retained immutable bulk retry control receipts.
-   * Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+   * Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume/cancel commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
    * @returns EventExecutionLineageRetryJobControls Immutable command receipts, oldest sequence first.
    * @throws ApiError
    */
@@ -2009,8 +2009,8 @@ export class EventsService {
   }
   /**
    * Cancel unprocessed cases in a retained bulk lineage retry job.
-   * Requires deploy/write scope. The original creation timestamp fences the job incarnation. Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it.
-   * @returns EventExecutionLineageRetryJob Cancelled or previously terminal job, preserving evaluated results.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation. Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it. Optional nonzero command_id atomically records an immutable cancellation acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current job state with the original control_receipt. A completed or already cancelled job remains unchanged and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409 event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID beyond the cap returns 429 without cancelling, while known command repeats and cancellation without command_id remain available. Receipts expire with the original job.
+   * @returns EventExecutionLineageRetryJob Cancelled or previously terminal job, preserving evaluated results; optional control_receipt records the original command outcome.
    * @throws ApiError
    */
   public static cancelEventExecutionLineageRetryJob({
@@ -2044,13 +2044,14 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier or missing original creation timestamp.`,
+        400: `Invalid identifier, command UUID or missing original creation timestamp.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Original creation timestamp does not match; stable code event_lineage_retry_job_changed.`,
+        409: `Original creation timestamp does not match (event_lineage_retry_job_changed) or command UUID reused for another action (event_lineage_retry_control_command_changed).`,
         413: `Request exceeds the 65536-byte body limit.`,
-        504: `Cancellation timed out; repeat the same UUID and original creation timestamp.`,
+        429: `New command UUID exceeds the shared 128-receipt cap; stable code event_lineage_retry_control_limit.`,
+        504: `Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.`,
       },
     });
   }

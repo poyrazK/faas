@@ -26,7 +26,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 	case "subscription-lineage-retry-job-create":
 		fs.StringVar(&file, "file", "", "JSON request path")
 	}
-	if mode == "subscription-lineage-retry-job-pause" || mode == "subscription-lineage-retry-job-resume" {
+	if mode == "subscription-lineage-retry-job-cancel" || mode == "subscription-lineage-retry-job-pause" || mode == "subscription-lineage-retry-job-resume" {
 		fs.StringVar(&commandID, "command-id", "", "optional reusable UUID for an immutable control receipt")
 	}
 	if err := fs.Parse(flags); err != nil {
@@ -37,7 +37,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		n = 3
 	}
 	if len(positional) != n || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events "+mode+" APP SUB [REQUEST_ID] [--file PATH] [--reason CODE] [--limit N] [--after ID] [--expected-created-at TIMESTAMP]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events "+mode+" APP SUB [REQUEST_ID] [--file PATH] [--reason CODE] [--limit N] [--after ID] [--expected-created-at TIMESTAMP] [--command-id UUID]", "events")
 		return 1
 	}
 	var input lineageRetryRequestFile
@@ -88,7 +88,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		case "subscription-lineage-retry-job-resume":
 			out, err = client.ResumeEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created, CommandID: commandID})
 		default:
-			out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+			out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created, CommandID: commandID})
 		}
 	} else {
 		out, err = client.GetEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2])

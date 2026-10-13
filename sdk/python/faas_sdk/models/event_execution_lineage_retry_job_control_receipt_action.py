@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventExecutionLineageRetryJobControlReceiptAction = Literal["pause", "resume"]
+EventExecutionLineageRetryJobControlReceiptAction = Literal["cancel", "pause", "resume"]
 
 EVENT_EXECUTION_LINEAGE_RETRY_JOB_CONTROL_RECEIPT_ACTION_VALUES: set[
     EventExecutionLineageRetryJobControlReceiptAction
 ] = {
+    "cancel",
     "pause",
     "resume",
 }

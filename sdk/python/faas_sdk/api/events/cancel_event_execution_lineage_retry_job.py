@@ -77,6 +77,11 @@ def _parse_response(
 
         return response_413
 
+    if response.status_code == 429:
+        response_429 = Problem.from_dict(response.json())
+
+        return response_429
+
     if response.status_code == 504:
         response_504 = Problem.from_dict(response.json())
 
@@ -109,14 +114,20 @@ def sync_detailed(
 ) -> Response[EventExecutionLineageRetryJob | Problem]:
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation.
     Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
     committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
     Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
     completed job stays completed. No evaluation can start for this job after cancellation commits.
     Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
     reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
-    restarting it.
+    restarting it. Optional nonzero command_id atomically records an immutable cancellation
+    acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current
+    job state with the original control_receipt. A completed or already cancelled job remains unchanged
+    and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409
+    event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID
+    beyond the cap returns 429 without cancelling, while known command repeats and cancellation without
+    command_id remain available. Receipts expire with the original job.
 
     Args:
         slug (str):
@@ -156,14 +167,20 @@ def sync(
 ) -> EventExecutionLineageRetryJob | Problem | None:
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation.
     Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
     committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
     Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
     completed job stays completed. No evaluation can start for this job after cancellation commits.
     Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
     reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
-    restarting it.
+    restarting it. Optional nonzero command_id atomically records an immutable cancellation
+    acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current
+    job state with the original control_receipt. A completed or already cancelled job remains unchanged
+    and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409
+    event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID
+    beyond the cap returns 429 without cancelling, while known command repeats and cancellation without
+    command_id remain available. Receipts expire with the original job.
 
     Args:
         slug (str):
@@ -198,14 +215,20 @@ async def asyncio_detailed(
 ) -> Response[EventExecutionLineageRetryJob | Problem]:
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation.
     Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
     committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
     Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
     completed job stays completed. No evaluation can start for this job after cancellation commits.
     Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
     reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
-    restarting it.
+    restarting it. Optional nonzero command_id atomically records an immutable cancellation
+    acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current
+    job state with the original control_receipt. A completed or already cancelled job remains unchanged
+    and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409
+    event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID
+    beyond the cap returns 429 without cancelling, while known command repeats and cancellation without
+    command_id remain available. Receipts expire with the original job.
 
     Args:
         slug (str):
@@ -243,14 +266,20 @@ async def asyncio(
 ) -> EventExecutionLineageRetryJob | Problem | None:
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job incarnation.
     Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
     committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
     Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
     completed job stays completed. No evaluation can start for this job after cancellation commits.
     Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
     reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
-    restarting it.
+    restarting it. Optional nonzero command_id atomically records an immutable cancellation
+    acknowledgment with the state change. Repeating the same UUID/action/creation guard returns current
+    job state with the original control_receipt. A completed or already cancelled job remains unchanged
+    and a new UUID records that terminal acknowledgment. Reusing a pause/resume command UUID returns 409
+    event_lineage_retry_control_command_changed. The shared cap is 128 receipts per job; a new UUID
+    beyond the cap returns 429 without cancelling, while known command repeats and cancellation without
+    command_id remain available. Receipts expire with the original job.
 
     Args:
         slug (str):

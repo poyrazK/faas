@@ -2426,10 +2426,11 @@ Resume a paused bulk lineage retry job
 
 Cancel unprocessed lineage retries
 
-`gregale events subscription-lineage-retry-job-cancel [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+`gregale events subscription-lineage-retry-job-cancel [--command-id <UUID>] [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--command-id <UUID>` | optional reusable UUID for an immutable control receipt |  |
 | `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
 
 ### events subscription-lineage-retry-job-export

@@ -40,10 +40,10 @@ func controlLineageRetryJob(job *api.EventExecutionLineageRetryJob, action strin
 }
 
 func (s *PgStore) CancelEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id string, req api.CancelEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
-	return s.controlEventExecutionLineageRetryJob(ctx, account, app, sub, id, "cancel", api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt})
+	return s.controlEventExecutionLineageRetryJob(ctx, account, app, sub, id, "cancel", api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt, CommandID: req.CommandID})
 }
 func (m *MemStore) CancelEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id string, req api.CancelEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
-	return m.controlEventExecutionLineageRetryJob(ctx, account, app, sub, id, "cancel", api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt})
+	return m.controlEventExecutionLineageRetryJob(ctx, account, app, sub, id, "cancel", api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt, CommandID: req.CommandID})
 }
 func (s *PgStore) ControlEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id, action string, req api.ControlEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
 	if action != "pause" && action != "resume" {

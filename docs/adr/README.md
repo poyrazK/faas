@@ -490,6 +490,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1159 | [Scope-bound lineage retry files](1159-scope-bound-lineage-retry-files.md) | accepted | Versioned target UUIDs, source provenance and guarded CLI submission with raw-file compatibility |
 | 1160 | [Pausable bulk lineage retries](1160-pausable-bulk-lineage-retries.md) | accepted | Original-incarnation pause/resume, preserved progress and unfinished-work diagnostic gates |
 | 1161 | [Idempotent bulk lineage control receipts](1161-idempotent-bulk-lineage-control-receipts.md) | accepted | Atomic UUID-keyed acknowledgments, bounded metadata history and no repeated state transition |
+| 1162 | [Idempotent bulk lineage cancellation receipts](1162-idempotent-bulk-lineage-cancellation-receipts.md) | accepted | Cancellation shares atomic command receipts, terminal acknowledgments and bounded history |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

@@ -183,6 +183,7 @@ func (c *Client) GetEventExecutionLineageRetryJob(ctx context.Context, app, sub,
 
 // CancelEventExecutionLineageRetryJobRequest fences the original job incarnation.
 type CancelEventExecutionLineageRetryJobRequest struct {
+	CommandID         string    `json:"command_id,omitempty"`
 	ExpectedCreatedAt time.Time `json:"expected_created_at"`
 }
 

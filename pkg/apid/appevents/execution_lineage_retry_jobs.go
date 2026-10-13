@@ -91,12 +91,15 @@ func (s *Service) GetEventExecutionLineageRetryJob(w http.ResponseWriter, r *htt
 }
 
 func writeLineageRetryJobCancelError(w http.ResponseWriter, err error) bool {
+	if writeLineageRetryControlReceiptError(w, err) {
+		return true
+	}
 	switch {
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(409, "event_lineage_retry_job_changed", "Lineage retry job changed", "refresh the job and use its original creation timestamp"))
 		return true
 	case errors.Is(err, context.DeadlineExceeded):
-		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Lineage cancellation timed out", "repeat cancellation with the same job UUID and original creation timestamp"))
+		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Lineage cancellation timed out", "repeat cancellation with the same job UUID, original creation timestamp and command UUID if supplied"))
 		return true
 	default:
 		return writeLineageCaseError(w, err)
