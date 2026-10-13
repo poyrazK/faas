@@ -25,6 +25,8 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    obligation_id: str | Unset = UNSET
+    """Exact obligation identity for mutation-time receipts; older inferred observations may omit it."""
     actor: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +35,8 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        obligation_id = self.obligation_id
 
         actor = self.actor
 
@@ -45,6 +49,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if obligation_id is not UNSET:
+            field_dict["obligation_id"] = obligation_id
         if actor is not UNSET:
             field_dict["actor"] = actor
 
@@ -59,12 +65,15 @@ class OperationWorkflowObligationEvent:
 
         explanation = d.pop("explanation")
 
+        obligation_id = d.pop("obligation_id", UNSET)
+
         actor = d.pop("actor", UNSET)
 
         operation_workflow_obligation_event = cls(
             kind=kind,
             at=at,
             explanation=explanation,
+            obligation_id=obligation_id,
             actor=actor,
         )
 

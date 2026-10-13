@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
+    from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
     from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
     from ..models.operation_workflow_playbook_completion_review_event import (
         OperationWorkflowPlaybookCompletionReviewEvent,
@@ -72,6 +73,11 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    obligation_receipts: list[OperationWorkflowObligationEvent] | Unset = UNSET
+    """Server-written obligation-linked lifecycle receipts saved atomically with this source mutation; bounded
+    history is not a complete audit log."""
+    obligation_receipts_truncated: bool | Unset = UNSET
+    """Older obligation receipts have been pruned from this source record."""
     next_action_digest: OperationWorkflowNextActionDigest | Unset = UNSET
     """One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source
     state may change before reading or publication. Fingerprints exclude polling timestamps and are recorded
@@ -160,6 +166,15 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        obligation_receipts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.obligation_receipts, Unset):
+            obligation_receipts = []
+            for obligation_receipts_item_data in self.obligation_receipts:
+                obligation_receipts_item = obligation_receipts_item_data.to_dict()
+                obligation_receipts.append(obligation_receipts_item)
+
+        obligation_receipts_truncated = self.obligation_receipts_truncated
 
         next_action_digest: dict[str, Any] | Unset = UNSET
         if not isinstance(self.next_action_digest, Unset):
@@ -268,6 +283,10 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if obligation_receipts is not UNSET:
+            field_dict["obligation_receipts"] = obligation_receipts
+        if obligation_receipts_truncated is not UNSET:
+            field_dict["obligation_receipts_truncated"] = obligation_receipts_truncated
         if next_action_digest is not UNSET:
             field_dict["next_action_digest"] = next_action_digest
         if handoff_reassignment is not UNSET:
@@ -322,6 +341,7 @@ class OperationWorkflowReadinessNotification:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
+        from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
         from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
         from ..models.operation_workflow_playbook_completion_review_event import (
             OperationWorkflowPlaybookCompletionReviewEvent,
@@ -376,6 +396,17 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _obligation_receipts = d.pop("obligation_receipts", UNSET)
+        obligation_receipts: list[OperationWorkflowObligationEvent] | Unset = UNSET
+        if _obligation_receipts is not UNSET:
+            obligation_receipts = []
+            for obligation_receipts_item_data in _obligation_receipts:
+                obligation_receipts_item = OperationWorkflowObligationEvent.from_dict(obligation_receipts_item_data)
+
+                obligation_receipts.append(obligation_receipts_item)
+
+        obligation_receipts_truncated = d.pop("obligation_receipts_truncated", UNSET)
 
         _next_action_digest = d.pop("next_action_digest", UNSET)
         next_action_digest: OperationWorkflowNextActionDigest | Unset
@@ -553,6 +584,8 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            obligation_receipts=obligation_receipts,
+            obligation_receipts_truncated=obligation_receipts_truncated,
             next_action_digest=next_action_digest,
             handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,

@@ -45,35 +45,37 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
-	NextActionDigest     *OperationWorkflowNextActionDigest                       `json:"next_action_digest,omitempty"`
-	HandoffReassignment  *OperationWorkflowReviewResponseHandoffReassignmentEvent `json:"handoff_reassignment,omitempty"`
-	HandoffDecline       *OperationWorkflowReviewResponseHandoffDeclineEvent      `json:"handoff_decline,omitempty"`
-	DecisionReview       *OperationWorkflowReviewResponseDecisionReviewEvent      `json:"decision_review,omitempty"`
-	ReviewBlockage       *OperationWorkflowReviewResponseBlockageEvent            `json:"review_blockage,omitempty"`
-	ReviewCheckIn        *OperationWorkflowReviewResponseCheckInEvent             `json:"review_check_in,omitempty"`
-	ReviewResponse       *OperationWorkflowReviewResponse                         `json:"review_response,omitempty"`
-	BusinessImpact       *OperationWorkflowReadinessImpactEvent                   `json:"business_impact,omitempty"`
-	DependencyRecovery   *OperationWorkflowPlaybookDependencyRecovery             `json:"dependency_recovery,omitempty"`
-	DependencyRegression *OperationWorkflowPlaybookDependencyRegression           `json:"dependency_regression,omitempty"`
-	PlaybookStep         *OperationWorkflowPlaybookStepAssignment                 `json:"playbook_step,omitempty"`
-	PlaybookReview       *OperationWorkflowPlaybookCompletionReview               `json:"playbook_review,omitempty"`
-	PlaybookReviewEvent  *OperationWorkflowPlaybookCompletionReviewEvent          `json:"playbook_review_event,omitempty"`
-	PlaybookEscalation   *OperationWorkflowPlaybookOutcomeEscalation              `json:"playbook_escalation,omitempty"`
-	PlaybookEvidence     *OperationWorkflowPlaybookEvidenceEvent                  `json:"playbook_evidence,omitempty"`
-	EscalationResponse   *OperationWorkflowReadinessEscalationResponseEvent       `json:"escalation_response,omitempty"`
-	OutcomeEscalation    *OperationWorkflowReadinessOutcomeEscalation             `json:"outcome_escalation,omitempty"`
-	BusinessOutcomeWatch *OperationWorkflowReadinessBusinessOutcomeWatch          `json:"business_outcome_watch,omitempty"`
-	BusinessOutcome      *OperationWorkflowReadinessBusinessOutcomeEvent          `json:"business_outcome,omitempty"`
-	VerificationWatch    *OperationWorkflowReadinessVerificationWatch             `json:"verification_watch,omitempty"`
-	Verification         *OperationWorkflowReadinessVerificationEvent             `json:"verification,omitempty"`
-	Reminder             *OperationWorkflowReadinessDueReminder                   `json:"reminder,omitempty"`
-	Coordination         *OperationWorkflowReadinessCoordination                  `json:"coordination,omitempty"`
-	ID                   string                                                   `json:"id"`
-	Sequence             int64                                                    `json:"sequence"`
-	Kind                 string                                                   `json:"kind"`
-	CreatedAt            time.Time                                                `json:"created_at"`
-	Explanation          string                                                   `json:"explanation"`
-	Change               *OperationWorkflowReadinessChange                        `json:"change,omitempty"`
+	ObligationReceipts          []OperationWorkflowObligationEvent                       `json:"obligation_receipts,omitempty"`
+	ObligationReceiptsTruncated bool                                                     `json:"obligation_receipts_truncated,omitempty"`
+	NextActionDigest            *OperationWorkflowNextActionDigest                       `json:"next_action_digest,omitempty"`
+	HandoffReassignment         *OperationWorkflowReviewResponseHandoffReassignmentEvent `json:"handoff_reassignment,omitempty"`
+	HandoffDecline              *OperationWorkflowReviewResponseHandoffDeclineEvent      `json:"handoff_decline,omitempty"`
+	DecisionReview              *OperationWorkflowReviewResponseDecisionReviewEvent      `json:"decision_review,omitempty"`
+	ReviewBlockage              *OperationWorkflowReviewResponseBlockageEvent            `json:"review_blockage,omitempty"`
+	ReviewCheckIn               *OperationWorkflowReviewResponseCheckInEvent             `json:"review_check_in,omitempty"`
+	ReviewResponse              *OperationWorkflowReviewResponse                         `json:"review_response,omitempty"`
+	BusinessImpact              *OperationWorkflowReadinessImpactEvent                   `json:"business_impact,omitempty"`
+	DependencyRecovery          *OperationWorkflowPlaybookDependencyRecovery             `json:"dependency_recovery,omitempty"`
+	DependencyRegression        *OperationWorkflowPlaybookDependencyRegression           `json:"dependency_regression,omitempty"`
+	PlaybookStep                *OperationWorkflowPlaybookStepAssignment                 `json:"playbook_step,omitempty"`
+	PlaybookReview              *OperationWorkflowPlaybookCompletionReview               `json:"playbook_review,omitempty"`
+	PlaybookReviewEvent         *OperationWorkflowPlaybookCompletionReviewEvent          `json:"playbook_review_event,omitempty"`
+	PlaybookEscalation          *OperationWorkflowPlaybookOutcomeEscalation              `json:"playbook_escalation,omitempty"`
+	PlaybookEvidence            *OperationWorkflowPlaybookEvidenceEvent                  `json:"playbook_evidence,omitempty"`
+	EscalationResponse          *OperationWorkflowReadinessEscalationResponseEvent       `json:"escalation_response,omitempty"`
+	OutcomeEscalation           *OperationWorkflowReadinessOutcomeEscalation             `json:"outcome_escalation,omitempty"`
+	BusinessOutcomeWatch        *OperationWorkflowReadinessBusinessOutcomeWatch          `json:"business_outcome_watch,omitempty"`
+	BusinessOutcome             *OperationWorkflowReadinessBusinessOutcomeEvent          `json:"business_outcome,omitempty"`
+	VerificationWatch           *OperationWorkflowReadinessVerificationWatch             `json:"verification_watch,omitempty"`
+	Verification                *OperationWorkflowReadinessVerificationEvent             `json:"verification,omitempty"`
+	Reminder                    *OperationWorkflowReadinessDueReminder                   `json:"reminder,omitempty"`
+	Coordination                *OperationWorkflowReadinessCoordination                  `json:"coordination,omitempty"`
+	ID                          string                                                   `json:"id"`
+	Sequence                    int64                                                    `json:"sequence"`
+	Kind                        string                                                   `json:"kind"`
+	CreatedAt                   time.Time                                                `json:"created_at"`
+	Explanation                 string                                                   `json:"explanation"`
+	Change                      *OperationWorkflowReadinessChange                        `json:"change,omitempty"`
 }
 type OperationWorkflowReadinessInboxResponse struct {
 	Subscription   OperationWorkflowReadinessSubscription   `json:"subscription"`
@@ -919,8 +921,9 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
-	Kind        string    `json:"kind"`
-	At          time.Time `json:"at"`
-	Actor       string    `json:"actor,omitempty"`
-	Explanation string    `json:"explanation"`
+	ObligationID string    `json:"obligation_id,omitempty"`
+	Kind         string    `json:"kind"`
+	At           time.Time `json:"at"`
+	Actor        string    `json:"actor,omitempty"`
+	Explanation  string    `json:"explanation"`
 }

@@ -79365,6 +79365,15 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        obligation_receipts:
+          type: array
+          maxItems: 128
+          description: Server-written obligation-linked lifecycle receipts saved atomically with this source mutation; bounded history is not a complete audit log.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationEvent'
+        obligation_receipts_truncated:
+          type: boolean
+          description: Older obligation receipts have been pruned from this source record.
         next_action_digest:
           $ref: '#/components/schemas/OperationWorkflowNextActionDigest'
           description: Immutable retained snapshots of newly qualifying or changed team actions, with links to current controls. Source records are read independently of publication.
@@ -82504,9 +82513,12 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        obligation_id:
+          type: string
+          description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded]
         at:
           type: string
           format: date-time

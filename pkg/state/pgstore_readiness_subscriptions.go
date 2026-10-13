@@ -199,10 +199,10 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 					if watch.ID != u.Playbook.Watch.ID {
 						continue
 					}
-					if err = syncPlaybookStepAssignmentsTx(ctx, tx, q, id, watch, *progress); err != nil {
+					if err = syncPlaybookStepAssignmentsTx(ctx, tx, q, id, r.Subscription.Scope, watch, *progress); err != nil {
 						return err
 					}
-					if err = syncPlaybookOutcomeEscalationTx(ctx, tx, q, id, watch); err != nil {
+					if err = syncPlaybookOutcomeEscalationTx(ctx, tx, q, id, r.Subscription.Scope, watch); err != nil {
 						return err
 					}
 					break
@@ -221,6 +221,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		if err = json.Unmarshal(payload, &n); err != nil {
 			return err
 		}
+		prior := cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{n}}).Items[0]
 		refreshed := false
 		if u.ResponseWatchID != "" && n.PlaybookStep != nil && n.PlaybookEvidence != nil {
 			rows, e := readPGPlaybookProgress(ctx, tx, playbookStepResponseIdentity(r, n))
@@ -233,6 +234,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		if !ok && !refreshed {
 			continue
 		}
+		updated = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, prior, updated, "")
 		payload, err = json.Marshal(updated)
 		if err != nil {
 			return err
@@ -241,7 +243,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 			return mapErr(err)
 		}
 		if n.BusinessOutcomeWatch != nil && n.BusinessOutcomeWatch.Escalation != nil {
-			if err = syncReadinessOutcomeEscalationTx(ctx, tx, q, id, updated); err != nil {
+			if err = syncReadinessOutcomeEscalationTx(ctx, tx, q, id, r.Subscription.Scope, updated); err != nil {
 				return err
 			}
 		}
@@ -259,6 +261,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		return mapErr(err)
 	}
 	for _, notification := range notifications {
+		notification = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, api.OperationWorkflowReadinessNotification{}, notification, "")
 		payload, err := json.Marshal(notification)
 		if err != nil {
 			return err
@@ -296,10 +299,12 @@ func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tena
 	if err = json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
+	before := cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{out}}).Items[0]
 	out, err = applyReadinessCoordination(out, actor, req)
 	if err != nil {
 		return out, err
 	}
+	out = captureObligationReceipts(id, scope, before, out, actor)
 	payload, err := json.Marshal(out)
 	if err != nil {
 		return out, err
@@ -366,7 +371,7 @@ func (s *PgStore) PublishDueWorkflowReadinessReminders(ctx context.Context) (int
 	return published, nil
 }
 
-func syncReadinessOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, subscriptionID pgtype.UUID, source api.OperationWorkflowReadinessNotification) error {
+func syncReadinessOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, subscriptionID pgtype.UUID, scope string, source api.OperationWorkflowReadinessNotification) error {
 	ref := source.BusinessOutcomeWatch.Escalation
 	payload, err := q.LockReadinessNotification(ctx, tx, sqlc.LockReadinessNotificationParams{SubscriptionID: subscriptionID, Sequence: ref.Sequence})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -383,6 +388,7 @@ func syncReadinessOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Qu
 	if !ok {
 		return nil
 	}
+	updated = captureObligationReceipts(uuid.UUID(subscriptionID.Bytes).String(), scope, n, updated, "")
 	payload, err = json.Marshal(updated)
 	if err != nil {
 		return err

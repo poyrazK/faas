@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowNextActionDigest } from './OperationWorkflowNextActionDigest.js';
+import type { OperationWorkflowObligationEvent } from './OperationWorkflowObligationEvent.js';
 import type { OperationWorkflowPlaybookCompletionReview } from './OperationWorkflowPlaybookCompletionReview.js';
 import type { OperationWorkflowPlaybookCompletionReviewEvent } from './OperationWorkflowPlaybookCompletionReviewEvent.js';
 import type { OperationWorkflowPlaybookDependencyRecovery } from './OperationWorkflowPlaybookDependencyRecovery.js';
@@ -30,6 +31,14 @@ import type { OperationWorkflowReviewResponseHandoffReassignmentEvent } from './
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  /**
+   * Server-written obligation-linked lifecycle receipts saved atomically with this source mutation; bounded history is not a complete audit log.
+   */
+  obligation_receipts?: Array<OperationWorkflowObligationEvent>;
+  /**
+   * Older obligation receipts have been pruned from this source record.
+   */
+  obligation_receipts_truncated?: boolean;
   /**
    * Immutable retained snapshots of newly qualifying or changed team actions, with links to current controls. Source records are read independently of publication.
    */

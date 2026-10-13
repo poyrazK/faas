@@ -80,9 +80,34 @@ func workflowObligationReceipts(n api.OperationWorkflowReadinessNotification, ac
 		}
 	}
 	add("observed_assignment", observedAt, "", "Saved assignment to "+action.Owner+" for this obligation.")
+	applyReceipts := func() {
+		for _, event := range n.ObligationReceipts {
+			if event.ObligationID != action.Obligation.ID {
+				continue
+			}
+			if !slices.Contains(events, event) {
+				events = append(events, event)
+			}
+			switch event.Kind {
+			case "assigned":
+				terminal = ""
+			case "completed":
+				terminal = "completed"
+			case "canceled":
+				terminal = "canceled"
+			case "superseded":
+				terminal = "replaced"
+			}
+		}
+	}
 	response := n.ReviewResponse
 	if response == nil {
-		return events, ""
+		applyReceipts()
+		slices.SortStableFunc(events, func(a, b api.OperationWorkflowObligationEvent) int { return a.At.Compare(b.At) })
+		if len(events) > 40 {
+			events = events[len(events)-40:]
+		}
+		return events, terminal
 	}
 	completion := func(c *api.OperationWorkflowReviewResponseEscalationCompletion) {
 		if action.Kind == "scheduled_evidence_check" && c != nil && c.At.Equal(epoch) && c.ScheduledReviewAt != nil && c.Review != nil && c.Review.At.Equal(*c.ScheduledReviewAt) {
@@ -140,6 +165,7 @@ func workflowObligationReceipts(n api.OperationWorkflowReadinessNotification, ac
 			}
 		}
 	}
+	applyReceipts()
 	slices.SortStableFunc(events, func(a, b api.OperationWorkflowObligationEvent) int { return a.At.Compare(b.At) })
 	if len(events) > 40 {
 		events = events[len(events)-40:]

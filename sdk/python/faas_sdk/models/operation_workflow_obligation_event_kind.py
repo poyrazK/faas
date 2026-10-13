@@ -1,17 +1,29 @@
 from typing import Literal
 
 OperationWorkflowObligationEventKind = Literal[
-    "accepted", "canceled", "completed", "declined", "observed_assignment", "reassigned", "rescheduled"
-]
-
-OPERATION_WORKFLOW_OBLIGATION_EVENT_KIND_VALUES: set[OperationWorkflowObligationEventKind] = {
     "accepted",
+    "assigned",
     "canceled",
+    "changed",
     "completed",
     "declined",
     "observed_assignment",
     "reassigned",
     "rescheduled",
+    "superseded",
+]
+
+OPERATION_WORKFLOW_OBLIGATION_EVENT_KIND_VALUES: set[OperationWorkflowObligationEventKind] = {
+    "accepted",
+    "assigned",
+    "canceled",
+    "changed",
+    "completed",
+    "declined",
+    "observed_assignment",
+    "reassigned",
+    "rescheduled",
+    "superseded",
 }
 
 
