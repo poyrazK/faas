@@ -37080,6 +37080,123 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  # ADR-1140 — pull leases for worker and job consumers.
+  /v1/apps/{slug}/queues/{queue}/leases:
+    post:
+      tags: [queues]
+      operationId: leaseQueueMessages
+      summary: Lease ready messages from a pull-bound queue.
+      description: |
+        Leases up to `max_messages` ready messages from a queue with an
+        enabled pull binding on this app. Each message stays hidden for the
+        visibility timeout and is redelivered with a new attempt if it is not
+        acked, nacked or extended in time. Unexpired leases never exceed the
+        binding's `max_concurrency`. An empty list means nothing is ready;
+        poll again with back-off. Authenticate with an API key carrying
+        `queues:consume`, `deploy:write` or `admin`, or with a workload
+        identity token for audience `gregale:queues` from a live instance of
+        this app.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseRequest' }
+      responses:
+        '200':
+          description: Leased messages, possibly none.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/{queue}/leases:ack:
+    post:
+      tags: [queues]
+      operationId: ackQueueLeases
+      summary: Complete leased messages.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
+      responses:
+        '200':
+          description: Per-receipt outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/{queue}/leases:nack:
+    post:
+      tags: [queues]
+      operationId: nackQueueLeases
+      summary: Return leased messages for a retry.
+      description: |
+        Applies the message's retry policy and the plan's attempt budget:
+        the message returns to the queue after the back-off (or after
+        `delay_seconds` if later), or moves to the dead-letter queue once the
+        budget is spent. `error` is recorded as the attempt's last error.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
+      responses:
+        '200':
+          description: Per-receipt outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/queues/{queue}/leases:extend:
+    post:
+      tags: [queues]
+      operationId: extendQueueLeases
+      summary: Extend the visibility timeout of leased messages.
+      x-faas-queue-leases: true
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/QueueLeaseQueue'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueLeaseReceiptsRequest' }
+      responses:
+        '200':
+          description: Per-receipt outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueLeaseReceiptsResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanFeatureGated' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   # Issue #394 — queue introspection (read-only).
   /v1/apps/{slug}/queues/state:
     get:
@@ -47870,6 +47987,12 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
       description: App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+    QueueLeaseQueue:
+      name: queue
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+      description: Queue name of an enabled pull binding on this app.
     Id32:
       name: id
       in: path
@@ -61458,7 +61581,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection automation; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -78793,7 +78916,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection automation; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -78874,7 +78997,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection automation. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
 
@@ -78901,7 +79024,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection automation; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
 
@@ -82445,6 +82568,65 @@ components:
         result: { type: object, additionalProperties: true }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
+
+    QueueLeaseRequest:
+      description: "ADR-1140 pull lease. Zero values lease one message for the default visibility timeout (30s)."
+      type: object
+      properties:
+        max_messages: { type: integer, minimum: 0, maximum: 10 }
+        visibility_timeout_seconds: { type: integer, minimum: 0, description: "At most the plan's async invocation deadline." }
+
+    QueueLeaseMessage:
+      type: object
+      required: [id, receipt, payload, attempt, enqueued_at, lease_expires_at]
+      properties:
+        id: { type: string }
+        receipt: { type: string, description: "Opaque; acts only while this lease is current." }
+        payload: { type: object, additionalProperties: true }
+        headers: { type: object, additionalProperties: { type: string } }
+        attempt: { type: integer, minimum: 1 }
+        enqueued_at: { type: string, format: date-time }
+        lease_expires_at: { type: string, format: date-time }
+
+    QueueLeaseResponse:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/QueueLeaseMessage' }
+
+    QueueLeaseReceiptsRequest:
+      description: "Receipts for ack, nack or extend. delay_seconds and error apply to nack; visibility_timeout_seconds to extend."
+      type: object
+      required: [receipts]
+      properties:
+        receipts:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string }
+        delay_seconds: { type: integer, minimum: 0, maximum: 86400 }
+        error: { type: string, maxLength: 1024 }
+        visibility_timeout_seconds: { type: integer, minimum: 0 }
+
+    QueueLeaseReceiptFailure:
+      type: object
+      required: [receipt, reason]
+      properties:
+        receipt: { type: string }
+        reason: { type: string, enum: [lease_expired, invalid_receipt] }
+
+    QueueLeaseReceiptsResponse:
+      type: object
+      required: [succeeded, failed]
+      properties:
+        succeeded:
+          type: array
+          items: { type: string }
+        failed:
+          type: array
+          items: { $ref: '#/components/schemas/QueueLeaseReceiptFailure' }
 
     AccountTraceLookupResponse:
       type: object
