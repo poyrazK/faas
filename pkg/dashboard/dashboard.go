@@ -977,6 +977,31 @@ type AppEdgeRulesData struct {
 	Protection api.EdgeProtectionResponse
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
+	// Recipes is the protection-recipes section (ADR-986).
+	Recipes []EdgeRuleRecipeView
+}
+
+// EdgeRuleRecipeView is one protection recipe on the edge-rules page.
+// Added is set when a rule created from the recipe already exists; Blocked
+// explains why the account's plan cannot use the recipe's rule kind.
+type EdgeRuleRecipeView struct {
+	ID      string
+	Title   string
+	Summary string
+	LogNote string
+	Params  []EdgeRuleRecipeParamView
+	Added   bool
+	Blocked string
+}
+
+// EdgeRuleRecipeParamView is one input of a protection recipe form.
+type EdgeRuleRecipeParamView struct {
+	Name        string
+	Label       string
+	Help        string
+	Default     string
+	Placeholder string
+	Required    bool
 }
 
 // EdgeRuleEventsPageData is the filterable security-events table (ADR-964).

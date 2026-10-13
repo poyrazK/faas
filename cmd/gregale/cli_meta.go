@@ -3067,6 +3067,16 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "version", Short: "show the rules recorded in this version", Value: "N"},
 			}},
+			{Name: "recipes", Short: "List protection recipes: ready-made rules that start in log mode"},
+			{Name: "recipe", Short: "Add a protection recipe's rule to an app, in log mode unless --enforce", Positionals: []string{"<recipe>"}, Examples: []string{
+				"gregale edge-rules recipe block-unverified-bots --app my-api",
+				"gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+				{Name: "host", Short: "hostname the rule matches (defaults to the app canonical URL)", Value: "HOST"},
+				{Name: "set", Short: "recipe parameter name=value (repeat)", Value: "NAME=VALUE"},
+				{Name: "enforce", Short: "enforce immediately instead of starting in log mode", Bool: true},
+			}},
 			{Name: "stats", Short: "Per-rule match counts (matched for enforced rules, logged for log-mode rules)", Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
