@@ -22,6 +22,10 @@ type Remote interface {
 	Put(ctx context.Context, key string, r io.ReadSeeker, size int64) error
 	// Get writes the object to w; a missing object is ErrNotFound.
 	Get(ctx context.Context, key string, w io.Writer) error
+	// Delete removes an object; a missing one is success.
+	Delete(ctx context.Context, key string) error
+	// List returns every key under prefix.
+	List(ctx context.Context, prefix string) ([]string, error)
 }
 
 // WALKey is the remote key of a WAL file.
@@ -94,10 +98,36 @@ func (r *S3Remote) Get(ctx context.Context, key string, w io.Writer) error {
 	return err
 }
 
+func (r *S3Remote) Delete(ctx context.Context, key string) error {
+	_, err := r.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(r.bucket), Key: aws.String(key)})
+	var missing *types.NoSuchKey
+	if err != nil && !errors.As(err, &missing) {
+		return fmt.Errorf("dbarchive: delete %s: %w", key, err)
+	}
+	return nil
+}
+
+func (r *S3Remote) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	pages := s3.NewListObjectsV2Paginator(r.client, &s3.ListObjectsV2Input{Bucket: aws.String(r.bucket), Prefix: aws.String(prefix)})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("dbarchive: list %s: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			keys = append(keys, aws.ToString(obj.Key))
+		}
+	}
+	return keys, nil
+}
+
 // TieredStore keeps the archive on the node and off it: writes land
 // locally (durable before PostgreSQL is told), the Uploader ships them,
-// and reads fall back to the remote, so a database restores on any node
-// and after the local copy is pruned.
+// and reads of WAL and base backups fall back to the remote, so a database
+// restores after its node is lost. Remote reads are never kept: the only
+// local archives are those of databases this node runs, which is what
+// pruning and uploads walk.
 type TieredStore struct {
 	*LocalStore
 	Remote Remote
@@ -109,34 +139,31 @@ func (s *TieredStore) OpenWAL(ctx context.Context, databaseID, name string) (io.
 	if !errors.Is(err, ErrNotFound) || s.Remote == nil {
 		return rc, size, err
 	}
-	path, err := s.walPath(databaseID, name)
+	return s.fetch(ctx, WALKey(s.Prefix, databaseID, name))
+}
+
+// fetch downloads an object into an already unlinked temporary file, so
+// nothing of it outlives the reader. WAL files are at most a segment;
+// the protocol needs their size before the bytes.
+func (s *TieredStore) fetch(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	tmp, err := os.CreateTemp(s.fetchDir(), "fetch-*")
 	if err != nil {
 		return nil, 0, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	_ = os.Remove(tmp.Name())
+	if err := s.Remote.Get(ctx, key, tmp); err != nil {
+		_ = tmp.Close()
 		return nil, 0, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+name+".*.fetch")
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	err = s.Remote.Get(ctx, WALKey(s.Prefix, databaseID, name), tmp)
+	size, err := tmp.Seek(0, io.SeekCurrent)
 	if err == nil {
-		err = tmp.Sync()
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
+		_, err = tmp.Seek(0, io.SeekStart)
 	}
 	if err != nil {
+		_ = tmp.Close()
 		return nil, 0, err
 	}
-	// A fetched file is already uploaded: mark it so it is not re-sent.
-	if err := os.Link(tmp.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
-		return nil, 0, err
-	}
-	_ = markUploaded(s.dir, databaseID, name)
-	return s.LocalStore.OpenWAL(ctx, databaseID, name)
+	return tmp, size, nil
 }
 
 func uploadedMarker(dir, databaseID, name string) string {
@@ -203,6 +230,8 @@ func (u *Uploader) files(databaseID string) []archiveFile {
 // RunOnce uploads every pending archive file and returns how many it
 // shipped. A failed upload stops the pass; the next pass retries it.
 func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
+	u.Store.maint.Lock()
+	defer u.Store.maint.Unlock()
 	now := time.Now
 	if u.now != nil {
 		now = u.now

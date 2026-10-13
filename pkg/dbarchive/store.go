@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Store holds archived WAL per database.
@@ -26,15 +27,31 @@ type Store interface {
 // <dir>/<database-id>/wal/<name>.
 type LocalStore struct {
 	dir string
+	// maint serializes passes that walk the whole store: uploads, pruning
+	// and drops, so a drop cannot race an upload of the same database.
+	maint     sync.Mutex
+	windowsMu sync.Mutex
+	windows   map[string]int64
 }
 
-// NewLocalStore creates dir if needed.
+// NewLocalStore creates dir if needed and clears leftovers of remote reads.
 func NewLocalStore(dir string) (*LocalStore, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("dbarchive: store dir: %w", err)
 	}
-	return &LocalStore{dir: dir}, nil
+	s := &LocalStore{dir: dir}
+	if err := os.RemoveAll(s.fetchDir()); err != nil {
+		return nil, fmt.Errorf("dbarchive: clear fetch dir: %w", err)
+	}
+	if err := os.MkdirAll(s.fetchDir(), 0o700); err != nil {
+		return nil, fmt.Errorf("dbarchive: fetch dir: %w", err)
+	}
+	return s, nil
 }
+
+// fetchDir holds remote reads in flight; it is not a database id, so
+// uploads and pruning never walk it.
+func (s *LocalStore) fetchDir() string { return filepath.Join(s.dir, ".fetch") }
 
 func (s *LocalStore) walPath(databaseID, name string) (string, error) {
 	if !ValidDatabaseID(databaseID) || !ValidWALName(name) {

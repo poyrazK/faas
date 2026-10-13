@@ -41,7 +41,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 	key, shared := secret("key", ""), secret("shared", "shared")
 	cfg, err := LoadConfig(writeConfig(t, ""))
-	if err != nil || cfg.Remote != nil || cfg.OpsAddr != DefaultOpsAddr || cfg.StoreDir != "/srv/db/archive" {
+	if err != nil || cfg.Remote != nil || cfg.OpsAddr != DefaultOpsAddr || cfg.StoreDir != "/srv/db/archive" || cfg.MinRetention != 24*time.Hour || cfg.PruneInterval != time.Hour {
 		t.Fatalf("defaults = %+v, %v", cfg, err)
 	}
 	remote := `[remote]
@@ -63,6 +63,8 @@ secret_access_key_path = "` + key + `"
 	}
 	for name, body := range map[string]string{
 		"relative store": `store_dir = "archive"`,
+		"tiny retention": `min_retention = "10m"`,
+		"fast pruning":   `prune_interval = "1s"`,
 		"no prefix":      strings.Replace(remote, `prefix = "native"`, `prefix = "/"`, 1),
 		"no bucket":      strings.Replace(remote, `bucket = "b"`, "", 1),
 		"fast uploads":   remote + "upload_interval = \"10ms\"\n",
@@ -120,6 +122,13 @@ ops_addr = "`+ops+`"
 	}
 	if body, err := os.ReadFile(filepath.Join(store, testDB, "wal", seg)); err != nil || string(body) != "wal" {
 		t.Fatalf("stored = %q, %v", body, err)
+	}
+	// Deleting the database drops its archive through vmmd's admin header.
+	if err := dbarchive.DropArchive(context.Background(), sock, testDB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(store, testDB)); !os.IsNotExist(err) {
+		t.Fatalf("archive after drop: %v", err)
 	}
 	resp, err := http.Get("http://" + ops + "/readyz")
 	if err != nil || resp.StatusCode != http.StatusOK {

@@ -47,6 +47,8 @@ type metrics struct {
 	pendingFiles  prometheus.Gauge
 	pendingOldest prometheus.Gauge
 	uploadErrors  prometheus.Counter
+	pruned        *prometheus.CounterVec
+	pruneErrors   prometheus.Counter
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
@@ -57,8 +59,12 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			Help: "Age of the oldest archive file not yet uploaded: the off-node recovery point."}),
 		uploadErrors: prometheus.NewCounter(prometheus.CounterOpts{Name: "dbarchive_upload_errors_total",
 			Help: "Upload passes that stopped on an error."}),
+		pruned: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "dbarchive_pruned_total",
+			Help: "Archive files removed past their retention, by kind (backup, wal)."}, []string{"kind"}),
+		pruneErrors: prometheus.NewCounter(prometheus.CounterOpts{Name: "dbarchive_prune_errors_total",
+			Help: "Prune passes that failed for at least one database."}),
 	}
-	reg.MustRegister(m.pendingFiles, m.pendingOldest, m.uploadErrors)
+	reg.MustRegister(m.pendingFiles, m.pendingOldest, m.uploadErrors, m.pruned, m.pruneErrors)
 	return m
 }
 
@@ -97,6 +103,8 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 		log.Warn("dbbackupd: no remote configured; the archive lives only on this node")
 	}
 
+	go prune(ctx, store, cfg, m, log)
+
 	ln, err := listenUnix(cfg.SocketPath)
 	if err != nil {
 		return err
@@ -113,7 +121,29 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	stopWatchdog := daemonunit.WatchdogFromEnv(ctx, func() bool { return true })
 	defer stopWatchdog()
 	log.Info("dbbackupd: serving", "socket", cfg.SocketPath, "store_dir", cfg.StoreDir, "remote", cfg.Remote != nil)
-	return (&dbarchive.Server{Store: store, Backups: store, Log: log}).Serve(ctx, ln)
+	return (&dbarchive.Server{Store: store, Backups: store, Retention: store, Log: log}).Serve(ctx, ln)
+}
+
+// prune trims every archive to its retention now and every interval.
+func prune(ctx context.Context, store *dbarchive.TieredStore, cfg *Config, m *metrics, log *slog.Logger) {
+	ticker := time.NewTicker(cfg.PruneInterval)
+	defer ticker.Stop()
+	for {
+		res, err := store.PruneAll(ctx, time.Now(), cfg.MinRetention)
+		m.pruned.WithLabelValues("backup").Add(float64(res.Backups))
+		m.pruned.WithLabelValues("wal").Add(float64(res.WAL))
+		if err != nil && ctx.Err() == nil {
+			m.pruneErrors.Inc()
+			log.Warn("dbbackupd: prune pass failed", "err", err)
+		} else if res.Backups+res.WAL > 0 {
+			log.Info("dbbackupd: pruned", "backups", res.Backups, "wal", res.WAL)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // listenUnix replaces a stale socket and keeps it owner-only: vmmd, the

@@ -10620,8 +10620,11 @@ func (*CreateDatabaseVolumeResponse) Descriptor() ([]byte, []int) {
 }
 
 type DeleteDatabaseVolumeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DatabaseId    string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseId string                 `protobuf:"bytes,1,opt,name=database_id,json=databaseId,proto3" json:"database_id,omitempty"`
+	// archive also deletes the database's archived WAL and base backups
+	// through dbbackupd: the database itself is being deleted.
+	Archive       bool `protobuf:"varint,2,opt,name=archive,proto3" json:"archive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -10661,6 +10664,13 @@ func (x *DeleteDatabaseVolumeRequest) GetDatabaseId() string {
 		return x.DatabaseId
 	}
 	return ""
+}
+
+func (x *DeleteDatabaseVolumeRequest) GetArchive() bool {
+	if x != nil {
+		return x.Archive
+	}
+	return false
 }
 
 type DeleteDatabaseVolumeResponse struct {
@@ -10712,8 +10722,10 @@ type StartDatabaseRequest struct {
 	// restore_source as of restore_target. Both or neither.
 	RestoreSource string                 `protobuf:"bytes,7,opt,name=restore_source,json=restoreSource,proto3" json:"restore_source,omitempty"`
 	RestoreTarget *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=restore_target,json=restoreTarget,proto3" json:"restore_target,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// The database's restore window; dbbackupd keeps its archive that long.
+	RestoreWindowSeconds int64 `protobuf:"varint,9,opt,name=restore_window_seconds,json=restoreWindowSeconds,proto3" json:"restore_window_seconds,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *StartDatabaseRequest) Reset() {
@@ -10800,6 +10812,13 @@ func (x *StartDatabaseRequest) GetRestoreTarget() *timestamppb.Timestamp {
 		return x.RestoreTarget
 	}
 	return nil
+}
+
+func (x *StartDatabaseRequest) GetRestoreWindowSeconds() int64 {
+	if x != nil {
+		return x.RestoreWindowSeconds
+	}
+	return 0
 }
 
 type StartDatabaseResponse struct {
@@ -11954,11 +11973,12 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"databaseId\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x02 \x01(\x03R\tsizeBytes\"\x1e\n" +
-	"\x1cCreateDatabaseVolumeResponse\">\n" +
+	"\x1cCreateDatabaseVolumeResponse\"X\n" +
 	"\x1bDeleteDatabaseVolumeRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
-	"databaseId\"\x1e\n" +
-	"\x1cDeleteDatabaseVolumeResponse\"\xfa\x02\n" +
+	"databaseId\x12\x18\n" +
+	"\aarchive\x18\x02 \x01(\bR\aarchive\"\x1e\n" +
+	"\x1cDeleteDatabaseVolumeResponse\"\xb0\x03\n" +
 	"\x14StartDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12%\n" +
@@ -11970,7 +11990,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x1evolume_bandwidth_bytes_per_sec\x18\x05 \x01(\x03R\x1avolumeBandwidthBytesPerSec\x12+\n" +
 	"\x12volume_ops_per_sec\x18\x06 \x01(\x03R\x0fvolumeOpsPerSec\x12%\n" +
 	"\x0erestore_source\x18\a \x01(\tR\rrestoreSource\x12A\n" +
-	"\x0erestore_target\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\rrestoreTarget\"-\n" +
+	"\x0erestore_target\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\rrestoreTarget\x124\n" +
+	"\x16restore_window_seconds\x18\t \x01(\x03R\x14restoreWindowSeconds\"-\n" +
 	"\x15StartDatabaseResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\"6\n" +
 	"\x13StopDatabaseRequest\x12\x1f\n" +

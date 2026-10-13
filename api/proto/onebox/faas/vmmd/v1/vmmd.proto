@@ -2587,6 +2587,9 @@ message CreateDatabaseVolumeResponse {}
 
 message DeleteDatabaseVolumeRequest {
   string database_id = 1;
+  // archive also deletes the database's archived WAL and base backups
+  // through dbbackupd: the database itself is being deleted.
+  bool archive = 2;
 }
 
 message DeleteDatabaseVolumeResponse {}
@@ -2603,6 +2606,8 @@ message StartDatabaseRequest {
   // restore_source as of restore_target. Both or neither.
   string restore_source = 7;
   google.protobuf.Timestamp restore_target = 8;
+  // The database's restore window; dbbackupd keeps its archive that long.
+  int64 restore_window_seconds = 9;
 }
 
 message StartDatabaseResponse {

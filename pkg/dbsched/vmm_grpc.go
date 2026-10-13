@@ -93,7 +93,8 @@ func (g *GRPCVMM) DeleteVolume(ctx context.Context, node Node, id string) error 
 	if err != nil {
 		return err
 	}
-	_, err = c.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: id})
+	// Deleting a database deletes its archive with the volume.
+	_, err = c.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: id, Archive: true})
 	return err
 }
 
@@ -105,6 +106,7 @@ func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 	}
 	req := &vmmdpb.StartDatabaseRequest{
 		DatabaseId: vm.DatabaseID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemSizeMib: int32(vm.MemMiB),
+		RestoreWindowSeconds: vm.RestoreWindowSeconds,
 	}
 	// Only the first boot of a restored database recovers; once
 	// bootstrapped it boots from its own volume.

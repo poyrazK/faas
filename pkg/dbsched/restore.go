@@ -116,6 +116,10 @@ func (s *Scheduler) restorable(source VM, req RestoreRequest) error {
 		return fmt.Errorf("%w: point in time precedes the source", ErrInvalid)
 	case req.Target.After(s.now()):
 		return fmt.Errorf("%w: point in time is in the future", ErrInvalid)
+	case source.RestoreWindowSeconds > 0 && req.Target.Before(s.now().Add(-time.Duration(source.RestoreWindowSeconds)*time.Second)):
+		// dbbackupd keeps the archive at least this long; older points may
+		// already be pruned.
+		return fmt.Errorf("%w: point in time is outside the source's restore window", ErrInvalid)
 	}
 	return nil
 }

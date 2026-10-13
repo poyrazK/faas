@@ -28,6 +28,9 @@ const (
 	// OpGetWAL fetches one archived WAL file (restore_command). It reads the
 	// restore source's archive when the relay names one.
 	OpGetWAL = "get_wal"
+	// OpDrop deletes the database's whole archive. Only vmmd's own admin
+	// streams may send it, never a relayed guest stream.
+	OpDrop = "drop"
 )
 
 // Stable error codes in Response.Error.
@@ -65,18 +68,27 @@ var databaseID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 // ValidDatabaseID reports whether id is a database id.
 func ValidDatabaseID(id string) bool { return databaseID.MatchString(id) }
 
-// Header is written by vmmd's relay before the guest's stream.
+// Header is written by vmmd before a stream: its relay writes it ahead of
+// every guest stream, so the guest controls none of it.
 type Header struct {
 	DatabaseID string `json:"database_id"`
 	// RestoreSource is the database whose archive OpGetWAL reads while this
 	// one recovers from it; empty means its own archive.
 	RestoreSource string `json:"restore_source,omitempty"`
+	// RestoreWindowSeconds is the database's restore window, which sets
+	// how long its archive is kept (see retention.go).
+	RestoreWindowSeconds int64 `json:"restore_window_seconds,omitempty"`
+	// Admin marks vmmd's own stream for OpDrop. The relay never sets it.
+	Admin bool `json:"admin,omitempty"`
 }
 
 // Validate rejects a header naming anything but database ids.
 func (h Header) Validate() error {
-	if !ValidDatabaseID(h.DatabaseID) || (h.RestoreSource != "" && !ValidDatabaseID(h.RestoreSource)) {
+	if !ValidDatabaseID(h.DatabaseID) || (h.RestoreSource != "" && !ValidDatabaseID(h.RestoreSource)) || h.RestoreWindowSeconds < 0 {
 		return errors.New("dbarchive: invalid header")
+	}
+	if h.Admin && (h.RestoreSource != "" || h.RestoreWindowSeconds != 0) {
+		return errors.New("dbarchive: invalid admin header")
 	}
 	return nil
 }

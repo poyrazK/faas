@@ -96,6 +96,9 @@ type BootRequest struct {
 	// RestoreTarget boots the (empty) volume as a point-in-time restore of
 	// RestoreSource to that instant.
 	RestoreTarget time.Time
+	// RestoreWindowSeconds reaches dbbackupd in the relay header and sets
+	// how long the database's archive is kept.
+	RestoreWindowSeconds int64
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.

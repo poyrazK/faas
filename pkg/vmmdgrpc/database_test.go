@@ -31,11 +31,13 @@ import (
 const testDatabaseID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
 type fakeDatabaseRuntime struct {
+	calls     []string
 	created   int64
 	started   dbvm.BootRequest
 	controls  []dbguest.Request
 	stopped   string
 	err       error
+	dropErr   error
 	controlRs dbguest.Response
 }
 
@@ -43,7 +45,14 @@ func (f *fakeDatabaseRuntime) CreateVolume(_ context.Context, _ string, size int
 	f.created = size
 	return f.err
 }
-func (f *fakeDatabaseRuntime) DeleteVolume(context.Context, string) error { return f.err }
+func (f *fakeDatabaseRuntime) DeleteVolume(context.Context, string) error {
+	f.calls = append(f.calls, "delete_volume")
+	return f.err
+}
+func (f *fakeDatabaseRuntime) DropArchive(context.Context, string) error {
+	f.calls = append(f.calls, "drop_archive")
+	return f.dropErr
+}
 func (f *fakeDatabaseRuntime) Start(_ context.Context, req dbvm.BootRequest) error {
 	f.started = req
 	return f.err
@@ -132,13 +141,40 @@ func TestStartDatabaseValidatesShapeAndMapsRateLimits(t *testing.T) {
 	}
 }
 
+// Deleting a database drops its archive first, so an unreachable
+// dbbackupd leaves the volume for schedd's retry to find.
+func TestDeleteDatabaseVolumeDropsTheArchiveFirst(t *testing.T) {
+	rt := &fakeDatabaseRuntime{}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	if _, err := s.DeleteDatabaseVolume(unixCaller(), &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: testDatabaseID}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rt.calls, ",") != "delete_volume" {
+		t.Fatalf("volume-only delete = %v", rt.calls)
+	}
+	rt.calls = nil
+	if _, err := s.DeleteDatabaseVolume(unixCaller(), &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: testDatabaseID, Archive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rt.calls, ",") != "drop_archive,delete_volume" {
+		t.Fatalf("database delete = %v", rt.calls)
+	}
+	rt.calls, rt.dropErr = nil, errors.New("dial unix: connection refused")
+	if _, err := s.DeleteDatabaseVolume(unixCaller(), &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: testDatabaseID, Archive: true}); status.Code(err) != codes.Internal {
+		t.Fatalf("drop failure = %v", err)
+	}
+	if strings.Join(rt.calls, ",") != "drop_archive" {
+		t.Fatalf("volume deleted although the archive was not: %v", rt.calls)
+	}
+}
+
 func TestStartDatabaseRelaysARestore(t *testing.T) {
 	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateStarting}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	target := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
 	_, err := s.StartDatabase(unixCaller(), &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384,
-		RestoreSource: "7c9e6679-7425-40de-944b-e07fc1f90ae7", RestoreTarget: timestamppb.New(target)})
-	if err != nil || rt.started.RestoreSource != "7c9e6679-7425-40de-944b-e07fc1f90ae7" || !rt.started.RestoreTarget.Equal(target) {
+		RestoreSource: "7c9e6679-7425-40de-944b-e07fc1f90ae7", RestoreTarget: timestamppb.New(target), RestoreWindowSeconds: 3600})
+	if err != nil || rt.started.RestoreSource != "7c9e6679-7425-40de-944b-e07fc1f90ae7" || !rt.started.RestoreTarget.Equal(target) || rt.started.RestoreWindowSeconds != 3600 {
 		t.Fatalf("StartDatabase = %v; boot %+v", err, rt.started)
 	}
 }

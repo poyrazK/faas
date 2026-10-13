@@ -1,6 +1,7 @@
 package dbvm
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -29,7 +30,7 @@ func (r *Runtime) startArchiveRelay(vm *databaseVM, id string, req BootRequest) 
 	if r.cfg.ArchiveSocket == "" {
 		return nil
 	}
-	header := dbarchive.Header{DatabaseID: id, RestoreSource: req.RestoreSource}
+	header := dbarchive.Header{DatabaseID: id, RestoreSource: req.RestoreSource, RestoreWindowSeconds: req.RestoreWindowSeconds}
 	if err := header.Validate(); err != nil {
 		return err
 	}
@@ -54,6 +55,21 @@ func (r *Runtime) startArchiveRelay(vm *databaseVM, id string, req BootRequest) 
 			go r.relayArchive(conn, header)
 		}
 	}()
+	return nil
+}
+
+// DropArchive deletes a deleted database's archive through dbbackupd's
+// admin header; without archiving there is nothing to drop.
+func (r *Runtime) DropArchive(ctx context.Context, id string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return nil
+	}
+	if err := dbarchive.DropArchive(ctx, r.cfg.ArchiveSocket, id); err != nil {
+		return fmt.Errorf("dbvm: drop archive: %w", err)
+	}
 	return nil
 }
 

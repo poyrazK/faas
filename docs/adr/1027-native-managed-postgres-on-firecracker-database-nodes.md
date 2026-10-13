@@ -375,7 +375,7 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
   database node as its own user. It serves vmmd's relays on
   `/run/faas-dbbackupd/dbbackupd.sock`, fsyncs to `/srv/db/archive`, and
   uploads WAL and base backups (data before manifest) to an S3-compatible
-  bucket under a prefix. Reads fall back to the bucket for WAL.
+  bucket under a prefix.
   `dbarchive_pending_oldest_seconds` is the off-node recovery point.
   Enabling it renders `archive_socket` into vmmd.toml, which turns
   archiving on for every database VM booted afterwards.
@@ -383,8 +383,46 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
   1.8 s, source flush 0.3 s, restore to ready 3.7 s, stops 0.1–0.6 s. The
   restore holds exactly the commits before the target, takes writes, and
   boots normally afterwards.
-- Not yet: retention and pruning, base-backup reads from the bucket (so a
-  restore after node loss), and restore onto another node.
+- **Retention.** Each archive must restore to any instant in
+  `max(restore window, min_retention)` (dbbackupd's `min_retention`,
+  default 24 h). The window reaches dbbackupd in the relay header, which
+  vmmd fills from `StartDatabase`, so the guest cannot change it; dbbackupd
+  records it per database. Hourly, for each database:
+  - The anchor is the newest base backup whose stop time is at or before
+    the period's start. It and every newer backup stay, and so does all WAL
+    from its start segment on, compared by segment number across
+    timelines. Older backups, segments, partial segments and backup
+    history files go. Timeline history files stay.
+  - Removal deletes the bucket copy first, so a bucket outage leaves the
+    local file for the next pass.
+  - With no anchor yet (a database younger than its period, or history
+    files not archived), nothing goes.
+  - schedd refuses a restore to a point older than the source's window,
+    since it may be pruned. Without a window, older points are best effort.
+- **Deletion.** Deleting a database deletes its archive: schedd's delete
+  asks vmmd for the volume with `archive = true`, and vmmd first sends
+  dbbackupd an admin stream (`Header.Admin`, op `drop`) that removes every
+  object under the database's bucket prefix and the local directory, then
+  deletes the volume. The relay never sets `Admin`, so a guest cannot drop
+  an archive. If dbbackupd is unreachable the volume stays and schedd's
+  retried delete finishes both.
+- **Reads from the bucket.** A restore reads the source's archive locally
+  and falls back to the bucket for anything missing, so it works on a node
+  that never held the source:
+  - The catalog merges local manifests with the bucket's (a bucket manifest
+    counts only next to its data). Stop times come from history files read
+    the same way.
+  - WAL is fetched into an already unlinked temporary file (the protocol
+    needs its size first). A base backup streams from the bucket through the
+    decoder, never staged, since it can be as large as the volume.
+  - Nothing read from the bucket is kept. The only local archives are those
+    of databases the node runs, which is what uploads and pruning walk; a
+    node restoring someone else's database never prunes it.
+  - Metal (`TestMetalPointInTimeRestore`): after the source's local archive
+    is deleted, a runtime backed by an empty store restores it from the
+    bucket to the same rows.
+- Not yet: placing a restore on another node (schedd still pins it to the
+  source's), and pruning objects that exist only in the bucket.
 
 ### Driver
 

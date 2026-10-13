@@ -23,6 +23,11 @@ type Config struct {
 	StoreDir string `toml:"store_dir"`
 	// OpsAddr serves /healthz, /readyz and /metrics on loopback.
 	OpsAddr string `toml:"ops_addr"`
+	// MinRetention is how long every database's archive restores, whatever
+	// its restore window; a longer window keeps more (pkg/dbarchive).
+	MinRetention time.Duration `toml:"min_retention"`
+	// PruneInterval is how often archives are pruned to their retention.
+	PruneInterval time.Duration `toml:"prune_interval"`
 	// Remote ships the archive off the node; without it the archive lives
 	// only on this node's disk.
 	Remote *RemoteConfig `toml:"remote"`
@@ -46,7 +51,8 @@ const DefaultOpsAddr = "127.0.0.1:9110"
 
 // LoadConfig reads and validates the config file.
 func LoadConfig(path string) (*Config, error) {
-	cfg := &Config{SocketPath: "/run/faas-dbbackupd/dbbackupd.sock", StoreDir: "/srv/db/archive", OpsAddr: DefaultOpsAddr}
+	cfg := &Config{SocketPath: "/run/faas-dbbackupd/dbbackupd.sock", StoreDir: "/srv/db/archive", OpsAddr: DefaultOpsAddr,
+		MinRetention: 24 * time.Hour, PruneInterval: time.Hour}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return nil, fmt.Errorf("dbbackupd: read %s: %w", path, err)
 	}
@@ -59,6 +65,12 @@ func LoadConfig(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if !filepath.IsAbs(c.SocketPath) || !filepath.IsAbs(c.StoreDir) {
 		return errors.New("dbbackupd: socket_path and store_dir must be absolute")
+	}
+	if c.MinRetention < time.Hour || c.MinRetention > 400*24*time.Hour {
+		return errors.New("dbbackupd: min_retention must be between 1h and 400 days")
+	}
+	if c.PruneInterval < time.Minute || c.PruneInterval > 24*time.Hour {
+		return errors.New("dbbackupd: prune_interval must be between 1m and 24h")
 	}
 	r := c.Remote
 	if r == nil {

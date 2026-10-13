@@ -10,6 +10,11 @@ dbbackupd_enabled: false
 dbbackupd_store_dir: /srv/db/archive
 dbbackupd_socket_path: /run/faas-dbbackupd/dbbackupd.sock
 
+# Every archive restores to any point this far back; a database's restore
+# window keeps more. Pruned hourly, locally and in the bucket.
+dbbackupd_min_retention: "24h"
+dbbackupd_prune_interval: "1h"
+
 # Off-node copy. Leave dbbackupd_s3_bucket empty to keep the archive on the
 # node only (a node loss then loses every restore point).
 dbbackupd_s3_endpoint: ""

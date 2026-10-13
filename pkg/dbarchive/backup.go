@@ -277,7 +277,7 @@ func (s *LocalStore) ListBackups(databaseID string) ([]BackupManifest, error) {
 }
 
 // OpenBackup returns a backup's uncompressed tar.
-func (s *LocalStore) OpenBackup(databaseID, id string) (io.ReadCloser, error) {
+func (s *LocalStore) OpenBackup(_ context.Context, databaseID, id string) (io.ReadCloser, error) {
 	dir, err := s.baseDir(databaseID)
 	if err != nil || !ValidBackupID(id) {
 		return nil, fmt.Errorf("dbarchive: invalid backup reference")
@@ -343,6 +343,11 @@ func (s *LocalStore) SelectBackup(ctx context.Context, wal Store, databaseID str
 	if err != nil {
 		return BackupManifest{}, err
 	}
+	return selectBackup(ctx, wal, databaseID, target, backups)
+}
+
+// selectBackup picks from backups (oldest first).
+func selectBackup(ctx context.Context, wal Store, databaseID string, target time.Time, backups []BackupManifest) (BackupManifest, error) {
 	for i := len(backups) - 1; i >= 0; i-- {
 		stop, err := backupStopTime(ctx, wal, databaseID, backups[i])
 		if err == nil && !stop.After(target) {

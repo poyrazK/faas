@@ -42,11 +42,15 @@ func TestMetalPointInTimeRestore(t *testing.T) {
 	}
 	serveCtx, stopServe := context.WithCancel(context.Background())
 	t.Cleanup(stopServe)
-	go func() { _ = (&dbarchive.Server{Store: store, Backups: store}).Serve(serveCtx, ln) }()
+	tiered := &dbarchive.TieredStore{LocalStore: store}
+	go func() {
+		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered}).Serve(serveCtx, ln)
+	}()
+	leases := &fakeLeaser{}
 	rt, err := NewRuntime(RuntimeConfig{
 		JailBase: filepath.Join(env.workdir, "rjail"), VolumeRoot: filepath.Join(env.workdir, "rvolumes"),
 		KernelPath: env.kernel, Bases: map[int]string{17: env.base}, ParentCgroup: parent,
-		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: env.firecracker, Leases: &fakeLeaser{},
+		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: env.firecracker, Leases: leases,
 		ArchiveSocket: sock,
 	})
 	if err != nil {
@@ -100,6 +104,8 @@ func TestMetalPointInTimeRestore(t *testing.T) {
 	}
 	exec("CREATE TABLE marks (v text PRIMARY KEY)")
 	exec("INSERT INTO marks VALUES ('before-backup')")
+	// Ship a segment that predates the backup, for pruning to remove.
+	control(source, dbguest.Request{Op: dbguest.OpFlushWAL, After: time.Now()})
 	started := time.Now()
 	backup := control(source, dbguest.Request{Op: dbguest.OpBaseBackup}).Backup
 	backupTook := time.Since(started)
@@ -121,6 +127,13 @@ func TestMetalPointInTimeRestore(t *testing.T) {
 	}
 	if !hasHistoryFile(t, filepath.Join(storeDir, source, "wal")) {
 		t.Fatal("the backup's history file was not archived")
+	}
+	// Prune to a retention ending now (with slack for the guest clock):
+	// only the backup and the WAL from its start segment stay, and the
+	// restore below must still work.
+	pruned, err := tiered.Prune(ctx, source, time.Now().Add(30*time.Second))
+	if err != nil || pruned.WAL == 0 {
+		t.Fatalf("prune = %+v, %v; want WAL before the backup removed", pruned, err)
 	}
 
 	started = time.Now()
@@ -175,6 +188,80 @@ func TestMetalPointInTimeRestore(t *testing.T) {
 	}
 	_ = conn.Close(ctx)
 	stop(restored)
+	// Deleting a database drops its archive through the admin header.
+	if err := rt.DropArchive(ctx, restored); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, restored)); !os.IsNotExist(err) {
+		t.Fatalf("archive after drop: %v", err)
+	}
+	t.Logf("pruned %d WAL files before the restore", pruned.WAL)
+
+	// Node loss: the source's archive survives only in the bucket, and a
+	// node with an empty archive restores it from there.
+	bucket := &dbarchive.FileRemote{Dir: filepath.Join(env.workdir, "rbucket")}
+	_ = os.RemoveAll(bucket.Dir)
+	t.Cleanup(func() { _ = os.RemoveAll(bucket.Dir) })
+	if _, err := (&dbarchive.Uploader{Store: store, Remote: bucket, Prefix: "native"}).RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(storeDir, source)); err != nil {
+		t.Fatal(err)
+	}
+	nodeB := filepath.Join(env.workdir, "rnodeb")
+	_ = os.RemoveAll(nodeB)
+	t.Cleanup(func() { _ = os.RemoveAll(nodeB) })
+	storeB, err := dbarchive.NewLocalStore(filepath.Join(nodeB, "archive"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tieredB := &dbarchive.TieredStore{LocalStore: storeB, Remote: bucket, Prefix: "native"}
+	sockB := filepath.Join(nodeB, "b.sock")
+	lnB, err := net.Listen("unix", sockB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = (&dbarchive.Server{Store: tieredB, Backups: tieredB, Retention: tieredB}).Serve(serveCtx, lnB)
+	}()
+	rtB, err := NewRuntime(RuntimeConfig{
+		JailBase: filepath.Join(env.workdir, "bj"), VolumeRoot: filepath.Join(nodeB, "volumes"),
+		KernelPath: env.kernel, Bases: map[int]string{17: env.base}, ParentCgroup: parent,
+		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: env.firecracker, Leases: leases,
+		ArchiveSocket: sockB,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const fromBucket = "8c3d4e5f-6a7b-4c8d-ae9f-1a2b3c4d5e6f"
+	if err := rtB.CreateVolume(ctx, fromBucket, 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = rtB.Stop(context.Background(), fromBucket)
+		_ = rtB.DeleteVolume(context.Background(), fromBucket)
+	})
+	started = time.Now()
+	if err := rtB.Start(ctx, BootRequest{ID: fromBucket, Major: 17, VcpuCount: 1, MemSizeMiB: 384, RestoreSource: source, RestoreTarget: point}); err != nil {
+		t.Fatalf("start bucket restore: %v", err)
+	}
+	if resp, err := rtB.WaitState(ctx, fromBucket, dbguest.StateReady, dbguest.StateFailed); err != nil || resp.State != dbguest.StateReady {
+		t.Fatalf("bucket restore = %+v, %v", resp, err)
+	}
+	bucketTook := time.Since(started)
+	conn = connectRuntime(ctx, t, rtB, fromBucket, password)
+	var marks string
+	if err := conn.QueryRow(ctx, "SELECT string_agg(v, ',' ORDER BY v) FROM marks").Scan(&marks); err != nil || marks != "after-backup,before-backup" {
+		t.Fatalf("rows restored from the bucket = %q, %v", marks, err)
+	}
+	_ = conn.Close(ctx)
+	if err := rtB.Stop(ctx, fromBucket); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(nodeB, "archive", source)); !os.IsNotExist(err) {
+		t.Fatalf("node B kept the source's archive: %v", err)
+	}
+	t.Logf("restore from the bucket to ready %v", bucketTook.Round(time.Millisecond))
 	t.Logf("base backup %v, flush %v, restore to ready %v, stops %v", backupTook.Round(time.Millisecond), flushTook.Round(time.Millisecond), restoreTook.Round(time.Millisecond), stops)
 }
 

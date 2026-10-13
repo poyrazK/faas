@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -15,7 +16,14 @@ import (
 type BackupStore interface {
 	PutBackup(ctx context.Context, databaseID string, r io.Reader, now time.Time) (BackupManifest, error)
 	SelectBackup(ctx context.Context, wal Store, databaseID string, target time.Time) (BackupManifest, error)
-	OpenBackup(databaseID, id string) (io.ReadCloser, error)
+	OpenBackup(ctx context.Context, databaseID, id string) (io.ReadCloser, error)
+}
+
+// RetentionStore records restore windows and drops deleted databases'
+// archives.
+type RetentionStore interface {
+	NoteWindow(databaseID string, seconds int64) error
+	Drop(ctx context.Context, databaseID string) error
 }
 
 // Server answers relayed guest streams on dbbackupd's socket.
@@ -23,8 +31,10 @@ type Server struct {
 	Store Store
 	// Backups holds base backups; nil refuses backup ops.
 	Backups BackupStore
-	Log     *slog.Logger
-	now     func() time.Time
+	// Retention records windows and serves OpDrop; nil refuses OpDrop.
+	Retention RetentionStore
+	Log       *slog.Logger
+	now       func() time.Time
 }
 
 // Serve accepts streams until ctx ends or ln fails.
@@ -59,6 +69,15 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	if err := ReadLine(br, &header); err != nil || header.Validate() != nil {
 		s.Log.Warn("dbarchive: refused stream without a valid header", "err", err)
 		return
+	}
+	if header.Admin {
+		s.handleAdmin(ctx, conn, br, header)
+		return
+	}
+	if s.Retention != nil && header.RestoreWindowSeconds > 0 {
+		if err := s.Retention.NoteWindow(header.DatabaseID, header.RestoreWindowSeconds); err != nil {
+			s.Log.Warn("dbarchive: record restore window", "database_id", header.DatabaseID, "err", err)
+		}
 	}
 	for {
 		var req Request
@@ -117,6 +136,51 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
+// handleAdmin serves vmmd's own stream: one OpDrop. Guest streams never
+// reach it: the relay's header has no Admin.
+func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header) {
+	var req Request
+	if err := ReadLine(br, &req); err != nil {
+		return
+	}
+	if req.Op != OpDrop || s.Retention == nil {
+		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return
+	}
+	err := s.Retention.Drop(ctx, header.DatabaseID)
+	if err != nil {
+		s.Log.Warn("dbarchive: drop failed", "database_id", header.DatabaseID, "err", err)
+	} else {
+		s.Log.Info("dbarchive: archive dropped", "database_id", header.DatabaseID)
+	}
+	_ = WriteLine(conn, Response{Error: codeFor(err)})
+}
+
+// DropArchive asks dbbackupd at socketPath to delete a deleted database's
+// archive. vmmd calls it; the admin header is what lets it through.
+func DropArchive(ctx context.Context, socketPath, databaseID string) error {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("dbarchive: dial %s: %w", socketPath, err)
+	}
+	defer func() { _ = conn.Close() }()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if err := WriteLine(conn, Header{DatabaseID: databaseID, Admin: true}); err != nil {
+		return err
+	}
+	if err := WriteLine(conn, Request{Op: OpDrop}); err != nil {
+		return err
+	}
+	var resp Response
+	if err := ReadLine(bufio.NewReader(conn), &resp); err != nil {
+		return err
+	}
+	return errorFor(resp.Error)
+}
+
 // handleBackup serves one backup op and reports whether the stream is still
 // usable.
 func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header, req Request) bool {
@@ -152,7 +216,7 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 	if err != nil {
 		return WriteLine(conn, Response{Error: codeFor(err)}) == nil
 	}
-	rc, err := s.Backups.OpenBackup(source, m.ID)
+	rc, err := s.Backups.OpenBackup(ctx, source, m.ID)
 	if err != nil {
 		return WriteLine(conn, Response{Error: codeFor(err)}) == nil
 	}

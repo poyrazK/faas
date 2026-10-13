@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -44,6 +45,35 @@ func (m *memRemote) Get(_ context.Context, key string, w io.Writer) error {
 	}
 	_, err := w.Write(body)
 	return err
+}
+
+func (m *memRemote) Delete(_ context.Context, key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail != nil {
+		return m.fail
+	}
+	delete(m.objects, key)
+	return nil
+}
+
+func (m *memRemote) List(_ context.Context, prefix string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var keys []string
+	for k := range m.objects {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func (m *memRemote) has(key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.objects[key]
+	return ok
 }
 
 func TestUploaderShipsOnceAndReportsLag(t *testing.T) {
@@ -89,21 +119,77 @@ func TestTieredStoreFallsBackToRemote(t *testing.T) {
 	if string(body) != "from-remote" || size != int64(len(body)) {
 		t.Fatalf("fetched %q (%d)", body, size)
 	}
-	// Cached locally and marked uploaded: no second download, no re-upload.
-	remote.objects = map[string][]byte{}
-	if rc, _, err := store.OpenWAL(ctx, dbA, seg); err != nil {
-		t.Fatalf("cached copy: %v", err)
-	} else {
-		_ = rc.Close()
+	// Nothing of a remote read is kept: no local copy, no temporary file.
+	if _, err := os.Stat(filepath.Join(store.dir, dbA)); !os.IsNotExist(err) {
+		t.Fatalf("a remote read left a local archive: %v", err)
 	}
-	if n, _ := (&Uploader{Store: store.LocalStore, Remote: remote, Prefix: "native"}).RunOnce(ctx); n != 0 {
-		t.Fatal("a fetched segment was uploaded again")
+	if entries, _ := os.ReadDir(store.fetchDir()); len(entries) != 0 {
+		t.Fatalf("temporary fetch files left behind: %v", entries)
 	}
 	if _, _, err := store.OpenWAL(ctx, dbA, "000000010000000000000009"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing everywhere = %v", err)
 	}
-	if entries, _ := os.ReadDir(store.dir + "/" + dbA + "/wal"); len(entries) != 1 {
-		t.Fatalf("temporary fetch files left behind: %v", entries)
+}
+
+// TestRestoreFromTheBucketAfterNodeLoss: a node with an empty disk serves
+// a restore of another database entirely from the bucket.
+func TestRestoreFromTheBucketAfterNodeLoss(t *testing.T) {
+	for name, remote := range map[string]Remote{
+		"mem":  &memRemote{objects: map[string][]byte{}},
+		"file": &FileRemote{Dir: t.TempDir()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			lost := newStore(t)
+			first := putBackup(t, lost, dbA, 2, t0, true)
+			second := putBackup(t, lost, dbA, 5, t0.Add(time.Hour), true)
+			putFile(t, lost, dbA, segName(5), "wal-5")
+			if _, err := (&Uploader{Store: lost, Remote: remote, Prefix: "native"}).RunOnce(ctx); err != nil {
+				t.Fatal(err)
+			}
+			want, err := lost.OpenBackup(ctx, dbA, first.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTar, _ := io.ReadAll(want)
+			_ = want.Close()
+
+			fresh := &TieredStore{LocalStore: newStore(t), Remote: remote, Prefix: "native"}
+			all, err := fresh.ListAllBackups(ctx, dbA)
+			if err != nil || len(all) != 2 || all[0].ID != first.ID || all[1].ID != second.ID {
+				t.Fatalf("catalog from the bucket = %+v, %v", all, err)
+			}
+			dial := serveServer(t, &Server{Store: fresh, Backups: fresh})
+			var got bytes.Buffer
+			id, err := dial(Header{DatabaseID: dbB, RestoreSource: dbA}).GetBackup(t0.Add(30*time.Minute), &got)
+			if err != nil || id != first.ID || !bytes.Equal(got.Bytes(), wantTar) {
+				t.Fatalf("restore from the bucket = %q (%d bytes), %v", id, got.Len(), err)
+			}
+			var wal bytes.Buffer
+			if err := dial(Header{DatabaseID: dbB, RestoreSource: dbA}).GetWAL(segName(5), &wal); err != nil || wal.String() != "wal-5" {
+				t.Fatalf("wal from the bucket = %q, %v", wal.String(), err)
+			}
+			if _, err := os.Stat(filepath.Join(fresh.dir, dbA)); !os.IsNotExist(err) {
+				t.Fatalf("remote reads were kept locally: %v", err)
+			}
+			// Local and bucket copies of one backup count once.
+			both := &TieredStore{LocalStore: lost, Remote: remote, Prefix: "native"}
+			if all, err := both.ListAllBackups(ctx, dbA); err != nil || len(all) != 2 {
+				t.Fatalf("merged catalog = %+v, %v", all, err)
+			}
+		})
+	}
+}
+
+func TestFileRemoteRefusesEscapingKeys(t *testing.T) {
+	r := &FileRemote{Dir: t.TempDir()}
+	for _, key := range []string{"", "/etc/passwd", "../x", "a/../../x", "a//b"} {
+		if err := r.Put(context.Background(), key, strings.NewReader("x"), 1); err == nil {
+			t.Errorf("key %q accepted", key)
+		}
+	}
+	if err := r.Delete(context.Background(), "native/missing"); err != nil {
+		t.Fatalf("deleting a missing key = %v", err)
 	}
 }
 

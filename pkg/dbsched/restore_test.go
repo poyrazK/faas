@@ -4,6 +4,7 @@ package dbsched
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,18 @@ func TestRestoreRejectsWhatCannotBeRestored(t *testing.T) {
 	if _, err := s.Restore(ctx, RestoreRequest{ProvisionRequest: restoreRequest(source, now).ProvisionRequest, Source: uuid.NewString(), Target: now}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown source = %v, want ErrNotFound", err)
 	}
+
+	// A point older than the source's window may already be pruned.
+	windowed, err := s.Provision(ctx, ProvisionRequest{DatabaseID: uuid.NewString(), Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, RestoreWindowSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	point := windowed.CreatedAt.Add(time.Millisecond)
+	s.now = func() time.Time { return point.Add(2 * time.Minute) }
+	if _, err := s.Restore(ctx, restoreRequest(windowed, point)); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "window") {
+		t.Errorf("point outside the window = %v, want ErrInvalid", err)
+	}
+	s.now = time.Now
 
 	// A source on a node without archiving has no base backup.
 	s2, _, _ := newTestScheduler(t, 4096)

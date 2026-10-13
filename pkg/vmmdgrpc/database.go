@@ -30,6 +30,8 @@ const (
 type DatabaseRuntime interface {
 	CreateVolume(ctx context.Context, id string, sizeBytes int64) error
 	DeleteVolume(ctx context.Context, id string) error
+	// DropArchive deletes a deleted database's archive.
+	DropArchive(ctx context.Context, id string) error
 	Start(ctx context.Context, req dbvm.BootRequest) error
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
@@ -97,6 +99,13 @@ func (s *Server) DeleteDatabaseVolume(ctx context.Context, req *vmmdpb.DeleteDat
 	if err != nil {
 		return nil, err
 	}
+	// The archive goes first: if dbbackupd is unreachable the volume stays
+	// too, and schedd's retried delete finds both.
+	if req.GetArchive() {
+		if err := rt.DropArchive(ctx, req.GetDatabaseId()); err != nil {
+			return nil, s.databaseStatus("drop archive", err)
+		}
+	}
 	if err := rt.DeleteVolume(ctx, req.GetDatabaseId()); err != nil {
 		return nil, s.databaseStatus("delete volume", err)
 	}
@@ -132,14 +141,18 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 	}
 	boot := dbvm.BootRequest{
 		ID: req.GetDatabaseId(), Major: major, VcpuCount: vcpus, MemSizeMiB: mem,
-		VolumeRateLimiter: volumeRateLimiter(req.GetVolumeBandwidthBytesPerSec(), req.GetVolumeOpsPerSec()),
-		RestoreSource:     req.GetRestoreSource(),
+		VolumeRateLimiter:    volumeRateLimiter(req.GetVolumeBandwidthBytesPerSec(), req.GetVolumeOpsPerSec()),
+		RestoreSource:        req.GetRestoreSource(),
+		RestoreWindowSeconds: req.GetRestoreWindowSeconds(),
 	}
 	if req.GetRestoreTarget() != nil {
 		if err := req.GetRestoreTarget().CheckValid(); err != nil {
 			return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "invalid restore target")
 		}
 		boot.RestoreTarget = req.GetRestoreTarget().AsTime()
+	}
+	if boot.RestoreWindowSeconds < 0 {
+		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "negative restore window")
 	}
 	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a restore names its source and target")

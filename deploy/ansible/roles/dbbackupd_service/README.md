@@ -15,6 +15,7 @@ backend only once its settings carry `max_restore_window_seconds`.
 | Variable | Meaning |
 | --- | --- |
 | `dbbackupd_store_dir` | local archive (default `/srv/db/archive`) |
+| `dbbackupd_min_retention`, `dbbackupd_prune_interval` | every archive restores this far back (default 24h; a database's restore window keeps more), pruned this often |
 | `dbbackupd_s3_bucket`, `dbbackupd_s3_prefix` | off-node copy; empty bucket keeps it on the node only |
 | `dbbackupd_s3_endpoint`, `dbbackupd_s3_region`, `dbbackupd_s3_path_style` | S3-compatible endpoint |
 | `dbbackupd_s3_access_key_id`, `dbbackupd_s3_secret_access_key` | prefix-scoped credentials (Vault) |
@@ -25,6 +26,9 @@ Files written on the host:
 - `/etc/faas/dbbackupd/s3-{access-key-id,secret-access-key}`: owner-only
   files of `faas-dbbackupd`; the daemon refuses group- or world-readable
   secrets.
+
+Deleting a database deletes its archive (local and bucket) before vmmd
+deletes its volume.
 
 Operations: `/healthz`, `/readyz` and `/metrics` on `127.0.0.1:9110`.
 `dbarchive_pending_oldest_seconds` is the off-node recovery point: how old

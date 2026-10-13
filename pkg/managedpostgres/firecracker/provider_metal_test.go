@@ -258,19 +258,26 @@ func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 	}
 	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
 	// dbbackupd's role: every VM archives WAL and base backups here.
-	archiveDir, archiveSock := filepath.Join(workdir, "driver-archive"), filepath.Join(workdir, "driver-archive.sock")
-	_ = os.RemoveAll(archiveDir)
-	t.Cleanup(func() { _ = os.RemoveAll(archiveDir) })
+	// Per stack: a closing listener unlinks its path, which would remove
+	// the next test's socket if they shared one.
+	archiveRoot, err := os.MkdirTemp(workdir, "da")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(archiveRoot) })
+	archiveDir, archiveSock := filepath.Join(archiveRoot, "store"), filepath.Join(archiveRoot, "a.sock")
 	archive, err := dbarchive.NewLocalStore(archiveDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = os.Remove(archiveSock)
 	archiveLn, err := net.Listen("unix", archiveSock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = (&dbarchive.Server{Store: archive, Backups: archive}).Serve(ctx, archiveLn) }()
+	tiered := &dbarchive.TieredStore{LocalStore: archive}
+	go func() {
+		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered}).Serve(ctx, archiveLn)
+	}()
 	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
 		JailBase: filepath.Join(workdir, "djail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
 		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,

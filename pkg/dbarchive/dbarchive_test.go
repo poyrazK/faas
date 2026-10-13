@@ -28,6 +28,24 @@ func serve(t *testing.T, store Store) func(Header) *Client {
 
 func serveServer(t *testing.T, server *Server) func(Header) *Client {
 	t.Helper()
+	sock := serveSocket(t, server)
+	return func(h Header) *Client {
+		conn, err := net.Dial("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+		if err := WriteLine(conn, h); err != nil {
+			t.Fatal(err)
+		}
+		return NewClient(conn)
+	}
+}
+
+// serveSocket starts a Server and returns its socket path.
+func serveSocket(t *testing.T, server *Server) string {
+	t.Helper()
 	short, err := os.MkdirTemp("", "dba") // unix socket paths are short on macOS
 	if err != nil {
 		t.Fatal(err)
@@ -42,18 +60,7 @@ func serveServer(t *testing.T, server *Server) func(Header) *Client {
 	done := make(chan struct{})
 	go func() { _ = server.Serve(ctx, ln); close(done) }()
 	t.Cleanup(func() { cancel(); <-done })
-	return func(h Header) *Client {
-		conn, err := net.Dial("unix", sock)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = conn.Close() })
-		_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
-		if err := WriteLine(conn, h); err != nil {
-			t.Fatal(err)
-		}
-		return NewClient(conn)
-	}
+	return sock
 }
 
 func newStore(t *testing.T) *LocalStore {
