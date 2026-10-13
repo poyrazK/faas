@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -176,6 +177,25 @@ func (r *Runner) Acquire(ctx context.Context) (*Holding, error) {
 			return nil, ctx.Err()
 		}
 	}
+}
+
+// AcquireAsService is Acquire for a whole daemon running under systemd's
+// notify protocol. A standby is a started, healthy unit, so it reports READY
+// with a standby STATUS and keeps the systemd watchdog fed while it waits;
+// otherwise systemd would kill it at TimeoutStartSec or WatchdogSec, and
+// FaasStuckActivating would page for every standby. The returned stop
+// function ends that watchdog feed: call it once the daemon's own watchdog
+// runs. Outside systemd (no NOTIFY_SOCKET) the notifications are no-ops.
+func (r *Runner) AcquireAsService(ctx context.Context) (*Holding, func(), error) {
+	stopWatchdog := daemonunit.WatchdogFromEnv(ctx, func() bool { return true })
+	_ = daemonunit.Notify("READY=1\nSTATUS=standby: waiting for the " + r.name + " lease")
+	hold, err := r.Acquire(ctx)
+	if err != nil {
+		stopWatchdog()
+		return nil, nil, err
+	}
+	_ = daemonunit.Notify("STATUS=active: holding the " + r.name + " lease")
+	return hold, stopWatchdog, nil
 }
 
 // Holding is a held lease.

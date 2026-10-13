@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/singleton"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhook"
@@ -299,12 +300,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
-func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr error) {
 	// All startup goroutines share a context owned by this run. Cancel it
 	// before releasing the database pool so notification subscribers can
 	// relinquish their connections on every startup or serve error path.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// ADR-1152 §4: a central schedd that lost its lease must exit with an
+	// error so systemd restarts it as a standby (central_lease.go).
+	var centralHold *singleton.Holding
+	stopStandbyWatchdog := func() {}
+	defer func() {
+		if centralHold != nil && centralHold.Lost() && runErr == nil {
+			runErr = fmt.Errorf("schedd: %w; exiting to restart as a standby", singleton.ErrLeaseLost)
+		}
+	}()
 
 	// DEPLOY-1 / ADR-075 capdecl gate. schedd permits only CAP_NET_ADMIN for
 	// read-only conntrack enumeration. The capCheck seam (review finding M2)
@@ -463,6 +474,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd owner node resolved", "node_name", cfg.NodeName, "node_id", ownerNodeID)
 	} else {
 		log.Info("schedd owner node: legacy single-box (cfg.NodeName empty; ownership guard short-circuits)")
+	}
+	// ADR-1152 §4: only one central schedd runs per cell. Wait here as a
+	// standby until this process holds the central-scheduler lease; all
+	// work below then stops when the lease is lost.
+	if ownerNodeID == "" && centralSchedulerLeaseEnabled(os.Getenv(centralSchedulerLeaseEnv)) {
+		hold, stop, err := acquireCentralSchedulerLease(ctx, store, log)
+		if err != nil {
+			return fmt.Errorf("schedd: acquire central-scheduler lease: %w", err)
+		}
+		centralHold, stopStandbyWatchdog = hold, stop
+		defer hold.Release()
+		defer stop()
+		ctx = hold.Context()
 	}
 
 	// Issue #97 / ADR-025 axis 3: enumerate the active compute_nodes
@@ -2393,6 +2417,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, scheddProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, liveness, ops, log)()
+	// The daemon's own watchdog now runs; a former standby stops its
+	// unconditional feed so a stalled main loop is caught again.
+	stopStandbyWatchdog()
 
 	select {
 	case <-ctx.Done():
