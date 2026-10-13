@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
 /**
  * Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
  */
 export type SetBindingReleasePolicyRequest = {
+  object_storage_requirements?: ObjectStorageReleaseRequirements;
   mode: 'off' | 'enforce';
   expected_revision: number;
   /**

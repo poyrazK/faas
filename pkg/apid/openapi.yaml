@@ -1162,7 +1162,9 @@ paths:
         canary advance evaluate the policy; request flags may only strengthen it.
         New candidates must be admitted with explicit zero traffic. Automatic
         cutovers, legacy recovery and project release graph switches fail closed
-        until they support binding fences. To recover without evidence, explicitly
+        until they support binding fences. Policies with storage requirements must use
+        release-policy-with-object-storage for updates, including explicit clearing.
+        To recover without evidence, explicitly
         set off with the current revision and a reason, then retry. Every update
         has durable policy history. Existing traffic is not changed by this call.
       requestBody:
@@ -1173,6 +1175,47 @@ paths:
       responses:
         '200':
           description: Saved policy with incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/bindings/release-policy-with-object-storage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Deployment scope whose object-storage release policy will be replaced. Omit for default.
+        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
+    put:
+      tags: [apps]
+      operationId: setObjectStorageBindingReleasePolicy
+      summary: Replace release policy including required object-storage operations.
+      description: |
+        Requires deploy:write or admin and completed MFA. Uses the same revision
+        compare-and-set and traffic fences as release-policy. Explicit
+        object_storage_requirements is required; an empty object clears it.
+        Keys are managed environment prefixes in this scope (at most 32), values
+        are read, write or read_write. Missing bindings, insufficient permissions,
+        stale evidence, incomplete stages and mismatched operations block traffic.
+        Read accepts the legacy listing canary; write requires upload and cleanup;
+        read_write also requires byte-for-byte download. Current application ACKs
+        are independently required when configured. This call only records policy;
+        neither policy updates nor promotion initiate storage writes. Old servers
+        return 404 on this route rather than silently dropping the requirements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetObjectStorageBindingReleasePolicyRequest' }
+      responses:
+        '200':
+          description: Updated object-storage release requirements and the new policy revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
@@ -3108,6 +3151,43 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/compute-triggers:
+    parameters:
+      - { name: slug, in: path, required: true, description: App owning the bucket and trigger destination., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Bucket whose managed triggers are reconciled., schema: { type: string, format: uuid } }
+    put:
+      tags: [storage]
+      operationId: reconcileObjectStorageComputeTriggers
+      summary: Reconcile managed ObjectCreated triggers for the bucket's owning app
+      description: |
+        Requires MFA, storage manage scope and bucket write access. The destination
+        is always this bucket's owning app in its region. expected_revision is
+        mandatory and stale revisions return 409, including unchanged requests.
+        Replaces only managed rules, preserving manual notification rules.
+        Explicit triggers: [] clears managed ownership. Manual ID collisions
+        return 409; overlapping filters return 400. Nonempty configuration
+        requires object storage enabled and an async-invocation eligible plan.
+        Accepted deliveries retain their original destination snapshots.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReconcileObjectStorageComputeTriggersRequest' }
+      responses:
+        '200':
+          description: Complete notification configuration including managed rule identities; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketNotifications' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default:
+          description: Missing owned bucket, storage disabled, or invalid request
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/notifications:
     parameters:
       - { name: slug, in: path, required: true, description: App whose notification policy is inspected., schema: { type: string } }
@@ -3131,7 +3211,7 @@ paths:
     put:
       operationId: putObjectBucketNotifications
       summary: Replace durable bucket notification rules
-      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Full replacement clears managed compute-trigger ownership, including identical rules. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
       tags: [storage]
       requestBody:
         required: true
@@ -12097,11 +12177,12 @@ paths:
         '403': { $ref: '#/components/responses/PlanLimit' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     get:
       tags: [dev]
       operationId: getDevSession
       summary: Inspect a remote developer environment.
-      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
       parameters:
         - name: workspace_id
           in: query
@@ -12118,6 +12199,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
       operationId: destroyDevSession
@@ -12134,6 +12216,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/dev/test-runs/{run_id}:
     parameters:
@@ -13476,6 +13559,147 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IssueDetail' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Original fingerprint identity within this app, including a linked member.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: previewIssueSplit
+      summary: Preview exact occurrence matches without changing grouping.
+      description: Read-only snapshot of all retained evidence for one original identity. Missing lifetime evidence remains unclassified. Every populated matcher must equal the sanitized stored value.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitMatcher' }
+      responses:
+        '200':
+          description: Retained match counts, unavailable history, and bounded matching IDs.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-rules:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: UUID of the original fingerprint source; derived branches cannot have nested rules.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: createIssueSplitRule
+      summary: Split retained matches and route future matching captures.
+      description: Creates an immutable ordered rule and an open branch with the source canonical owner. Repeating the same source and matcher returns the existing rule without replaying evidence. At most eight rules, including disabled rules, per source. Branches count toward issue storage limits.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitMatcher' }
+      responses:
+        '200':
+          description: Rule and branch created with actor-attributed activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitRule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: UUID of the original source owning the routing rule whose enabled state should change.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: rule_id
+        description: Immutable rule UUID belonging to the source issue.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [apps]
+      operationId: updateIssueSplitRule
+      summary: Enable or disable an existing occurrence routing rule.
+      description: Changes future routing only. Existing evidence, prior retry destinations, matcher, and priority remain unchanged.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitRuleUpdate' }
+      responses:
+        '200':
+          description: Rule state returned; changes append actor-attributed activity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitRule' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Original source issue UUID owning the rule to undo.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: rule_id
+        description: Rule UUID to disable and combine with its reviewed source group.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: undoIssueSplitRule
+      summary: Disable a split rule and merge its isolated branch atomically.
+      description: Requires the reviewed canonical source ID. Rejects changed destinations and unrelated branch links. Destination owner and lifecycle win. Existing occurrence provenance and original counters remain intact. Other enabled rules continue routing by priority. A repeated completed undo is a no-op.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueSplitRuleUndoRequest' }
+      responses:
+        '200':
+          description: Disabled rule; its branch is combined with the reviewed source group.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSplitRule' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanFeatureGated' }
@@ -48567,7 +48791,7 @@ components:
       additionalProperties: false
     EnvironmentWorkloadSource:
       type: object
-      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
+      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. An immutable image may explicitly opt into full-rootfs dispatch. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
         kind:
           type: string
@@ -48586,6 +48810,9 @@ components:
           type: string
         image:
           type: string
+        full_rootfs:
+          type: boolean
+          description: Explicit full-rootfs dispatch for an immutable image source; unsupported for other source kinds.
       required:
       - kind
       additionalProperties: false
@@ -49680,7 +49907,7 @@ components:
       properties:
         mode: { type: string, enum: [report, enforce] }
         on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
-        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
     RouteHealthInvestigationSelection:
       type: object
@@ -50258,7 +50485,7 @@ components:
       required: [mode, expected_revision]
       properties:
         mode: { type: string, enum: [report, enforce] }
-        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
     RouteGateDecision:
       type: object
       description: Metadata-only decision from the same transaction as a canary traffic advance. Findings remain in the route result API.
@@ -50590,6 +50817,8 @@ components:
       description: Preflight status and safe evidence summary for one binding.
       required: [type, name, scope, status]
       properties:
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.' }
+        required_object_storage_mode: { type: string, enum: [read, write, read_write] }
         type: { type: string }
         name: { type: string }
         binding: { type: string }
@@ -50605,6 +50834,7 @@ components:
       description: Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a passed report does not independently establish application readiness or credential use. Optional application acknowledgements are version-bound self-attestations.
       required: [app, scope, deployment_id, checked_at, inventory_generated_at, max_verification_age, allow_unsupported, passed, coverage, bindings, runtime, issues, blockers, warnings]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         expected_deployment_id: { type: string, format: uuid }
         app: { type: string }
         scope: { type: string }
@@ -50630,11 +50860,25 @@ components:
         path: { type: string, minLength: 1, maxLength: 512 }
         expected_status: { type: integer, minimum: 200, maximum: 299 }
 
+    ObjectStorageReleaseRequirements:
+      type: object
+      maxProperties: 32
+      description: 'Managed environment prefix to required canary mode in the selected scope. Prefixes match ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require successful cleanup. No implicit probes or writes.'
+      additionalProperties: { type: string, enum: [read, write, read_write] }
+    SetObjectStorageBindingReleasePolicyRequest:
+      description: Revision-guarded release policy replacement with explicit required object-storage canary modes.
+      allOf:
+        - $ref: '#/components/schemas/SetBindingReleasePolicyRequest'
+        - type: object
+          required: [object_storage_requirements]
+          properties:
+            object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
     BindingReleasePolicy:
       type: object
       description: Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
       required: [app_id, scope, mode, revision, max_verification_age, require_application_ack]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         app_id: { type: string, format: uuid }
         scope: { type: string }
         mode: { type: string, enum: [off, enforce] }
@@ -50648,6 +50892,7 @@ components:
       description: Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
       required: [mode, expected_revision]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         mode: { type: string, enum: [off, enforce] }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
         max_verification_age: { type: string, default: 10m, description: 'Whole-second Go duration between 1s and 24h.' }
@@ -50674,9 +50919,10 @@ components:
         bindings_check: { $ref: '#/components/schemas/BindingCheckReport' }
     BindingVerification:
       type: object
-      description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification checks bucket-list read access only; resident application adoption is not checked.
+      description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
       required: [result, source, deployment_id, scope]
       properties:
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.' }
         result: { type: string, description: 'Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence.' }
         reason: { type: string, description: 'Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or report_truncated.' }
         source: { type: string, description: 'Currently task_guest.' }
@@ -53291,10 +53537,43 @@ components:
       properties:
         bucket_id: { type: string, format: uuid }
         revision: { type: integer, format: int64, minimum: 0 }
+        managed_rule_ids:
+          type: array
+          maxItems: 1000
+          items: { type: string }
+          description: Rules owned by declarative compute reconciliation. Full manual replacement clears ownership.
         rules:
           type: array
           maxItems: 1000
           items: { $ref: '#/components/schemas/ObjectNotificationRule' }
+    ObjectStorageComputeTrigger:
+      type: object
+      description: Stable ObjectCreated filter targeting only the bucket's owning app.
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 255, description: Stable manifest identity scoped to the bucket. }
+        events:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Defaults to s3:ObjectCreated:* when omitted or empty.
+          items:
+            type: string
+            enum: ['s3:ObjectCreated:*', 's3:ObjectCreated:Put', 's3:ObjectCreated:Copy', 's3:ObjectCreated:CompleteMultipartUpload']
+        prefix: { type: string, maxLength: 1024 }
+        suffix: { type: string, maxLength: 1024 }
+    ReconcileObjectStorageComputeTriggersRequest:
+      type: object
+      description: Revision-checked replacement of only the bucket's declarative compute triggers.
+      additionalProperties: false
+      required: [expected_revision, triggers]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
+        triggers:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObjectStorageComputeTrigger' }
     ObjectNotificationRule:
       type: object
       description: Proven mutation routing to a Gregale function or existing enabled queue binding. Prefix and suffix are decoded strings; overlapping filters for the same event are rejected. IDs are generated when omitted.
@@ -57668,6 +57947,10 @@ components:
           description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
         postgres:
           $ref: '#/components/schemas/DevPostgresRequest'
+        buckets:
+          type: array
+          description: Explicitly provision private workspace buckets and bindings. Requires storage:manage or admin in addition to developer session authorization. Omission preserves existing resources. Repeating a revoked binding returns conflict.
+          items: { $ref: '#/components/schemas/DevBucketRequest' }
         lease_seconds:
           type: integer
           format: int64
@@ -57786,6 +58069,29 @@ components:
         applied_at: { type: string, format: date-time, description: When the first instance acknowledged the patch. }
         apply_ms: { type: integer, format: int64, minimum: 0, description: How long the instance took to write the patch and request the restart. }
         error_code: { type: string, description: 'Bounded guest error code when state is failed, for example apply_failed or restart_failed.' }
+    DevBucketRequest:
+      description: Opt-in private bucket in the developer workspace, bound in the default secret scope. Bucket and binding names are unique within the batch.
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string, description: Omit to reuse existing placement or the current creation default. }
+        permission: { type: string, enum: [read, write, read_write], default: read_write }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', description: Defaults to GREGALE_S3_ followed by the normalized bucket name. }
+        triggers:
+          type: array
+          maxItems: 1000
+          description: Opt-in ObjectCreated triggers targeting this developer app. Omission preserves managed intent; an empty array clears it.
+          items: { $ref: '#/components/schemas/ObjectStorageComputeTrigger' }
+
+    DevBucketResponse:
+      description: Safe metadata for an active automatic developer bucket binding. No credential secret or provider placement is returned.
+      type: object
+      required: [bucket, binding]
+      properties:
+        bucket: { $ref: '#/components/schemas/ObjectBucket' }
+        binding: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+
     DevPostgresResponse:
       description: Safe receipt for the isolated developer database and its app binding. Credentials are injected into DATABASE_URL and never returned.
       type: object
@@ -57806,6 +58112,10 @@ components:
         app: { $ref: '#/components/schemas/AppResponse' }
         expires_at: { type: string, format: date-time }
         postgres: { $ref: '#/components/schemas/DevPostgresResponse' }
+        buckets:
+          type: array
+          description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
+          items: { $ref: '#/components/schemas/DevBucketResponse' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.
@@ -70286,8 +70596,13 @@ components:
         ADR-962 match condition, ANDed with the rule's fixed selectors. A node
         is exactly one of all, any, not, or a field/op leaf. Fields: method,
         path, host, client_ip, country, asn (ADR-966: the client IP's
-        autonomous system, e.g. 13335 or AS13335), header:<name>,
-        cookie:<name>, query:<name>. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+        autonomous system, e.g. 13335 or AS13335), ua_family (ADR-973: the
+        User-Agent's family, one of browser, mobile, bot, tool, other),
+        verified_bot (ADR-973: a known crawler confirmed by forward-confirmed
+        reverse DNS of the client IP, one of googlebot, bingbot, applebot,
+        yandexbot, baiduspider, yahoo, petalbot; absent otherwise),
+        header:<name>, cookie:<name>, query:<name>. ua_family and
+        verified_bot take eq, ne, in, not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
         exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
         list names an account list whose kind fits the field). Depth at most 4,
         at most 32 nodes, 64 values per leaf, values and regexes at most 256
@@ -81484,7 +81799,7 @@ components:
 
 
     IssueFrame:
-      description: "A sanitized application stack frame used by grouping version 1."
+      description: "A sanitized stack frame. Grouping excludes line numbers; in_app selects application evidence."
       type: object
       required: [file, function, in_app]
       properties:
@@ -81493,11 +81808,24 @@ components:
         line: { type: integer }
         in_app: { type: boolean }
 
+    IssueCause:
+      description: "One sanitized linear cause, ordered immediate to deepest; bounds are UTF-8 bytes."
+      type: object
+      required: [exception_type, message]
+      properties:
+        exception_type: { type: string, maxLength: 256 }
+        message: { type: string, maxLength: 2048 }
+        error_code: { type: string, maxLength: 256 }
+        frames: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/IssueFrame' } }
+        frame_order: { type: string, enum: [newest-first, oldest-first] }
+
     IssueEvent:
       description: "Structured exception evidence; credential-derived account and deployment identity cannot be overridden."
       type: object
       required: [event_id, occurred_at, exception_type, message]
       properties:
+        causes: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/IssueCause' } }
+        causes_incomplete: { type: boolean, description: "Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause." }
         event_id: { type: string, format: uuid }
         occurred_at: { type: string, format: date-time }
         exception_type: { type: string }
@@ -81505,6 +81833,18 @@ components:
         stack_trace: { type: string }
         frames: { type: array, items: { $ref: '#/components/schemas/IssueFrame' } }
         fingerprint_override: { type: string }
+        grouping_strategy:
+          type: string
+          enum: [legacy, failure-site-v1, cause-chain-v1]
+          description: "Defaults to unchanged version 1. failure-site-v1 selects version 2 and creates separate groups without migrating existing history. cause-chain-v1 selects version 3 using the deepest complete reported cause."
+        frame_order:
+          type: string
+          enum: [newest-first, oldest-first]
+          description: "For failure-site-v1, structured frames default to newest-first. Parsed Node/Python stacks infer order when omitted."
+        error_code:
+          type: string
+          maxLength: 256
+          description: "Stable application error code, bounded to 256 UTF-8 bytes and sanitized. In failure-site-v1 it replaces the normalized message discriminator; ignored by legacy grouping."
         trace_id: { type: string }
         span_id: { type: string }
         request_id: { type: string, description: "Bounded opaque gateway request ID, sanitized before persistence." }
@@ -81519,6 +81859,7 @@ components:
       type: object
       required: [id, app_id, environment, fingerprint, grouping_version, title, state, first_seen_at, last_seen_at, event_count, regression_count]
       properties:
+        split_source_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint source for a branch created by an occurrence split rule. }
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         environment: { type: string }
@@ -81546,6 +81887,32 @@ components:
         observed_events: { type: integer }
         unattributed_events: { type: integer }
 
+    IssueGroupingFrame:
+      description: "Canonical file and function used in identity, with a zero-based index into selected cause frames when cause_index is present, otherwise occurrence frames. Line numbers are excluded."
+      type: object
+      required: [frame_index, file, function]
+      properties:
+        frame_index: { type: integer, minimum: 0 }
+        file: { type: string }
+        function: { type: string }
+
+    IssueGroupingExplanation:
+      description: "Read-only evidence reconstructed from a retained sanitized occurrence using the saved group version. Present only when its identity reproduces the saved fingerprint. Unsupported versions or mismatches omit the explanation."
+      type: object
+      required: [grouping_version, strategy, basis, source_kind, exception_type, discriminator_kind]
+      properties:
+        cause_index: { type: integer, minimum: 0, maximum: 7, description: "Zero-based selected cause index; absent when grouping uses the outer exception." }
+        grouping_version: { type: integer }
+        strategy: { type: string, enum: [legacy, failure-site-v1, cause-chain-v1] }
+        basis: { type: string, enum: [override, application-frames, failure-site, fallback] }
+        source_kind: { type: string }
+        exception_type: { type: string }
+        frames: { type: array, items: { $ref: '#/components/schemas/IssueGroupingFrame' } }
+        route: { type: string }
+        http_status: { type: integer }
+        discriminator_kind: { type: string, enum: [none, override, error-code, message] }
+        discriminator_value: { type: string, description: "Selected sanitized override, stable error code, or normalized message. May be empty for an empty message." }
+
     IssueOccurrence:
       description: "Retained sanitized occurrence with verified platform attribution and optional debugger correlation."
       allOf:
@@ -81554,12 +81921,14 @@ components:
           required: [deployment_id, received_at, attribution]
           properties:
             id: { type: string, format: uuid }
+            original_issue_id: { type: string, format: uuid, readOnly: true, description: Original fingerprint provenance retained through occurrence-level splits and manual merges. }
             deployment_id: { type: string, format: uuid }
             received_at: { type: string, format: date-time }
             verified_consumer_id: { type: string, format: uuid }
             verified_platform_tenant_id: { type: string, format: uuid }
             debug_request_id: { type: string, format: uuid }
             attribution: { type: string }
+            grouping_explanation: { $ref: '#/components/schemas/IssueGroupingExplanation' }
 
     IssueRelease:
       description: "Immutable deployment metadata and aggregate observations for one issue."
@@ -81574,12 +81943,13 @@ components:
         last_seen_at: { type: string, format: date-time }
 
     IssueActivity:
-      description: "An audited issue lifecycle or ownership transition."
+      description: "An audited issue lifecycle, ownership, or manual regrouping transition."
       type: object
       required: [id, action, created_at, details]
       properties:
         id: { type: string, format: uuid }
         action: { type: string }
+        original_issue_id: { type: string, format: uuid, readOnly: true }
         actor_account_id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         details: { type: object, additionalProperties: { type: string } }
@@ -81633,11 +82003,13 @@ components:
         rules: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/IssueOwnershipRule' } }
 
     IssueDetail:
-      description: "Issue metadata and independently paginated occurrence, release, and activity collections."
+      description: "Canonical issue metadata and independently paginated combined history. Linked IDs resolve to their current canonical issue; original identities and counters appear in group_members."
       type: object
       required: [issue, events, releases, activity, impact]
       properties:
+        split_rules: { type: array, maxItems: 256, description: Routing rules associated with the displayed original identities or derived branches; lower priority wins per source., items: { $ref: '#/components/schemas/IssueSplitRule' } }
         issue: { $ref: '#/components/schemas/Issue' }
+        group_members: { type: array, minItems: 2, maxItems: 32, description: Original fingerprint identities with their own lifetime counters., items: { $ref: '#/components/schemas/Issue' } }
         events: { type: array, items: { $ref: '#/components/schemas/IssueOccurrence' } }
         releases: { type: array, items: { $ref: '#/components/schemas/IssueRelease' } }
         activity: { type: array, items: { $ref: '#/components/schemas/IssueActivity' } }
@@ -81664,12 +82036,77 @@ components:
         duplicate: { type: boolean }
         regressed: { type: boolean }
 
+    IssueSplitMatcher:
+      description: Exact equality against sanitized stored evidence; every populated field must match. At least one nonempty selector is required. Empty fields are wildcards.
+      type: object
+      additionalProperties: false
+      properties:
+        exception_type: { type: string, maxLength: 256 }
+        error_code: { type: string, maxLength: 256 }
+        route: { type: string, maxLength: 256 }
+        source_kind: { type: string, enum: ['', exception, http, runtime, worker] }
+
+    IssueSplitPreview:
+      description: Read-only counts for one original fingerprint, across all retained evidence. Unavailable lifetime history cannot be classified; no split or routing change is performed.
+      type: object
+      required: [original_issue_id, canonical_issue_id, matcher, lifetime_event_count, retained_event_count, matching_event_count, nonmatching_event_count, unavailable_history_event_count, matching_event_ids]
+      properties:
+        eligible_event_count: { type: integer, format: int64, minimum: 0, readOnly: true, description: Current retained matches a new rule would move; zero when application_status is not new-rule. }
+        shadowed_event_count: { type: integer, format: int64, minimum: 0, readOnly: true, description: Retained selector matches claimed by already enabled rules. }
+        eligible_event_ids: { type: array, maxItems: 10, readOnly: true, items: { type: string, format: uuid }, description: Newest eligible occurrence IDs after rule priority exclusions. }
+        application_status: { type: string, enum: [new-rule, existing-rule, derived-branch, rule-limit], readOnly: true, description: Whether this matcher can create a new rule in the current snapshot; plan capacity is checked during application. }
+        existing_rule_id: { type: string, format: uuid, readOnly: true, description: Existing exact matcher returned by repeat creation without replay or re-enable. }
+        existing_target_issue_id: { type: string, format: uuid, readOnly: true, description: Stable branch of the existing exact matcher. }
+        original_issue_id: { type: string, format: uuid }
+        canonical_issue_id: { type: string, format: uuid }
+        matcher: { $ref: '#/components/schemas/IssueSplitMatcher' }
+        lifetime_event_count: { type: integer, format: int64, minimum: 0 }
+        retained_event_count: { type: integer, format: int64, minimum: 0 }
+        matching_event_count: { type: integer, format: int64, minimum: 0 }
+        nonmatching_event_count: { type: integer, format: int64, minimum: 0 }
+        unavailable_history_event_count: { type: integer, format: int64, minimum: 0 }
+        matching_event_ids: { type: array, maxItems: 10, description: Newest matching occurrence IDs, bounded independently of total matches., items: { type: string, format: uuid } }
+
+    IssueSplitRule:
+      description: Immutable exact-match routing rule. Creating it moves eligible retained matches still assigned to the original source into an open branch. Earlier enabled rules take priority. Expired history remains on the source. Toggling affects future captures only; retries retain their existing routing identity.
+      type: object
+      required: [id, source_issue_id, target_issue_id, priority, matcher, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_issue_id: { type: string, format: uuid }
+        target_issue_id: { type: string, format: uuid }
+        priority: { type: integer, minimum: 1, maximum: 8 }
+        matcher: { $ref: '#/components/schemas/IssueSplitMatcher' }
+        enabled: { type: boolean }
+        initial_moved_event_count: { type: integer, format: int64, minimum: 0 }
+        unavailable_history_event_count: { type: integer, format: int64, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    IssueSplitRuleUndoRequest:
+      description: Reviewed canonical destination required for atomic split-rule undo; a changed destination rejects the operation without disabling the rule.
+      type: object
+      additionalProperties: false
+      required: [canonical_source_issue_id]
+      properties:
+        canonical_source_issue_id: { type: string, format: uuid }
+
+    IssueSplitRuleUpdate:
+      description: Enable or disable routing for future captures without moving existing occurrences or changing the immutable rule definition.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+
     IssueActionRequest:
-      description: "Desired ownership or lifecycle action, validated within the app scope."
+      description: "Desired ownership, lifecycle, or reversible regrouping action within the app. Merge adopts the destination owner/state; split opens one linked original group. Merge/split responses identify the remaining canonical issue."
       type: object
       required: [action]
       properties:
-        action: { type: string, enum: [assign,resolve,reopen,ignore] }
+        action: { type: string, enum: [assign,resolve,reopen,ignore,merge,split] }
+        target_issue_id: { type: string, format: uuid, description: Required only for merge; destination in the same app and environment. }
+        member_issue_id: { type: string, format: uuid, description: Required only for split; linked original identity to detach. }
         assignee_account_id: { type: string, format: uuid }
         fixed_deployment_id: { type: string, format: uuid }
         ignored_until: { type: string, format: date-time }

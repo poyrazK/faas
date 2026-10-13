@@ -200,7 +200,7 @@ export {
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
-export { createIssueReporter, type IssueContext, type IssueReporterOptions } from './issues.js';
+export { createIssueReporter, type IssueContext, type IssueReporterOptions, type IssueSourceMap } from './issues.js';
 
 export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
 export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
@@ -374,6 +374,16 @@ export { validateDurableEntityRestore, type DurableEntityRestoreValidationOption
 export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
+
+export type { BindingReleasePolicy } from './generated/models/BindingReleasePolicy.js';
+
+export type { SetBindingReleasePolicyRequest } from './generated/models/SetBindingReleasePolicyRequest.js';
+
+export type { SetObjectStorageBindingReleasePolicyRequest } from './generated/models/SetObjectStorageBindingReleasePolicyRequest.js';
+
+export type { ObjectStorageReleaseRequirements } from './generated/models/ObjectStorageReleaseRequirements.js';
+
+export type { BindingCheckReport } from './generated/models/BindingCheckReport.js';
 
 export { defineDurableEntity, createDurableEntityRegistry, type DurableEntityDefinition, type DurableEntityRegistry } from './durable-entity-runtime.js';
 

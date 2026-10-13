@@ -824,11 +824,11 @@ Test rigs that mock `fetch` should pass `fetch: mockFn` via
 `FaaSClientOptions` rather than setting `globalThis.fetch` directly —
 the wrapper will chain the mock in the correct order.
 
-## Zero runtime dependencies
+## Runtime dependencies
 
-`dependencies: {}` — the wrapper uses only Web APIs (`fetch`,
-`AbortController`, `Headers`, `URL`) plus Node 22 built-ins
-(`node:crypto`, `node:test`, `node:child_process`, `node:net`).
+The HTTP wrapper uses Web APIs (`fetch`, `AbortController`, `Headers`, `URL`)
+and Node 22 built-ins. Deployment-local issue source maps use the pinned
+`@jridgewell/trace-mapping@0.3.31` parser (ADR-1113). No map URLs are fetched.
 
 The `devDependencies` pin `openapi-typescript-codegen@0.31.0` and
 `typescript@5.6.3`. Major-version bumps require an ADR.
@@ -2773,6 +2773,22 @@ Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted n
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
 
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `SecretReloadCoordinator` from `@gregale/sdk-node/secrets/runtime` with each
+`ObjectStorageBinding.secretConsumer()` to install SIGHUP before readiness,
+serialize atomic snapshot adoption and ACK only after all registered consumers
+succeed. Require the current guest atomic snapshot, readiness and generation
+contract; register all other secret users as well. Start serving after
+`await coordinator.start()` and pass your shutdown signal. Both runtime subpaths
+are server-only and have no added package dependencies.
+
+For automatic old-client cleanup, pass `{retire: ...}` to the storage binding.
+Use `acquire()` and release the lease in a finally block after consuming/closing
+all response streams; managed bindings reject raw `current()`. Stop admission
+and the coordinator before `waitForRetirement(shutdownSignal)`. A canceled wait
+never destroys leased clients. Without a hook, lifetime remains caller-owned.
+
 ### Durable entity developer workflow
 
 The pure `@gregale/sdk-node/durable-entities/runtime` entrypoint exports
@@ -2817,3 +2833,24 @@ The session module also exports `defineRecoverableDurableSessionEntity`,
 status snapshots, service-driven logical-time expiry, generation-fenced cohort
 reclamation and pure application migrations. See
 [the lifecycle guide](../../docs/durable-entity-session-lifecycle.md).
+
+## Issue source maps
+
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
+`sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
+bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
+Ship matching maps with the deployment and load them before creating the reporter.
+Original frames determine grouping, and raw bundle stacks remain available.
+Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
+[registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.

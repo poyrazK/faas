@@ -1038,6 +1038,9 @@ message InstanceTelemetry {
   // ADR-361 decision 9 flood drops and ceiling. Mirrors vmmd InstanceStats.
   google.protobuf.Int64Value egress_flood_drops_per_min = 17;
   int64 egress_flood_drops_limit_per_min = 18;
+  // ADR-957: vmmd holds the instance quiet-paused between requests. schedd's
+  // quiet pause admission leaves its vCPUs out of the node's active vCPU.
+  bool quiet_paused = 19;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

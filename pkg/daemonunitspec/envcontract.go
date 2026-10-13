@@ -271,6 +271,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_EGRESS_DNS_GATING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-373 per-node escape hatch; \"off\" disables DNS-gated tenant egress, any other value keeps it on"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
+	{Name: "FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Default: "0", Note: "isolated GitOps end-to-end acceptance only; requires FAAS_DEV=1 and GREGALE_GITOPS_ACCEPTANCE=1 and is rejected on production control-plane roles"},
 	{Name: "FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "0", Note: "explicit opt-in for preview qualification dispatch; leave off until dedicated native Linux acceptance passes"},
 	{Name: "FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTPS_URL", Owners: []string{"schedd"}, Source: EnvSourceDefault, Validate: EnvValidationURL, Note: "optional local private HTTPS service proxy URL for qualification; unset rejects HTTPS service-bound graphs before VM admission"},
 	{Name: "FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL", Owners: []string{"schedd"}, Source: EnvSourceDefault, Validate: EnvValidationURL, Note: "optional local private HTTP service proxy URL for qualification; unset rejects HTTP service-bound graphs before VM admission"},
@@ -488,6 +489,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PUBLIC_STATUS_LAUNCH_AT", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "public-beta launch boundary rendered by the control-plane deployment"},
 	{Name: "FAAS_PYROSCOPE_TOKEN", Owners: []string{"apid", "profiled"}, Source: EnvSourceDefault, Note: "operator backend credential; never sent into guests"},
 	{Name: "FAAS_PYROSCOPE_URL", Owners: []string{"apid", "profiled"}, Source: EnvSourceDefault, Note: "private tenant-enabled backend configured in /etc/faas/profiling.env"},
+	{Name: "FAAS_QUIET_PAUSE", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch for ADR-957 quiet pause between requests; production default is off"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 
 	{Name: "FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

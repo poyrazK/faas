@@ -25,7 +25,7 @@ func (r *Report) checkVerification(item api.AppBindingInventoryItem, maxAge time
 		r.bindingBlock(item, "verification_unknown", "The reported pass has incomplete or contradictory evidence.")
 		return
 	}
-	if !validVerificationChecks(item.Type, v.Checks) {
+	if !validVerificationChecks(item.Type, v.ObjectStorageMode, v.Checks) {
 		r.bindingBlock(item, "verification_unknown", "The reported pass has missing, duplicated or unsuccessful probe stages.")
 		return
 	}
@@ -48,7 +48,7 @@ func (r *Report) checkVerification(item api.AppBindingInventoryItem, maxAge time
 	}
 }
 
-func validVerificationChecks(kind string, checks []api.BindingVerificationCheck) bool {
+func validVerificationChecks(kind, mode string, checks []api.BindingVerificationCheck) bool {
 	var names []string
 	switch kind {
 	case api.BindingTypeService:
@@ -59,6 +59,15 @@ func validVerificationChecks(kind string, checks []api.BindingVerificationCheck)
 		names = []string{"configuration", "identity", "gateway", "response"}
 	case api.BindingTypeObjectStorage:
 		names = []string{"environment", "configuration", "connection", "authorization", "bucket_access"}
+		switch mode {
+		case "", "read":
+		case "write":
+			names = append(names, "upload", "cleanup")
+		case "read_write":
+			names = append(names, "upload", "cleanup", "download")
+		default:
+			return false
+		}
 	default:
 		return false
 	}

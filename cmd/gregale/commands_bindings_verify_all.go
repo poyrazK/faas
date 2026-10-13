@@ -178,6 +178,9 @@ func bindingProbeOmission(item api.AppBindingInventoryItem, scope string) (strin
 		if item.Scope != scope {
 			return "skipped", "outside_deployment_scope"
 		}
+		if item.Type == api.BindingTypeObjectStorage && item.Access == "write" {
+			return "unsupported", "write_probe_requires_opt_in"
+		}
 		return "", ""
 	case api.BindingTypeQueue:
 		return "unsupported", "queue_probe_unsupported"

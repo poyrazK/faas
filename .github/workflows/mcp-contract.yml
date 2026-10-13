@@ -49,9 +49,9 @@ env:
 jobs:
   go-contracts:
     runs-on: ubuntu-latest
-    # Cold race compilation takes about 19 minutes; allow cache finalization
-    # after the complete package suite rather than cancelling a passing run.
-    timeout-minutes: 30
+    # Cold race compilation of the state and CLI test units can consume the
+    # former twenty-minute job budget before the final contracts execute.
+    timeout-minutes: 45
     services:
       postgres:
         # Match the shared CI cache to avoid Docker Hub pull limits.
@@ -66,9 +66,24 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      # Restore-only: use the same trusted main race-build cache as the API
+      # contracts job; avoid a separate setup-go cache per pull-request ref.
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: restore Go build + module cache from main
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-pg-1-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            go-pg-1-${{ runner.os }}-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: false  # restored from main above
       - name: Portable MCP and secret-scanner contracts
         env:
           GOMEMLIMIT: 2GiB

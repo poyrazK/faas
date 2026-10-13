@@ -28,6 +28,10 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
 
+// Capture the entire catalog atomically. An oversized catalog blocks the plan;
+// it must never become a partial inventory that could authorize publication.
+const ManagedPostgresCutoverDrainPlanMembersMax = 512
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (
@@ -1047,6 +1051,12 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// ArtifactCacheMinFreeBytes is the free space the node artifact cache
+	// (snapshots, app layers, bases) leaves on its filesystem. Builder drives
+	// and capture staging share that disk, so besides its byte budget
+	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
+	// the filesystem has less than this free.
+	ArtifactCacheMinFreeBytes int64 = 8 << 30
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -4575,6 +4585,11 @@ const (
 	// still books BillableRAMMB. See MeasuredChargeMB.
 	MeasuredChargeFloorMB         = 64
 	MeasuredChargeHeadroomPercent = 25
+	// QuietPauseAfterMillis is how long an eligible function instance sits
+	// with nothing in flight before vmmd pauses its vCPUs until the next
+	// request (ADR-957). The instance stays RUNNING and billed. In the
+	// ADR's simulation 2 s fit 2.5x the function apps per node.
+	QuietPauseAfterMillis = 2000
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
@@ -4593,6 +4608,14 @@ const (
 	// measured memory exceeds its admission ceiling, schedd evicts until it
 	// is back under this share of the ceiling (ADR-909 proposal 3).
 	MeasuredEvictionTargetPercent = 90
+	// QuietPauseMaxVCPUOvercommitPercent caps a node's booked vCPU and CPU
+	// millicores, quiet-paused instances included, at this share of its
+	// budget under quiet pause admission (ADR-957); the gates otherwise
+	// count only active instances. The ADR's simulation peaked at 265%.
+	QuietPauseMaxVCPUOvercommitPercent = 300
+	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
+	// quiet-paused instances may be before admission counts every booking.
+	QuietPauseSampleMaxAgeMillis = 2000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
@@ -9251,6 +9274,7 @@ const (
 	IssueMessageMaxBytes  = 2048
 	IssueStackMaxBytes    = 16 << 10
 	IssueMaxFrames        = 32
+	IssueMaxCauses        = 8
 	IssueMaxFrameBytes    = 512
 	IssueMaxTypeBytes     = 256
 	IssuePageSize         = 50
@@ -9258,6 +9282,19 @@ const (
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
 )
+
+// Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
+// bounds; map artifacts and source content never enter ingestion.
+const (
+	IssueSourceMapsMax       = 32
+	IssueSourceMapMaxBytes   = 512 << 10
+	IssueSourceMapsMaxBytes  = 4 << 20
+	IssueSourceMapEntriesMax = 100000
+	IssueSourceMapSymbolsMax = 8192
+)
+
+// IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
+const IssueGroupMembersMax = 32
 
 type IssueLimits struct {
 	Enabled         bool
@@ -10210,6 +10247,12 @@ const (
 	AppEventPublishStatusRecipientsDefault = 100
 	AppEventPublishStatusCursorMaxBytes    = 8192
 )
+
+// IssueSplitPreviewSamplesMax bounds matching occurrence IDs in a preview.
+const IssueSplitPreviewSamplesMax = 10
+
+// IssueSplitRulesPerIssueMax bounds immutable rules, including disabled rules.
+const IssueSplitRulesPerIssueMax = 8
 
 // EventConsumerInbox bounds application-owned transactional consumer receipts.
 // The inbox schema generator packages these limits with the standalone SDK.

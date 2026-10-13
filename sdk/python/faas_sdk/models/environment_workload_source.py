@@ -21,8 +21,8 @@ T = TypeVar("T", bound="EnvironmentWorkloadSource")
 @_attrs_define
 class EnvironmentWorkloadSource:
     """Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require
-    runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted.
-    Preparation does not grant serving authority.
+    runtime and exclude dockerfile. An immutable image may explicitly opt into full-rootfs dispatch. The gated internal
+    executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
 
     """
 
@@ -32,6 +32,8 @@ class EnvironmentWorkloadSource:
     directory: str | Unset = UNSET
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
+    full_rootfs: bool | Unset = UNSET
+    """Explicit full-rootfs dispatch for an immutable image source; unsupported for other source kinds."""
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind
@@ -45,6 +47,8 @@ class EnvironmentWorkloadSource:
         dockerfile = self.dockerfile
 
         image = self.image
+
+        full_rootfs = self.full_rootfs
 
         field_dict: dict[str, Any] = {}
 
@@ -61,6 +65,8 @@ class EnvironmentWorkloadSource:
             field_dict["dockerfile"] = dockerfile
         if image is not UNSET:
             field_dict["image"] = image
+        if full_rootfs is not UNSET:
+            field_dict["full_rootfs"] = full_rootfs
 
         return field_dict
 
@@ -82,12 +88,15 @@ class EnvironmentWorkloadSource:
 
         image = d.pop("image", UNSET)
 
+        full_rootfs = d.pop("full_rootfs", UNSET)
+
         environment_workload_source = cls(
             kind=kind,
             runtime=runtime,
             directory=directory,
             dockerfile=dockerfile,
             image=image,
+            full_rootfs=full_rootfs,
         )
 
         return environment_workload_source

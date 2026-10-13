@@ -117,7 +117,7 @@ func (v *qualificationRPCVMM) RestoreEnvironmentQualification(ctx context.Contex
 }
 
 func qualificationRPCServer(v vmmdgrpc.VmmdAPI, nodeID string) *vmmdgrpc.Server {
-	return vmmdgrpc.New(v, wire.NewOpsMetrics("qualification_test"), "test-fc", nil).WithNodeID(nodeID)
+	return vmmdgrpc.New(v, wire.NewOpsMetrics("qualification_test"), "test-fc", nil).WithNodeID(nodeID).WithQualificationNodeID(nodeID)
 }
 
 func TestVMMClientEnvironmentQualificationPreservesOriginalRuntimeAndCleanup(t *testing.T) {

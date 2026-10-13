@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,15 +22,19 @@ func cmdBindingsReleasePolicy(args []string) int {
 	var r api.SetBindingReleasePolicyRequest
 	var revision int64
 	var requireVerification bool
+	var storageRequirements storageRequirementsFlag
+	var clearStorageRequirements bool
 	if action == "set" {
 		fs.StringVar(&r.Mode, "mode", "", "off or enforce")
 		fs.BoolVar(&requireVerification, "require-verification", false, "enable verification enforcement (alias for --mode enforce)")
 		fs.StringVar(&r.MaxVerificationAge, "max-age", "10m", "maximum verification age (1s to 24h)")
 		fs.BoolVar(&r.RequireApplicationAck, "require-application-ack", false, "require current application acknowledgements")
+		fs.Var(&storageRequirements, "object-storage-require", "require PREFIX=read|write|read_write (repeatable; replaces all storage requirements)")
+		fs.BoolVar(&clearStorageRequirements, "clear-object-storage-requirements", false, "explicitly remove all storage operation requirements")
 		fs.Int64Var(&revision, "expected-revision", -1, "current policy revision; use 0 initially")
 		fs.StringVar(&r.Reason, "reason", "", "reason for the update; required when disabling enforcement")
 	}
-	flags, positional := splitArgsForFlags(args[1:], "require-verification", "require-application-ack")
+	flags, positional := splitArgsForFlags(args[1:], "require-verification", "require-application-ack", "clear-object-storage-requirements")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -37,6 +42,13 @@ func cmdBindingsReleasePolicy(args []string) int {
 		return printErr("Invalid release policy command", errors.New("supply an app slug and a valid scope"))
 	}
 	if action == "set" {
+		if clearStorageRequirements && len(storageRequirements) > 0 {
+			return printErr("Invalid release policy command", errors.New("cannot require storage operations and clear them in the same update"))
+		}
+		r.ObjectStorageRequirements = storageRequirements
+		if clearStorageRequirements {
+			r.ObjectStorageRequirements = map[string]string{}
+		}
 		if requireVerification {
 			if r.Mode != "" && r.Mode != "enforce" {
 				return printErr("Invalid release policy command", errors.New("--require-verification conflicts with --mode off"))
@@ -69,7 +81,7 @@ func cmdBindingsReleasePolicy(args []string) int {
 	if action == "set" {
 		age, _ := time.ParseDuration(r.MaxVerificationAge)
 		actual, _ := time.ParseDuration(p.MaxVerificationAge)
-		if p.Mode != r.Mode || p.Revision != revision+1 || p.RequireApplicationAck != r.RequireApplicationAck || actual != age || p.Reason != r.Reason {
+		if p.Mode != r.Mode || p.Revision != revision+1 || p.RequireApplicationAck != r.RequireApplicationAck || actual != age || p.Reason != r.Reason || !maps.Equal(p.ObjectStorageRequirements, r.ObjectStorageRequirements) {
 			return printErr("Invalid release policy response", errors.New("server did not confirm the submitted policy and revision"))
 		}
 	}
@@ -80,10 +92,17 @@ func cmdBindingsReleasePolicy(args []string) int {
 	if p.Reason != "" {
 		_, _ = fmt.Fprintf(osStdout, "Reason: %s\n", p.Reason)
 	}
+	if len(p.ObjectStorageRequirements) > 0 {
+		requirements := storageRequirementsFlag(p.ObjectStorageRequirements)
+		_, _ = fmt.Fprintf(osStdout, "Object-storage requirements: %s\n", requirements.String())
+	}
 	return 0
 }
 
 func validateBindingReleasePolicyResult(p api.BindingReleasePolicy, scope string) error {
+	if err := api.ValidateObjectStorageRequirements(p.ObjectStorageRequirements); err != nil {
+		return err
+	}
 	id, err := uuid.Parse(p.AppID)
 	age, ageErr := time.ParseDuration(p.MaxVerificationAge)
 	if err != nil || id == uuid.Nil || p.Scope != scope || p.Mode != "off" && p.Mode != "enforce" || p.Revision < 0 || p.Revision > api.BindingReleasePolicyMaxRevision || p.Revision == 0 && p.Mode != "off" || p.Revision > 0 && p.UpdatedAt == nil || ageErr != nil || age < time.Second || age > api.BindingReleasePolicyMaxAge {

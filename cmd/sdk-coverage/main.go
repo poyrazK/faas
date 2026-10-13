@@ -281,6 +281,7 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	"PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers":  "ReconcileObjectStorageComputeTriggers",
 	"GET /v1/apps/{slug}/entities/quotas":                    "InspectDurableEntityTenantQuotas",
 	"GET /v1/apps/{slug}/entities/readiness":                 "GetDurableEntityReadiness",
 	"GET /v1/apps/{slug}/entities/quota-migration/plan":      "PlanDurableEntityQuotaMigration",
@@ -339,6 +340,10 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                            "SetIssueImpactAlertPolicy",
 	"GET /v1/apps/{slug}/issue-ownership-rules":                                "GetIssueOwnershipRules",
 	"PUT /v1/apps/{slug}/issue-ownership-rules":                                "SetIssueOwnershipRules",
+	"POST /v1/apps/{slug}/issues/{issue_id}/split-preview":                     "PreviewIssueSplit",
+	"POST /v1/apps/{slug}/issues/{issue_id}/split-rules":                       "CreateIssueSplitRule",
+	"PATCH /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":            "UpdateIssueSplitRule",
+	"POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo":        "UndoIssueSplitRule",
 	"GET /v1/apps/{slug}/issues/{issue_id}":                                    "GetIssue",
 	"POST /v1/apps/{slug}/issues/{issue_id}/actions":                           "ActOnIssue",
 	"POST /v1/apps/{slug}/issue-ingest-tokens":                                 "CreateIssueIngestToken",
@@ -565,23 +570,24 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",
 	"GET /v1/outbound/ai-price-catalog":                                                "GetOutboundAIPriceCatalog",
 
-	"GET /v1/apps/{slug}/route-requirements/gate":                 "GetCanaryRouteGate",
-	"PUT /v1/apps/{slug}/route-requirements/gate":                 "SetCanaryRouteGate",
-	"POST /v1/apps/{slug}/route-policy/plan":                      "PlanRoutePolicy",
-	"POST /v1/apps/{slug}/route-policy/apply":                     "ApplyRoutePolicy",
-	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":      "GetRoutePolicyReceipt",
-	"GET /v1/outbound/integrations/{integration}/probe-policy":    "GetOutboundBindingProbePolicy",
-	"PUT /v1/outbound/integrations/{integration}/probe-policy":    "SetOutboundBindingProbePolicy",
-	"DELETE /v1/outbound/integrations/{integration}/probe-policy": "DeleteOutboundBindingProbePolicy",
-	"POST /v1/deployments/{id}/promote-with-application-ack":      "PromoteDeploymentWithBindings",
-	"POST /v1/deployments/{id}/promote":                           "PromoteDeploymentWithBindings",
-	"GET /v1/apps/{slug}/bindings":                                "GetAppBindingInventory",
-	"GET /v1/apps/{slug}/bindings/release-policy":                 "GetBindingReleasePolicy",
-	"PUT /v1/apps/{slug}/bindings/release-policy":                 "SetBindingReleasePolicy",
-	"GET /v1/apps/{slug}/alert-rollbacks":                         "ListAlertRollbacks",
-	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                  "GetAlertRollback",
-	"GET /v1/apps/{slug}/rollbacks/{operation}":                   "GetRollbackOperation",
-	"GET /v1/apps/{slug}/operational-summary":                     "GetAppOperationalSummary",
+	"GET /v1/apps/{slug}/route-requirements/gate":                     "GetCanaryRouteGate",
+	"PUT /v1/apps/{slug}/route-requirements/gate":                     "SetCanaryRouteGate",
+	"POST /v1/apps/{slug}/route-policy/plan":                          "PlanRoutePolicy",
+	"POST /v1/apps/{slug}/route-policy/apply":                         "ApplyRoutePolicy",
+	"GET /v1/apps/{slug}/route-policy/receipts/{receipt_id}":          "GetRoutePolicyReceipt",
+	"GET /v1/outbound/integrations/{integration}/probe-policy":        "GetOutboundBindingProbePolicy",
+	"PUT /v1/outbound/integrations/{integration}/probe-policy":        "SetOutboundBindingProbePolicy",
+	"DELETE /v1/outbound/integrations/{integration}/probe-policy":     "DeleteOutboundBindingProbePolicy",
+	"POST /v1/deployments/{id}/promote-with-application-ack":          "PromoteDeploymentWithBindings",
+	"POST /v1/deployments/{id}/promote":                               "PromoteDeploymentWithBindings",
+	"GET /v1/apps/{slug}/bindings":                                    "GetAppBindingInventory",
+	"GET /v1/apps/{slug}/bindings/release-policy":                     "GetBindingReleasePolicy",
+	"PUT /v1/apps/{slug}/bindings/release-policy":                     "SetBindingReleasePolicy",
+	"PUT /v1/apps/{slug}/bindings/release-policy-with-object-storage": "SetObjectStorageBindingReleasePolicy",
+	"GET /v1/apps/{slug}/alert-rollbacks":                             "ListAlertRollbacks",
+	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                      "GetAlertRollback",
+	"GET /v1/apps/{slug}/rollbacks/{operation}":                       "GetRollbackOperation",
+	"GET /v1/apps/{slug}/operational-summary":                         "GetAppOperationalSummary",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
 	// First-class queue bindings use a hyphenated path segment. Pin the
@@ -1856,9 +1862,16 @@ func (r *reportT) print() {
 	}
 }
 
+// Convenience aliases share a route with its checked path-shaped method.
+// An alias is accounted for only while that route still exists in the spec.
+var methodAliasRoutes = map[string]string{
+	"UpsertDevSession": "PUT /v1/dev/sessions/{project}",
+}
+
 func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 	r := reportT{}
 	methodUsage := map[string]bool{} // SDK methods touched by a route
+	routeUsage := map[string]bool{}
 	for path, ops := range spec {
 		for method := range ops {
 			key := strings.ToUpper(method) + " " + path
@@ -1873,10 +1886,11 @@ func analyze(spec map[string]map[string]any, methods map[string]bool) reportT {
 				r.missing = append(r.missing, fmt.Sprintf("%s → SDK method %q", key, sdkName))
 			}
 			methodUsage[sdkName] = true
+			routeUsage[key] = true
 		}
 	}
 	for m := range methods {
-		if sdkMethodExclude[m] || methodUsage[m] {
+		if sdkMethodExclude[m] || methodUsage[m] || routeUsage[methodAliasRoutes[m]] {
 			continue
 		}
 		r.warn = append(r.warn, m+" (no spec route)")
