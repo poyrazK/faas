@@ -91,12 +91,12 @@ func (f *aiPreviewFixture) handler(rollout AIGatewayRollout, backend Backend) *H
 }
 
 // call sends one chat completion as the bound app through the relay.
-func (f *aiPreviewFixture) call(handler *Handler, body string) *httptest.ResponseRecorder {
+func (f *aiPreviewFixture) call(ctx context.Context, handler *Handler, body string) *httptest.ResponseRecorder {
 	f.t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "http://outboundd"+Prefix+f.offer.ID+"/v1/chat/completions", strings.NewReader(body))
+	ctx = withRelayPrincipal(ctx, relayPrincipal{app: WorkloadIdentity{AccountID: f.account.ID, AppID: f.app.ID}})
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "http://outboundd"+Prefix+f.offer.ID+"/v1/chat/completions",
+		strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
-	request = request.WithContext(withRelayPrincipal(request.Context(),
-		relayPrincipal{app: WorkloadIdentity{AccountID: f.account.ID, AppID: f.app.ID}}))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	return recorder

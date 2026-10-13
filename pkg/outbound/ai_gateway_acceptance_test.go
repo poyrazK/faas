@@ -36,7 +36,7 @@ func TestAIGatewayPreviewAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := f.handler(nil, nil)
-	first := f.call(handler, `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"mail ana@example.com"}]}`)
+	first := f.call(ctx, handler, `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"mail ana@example.com"}]}`)
 	if first.Code != http.StatusOK || first.Header().Get(AIContentRedactionsHeader) != "email=1" ||
 		len(forwarded) != 1 || strings.Contains(forwarded[0], "ana@example.com") {
 		t.Fatalf("first call = %d %q, forwarded %q", first.Code, first.Header().Get(AIContentRedactionsHeader), forwarded)
@@ -56,7 +56,7 @@ func TestAIGatewayPreviewAcceptance(t *testing.T) {
 	}
 	// The daily cap is hard: a call whose reservation would pass it is
 	// refused before it reaches the provider.
-	if capped := f.call(handler, `{"model":"gpt-4o","max_tokens":500,"messages":[]}`); capped.Code != http.StatusTooManyRequests || len(forwarded) != 1 {
+	if capped := f.call(ctx, handler, `{"model":"gpt-4o","max_tokens":500,"messages":[]}`); capped.Code != http.StatusTooManyRequests || len(forwarded) != 1 {
 		t.Fatalf("a call past the daily cap = %d, %d forwarded", capped.Code, len(forwarded))
 	}
 	// The staged rollout and the plan close the gateway for other accounts.
@@ -64,14 +64,14 @@ func TestAIGatewayPreviewAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refused := f.call(f.handler(other, nil), `{"model":"gpt-4o","max_tokens":1,"messages":[]}`); refused.Code != http.StatusForbidden ||
+	if refused := f.call(ctx, f.handler(other, nil), `{"model":"gpt-4o","max_tokens":1,"messages":[]}`); refused.Code != http.StatusForbidden ||
 		!strings.Contains(refused.Body.String(), "outbound_ai_gateway_unavailable") {
 		t.Fatalf("an account outside the rollout = %d %s", refused.Code, refused.Body.String())
 	}
 	if _, err := f.pool.Exec(ctx, `UPDATE accounts SET plan = 'free' WHERE id = $1`, f.account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if refused := f.call(f.handler(nil, nil), `{"model":"gpt-4o","max_tokens":1,"messages":[]}`); refused.Code != http.StatusForbidden {
+	if refused := f.call(ctx, f.handler(nil, nil), `{"model":"gpt-4o","max_tokens":1,"messages":[]}`); refused.Code != http.StatusForbidden {
 		t.Fatalf("a Free account = %d %s", refused.Code, refused.Body.String())
 	}
 	if len(forwarded) != 1 {

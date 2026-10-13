@@ -107,7 +107,7 @@ func TestAIGatewaySoak(t *testing.T) {
 			defer wg.Done()
 			for time.Now().Before(deadline) {
 				started := time.Now()
-				recorder := f.call(handler, body)
+				recorder := f.call(ctx, handler, body)
 				elapsed := time.Since(started)
 				mu.Lock()
 				statuses[recorder.Code]++

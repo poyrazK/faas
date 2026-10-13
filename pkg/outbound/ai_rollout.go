@@ -28,10 +28,10 @@ func ParseAIGatewayRollout(configured []string, override string) (AIGatewayRollo
 	var rollout AIGatewayRollout
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
-		switch {
-		case entry == "":
+		switch entry {
+		case "":
 			continue
-		case entry == "*":
+		case "*":
 			return nil, nil
 		}
 		id, err := uuid.Parse(entry)

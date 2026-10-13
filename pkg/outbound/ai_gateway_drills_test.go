@@ -67,7 +67,7 @@ func TestAIGatewayFailureDrills(t *testing.T) {
 			t.Fatal(err)
 		}
 		before := forwarded
-		got := f.call(f.handler(nil, backend), body)
+		got := f.call(ctx, f.handler(nil, backend), body)
 		if got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), "outbound_admission_unavailable") || forwarded != before {
 			t.Fatalf("admission without Postgres = %d %s, %d forwarded", got.Code, got.Body.String(), forwarded-before)
 		}
@@ -82,7 +82,7 @@ func TestAIGatewayFailureDrills(t *testing.T) {
 		if handler.Metrics, err = NewMetrics(prometheus.NewRegistry()); err != nil {
 			t.Fatal(err)
 		}
-		got := f.call(handler, body)
+		got := f.call(ctx, handler, body)
 		if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"ok"`) {
 			t.Fatalf("call with a failing settlement = %d %s", got.Code, got.Body.String())
 		}
@@ -98,14 +98,14 @@ func TestAIGatewayFailureDrills(t *testing.T) {
 		handler := f.handler(nil, nil)
 		handler.AIGatewayEnabled = false
 		before := forwarded
-		got := f.call(handler, body)
+		got := f.call(ctx, handler, body)
 		if got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), "outbound_ai_gateway_disabled") || forwarded != before {
 			t.Fatalf("a call with the gate closed = %d %s", got.Code, got.Body.String())
 		}
 	})
 
 	t.Run("an interrupted replay fails instead of hanging", func(t *testing.T) {
-		if got := f.call(f.handler(nil, nil), body); got.Code != http.StatusOK {
+		if got := f.call(ctx, f.handler(nil, nil), body); got.Code != http.StatusOK {
 			t.Fatalf("captured call = %d", got.Code)
 		}
 		log, err := f.store.ListOutboundAIRequestLog(ctx, f.account.ID, f.offer.ID, nil, 1)
@@ -138,12 +138,12 @@ func TestAIGatewayFailureDrills(t *testing.T) {
 		handler := f.handler(nil, nil)
 		tokensBefore := dailyTokens()
 		for i := range 3 {
-			if got := f.call(handler, body); got.Code != http.StatusServiceUnavailable {
+			if got := f.call(ctx, handler, body); got.Code != http.StatusServiceUnavailable {
 				t.Fatalf("outage call %d = %d %s", i, got.Code, got.Body.String())
 			}
 		}
 		before := forwarded
-		got := f.call(handler, body)
+		got := f.call(ctx, handler, body)
 		if got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), "outbound_circuit_breaker_open") || forwarded != before {
 			t.Fatalf("a call with the circuit open = %d %s, %d forwarded", got.Code, got.Body.String(), forwarded-before)
 		}
