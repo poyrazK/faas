@@ -29,7 +29,6 @@ AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
-AppendDeploymentAudit
 AppendDeploymentLog
 AppendDeploymentStage
 AppendEventWithTrace
@@ -478,7 +477,6 @@ RecordGitHubBinding
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
-RecordScenarioTestChaosInjections
 RecordStripePushHour
 RecordUploadCommitOutcome
 RecordWebhookDelivery
@@ -512,7 +510,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScenarioTestChaosMatchEvidence
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow
