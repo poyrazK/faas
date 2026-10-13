@@ -10151,8 +10151,11 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
-// EdgeRuleEventResponse (ADR-964) is one sampled rule match. RuleName and
-// RuleKind are empty once the rule has been deleted.
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match or kind=waf
+// detection. RuleName and RuleKind are empty once the rule has been deleted.
+// Detections (outcome detected, warned or blocked; ADR-831 amendment 5) also
+// carry the CRS rule IDs that scored, their attack categories and the
+// anomaly score.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`
@@ -10167,6 +10170,31 @@ type EdgeRuleEventResponse struct {
 	ClientIP   string    `json:"client_ip,omitempty"`
 	Country    string    `json:"country,omitempty"`
 	UserAgent  string    `json:"user_agent,omitempty"`
+
+	WAFRuleIDs    []int    `json:"waf_rule_ids,omitempty"`
+	WAFCategories []string `json:"waf_categories,omitempty"`
+	WAFScore      int      `json:"waf_score,omitempty"`
+}
+
+// WAFSummary renders a detection's detail for people, for example
+// "sqli, xss · CRS 942100, 941100 · score 10"; empty for other events.
+func (e EdgeRuleEventResponse) WAFSummary() string {
+	if len(e.WAFRuleIDs) == 0 && len(e.WAFCategories) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if len(e.WAFCategories) > 0 {
+		parts = append(parts, strings.Join(e.WAFCategories, ", "))
+	}
+	if len(e.WAFRuleIDs) > 0 {
+		ids := make([]string, len(e.WAFRuleIDs))
+		for i, id := range e.WAFRuleIDs {
+			ids[i] = strconv.Itoa(id)
+		}
+		parts = append(parts, "CRS "+strings.Join(ids, ", "))
+	}
+	parts = append(parts, "score "+strconv.Itoa(e.WAFScore))
+	return strings.Join(parts, " · ")
 }
 
 // EdgeRuleEventsResponse is GET /v1/apps/{slug}/edge-rules/events. Since is

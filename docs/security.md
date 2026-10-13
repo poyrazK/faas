@@ -317,6 +317,16 @@ gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-ru
 `edge-rules update --kind waf` replaces the whole WAF action, so repeat every
 setting you want to keep (mode, exclusions, thresholds) in each update.
 
+Each detection is also a security event, so you can see which request was
+flagged and why. `gregale edge-rules events --app my-api --outcome blocked`
+(or `detected` for sampled requests, `warned` for warn rules) lists the
+request ID, method, path, client and user agent, plus the CRS rule IDs that
+scored, their attack categories and the anomaly score. The matched payload
+and the query string are never stored. Up to 10 detections per rule per
+minute are kept, for 7 days; the Edge rules page in the dashboard shows the
+same table. A WAF rule's ordinary matches are counted but not listed, since
+every inspected request matches.
+
 `warn` and `block` run at paranoia level 1. Level 2 detects more and
 produces more false positives; it is available in `observe` only. The
 `edge_waf_detections` alert preset notifies you of bursts, and blocked
