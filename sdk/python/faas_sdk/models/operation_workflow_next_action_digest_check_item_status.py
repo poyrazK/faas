@@ -1,16 +1,18 @@
 from typing import Literal
 
 OperationWorkflowNextActionDigestCheckItemStatus = Literal[
-    "changed", "completed", "no_longer_outstanding", "outstanding", "unavailable"
+    "canceled", "changed", "completed", "no_longer_outstanding", "outstanding", "replaced", "unavailable"
 ]
 
 OPERATION_WORKFLOW_NEXT_ACTION_DIGEST_CHECK_ITEM_STATUS_VALUES: set[
     OperationWorkflowNextActionDigestCheckItemStatus
 ] = {
+    "canceled",
     "changed",
     "completed",
     "no_longer_outstanding",
     "outstanding",
+    "replaced",
     "unavailable",
 }
 

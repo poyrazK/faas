@@ -840,6 +840,7 @@ type OperationWorkflowReviewResponseScheduledReviewReschedule struct {
 
 // Current coordination obligations for an exact workflow case, separate from execution permission.
 type OperationWorkflowCaseNextAction struct {
+	Obligation     *OperationWorkflowActionObligation    `json:"obligation,omitempty"`
 	Kind           string                                `json:"kind"`
 	Summary        string                                `json:"summary"`
 	Owner          string                                `json:"owner,omitempty"`
@@ -900,6 +901,9 @@ type OperationWorkflowNextActionDigestCheck struct {
 	RetentionLimited bool                                         `json:"retention_limited"`
 }
 type OperationWorkflowNextActionDigestCheckItem struct {
+	ObligationID   string                                `json:"obligation_id,omitempty"`
+	Lifecycle      []OperationWorkflowObligationEvent    `json:"lifecycle,omitempty"`
+	HistoryLimited bool                                  `json:"history_limited"`
 	SubscriptionID string                                `json:"subscription_id"`
 	Sequence       int64                                 `json:"sequence"`
 	ActionKind     string                                `json:"action_kind"`
@@ -908,4 +912,15 @@ type OperationWorkflowNextActionDigestCheckItem struct {
 	ChangedFields  []string                              `json:"changed_fields"`
 	Current        *OperationWorkflowNextActionQueueItem `json:"current,omitempty"`
 	Completion     *OperationWorkflowReadinessCompletion `json:"completion,omitempty"`
+}
+
+type OperationWorkflowActionObligation struct {
+	ID        string    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
+}
+type OperationWorkflowObligationEvent struct {
+	Kind        string    `json:"kind"`
+	At          time.Time `json:"at"`
+	Actor       string    `json:"actor,omitempty"`
+	Explanation string    `json:"explanation"`
 }

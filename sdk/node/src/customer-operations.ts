@@ -950,3 +950,7 @@ export type OperationWorkflowNextActionDigestExplanation = import('./generated/m
 export type OperationWorkflowNextActionDigestCheck = import('./generated/models/OperationWorkflowNextActionDigestCheck.js').OperationWorkflowNextActionDigestCheck;
 
 export type OperationWorkflowNextActionDigestCheckItem = import('./generated/models/OperationWorkflowNextActionDigestCheckItem.js').OperationWorkflowNextActionDigestCheckItem;
+
+export type OperationWorkflowActionObligation = import('./generated/models/OperationWorkflowActionObligation.js').OperationWorkflowActionObligation;
+
+export type OperationWorkflowObligationEvent = import('./generated/models/OperationWorkflowObligationEvent.js').OperationWorkflowObligationEvent;

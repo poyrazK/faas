@@ -1124,6 +1124,7 @@ export type { OperationSubmissionLookupResponse } from './models/OperationSubmis
 export type { OperationSubmissionScope } from './models/OperationSubmissionScope.js';
 export type { OperationSummary } from './models/OperationSummary.js';
 export type { OperationTenantIdentity } from './models/OperationTenantIdentity.js';
+export type { OperationWorkflowActionObligation } from './models/OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
 export type { OperationWorkflowActiveConditionGroup } from './models/OperationWorkflowActiveConditionGroup.js';
@@ -1201,6 +1202,7 @@ export type { OperationWorkflowNextActionDigestCheckItem } from './models/Operat
 export type { OperationWorkflowNextActionDigestExplanation } from './models/OperationWorkflowNextActionDigestExplanation.js';
 export type { OperationWorkflowNextActionDigestPolicy } from './models/OperationWorkflowNextActionDigestPolicy.js';
 export type { OperationWorkflowNextActionQueueItem } from './models/OperationWorkflowNextActionQueueItem.js';
+export type { OperationWorkflowObligationEvent } from './models/OperationWorkflowObligationEvent.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';

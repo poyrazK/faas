@@ -11,7 +11,7 @@ export type OperationWorkflowNextActionDigestExplanation = {
   action_kind: string;
   reasons: Array<'overdue' | 'approaching_deadline' | 'waiting_for_acceptance'>;
   comparison: 'first_delivery' | 'previous_delivery' | 'previous_snapshot_unavailable';
-  changed_fields: Array<'deadline' | 'overdue' | 'owner' | 'summary' | 'trigger' | 'evidence' | 'cases' | 'shared_plan' | 'scope' | 'subscription_tenant_id'>;
+  changed_fields: Array<'obligation' | 'deadline' | 'overdue' | 'owner' | 'summary' | 'trigger' | 'evidence' | 'cases' | 'shared_plan' | 'scope' | 'subscription_tenant_id'>;
   next_step: string;
 };
 

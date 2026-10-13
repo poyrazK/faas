@@ -18,6 +18,7 @@ from ..models.operation_workflow_case_next_action_trigger import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_action_obligation import OperationWorkflowActionObligation
     from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
 
@@ -41,6 +42,10 @@ class OperationWorkflowCaseNextAction:
     """This action's own due time is at or before coordination_checked_at. Undated suggestions are never overdue."""
     subscription_id: UUID
     sequence: int
+    obligation: OperationWorkflowActionObligation | Unset = UNSET
+    """Stable source-and-kind identity derived from the persisted obligation epoch, including dependency-review
+    revision where available. Ownership changes and deadline edits preserve the identity except a newly scheduled
+    response check-in, which defines a new check-in obligation. Older saved actions may omit identity."""
     owner: str | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET
     evidence: list[OperationWorkflowReviewResponseLink] | Unset = UNSET
@@ -60,6 +65,10 @@ class OperationWorkflowCaseNextAction:
         subscription_id = str(self.subscription_id)
 
         sequence = self.sequence
+
+        obligation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.obligation, Unset):
+            obligation = self.obligation.to_dict()
 
         owner = self.owner
 
@@ -88,6 +97,8 @@ class OperationWorkflowCaseNextAction:
                 "sequence": sequence,
             }
         )
+        if obligation is not UNSET:
+            field_dict["obligation"] = obligation
         if owner is not UNSET:
             field_dict["owner"] = owner
         if due_at is not UNSET:
@@ -101,6 +112,7 @@ class OperationWorkflowCaseNextAction:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_action_obligation import OperationWorkflowActionObligation
         from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
         d = dict(src_dict)
@@ -115,6 +127,13 @@ class OperationWorkflowCaseNextAction:
         subscription_id = UUID(d.pop("subscription_id"))
 
         sequence = d.pop("sequence")
+
+        _obligation = d.pop("obligation", UNSET)
+        obligation: OperationWorkflowActionObligation | Unset
+        if isinstance(_obligation, Unset):
+            obligation = UNSET
+        else:
+            obligation = OperationWorkflowActionObligation.from_dict(_obligation)
 
         owner = d.pop("owner", UNSET)
 
@@ -143,6 +162,7 @@ class OperationWorkflowCaseNextAction:
             overdue=overdue,
             subscription_id=subscription_id,
             sequence=sequence,
+            obligation=obligation,
             owner=owner,
             due_at=due_at,
             evidence=evidence,

@@ -2,11 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowActionObligation } from './OperationWorkflowActionObligation.js';
 import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 /**
  * One current coordination obligation or suggestion for an exact workflow case, including the responsible label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references matching this case. This does not authorize application execution or infer business completion.
  */
 export type OperationWorkflowCaseNextAction = {
+  obligation?: OperationWorkflowActionObligation;
   kind: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up';
   summary: string;
   owner?: string;

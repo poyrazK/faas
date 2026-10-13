@@ -390,3 +390,7 @@ export type { OperationWorkflowNextActionDigestExplanation } from './customer-op
 export type { OperationWorkflowNextActionDigestCheck } from './customer-operations.js';
 
 export type { OperationWorkflowNextActionDigestCheckItem } from './customer-operations.js';
+
+export type { OperationWorkflowActionObligation } from './customer-operations.js';
+
+export type { OperationWorkflowObligationEvent } from './customer-operations.js';

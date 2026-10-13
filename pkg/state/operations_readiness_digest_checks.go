@@ -20,7 +20,7 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 			return nil, err
 		}
 		a := saved.Action
-		result := api.OperationWorkflowNextActionDigestCheckItem{SubscriptionID: a.SubscriptionID, Sequence: a.Sequence, ActionKind: a.Kind, Status: "unavailable", Explanation: "Source is missing, expired or outside the current access boundary; completion cannot be inferred.", ChangedFields: []string{}}
+		result := api.OperationWorkflowNextActionDigestCheckItem{SubscriptionID: a.SubscriptionID, Sequence: a.Sequence, ActionKind: a.Kind, Status: "unavailable", Explanation: "Source is missing, expired or outside the current access boundary; completion cannot be inferred.", ChangedFields: []string{}, HistoryLimited: true}
 		sourceID, err := uuid.Parse(a.SubscriptionID)
 		if err != nil || a.Sequence < 1 || saved.Scope != scope {
 			out.Items = append(out.Items, result)
@@ -43,13 +43,23 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 			continue
 		}
 		n := source.Items[0]
+		if a.Obligation != nil {
+			result.ObligationID = a.Obligation.ID
+		}
+		lifecycle, terminal := workflowObligationReceipts(n, a, digest.EvaluatedAt)
+		result.Lifecycle = lifecycle
+
 		if completion := n.Coordination.Completion; completion != nil {
 			result.Status = "no_longer_outstanding"
-			result.Explanation = "The source follow-up was explicitly closed without a resolved completion; this does not establish fulfillment."
+			result.Explanation = "The source follow-up was explicitly closed; this receipt alone does not establish completion of the saved obligation cycle."
 			result.Completion = completion
-			if completion.Outcome == "resolved" {
+			if completion.Outcome == "resolved" && (a.Obligation == nil || a.Kind == "follow_up") {
 				result.Status = "completed"
 				result.Explanation = "The source follow-up has an explicit resolved completion receipt. This confirms source coordination closure, not application success or live evidence health."
+			}
+			if terminal != "" {
+				result.Status = terminal
+				result.Explanation = "A retained lifecycle receipt explicitly records " + terminal + " for this saved obligation."
 			}
 			out.Items = append(out.Items, result)
 			continue
@@ -68,10 +78,19 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 			result.ChangedFields = explainNextActionDigest(current, saved, true, true, now).ChangedFields
 			result.Status = "outstanding"
 			result.Explanation = "The source still projects this outstanding action. Inspect current source controls before acting."
-			if readinessDigest(current) != readinessDigest(saved) {
+			if a.Obligation != nil && current.Action.Obligation != nil && a.Obligation.ID != current.Action.Obligation.ID {
+				result.Status = "replaced"
+				result.Explanation = "A newer obligation of this kind is outstanding on the same source. Its current details do not describe the saved obligation."
+			} else if readinessDigest(current) != readinessDigest(saved) {
 				result.Status = "changed"
 				result.Explanation = "The source still projects this action with changed details; use its current owner, deadline and source controls."
 			}
+		}
+		if terminal != "" {
+			result.Status = terminal
+			result.Explanation = "A retained lifecycle receipt explicitly records " + terminal + " for this saved obligation; any current action with a different identity is a separate obligation."
+		} else if a.Obligation == nil {
+			result.Explanation += " This older digest has no obligation identity; exact cycle comparison is unavailable."
 		}
 		out.Items = append(out.Items, result)
 	}

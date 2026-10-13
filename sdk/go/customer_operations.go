@@ -439,3 +439,7 @@ type OperationWorkflowNextActionDigestExplanation = api.OperationWorkflowNextAct
 type OperationWorkflowNextActionDigestCheck = api.OperationWorkflowNextActionDigestCheck
 
 type OperationWorkflowNextActionDigestCheckItem = api.OperationWorkflowNextActionDigestCheckItem
+
+type OperationWorkflowActionObligation = api.OperationWorkflowActionObligation
+
+type OperationWorkflowObligationEvent = api.OperationWorkflowObligationEvent

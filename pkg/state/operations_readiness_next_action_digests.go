@@ -74,6 +74,9 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 		}
 		matching++
 		key := action.SubscriptionID + "/" + strconv.FormatInt(action.Sequence, 10) + "/" + action.Kind
+		if action.Obligation != nil {
+			key += "/" + action.Obligation.ID
+		}
 		live[key] = true
 		fingerprint := readinessDigest(item)
 		if known[key] == fingerprint {
@@ -136,7 +139,7 @@ func explainNextActionDigest(item, previous api.OperationWorkflowNextActionQueue
 			name           string
 			current, prior any
 		}{
-			{"deadline", a.DueAt, previous.Action.DueAt}, {"overdue", a.Overdue, previous.Action.Overdue},
+			{"obligation", a.Obligation, previous.Action.Obligation}, {"deadline", a.DueAt, previous.Action.DueAt}, {"overdue", a.Overdue, previous.Action.Overdue},
 			{"owner", a.Owner, previous.Action.Owner}, {"summary", a.Summary, previous.Action.Summary},
 			{"trigger", a.Trigger, previous.Action.Trigger}, {"evidence", a.Evidence, previous.Action.Evidence},
 			{"cases", item.Cases, previous.Cases}, {"shared_plan", a.SharedPlan, previous.Action.SharedPlan},

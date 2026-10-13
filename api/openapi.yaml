@@ -82487,6 +82487,33 @@ components:
         retention_limited:
           type: boolean
           description: Queue and source inbox retention bound coverage. Deleted/pruned source work is unavailable.
+    OperationWorkflowActionObligation:
+      type: object
+      additionalProperties: false
+      description: Stable source-and-kind identity derived from the persisted obligation epoch, including dependency-review revision where available. Ownership changes and deadline edits preserve the identity except a newly scheduled response check-in, which defines a new check-in obligation. Older saved actions may omit identity.
+      required: [id, started_at]
+      properties:
+        id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+    OperationWorkflowObligationEvent:
+      type: object
+      additionalProperties: false
+      description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
+      required: [kind, at, explanation]
+      properties:
+        kind:
+          type: string
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled]
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        explanation:
+          type: string
     OperationWorkflowNextActionDigestCheck:
       type: object
       additionalProperties: false
@@ -82503,9 +82530,19 @@ components:
     OperationWorkflowNextActionDigestCheckItem:
       type: object
       additionalProperties: false
-      description: Current result for one saved source action. Completed requires a retained explicit resolved source follow-up closure; no-longer-outstanding and unavailable never imply completion. Current owner filters are intentionally not applied so reassignment remains visible. Linked evidence health and application success are not inferred.
-      required: [subscription_id, sequence, action_kind, status, explanation, changed_fields]
+      description: Current result for one saved source action. Completed requires an epoch-matched lifecycle receipt or an explicit resolved generic source follow-up closure; no-longer-outstanding and unavailable never imply completion. Current owner filters are intentionally not applied so reassignment remains visible. Linked evidence health and application success are not inferred.
+      required: [subscription_id, sequence, action_kind, status, explanation, changed_fields, history_limited]
       properties:
+        obligation_id:
+          type: string
+        history_limited:
+          type: boolean
+          description: Lifecycle coverage is bounded by source retention and available anchored receipts; missing events never prove completion.
+        lifecycle:
+          type: array
+          maxItems: 40
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationEvent'
         subscription_id:
           type: string
           format: uuid
@@ -82516,12 +82553,12 @@ components:
           type: string
         status:
           type: string
-          enum: [outstanding, changed, completed, no_longer_outstanding, unavailable]
+          enum: [outstanding, changed, completed, no_longer_outstanding, unavailable, replaced, canceled]
         explanation:
           type: string
         changed_fields:
           type: array
-          maxItems: 10
+          maxItems: 11
           items:
             type: string
         current:
@@ -82554,10 +82591,10 @@ components:
           enum: [first_delivery, previous_delivery, previous_snapshot_unavailable]
         changed_fields:
           type: array
-          maxItems: 10
+          maxItems: 11
           items:
             type: string
-            enum: [deadline, overdue, owner, summary, trigger, evidence, cases, shared_plan, scope, subscription_tenant_id]
+            enum: [obligation, deadline, overdue, owner, summary, trigger, evidence, cases, shared_plan, scope, subscription_tenant_id]
         next_step:
           type: string
     OperationWorkflowNextActionCase:
@@ -82602,6 +82639,8 @@ components:
       description: One current coordination obligation or suggestion for an exact workflow case, including the responsible label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references matching this case. This does not authorize application execution or infer business completion.
       required: [kind, summary, trigger, overdue, subscription_id, sequence]
       properties:
+        obligation:
+          $ref: '#/components/schemas/OperationWorkflowActionObligation'
         kind:
           type: string
           enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
