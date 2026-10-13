@@ -10,7 +10,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1162: the range follows the month's plan history hour by hour, exactly
+// adr: 1162
+//
+// The range follows the month's plan history hour by hour, exactly
 // as the provider pusher delivers it. Hobby's 50 GB-h applies until the Pro
 // upgrade activates at 10:30; from the 10:00 hour on, Pro's 250 GB-h does.
 // Hobby for the whole range would bill 30 GB-h, Pro for the whole range 0.
