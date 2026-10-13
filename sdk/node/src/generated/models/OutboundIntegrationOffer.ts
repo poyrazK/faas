@@ -51,9 +51,13 @@ export type OutboundIntegrationOffer = {
    */
   ai_monthly_cost_limit_millicents?: number | null;
   /**
-   * Whether every settled AI call writes one metadata row to the request log (ADR-991). Never stores content.
+   * Whether every settled AI call writes one metadata row to the request log (ADR-991).
    */
   ai_request_log_enabled?: boolean;
+  /**
+   * Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
+   */
+  ai_request_log_content?: boolean;
   /**
    * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */

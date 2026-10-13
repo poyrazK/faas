@@ -12,7 +12,7 @@
 - **Why:**
   - Agents and current OpenAI SDK examples call the Responses API. Routes accepted only chat completions, so those apps could not use fallback routes or non-OpenAI targets at all.
   - Claude Fable 5.1, Mythos 5.1, Opus 5.5 and Sonnet 5.5 return 400 for `tool_choice` `any` or `tool`. A route that translated a forced choice therefore failed on exactly the models customers pick first.
-  - Three leaks made the ADR-991 hard caps soft:
+  - Two leaks made the ADR-991 hard caps soft:
     - Gemini's `batchEmbedContents` and some streams report no usage. Such calls held a reservation at admission but settled at zero tokens and zero cost.
     - End users past the day's 10,000 tracked users landed in `~other`, where per-user caps do not apply. An app that minted a fresh user ID per call could bypass every per-user cap.
   - Debugging a bad completion needed the prompt and the answer. The request log (ADR-991) deliberately stored metadata only, so customers had to add their own logging inside the app.
@@ -35,7 +35,7 @@
   - **Settle unknown usage at zero and alert.** Caps that a provider's missing usage field can bypass are not hard caps.
   - **Estimate output tokens from the response bytes.** Byte counts differ widely by tokenizer and language, and they are unknown for binary event streams. The reservation is the bound the caller already accepted at admission.
   - **Raise the tracked-users cap.** A higher cap only moves the bypass. Refusing new users while per-user caps are set keeps them honest; operators who want more users can remove per-user limits.
-  - **Encrypt captured content with an age key pair as Run results are.** That needs a new key pair, key distribution to outboundd and decryption in apid. The same bytes already sit unencrypted in app logs, and retention is 3 days. Encryption at rest of the whole database covers the disk.
+  - **Encrypt captured content with an age key pair as Run results are.** That needs a new key pair, key distribution to outboundd and decryption in apid. The same bytes already sit unencrypted in app logs, and retention is 3 days.
   - **Capture headers.** Headers carry credentials and the relay assertion. Bodies are enough to debug a completion.
   - **Capture every logged call.** An integration serving thousands of calls a minute would write gigabytes a day. 1,000 captures a day is enough to debug and bounds the table.
 

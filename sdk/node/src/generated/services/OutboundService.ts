@@ -8,6 +8,7 @@ import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundI
 import type { OutboundAIBudgetAlertList } from '../models/OutboundAIBudgetAlertList.js';
 import type { OutboundAIPriceCatalogResponse } from '../models/OutboundAIPriceCatalogResponse.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIRequestContent } from '../models/OutboundAIRequestContent.js';
 import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
 import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
@@ -714,7 +715,7 @@ export class OutboundService {
   }
   /**
    * Page the opt-in AI request log.
-   * Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata only.
+   * Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata. content_captured marks calls whose bodies were captured (ADR-996).
    * @returns OutboundAIRequestLogList One page of logged calls.
    * @throws ApiError
    */
@@ -745,6 +746,43 @@ export class OutboundService {
       query: {
         'limit': limit,
         'before': before,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read one logged AI call's captured bodies.
+   * Requires MFA and read scope (ADR-996). Returns the start of the request and response bodies the gateway sent and received when request_log_content was on. Captures are kept for 3 days; a call without one is not found.
+   * @returns OutboundAIRequestContent The captured bodies.
+   * @throws ApiError
+   */
+  public static getOutboundAiRequestContent({
+    integration,
+    request,
+  }: {
+    /**
+     * UUID of the integration that logged the call.
+     */
+    integration: string,
+    /**
+     * ID of the request-log entry.
+     */
+    request: string,
+  }): CancelablePromise<OutboundAIRequestContent> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/content',
+      path: {
+        'integration': integration,
+        'request': request,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
