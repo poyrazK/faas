@@ -386,7 +386,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 		"vmmd_socket", cfg.VMMDSocket,
 		"metrics_addr", cfg.MetricsAddr)
 
-	pool, err := deps.openDB(ctx, cfg.DBURL)
+	var bootWait db.BootWaitRecord
+	pool, err := deps.openDB(db.WithBootWaitRecord(ctx, &bootWait), cfg.DBURL)
 	if err != nil {
 		return err
 	}
@@ -644,6 +645,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 		return artifactErr
 	}
 	engine.WithValidatorArtifactCheck(validatorArtifacts.Check)
+	// ADR-1152 §5 rule 4: a schedd that saw the store unavailable before it
+	// started (a boot wait for Postgres, or store errors while it waited for
+	// the central-scheduler lease) holds its liveness verdicts for a full
+	// staleness window; every heartbeat is old because nobody could write.
+	storeOutageAtStartup := bootWait.Waited() || (centralHold != nil && centralHold.SawStoreError())
+	if storeOutageAtStartup {
+		log.Info("schedd: store was unavailable before startup; liveness verdicts wait for a full staleness window")
+	}
+	engine.WithStoreOutageAtStartup(storeOutageAtStartup)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
@@ -1560,6 +1570,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
 		WithStalePeerObserver(ownerNodeID != "").
+		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
 		WithReachableHook(engine.DestroyLostVMs)

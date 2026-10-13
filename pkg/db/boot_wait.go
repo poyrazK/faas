@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,6 +39,30 @@ const (
 	// bootWaitLogEvery bounds the "waiting for PostgreSQL" warning.
 	bootWaitLogEvery = time.Minute
 )
+
+// BootWaitRecord reports whether Open had to wait for the database. A daemon
+// that waited saw the store unavailable before it started, which callers
+// such as schedd's liveness verdicts must account for (ADR-1152 §5 rule 4).
+type BootWaitRecord struct {
+	waited atomic.Bool
+}
+
+// Waited reports whether Open retried the initial ping before it succeeded.
+func (r *BootWaitRecord) Waited() bool { return r != nil && r.waited.Load() }
+
+type bootWaitRecordKey struct{}
+
+// WithBootWaitRecord returns a context under which Open records into r
+// whether it had to wait for the database.
+func WithBootWaitRecord(ctx context.Context, r *BootWaitRecord) context.Context {
+	return context.WithValue(ctx, bootWaitRecordKey{}, r)
+}
+
+func recordBootWait(ctx context.Context) {
+	if r, ok := ctx.Value(bootWaitRecordKey{}).(*BootWaitRecord); ok && r != nil {
+		r.waited.Store(true)
+	}
+}
 
 // bootWaiter retries the initial ping while the database is unreachable.
 type bootWaiter struct {
@@ -68,6 +93,7 @@ func (w bootWaiter) ping(ctx context.Context, ping func(context.Context) error) 
 		err := ping(ctx)
 		if err == nil {
 			if !waitedSince.IsZero() {
+				recordBootWait(ctx)
 				_ = w.notify("STATUS=PostgreSQL reachable")
 				w.log.Info("db: PostgreSQL reachable; continuing startup",
 					"waited", time.Since(waitedSince).Round(time.Second).String())

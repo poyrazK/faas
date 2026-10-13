@@ -573,9 +573,6 @@ func newEngine(t *testing.T, store state.Store, vmm RoutedVMM, notif Notifier, f
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	// The dead-node settle window (ADR-1152) has its own tests; fixtures
-	// start from a schedd that has read the store for a long time.
-	e.deadNodeSettle.settledSince(time.Now().Add(-24 * time.Hour))
 	// Worker scale-in stabilization has its own tests; fixtures that assert
 	// a single reconcile's convergence opt out of the window.
 	return e.WithWorkerScaleInStabilization(0)

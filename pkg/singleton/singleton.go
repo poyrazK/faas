@@ -160,7 +160,7 @@ func (r *Runner) Run(ctx context.Context, work Work) error {
 // before the local deadline or another holder took it. Call Release when
 // done.
 func (r *Runner) Acquire(ctx context.Context) (*Holding, error) {
-	waiting := false
+	waiting, storeErr := false, false
 	for {
 		start := time.Now()
 		lease, held, err := r.store.AcquireControlPlaneLease(ctx, r.name, r.holder, r.timings.TTL)
@@ -168,9 +168,12 @@ func (r *Runner) Acquire(ctx context.Context) (*Holding, error) {
 		case ctx.Err() != nil:
 			return nil, ctx.Err()
 		case err != nil:
+			storeErr = true
 			r.log.Warn("singleton: lease acquire failed", "err", err)
 		case held:
-			return r.startHolding(ctx, lease.Epoch, start), nil
+			h := r.startHolding(ctx, lease.Epoch, start)
+			h.storeErr = storeErr
+			return h, nil
 		case !waiting:
 			waiting = true
 			r.log.Info("singleton: lease held by another node; waiting as standby")
@@ -208,11 +211,20 @@ type Holding struct {
 	cancel context.CancelCauseFunc
 	stop   chan struct{}
 	done   chan struct{}
+	// storeErr records that Acquire met a store error before it got the
+	// lease. Set before the holding is returned; read-only after.
+	storeErr bool
 
 	mu       sync.Mutex
 	lost     bool
 	released bool
 }
+
+// SawStoreError reports whether Acquire met a store error while this
+// process waited for the lease. A standby that waited through a database
+// outage takes over with every heartbeat in the store old because nobody
+// could write one, so its liveness verdicts must wait (ADR-1152 §5 rule 4).
+func (h *Holding) SawStoreError() bool { return h.storeErr }
 
 // Context ends when the lease is lost (cause ErrLeaseLost), released, or the
 // parent context ends.

@@ -211,6 +211,19 @@ func (h *Heartbeat) WithStalePeerObserver(enabled bool) *Heartbeat {
 	return h
 }
 
+// WithStoreOutageAtStartup holds the stale-peer observer for a full staleness
+// window of store access when this process saw the store unavailable before
+// the heartbeat existed (ADR-1152 §5 rule 4).
+func (h *Heartbeat) WithStoreOutageAtStartup(outage bool) *Heartbeat {
+	if h == nil {
+		return h
+	}
+	if outage {
+		h.peerSettle.hold()
+	}
+	return h
+}
+
 // WithNodeRegistry makes heartbeat consume the same notification-backed
 // active-node snapshot as placement.
 func (h *Heartbeat) WithNodeRegistry(reg *NodeRegistry) *Heartbeat {
@@ -410,10 +423,11 @@ func (h *Heartbeat) Tick(ctx context.Context) error {
 // does not dial a peer and it never reactivates rows. The owning schedd's
 // probe remains the sole authority for transport recovery.
 //
-// The observer acts only after this schedd has read the store without
-// interruption for a full staleness window. Right after a store outage (or a
-// restart during one) every peer's timestamp is old because no one could
-// write it, and acting then would mark the whole fleet unavailable.
+// After this schedd saw the store unavailable (a failed read here, or an
+// outage at startup), the observer acts only once it has read the store
+// without interruption for a full staleness window. Right after a store
+// outage every peer's timestamp is old because no one could write it, and
+// acting then would mark the whole fleet unavailable.
 func (h *Heartbeat) observeStalePeerNodes(ctx context.Context, tickNow time.Time, staleness time.Duration) {
 	nodes, err := h.store.NodeList(ctx, "")
 	h.peerSettle.observe(err, tickNow)
