@@ -32,7 +32,7 @@ func (p ObjectStorageLineItemPolicy) valid() bool {
 // period. Implementations must expose an explicit rollout policy, use
 // record.ID as their external idempotency key, and translate millicents into
 // the provider's native currency unit. chargeMillicents is what to bill: the
-// record's total held under the account's overage cap (ADR-1200), never more
+// record's total held under the account's overage cap (ADR-1238), never more
 // than record.TotalMillicents. Keeping this optional interface separate from
 // Provider avoids forcing every billing integration to support object-storage
 // line items at once.
@@ -79,7 +79,7 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 		}
 	}
 	// The sink's egress policy prices the live egress that the overage cap
-	// reserves before object storage, as meterd prices it (ADR-1200).
+	// reserves before object storage, as meterd prices it (ADR-1238).
 	policies, _ := sink.(MeterUsagePolicyProvider)
 	all, err := accounts.ListAllAccounts(ctx)
 	if err != nil {
@@ -135,7 +135,7 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 				delivery.QuantityMillicents = 0
 			default:
 				// Shadow records what live would bill, so both stay under the
-				// overage cap (ADR-1200).
+				// overage cap (ADR-1238).
 				charge, err := objectStorageChargeWithinCap(ctx, store, policies, account, record)
 				if err != nil {
 					failures = append(failures, fmt.Errorf("account %s: object storage spend cap: %w", account.ID, err))

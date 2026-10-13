@@ -28,7 +28,7 @@ func TestCalculateChargeRoundsEachComponentUp(t *testing.T) {
 	}
 }
 
-// adr: 1200 — the plan allowance is removed from each meter before pricing,
+// adr: 1238 — the plan allowance is removed from each meter before pricing,
 // and usage below the allowance is never charged.
 func TestCalculateChargeRemovesAllowanceBeforePricing(t *testing.T) {
 	pricing := api.ObjectStoragePricing{

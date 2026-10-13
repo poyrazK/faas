@@ -729,6 +729,14 @@ operator limits. It does not add an enable flag or account allowlist. Missing
 or null policy keeps metadata/cleanup usable but blocks new signed URLs.
 Policy changes require restarting API replicas with identical config.
 
+A plan can tighten the account bytes, monthly requests, and monthly egress
+limits through its object-storage ceilings in `pkg/api/limits.go`
+([ADR-1238](adr/1238-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+Per limit, the tighter positive value applies, and the bucket byte limit never
+exceeds the account limit. A plan never loosens the operator policy.
+`GET /v1/account/object-storage-usage` reports the effective policy. Every
+plan's ceilings are currently zero, so the operator policy applies unchanged.
+
 In `gateway_safety_v1`, customer native calls reserve the shared request budget
 before dispatch. Each multipart part-list page (including CLI resume), bucket
 configuration or version-protection probe, and tag request counts separately,
@@ -793,9 +801,10 @@ separate from upstream `cost_millicents`.
 Polar billing is independently default-off. In `shadow`, Gregale finalizes the
 completed UTC month and records the would-be charge without sending an event.
 In `live`, it sends one idempotent event per immutable billing record. The
-event quantity is the exact total customer charge in millicents; detailed
-storage, request, egress, and upstream-cost values remain in metadata and the
-local ledger. A durable provider receipt records pre-activation, shadow, or
+event quantity is the customer charge in millicents, held under the account's
+overage cap (see below). The uncapped total (`uncapped_millicents`) and the
+detailed storage, request, egress, and upstream-cost values remain in metadata
+and the local ledger. A durable provider receipt records pre-activation, shadow, or
 live handling; accounts that are not on a paid plan receive a permanent
 zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
 retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at EUR
@@ -941,9 +950,15 @@ usage exporter and explicit limits, confirm fresh observations, then enable.
 Rollback must disable signing first; old binaries bypass these guards.
 Do not drop accounting tables while serving customer storage.
 
-No plan allowances are introduced by the accounting surface; compute billing
-is unchanged. `apid` closes the prior UTC month once per deployment period and
-stores an immutable per-account billing snapshot. Polar can publish that
+A plan's object-storage allowance (included stored bytes, requests, and egress
+bytes) is removed from each meter before pricing. The month uses the largest
+allowance among the plans active in it, and the finalized record copies the
+allowance it used. Every plan's allowance is currently zero. A finalized
+month is billed only up to what the account's overage cap still allows after
+the month's billable compute and live egress, and capped usage is never billed
+later ([ADR-1238](adr/1238-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+`apid` closes the prior UTC month once per deployment period and stores an
+immutable per-account billing snapshot. Polar can publish that
 snapshot idempotently when its independent rollout gate is live; other billing
 providers retain the internal ledger only. A qualified provider usage exporter
 and live month-close verification remain required for paid launch; see

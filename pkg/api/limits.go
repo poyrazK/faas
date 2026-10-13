@@ -1416,7 +1416,7 @@ type EventStorageLimits struct {
 	RetainedBytes  int64 `json:"retained_bytes"`
 }
 
-// ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1200).
+// ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1238).
 // Ceilings tighten the operator safety policy (ObjectStoragePolicy) and are
 // the plan's hard stop; allowances are usage included in the plan and removed
 // before month-close pricing. A zero field changes nothing: the operator
@@ -1475,7 +1475,7 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1200). Every plan currently leaves it zero.
+	// (ADR-1238). Every plan currently leaves it zero.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits

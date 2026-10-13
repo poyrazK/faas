@@ -2,7 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-1200: a finalized object-storage period records the plan allowance that
+-- ADR-1238: a finalized object-storage period records the plan allowance that
 -- was removed before pricing, next to the rates already copied into the row.
 -- Existing periods were priced with no allowance, which the zero default
 -- states exactly.

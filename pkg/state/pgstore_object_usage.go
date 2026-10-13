@@ -32,7 +32,7 @@ func (s *PgStore) ObjectUsageForPeriod(ctx context.Context, account string, peri
 func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string, periodStart time.Time) (ObjectUsageSnapshot, error) {
 	q := sqlc.New()
 	out := ObjectUsageSnapshot{}
-	// ADR-1200: checks tighten the operator policy by the plan's ceilings. A
+	// ADR-1238: checks tighten the operator policy by the plan's ceilings. A
 	// missing account keeps the operator policy, as before.
 	plan, err := q.ObjectUsageAccountPlan(ctx, db, mustPgUUID(account))
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {

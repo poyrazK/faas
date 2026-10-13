@@ -87,7 +87,7 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 }
 
 // ObjectStorageUsageResponse reports the account's effective policy: the
-// operator safety policy tightened by its plan's ceilings (ADR-1200).
+// operator safety policy tightened by its plan's ceilings (ADR-1238).
 func (s *Service) ObjectStorageUsageResponse(usage api.ObjectStorageUsage, charges *api.ObjectStorageCharge, plan api.Plan) api.ObjectStorageUsageResponse {
 	out := api.ObjectStorageUsageResponse{
 		Usage:       usage,

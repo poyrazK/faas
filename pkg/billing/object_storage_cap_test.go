@@ -1,4 +1,4 @@
-// adr: 1200 — the overage cap covers month-close object storage.
+// adr: 1238 — the overage cap covers month-close object storage.
 package billing
 
 import (

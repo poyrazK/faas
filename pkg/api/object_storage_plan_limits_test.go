@@ -1,4 +1,4 @@
-// adr: 1200
+// adr: 1238
 
 package api
 
@@ -14,7 +14,7 @@ func TestObjectStoragePlanLimitsZeroChangesNothing(t *testing.T) {
 	}
 	for _, plan := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
 		if MustLimitsFor(plan).ObjectStorage != (ObjectStoragePlanLimits{}) {
-			t.Fatalf("%s object-storage limits are set; ADR-1200 ships the mechanism with every plan at zero", plan)
+			t.Fatalf("%s object-storage limits are set; ADR-1238 ships the mechanism with every plan at zero", plan)
 		}
 	}
 }

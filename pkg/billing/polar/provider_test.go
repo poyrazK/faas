@@ -186,7 +186,7 @@ func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
 	if err := p.PublishObjectStorageLineItem(context.Background(), record, record.TotalMillicents+1); err == nil {
 		t.Fatal("a charge above the record total was published")
 	}
-	// ADR-1200: the overage cap held the charge to 1000 of 1239 millicents.
+	// ADR-1238: the overage cap held the charge to 1000 of 1239 millicents.
 	if err := p.PublishObjectStorageLineItem(context.Background(), record, 1000); err != nil {
 		t.Fatal(err)
 	}
