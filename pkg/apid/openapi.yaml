@@ -44183,7 +44183,7 @@ paths:
         name: state
         description: Business state filter.
         required: false
-        schema: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+        schema: {type: string, enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation]}
       - name: subject_type
         description: Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
         in: query
@@ -44727,6 +44727,50 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/approvals/{step}:
+    post:
+      tags:
+      - operations
+      operationId: decideOperationApproval
+      summary: Decide an account approval on waiting work (ADR-1156).
+      description: Requires deploy:write and MFA. Only a step whose definition names the account approver. The same decision is idempotent; a different one conflicts. Rejection settles the operation failed with approval_rejected.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - name: step
+        in: path
+        required: true
+        description: Approval step declared by the operation definition.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationApprovalRequest'
+      responses:
+        '200':
+          description: The decision is recorded; the operation resumes or settles approval_rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/platform-tenant-self/customer-operations:
     get:
       tags: [operations]
@@ -44768,7 +44812,7 @@ paths:
         in: query
         schema:
           type: string
-          enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]
+          enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation]
       - name: limit
         description: Maximum summaries in this page.
         in: query
@@ -45007,6 +45051,49 @@ paths:
           $ref: '#/components/responses/OperationGone'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}:
+    post:
+      tags:
+      - operations
+      operationId: decidePlatformTenantSelfOperationApproval
+      summary: Decide this customer's approval on its waiting operation (ADR-1156).
+      description: Requires platform_tenant:operations:manage. Only a step whose definition names the customer approver, on the customer's own operation. The same decision is idempotent; a different one conflicts.
+      parameters:
+      - $ref: '#/components/parameters/OperationId'
+      - name: step
+        in: path
+        required: true
+        description: Approval step that the definition assigns to the customer.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationApprovalRequest'
+      responses:
+        '200':
+          description: The customer's decision is recorded; its operation resumes or settles approval_rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -50928,7 +51015,7 @@ components:
       properties:
         operation_id: {type: string, format: uuid}
         generation: {type: integer, minimum: 1}
-        state: {type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]}
+        state: {type: string, enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation]}
         failure_code: {type: string}
         cancellation_requested: {type: boolean}
         execution_kind: {type: string, enum: [http, workflow, job]}
@@ -53319,8 +53406,9 @@ components:
           description: Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a public stable ID appropriate for customer-visible history.
     OperationDefinitionSpec:
       description: >-
-        Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment.
-        Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps.
+        Resolved immutable contract for an HTTP handler or a named linear workflow from the same deployment.
+        Workflow definitions require POST ingress, reconciliation recovery and stages matching the steps; steps
+        are HTTP actions, fixed timers or declared approvals, ending with an HTTP action.
         Ownership comes from verified authentication. Production admission remains disabled pending qualification.
       type: object
       additionalProperties: false
@@ -53333,6 +53421,12 @@ components:
       - output_schema
       - progress_stages
       properties:
+        approvals:
+          type: array
+          maxItems: 64
+          description: ADR-1156 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the named approver.
+          items:
+            $ref: '#/components/schemas/OperationApprovalSpec'
         milestones:
           type: object
           maxProperties: 16
@@ -53540,7 +53634,7 @@ components:
       required: [operation_id, business_state, operation_expires_at, observed_at, state, attempts, last_response_code]
       properties:
         operation_id: { type: string, format: uuid }
-        business_state: { type: string, enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation] }
+        business_state: { type: string, enum: [accepted, running, waiting, succeeded, failed, cancelled, requires_reconciliation] }
         operation_expires_at: { type: string, format: date-time }
         observed_at: { type: string, format: date-time }
         state: { type: string }
@@ -53755,6 +53849,33 @@ components:
         next_attempt_at:
           type: string
           format: date-time
+    OperationApprovalSpec:
+      description: Declares a workflow callback step as an approval decided by the account or the operation's customer.
+      type: object
+      additionalProperties: false
+      required: [step, approver]
+      properties:
+        step: { type: string, pattern: '^[a-z][a-z0-9-]{0,63}$' }
+        approver: { type: string, enum: [account, customer] }
+    OperationWaitingState:
+      description: Why a waiting operation holds no execution. until is the timer's wake time or the approval deadline.
+      type: object
+      required: [kind, step, since]
+      properties:
+        kind: { type: string, enum: [timer, approval] }
+        step: { type: string }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        approver: { type: string, enum: [account, customer] }
+    OperationApprovalRequest:
+      description: One approval decision for the operation's current generation.
+      type: object
+      additionalProperties: false
+      required: [expected_generation, decision]
+      properties:
+        expected_generation: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [approved, rejected] }
+        comment: { type: string, maxLength: 1024, description: Recorded with the decision in the operation history. }
     OperationResponse:
       description: Customer business work; execution recovery and delivery retain independent semantics.
       type: object
@@ -53785,6 +53906,7 @@ components:
           enum:
           - accepted
           - running
+          - waiting
           - succeeded
           - failed
           - cancelled
@@ -53803,6 +53925,8 @@ components:
           type: boolean
         failure_code:
           type: string
+        waiting:
+          $ref: '#/components/schemas/OperationWaitingState'
         latest_sequence:
           type: integer
           minimum: 0
@@ -53849,6 +53973,7 @@ components:
           enum:
           - accepted
           - running
+          - waiting
           - succeeded
           - failed
           - cancelled
