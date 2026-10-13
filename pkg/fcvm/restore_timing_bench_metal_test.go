@@ -284,7 +284,11 @@ func benchCycles(t *testing.T) int {
 type restoreBreakdownCapture struct {
 	mu       sync.Mutex
 	captured []map[string]int64
-	prev     *slog.Logger
+	// resume holds the latest "resume hook timing" record (host connect/ack
+	// plus the guest's own stages, ADR-022 amendment) until the restore's
+	// breakdown record arrives and absorbs it. Restores run one at a time.
+	resume map[string]int64
+	prev   *slog.Logger
 }
 
 func newRestoreBreakdownCapture(t *testing.T) *restoreBreakdownCapture {
@@ -311,7 +315,17 @@ func (c *restoreBreakdownCapture) rows() []map[string]int64 {
 func (c *restoreBreakdownCapture) add(row map[string]int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for k, v := range c.resume {
+		row[k] = v
+	}
+	c.resume = nil
 	c.captured = append(c.captured, row)
+}
+
+func (c *restoreBreakdownCapture) addResume(row map[string]int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resume = row
 }
 
 type restoreBreakdownHandler struct {
@@ -330,6 +344,17 @@ func (h *restoreBreakdownHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 func (h *restoreBreakdownHandler) WithGroup(string) slog.Handler { return h }
 
 func (h *restoreBreakdownHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == "resume hook timing" {
+		row := map[string]int64{}
+		r.Attrs(func(a slog.Attr) bool {
+			if v, ok := attrMillis(a); ok {
+				row[a.Key] = v
+			}
+			return true
+		})
+		h.sink.addResume(row)
+		return nil
+	}
 	if r.Message != "restore timing breakdown" {
 		// Keep warnings visible: a restore that silently fell back to a cold
 		// boot is otherwise reported only as the wrong wake method.
@@ -383,6 +408,20 @@ var restoreTimingPhases = []string{
 	"pre_boot_files_total",
 	"pre_boot_files_written",
 	"resume_hook_ms",
+	"connect_ms",
+	"ack_ms",
+	"guest_total_us",
+	"guest_outside_us",
+	"guest_userspace_reseed_us",
+	"guest_reseed_slowest_us",
+	"guest_reseed_clients",
+	"guest_read_us",
+	"guest_entropy_us",
+	"guest_hwrng_us",
+	"guest_clock_us",
+	"guest_uuid_marker_us",
+	"guest_profiles_us",
+	"guest_after_restore_us",
 	"stage_snapshot_ms",
 	"load_snapshot_ms",
 	"wait_ready_ms",
@@ -428,7 +467,7 @@ func reportRestoreTiming(t *testing.T, rows []map[string]int64) {
 		label := phase
 		if strings.HasSuffix(phase, "_us") {
 			label = phase + " (µs)"
-		} else if strings.HasPrefix(phase, "pre_boot_files_") {
+		} else if strings.HasPrefix(phase, "pre_boot_files_") || strings.HasSuffix(phase, "_clients") {
 			label = phase + " (count)"
 		}
 		t.Logf("%-26s %6d %6d %6d %6d %6d %6.1f",

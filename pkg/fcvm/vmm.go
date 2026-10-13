@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -2711,13 +2712,25 @@ const (
 // resume request.
 var ErrGuestLacksRestoreReseed = errors.New("vmm: restored guest-init lacks the userspace RNG reseed barrier (ADR-687)")
 
-func readResumeCapabilities(conn net.Conn) error {
+// readResumeCapabilities reads the capability byte after an OK ack and, when
+// the guest announces it, the guest-side timing frame (ADR-022 amendment).
+// The timings are advisory: a malformed frame costs the diagnostics, never
+// the restore, so it returns nil timings rather than an error.
+func readResumeCapabilities(conn net.Conn) (*resumetimingproto.Timings, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(resumeCapabilityWait))
 	caps := make([]byte, 1)
 	if _, err := io.ReadFull(conn, caps); err != nil || caps[0]&resumeCapUserspaceReseed == 0 {
-		return ErrGuestLacksRestoreReseed
+		return nil, ErrGuestLacksRestoreReseed
 	}
-	return nil
+	if caps[0]&resumetimingproto.CapTimings == 0 {
+		return nil, nil
+	}
+	timings, err := resumetimingproto.ReadFrame(conn)
+	if err != nil {
+		slog.Default().Debug("resume hook: guest timing frame unreadable", "err", err)
+		return nil, nil
+	}
+	return &timings, nil
 }
 
 // extensionHookMsgEvent is the host-initiated lifecycle notification type.
@@ -2966,6 +2979,7 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if _, err := io.ReadFull(conn, ack[:]); err != nil {
 		return fmt.Errorf("vmm: read resume ack: %w", err)
 	}
+	acked := time.Now()
 	ackValue := ack[0]
 	if ackValue != 0 {
 		if ackValue == resumeHookAckAfterRestore {
@@ -2976,7 +2990,8 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 		}
 		return fmt.Errorf("vmm: resume hook failed (ack=%d)", ackValue)
 	}
-	if err := readResumeCapabilities(conn); err != nil {
+	guest, err := readResumeCapabilities(conn)
+	if err != nil {
 		return err
 	}
 	if validatePeer != nil {
@@ -2994,11 +3009,46 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	}
 	// Keep host transport setup separate from waiting for the guest hook.
 	// Durations and the lease ID are sufficient; never log the entropy payload.
-	slog.Default().Info("resume hook timing", "instance", l.Instance,
+	ackWait := acked.Sub(sent)
+	attrs := []any{"instance", l.Instance,
 		"connect_ms", connected.Sub(started).Milliseconds(),
 		"write_ms", sent.Sub(connected).Milliseconds(),
-		"ack_ms", time.Since(sent).Milliseconds(), "attempts", attempts)
+		"ack_ms", ackWait.Milliseconds(), "attempts", attempts}
+	if guest != nil {
+		attrs = append(attrs, resumeGuestTimingAttrs(*guest, ackWait)...)
+		v.wakePhaseMetrics.ObserveResumeGuestStages(*guest, ackWait)
+	}
+	slog.Default().Info("resume hook timing", attrs...)
 	return nil
+}
+
+// resumeGuestOutside is the part of the host's ack wait the guest did not
+// account for: vsock transport both ways and the time before guest-init's
+// handler ran at all (vCPU resume, guest scheduling, faulting guest-init back
+// in). Host and guest durations come from separate monotonic clocks, so a
+// small negative difference is clamped to zero.
+func resumeGuestOutside(t resumetimingproto.Timings, ackWait time.Duration) time.Duration {
+	return max(ackWait-time.Duration(t.TotalUs)*time.Microsecond, 0)
+}
+
+// resumeGuestTimingAttrs renders the guest's resume stages for the
+// "resume hook timing" record.
+func resumeGuestTimingAttrs(t resumetimingproto.Timings, ackWait time.Duration) []any {
+	return []any{
+		"guest_total_us", t.TotalUs,
+		"guest_outside_us", resumeGuestOutside(t, ackWait).Microseconds(),
+		"guest_read_us", t.ReadUs,
+		"guest_entropy_us", t.EntropyUs,
+		"guest_hwrng_us", t.HWRNGUs,
+		"guest_clock_us", t.ClockUs,
+		"guest_uuid_marker_us", t.UUIDMarkerUs,
+		"guest_userspace_reseed_us", t.UserspaceReseedUs,
+		"guest_reseed_clients", t.ReseedClients,
+		"guest_reseed_slowest_us", t.ReseedSlowestUs,
+		"guest_reseed_slowest_runtime", t.ReseedSlowestRuntime,
+		"guest_profiles_us", t.ProfilesUs,
+		"guest_after_restore_us", t.AfterRestoreUs,
+	}
 }
 
 // TriggerBeforeCheckpoint is a fail-closed barrier before a terminal init
