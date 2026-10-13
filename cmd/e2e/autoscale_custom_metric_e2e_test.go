@@ -275,7 +275,9 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 	if status != http.StatusNoContent {
 		t.Fatalf("publish empty MCP backlog: status=%d body=%s", status, body)
 	}
-	deadline = time.Now().Add(45 * time.Second)
+	// Scale-in waits until the peak demand of the last stabilization window
+	// (ADR-829) has dropped, so the four-worker samples must age out first.
+	deadline = time.Now().Add(time.Duration(api.WorkerScaleInStabilizationSeconds)*time.Second + 45*time.Second)
 	for time.Now().Before(deadline) {
 		if mcpWorkerInstanceCount(t, f) == 0 {
 			return
