@@ -137,7 +137,7 @@ def pre_normalize_spec(spec: Path) -> Path:
     # Treat this binary attachment as opaque bytes for generation only; the
     # canonical API continues to return JSONL with its original content type.
     export_path = "/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export"
-    export_operation = fixed["paths"].get(export_path, {}).get("get")
+    export_operation = fixed.get("paths", {}).get(export_path, {}).get("get")
     if export_operation is not None:
         if export_operation.get("operationId") != "exportRealtimeConsumerGroupDeadLetters":
             raise ValueError("dead-letter export generator adaptation needs review")
