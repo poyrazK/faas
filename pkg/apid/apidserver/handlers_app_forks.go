@@ -1,4 +1,4 @@
-package main
+package apidserver
 
 // Production fork intent handlers (ADR-732).
 //

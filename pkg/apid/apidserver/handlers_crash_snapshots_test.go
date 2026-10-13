@@ -1,4 +1,4 @@
-package main
+package apidserver
 
 // adr: 733
 // Crash snapshot API: operator and plan gates, settings, manual capture

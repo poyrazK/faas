@@ -1,4 +1,4 @@
--- filename: 20261010140000000_crash_capture_sealed.sql
+-- filename: 20261010140003819_crash_capture_sealed.sql
 
 -- +goose Up
 -- +goose StatementBegin

@@ -1,4 +1,4 @@
-package main
+package apidserver
 
 // adr: 732
 // Production fork intent API: operator gate, plan gate, scopes, TTL bounds,

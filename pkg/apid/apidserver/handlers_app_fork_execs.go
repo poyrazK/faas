@@ -1,4 +1,4 @@
-package main
+package apidserver
 
 // ADR-732 fork exec routes. A command runs inside a running fork, the
 // debug copy of production memory, so creating one and reading its output

@@ -1,4 +1,4 @@
--- filename: 20261009150000000_crash_capture_sdk_trigger.sql
+-- filename: 20261009150004271_crash_capture_sdk_trigger.sql
 
 -- +goose Up
 -- +goose StatementBegin
