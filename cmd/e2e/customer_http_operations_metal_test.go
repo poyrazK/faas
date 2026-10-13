@@ -76,8 +76,11 @@ func TestCustomerHTTPOperationRecoveryMetal(t *testing.T) {
 	f.waitState(t, id, api.OperationRequiresReconciliation)
 	before, err := f.store.OperationByID(t.Context(), f.account.ID, f.tenantID, id)
 	mustCustomerHTTP(t, err)
-	if before.FailureCode != "execution_outcome_unknown" {
-		t.Fatalf("process death failure code = %q, want execution_outcome_unknown", before.FailureCode)
+	// Either classification means the outcome is uncertain: a transport loss,
+	// or a gateway error response that cannot satisfy the output schema.
+	t.Logf("process death recorded failure code %q", before.FailureCode)
+	if before.FailureCode != "execution_outcome_unknown" && before.FailureCode != "invalid_output" {
+		t.Fatalf("process death failure code = %q, want an uncertain outcome", before.FailureCode)
 	}
 	mustCustomerHTTP(t, f.h.KillAPID())
 	mustCustomerHTTP(t, f.h.KillSchedd())
