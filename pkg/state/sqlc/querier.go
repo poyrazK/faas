@@ -1568,6 +1568,10 @@ type Querier interface {
 	// via the existing app/deployment joins if needed by downstream
 	// code, but the per-tick hot loop doesn't pay for it here.
 	InstanceListByNodeForRecovery(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]InstanceListByNodeForRecoveryRow, error)
+	// Archived runtime logs are keyed by instance only. The instance row proves
+	// ownership while it exists; afterwards the app's billing rows for that
+	// instance in [from_minute, to_minute) do.
+	InstanceLogsOwnedByApp(ctx context.Context, db DBTX, arg InstanceLogsOwnedByAppParams) (bool, error)
 	InstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) (InstanceRuntimeConfigReceipt, error)
 	InterruptCustomerOperationWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	InvalidateEnvironmentGitOpsRuntimeAtBoundary(ctx context.Context, db DBTX, arg InvalidateEnvironmentGitOpsRuntimeAtBoundaryParams) error
