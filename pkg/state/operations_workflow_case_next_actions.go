@@ -32,7 +32,7 @@ func projectWorkflowCaseNextActionsWithLimit(out *api.OperationWorkflowCase, row
 	}
 	for _, row := range rows {
 		if row.Scope == opts.Scope {
-			actions = append(actions, projectFulfillmentReviewActions(row, out.Timeline.Subject, tenant, opts, operator)...)
+			actions = append(actions, projectFulfillmentReviewActions(row, out.Timeline.Subject, tenant, opts, operator, out.CoordinationCheckedAt)...)
 		}
 		if row.Scope != opts.Scope || row.Coordination.Completion != nil || row.Coordination.FollowUpAt == nil {
 			continue

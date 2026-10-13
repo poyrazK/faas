@@ -17,7 +17,7 @@ func prepareObligationFulfillment(ctx context.Context, store readinessSubscripti
 	if input == nil {
 		return nil, nil
 	}
-	if req.Reopening != nil || req.Reaffirmation != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || input.EvidenceReportID == "" || len(input.EvidenceReportID) > 128 {
+	if req.Reopening != nil || req.ReviewCoordination != nil || req.Reaffirmation != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || input.EvidenceReportID == "" || len(input.EvidenceReportID) > 128 {
 		return nil, ErrInvalidArgument
 	}
 	operationID, err := uuid.Parse(input.EvidenceOperationID)
@@ -245,6 +245,16 @@ func appendFulfillmentEvents(events []api.OperationWorkflowObligationEvent, coor
 			return e.FulfillmentReview != nil && fulfillmentReviewKey(e.FulfillmentReview.Binding, e.FulfillmentReview.FulfilledAt) == fulfillmentReviewKey(review.Binding, review.FulfilledAt) && e.FulfillmentReview.Fingerprint == review.Fingerprint
 		}) {
 			events = append(events, fulfillmentReviewEvent(review, "fulfillment_review_required", review.CheckedAt, "system:fulfillment-review"))
+		}
+	}
+	for _, change := range coord.ReviewCoordinationChanges {
+		if obligation != "" && change.ReviewID != obligation {
+			continue
+		}
+		if !slices.ContainsFunc(events, func(e api.OperationWorkflowObligationEvent) bool {
+			return e.ReviewCoordination != nil && readinessDigest(*e.ReviewCoordination) == readinessDigest(change)
+		}) {
+			events = append(events, reviewCoordinationEvent(change))
 		}
 	}
 	return events

@@ -12,6 +12,7 @@ import (
 )
 
 type readinessCoordinationUpdate struct {
+	PreparedReviewCoordination     *api.OperationWorkflowFulfillmentReviewCoordinationChange
 	PreparedReaffirmation          *api.OperationWorkflowObligationReaffirmation
 	PreparedReopening              *api.OperationWorkflowObligationReopening
 	PreparedFulfillment            *api.OperationWorkflowObligationFulfillment

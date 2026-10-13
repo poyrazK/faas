@@ -194,6 +194,11 @@ func mergeFulfillmentReview(coord *api.OperationWorkflowReadinessCoordination, c
 	previous := fulfillmentReviewFor(coord, current.Binding, current.FulfilledAt)
 	if previous != nil && previous.BasisAt.Equal(current.BasisAt) && previous.ReviewRequired {
 		current.RequiredAt = previous.RequiredAt
+		current.DueAt = previous.DueAt
+		current.ManualOwner = previous.ManualOwner
+		if previous.ManualOwner {
+			current.Owner = previous.Owner
+		}
 		for _, reason := range previous.Reasons {
 			if !slices.Contains(current.Reasons, reason) {
 				current.Reasons = append(current.Reasons, reason)
@@ -206,7 +211,7 @@ func mergeFulfillmentReview(coord *api.OperationWorkflowReadinessCoordination, c
 		current.RequiredAt = &at
 	}
 	slices.Sort(current.Reasons)
-	current.Fingerprint = readinessDigest([]any{current.Binding, current.FulfilledAt, current.BasisAt, current.Owner, current.Reasons, current.CurrentReasons, current.CurrentContractVersion})
+	current.Fingerprint = fulfillmentReviewFingerprint(current)
 	return current
 }
 
@@ -300,7 +305,7 @@ func prepareObligationReaffirmation(ctx context.Context, store readinessSubscrip
 	if input == nil {
 		return nil, nil
 	}
-	if req.Reopening != nil || req.Fulfillment != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || input.ReviewFingerprint == "" || len(input.ReviewFingerprint) > 128 || input.EvidenceReportID == "" || len(input.EvidenceReportID) > 128 {
+	if req.ReviewCoordination != nil || req.Reopening != nil || req.Fulfillment != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || input.ReviewFingerprint == "" || len(input.ReviewFingerprint) > 128 || input.EvidenceReportID == "" || len(input.EvidenceReportID) > 128 {
 		return nil, ErrInvalidArgument
 	}
 	if !operator && input.Binding.Case.PlatformTenantID != "" || operator && input.Binding.Case.PlatformTenantID == "" {
@@ -355,7 +360,7 @@ func prepareObligationReaffirmation(ctx context.Context, store readinessSubscrip
 	if len(checked.CurrentReasons) > 0 {
 		return nil, ErrConflict
 	}
-	return &api.OperationWorkflowObligationReaffirmation{ActionKind: f.ActionKind, Binding: f.Binding, FulfilledAt: f.CompletedAt, ReviewFingerprint: review.Fingerprint, Reason: input.Reason, SourceSequence: sequence, Owner: checked.Owner, Evidence: proof, EvidenceCheckedAt: checked.CheckedAt}, nil
+	return &api.OperationWorkflowObligationReaffirmation{ActionKind: f.ActionKind, Binding: f.Binding, FulfilledAt: f.CompletedAt, ReviewFingerprint: review.Fingerprint, Reason: input.Reason, SourceSequence: sequence, Owner: review.Owner, Evidence: proof, EvidenceCheckedAt: checked.CheckedAt}, nil
 }
 
 func readReaffirmationEvidence(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope string, binding api.OperationWorkflowObligationTargetBinding, operation, reportID string, version int, after time.Time, operator bool) (api.OperationWorkflowStateHistoryEntry, error) {

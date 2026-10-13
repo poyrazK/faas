@@ -1173,6 +1173,8 @@ export type { OperationWorkflowDependentInstance } from './OperationWorkflowDepe
 export type { OperationWorkflowDurationDistribution } from './OperationWorkflowDurationDistribution.js';
 export type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffectRequirement.js';
 export type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
+export type { OperationWorkflowFulfillmentReviewCoordinationChange } from './OperationWorkflowFulfillmentReviewCoordinationChange.js';
+export type { OperationWorkflowFulfillmentReviewCoordinationRequest } from './OperationWorkflowFulfillmentReviewCoordinationRequest.js';
 export type { OperationWorkflowGapProgressGroup } from './OperationWorkflowGapProgressGroup.js';
 export type { OperationWorkflowGapQueueGuidance } from './OperationWorkflowGapQueueGuidance.js';
 export type { OperationWorkflowGapQueuePriority } from './OperationWorkflowGapQueuePriority.js';

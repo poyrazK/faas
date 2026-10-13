@@ -414,3 +414,5 @@ export type { OperationWorkflowObligationFulfillment, OperationWorkflowObligatio
 export type { OperationWorkflowObligationReopening, OperationWorkflowObligationReopeningRequest } from './customer-operations.js';
 
 export type { OperationWorkflowObligationFulfillmentReview, OperationWorkflowObligationReaffirmation, OperationWorkflowObligationReaffirmationRequest } from './customer-operations.js';
+
+export type { OperationWorkflowFulfillmentReviewCoordinationRequest, OperationWorkflowFulfillmentReviewCoordinationChange } from './customer-operations.js';

@@ -49,6 +49,10 @@ class OperationWorkflowObligationFulfillmentReview:
     """Semantic comparison identity; timestamps and ordinary reporting revisions do not create new notices."""
     current_contract_version: int
     current_state_revision: int
+    manual_owner: bool | Unset = UNSET
+    """Explicit review-cycle owner, preserved across worker observations without altering original work ownership."""
+    due_at: datetime.datetime | Unset = UNSET
+    """Explicit review deadline, independent of the original source plan."""
     required_at: datetime.datetime | Unset = UNSET
     current_operation_id: UUID | Unset = UNSET
     current_report_id: str | Unset = UNSET
@@ -80,6 +84,12 @@ class OperationWorkflowObligationFulfillmentReview:
 
         current_state_revision = self.current_state_revision
 
+        manual_owner = self.manual_owner
+
+        due_at: str | Unset = UNSET
+        if not isinstance(self.due_at, Unset):
+            due_at = self.due_at.isoformat()
+
         required_at: str | Unset = UNSET
         if not isinstance(self.required_at, Unset):
             required_at = self.required_at.isoformat()
@@ -109,6 +119,10 @@ class OperationWorkflowObligationFulfillmentReview:
                 "current_state_revision": current_state_revision,
             }
         )
+        if manual_owner is not UNSET:
+            field_dict["manual_owner"] = manual_owner
+        if due_at is not UNSET:
+            field_dict["due_at"] = due_at
         if required_at is not UNSET:
             field_dict["required_at"] = required_at
         if current_operation_id is not UNSET:
@@ -149,6 +163,15 @@ class OperationWorkflowObligationFulfillmentReview:
 
         current_state_revision = d.pop("current_state_revision")
 
+        manual_owner = d.pop("manual_owner", UNSET)
+
+        _due_at = d.pop("due_at", UNSET)
+        due_at: datetime.datetime | Unset
+        if isinstance(_due_at, Unset):
+            due_at = UNSET
+        else:
+            due_at = datetime.datetime.fromisoformat(_due_at)
+
         _required_at = d.pop("required_at", UNSET)
         required_at: datetime.datetime | Unset
         if isinstance(_required_at, Unset):
@@ -179,6 +202,8 @@ class OperationWorkflowObligationFulfillmentReview:
             fingerprint=fingerprint,
             current_contract_version=current_contract_version,
             current_state_revision=current_state_revision,
+            manual_owner=manual_owner,
+            due_at=due_at,
             required_at=required_at,
             current_operation_id=current_operation_id,
             current_report_id=current_report_id,

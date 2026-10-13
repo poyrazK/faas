@@ -24,7 +24,7 @@ func fulfillmentReviewActionObligation(subscription string, sequence int64, r ap
 	}
 	return &api.OperationWorkflowActionObligation{ID: readinessDigest([]any{subscription, sequence, "fulfillment_review", r.Binding.ObligationID, r.Binding.Case, r.FulfilledAt, r.BasisAt, *r.RequiredAt}), StartedAt: *r.RequiredAt}
 }
-func projectFulfillmentReviewActions(row api.OperationWorkflowReadinessFollowUp, subject api.OperationSubject, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool) []api.OperationWorkflowCaseNextAction {
+func projectFulfillmentReviewActions(row api.OperationWorkflowReadinessFollowUp, subject api.OperationSubject, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool, now time.Time) []api.OperationWorkflowCaseNextAction {
 	actions := []api.OperationWorkflowCaseNextAction{}
 	for _, r := range row.Coordination.FulfillmentReviews {
 		c := r.Binding.Case
@@ -39,7 +39,7 @@ func projectFulfillmentReviewActions(row api.OperationWorkflowReadinessFollowUp,
 		if !operator {
 			value.Binding.Case.PlatformTenantID = ""
 		}
-		actions = append(actions, api.OperationWorkflowCaseNextAction{FulfillmentReview: &value, Obligation: fulfillmentReviewActionObligation(row.SubscriptionID, row.Sequence, r), Kind: "fulfillment_review", Summary: "Fulfillment evidence needs explicit review: " + strings.Join(r.Reasons, ", ") + ". Reaffirm with fresh evidence or explicitly reopen; fulfillment remains recorded.", Owner: r.Owner, Trigger: "human", SubscriptionID: row.SubscriptionID, Sequence: row.Sequence})
+		actions = append(actions, api.OperationWorkflowCaseNextAction{FulfillmentReview: &value, Obligation: fulfillmentReviewActionObligation(row.SubscriptionID, row.Sequence, r), Kind: "fulfillment_review", Summary: "Fulfillment evidence needs explicit review: " + strings.Join(r.Reasons, ", ") + ". Reaffirm with fresh evidence or explicitly reopen; fulfillment remains recorded.", Owner: r.Owner, DueAt: r.DueAt, Overdue: r.DueAt != nil && !r.DueAt.After(now), Trigger: "human", SubscriptionID: row.SubscriptionID, Sequence: row.Sequence})
 	}
 	return actions
 }

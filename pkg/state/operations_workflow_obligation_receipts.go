@@ -159,7 +159,13 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 	if after.Coordination != nil {
 		for _, review := range after.Coordination.FulfillmentReviews {
 			previous := fulfillmentReviewFor(before.Coordination, review.Binding, review.FulfilledAt)
-			if review.ReviewRequired && (previous == nil || previous.Fingerprint != review.Fingerprint) {
+			// Explicit coordination has its own receipt, rather than a new evidence flag.
+			coordinated := slices.ContainsFunc(after.Coordination.ReviewCoordinationChanges, func(change api.OperationWorkflowFulfillmentReviewCoordinationChange) bool {
+				return change.FulfilledAt.Equal(review.FulfilledAt) && readinessDigest(change.Binding) == readinessDigest(review.Binding) && (before.Coordination == nil || !slices.ContainsFunc(before.Coordination.ReviewCoordinationChanges, func(previous api.OperationWorkflowFulfillmentReviewCoordinationChange) bool {
+					return readinessDigest(previous) == readinessDigest(change)
+				}))
+			})
+			if !coordinated && review.ReviewRequired && (previous == nil || previous.Fingerprint != review.Fingerprint) {
 				receipts = append(receipts, fulfillmentReviewEvent(review, "fulfillment_review_required", review.CheckedAt, actor))
 			}
 		}
@@ -170,6 +176,16 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 				continue
 			}
 			receipts = append(receipts, reaffirmationEvent(r))
+		}
+	}
+	if after.Coordination != nil {
+		for _, change := range after.Coordination.ReviewCoordinationChanges {
+			if before.Coordination != nil && slices.ContainsFunc(before.Coordination.ReviewCoordinationChanges, func(previous api.OperationWorkflowFulfillmentReviewCoordinationChange) bool {
+				return readinessDigest(previous) == readinessDigest(change)
+			}) {
+				continue
+			}
+			receipts = append(receipts, reviewCoordinationEvent(change))
 		}
 	}
 	receipts = captureObligationTargetReceipts(before, after, old, current, cases, actor, now, receipts)

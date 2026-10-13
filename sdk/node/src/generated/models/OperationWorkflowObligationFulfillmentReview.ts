@@ -7,6 +7,14 @@ import type { OperationWorkflowObligationTargetBinding } from './OperationWorkfl
  * Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof. Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation. Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress owner notices.
  */
 export type OperationWorkflowObligationFulfillmentReview = {
+  /**
+   * Explicit review-cycle owner, preserved across worker observations without altering original work ownership.
+   */
+  manual_owner?: boolean;
+  /**
+   * Explicit review deadline, independent of the original source plan.
+   */
+  due_at?: string;
   action_kind: 'response_check_in' | 'coordinator_completion' | 'follow_up';
   binding: OperationWorkflowObligationTargetBinding;
   fulfilled_at: string;

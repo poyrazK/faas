@@ -13,6 +13,9 @@ from ..models.operation_workflow_obligation_event_kind import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_fulfillment_review_coordination_change import (
+        OperationWorkflowFulfillmentReviewCoordinationChange,
+    )
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
     from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
@@ -35,6 +38,9 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    review_coordination: OperationWorkflowFulfillmentReviewCoordinationChange | Unset = UNSET
+    """Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and
+    authenticated actor/reason. Does not modify original work or execute an application transition."""
     fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
     """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
@@ -76,6 +82,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        review_coordination: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_coordination, Unset):
+            review_coordination = self.review_coordination.to_dict()
 
         fulfillment_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.fulfillment_review, Unset):
@@ -125,6 +135,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if review_coordination is not UNSET:
+            field_dict["review_coordination"] = review_coordination
         if fulfillment_review is not UNSET:
             field_dict["fulfillment_review"] = fulfillment_review
         if reaffirmation is not UNSET:
@@ -152,6 +164,9 @@ class OperationWorkflowObligationEvent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_fulfillment_review_coordination_change import (
+            OperationWorkflowFulfillmentReviewCoordinationChange,
+        )
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
         from ..models.operation_workflow_obligation_fulfillment_review import (
@@ -168,6 +183,13 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _review_coordination = d.pop("review_coordination", UNSET)
+        review_coordination: OperationWorkflowFulfillmentReviewCoordinationChange | Unset
+        if isinstance(_review_coordination, Unset):
+            review_coordination = UNSET
+        else:
+            review_coordination = OperationWorkflowFulfillmentReviewCoordinationChange.from_dict(_review_coordination)
 
         _fulfillment_review = d.pop("fulfillment_review", UNSET)
         fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset
@@ -232,6 +254,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            review_coordination=review_coordination,
             fulfillment_review=fulfillment_review,
             reaffirmation=reaffirmation,
             reopening=reopening,

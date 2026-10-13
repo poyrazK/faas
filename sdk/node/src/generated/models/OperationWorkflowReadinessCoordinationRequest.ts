@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowFulfillmentReviewCoordinationRequest } from './OperationWorkflowFulfillmentReviewCoordinationRequest.js';
 import type { OperationWorkflowObligationFulfillmentRequest } from './OperationWorkflowObligationFulfillmentRequest.js';
 import type { OperationWorkflowObligationReaffirmationRequest } from './OperationWorkflowObligationReaffirmationRequest.js';
 import type { OperationWorkflowObligationReopeningRequest } from './OperationWorkflowObligationReopeningRequest.js';
@@ -12,6 +13,7 @@ import type { OperationWorkflowReviewResponseRequest } from './OperationWorkflow
  * OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordinationRequest = {
+  review_coordination?: OperationWorkflowFulfillmentReviewCoordinationRequest;
   reaffirmation?: OperationWorkflowObligationReaffirmationRequest;
   reopening?: OperationWorkflowObligationReopeningRequest;
   fulfillment?: OperationWorkflowObligationFulfillmentRequest;

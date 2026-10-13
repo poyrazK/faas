@@ -7718,3 +7718,12 @@ from .operation_workflow_obligation_reaffirmation_action_kind import OperationWo
 from .operation_workflow_obligation_reaffirmation_request import OperationWorkflowObligationReaffirmationRequest
 
 __all__ += ('OperationWorkflowObligationFulfillmentReview', 'OperationWorkflowObligationFulfillmentReviewActionKind', 'OperationWorkflowObligationReaffirmation', 'OperationWorkflowObligationReaffirmationActionKind', 'OperationWorkflowObligationReaffirmationRequest')
+
+from .operation_workflow_fulfillment_review_coordination_change import (
+    OperationWorkflowFulfillmentReviewCoordinationChange,
+)
+from .operation_workflow_fulfillment_review_coordination_request import (
+    OperationWorkflowFulfillmentReviewCoordinationRequest,
+)
+
+__all__ += ('OperationWorkflowFulfillmentReviewCoordinationChange', 'OperationWorkflowFulfillmentReviewCoordinationRequest')

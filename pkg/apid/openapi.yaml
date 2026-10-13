@@ -79546,6 +79546,8 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        review_coordination:
+          $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewCoordinationRequest'
         reaffirmation:
           $ref: '#/components/schemas/OperationWorkflowObligationReaffirmationRequest'
         reopening:
@@ -79600,6 +79602,12 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        review_coordination_changes:
+          type: array
+          maxItems: 128
+          description: Immutable review-cycle ownership/deadline changes. Capacity exhaustion rejects further writes without pruning decisions.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewCoordinationChange'
         fulfillment_reviews:
           type: array
           maxItems: 128
@@ -82578,6 +82586,8 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        review_coordination:
+          $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewCoordinationChange'
         fulfillment_review:
           $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
         reaffirmation:
@@ -82604,7 +82614,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed, fulfillment_review_coordinated]
         at:
           type: string
           format: date-time
@@ -82981,6 +82991,13 @@ components:
       description: Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof. Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation. Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress owner notices.
       required: [action_kind, binding, fulfilled_at, basis_at, source_sequence, owner, review_required, reasons, current_reasons, checked_at, fingerprint, current_contract_version, current_state_revision]
       properties:
+        manual_owner:
+          type: boolean
+          description: Explicit review-cycle owner, preserved across worker observations without altering original work ownership.
+        due_at:
+          type: string
+          format: date-time
+          description: Explicit review deadline, independent of the original source plan.
         action_kind:
           type: string
           enum: [response_check_in, coordinator_completion, follow_up]
@@ -83097,6 +83114,62 @@ components:
           type: string
           format: date-time
         reaffirmed_by:
+          type: string
+    OperationWorkflowFulfillmentReviewCoordinationRequest:
+      type: object
+      additionalProperties: false
+      description: Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review fingerprint fence stale edits. Preserve source status, owner, note and deadline; do not combine with other actions. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original fulfillment remains intact.
+      required: [review_id, review_fingerprint, owner, reason]
+      properties:
+        review_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        review_fingerprint:
+          type: string
+          minLength: 1
+          maxLength: 128
+        owner:
+          type: string
+          maxLength: 256
+        due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+    OperationWorkflowFulfillmentReviewCoordinationChange:
+      type: object
+      additionalProperties: false
+      description: Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and authenticated actor/reason. Does not modify original work or execute an application transition.
+      required: [review_id, binding, fulfilled_at, from_owner, owner, reason, at, actor]
+      properties:
+        review_id:
+          type: string
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        fulfilled_at:
+          type: string
+          format: date-time
+        from_owner:
+          type: string
+        owner:
+          type: string
+        previous_due_at:
+          type: string
+          format: date-time
+        due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        at:
+          type: string
+          format: date-time
+        actor:
           type: string
     OperationWorkflowObligationAssessment:
       type: object

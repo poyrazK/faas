@@ -13,6 +13,9 @@ from ..models.operation_workflow_readiness_coordination_request_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_fulfillment_review_coordination_request import (
+        OperationWorkflowFulfillmentReviewCoordinationRequest,
+    )
     from ..models.operation_workflow_obligation_fulfillment_request import OperationWorkflowObligationFulfillmentRequest
     from ..models.operation_workflow_obligation_reaffirmation_request import (
         OperationWorkflowObligationReaffirmationRequest,
@@ -45,6 +48,11 @@ class OperationWorkflowReadinessCoordinationRequest:
     note: str
     """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
     evidence."""
+    review_coordination: OperationWorkflowFulfillmentReviewCoordinationRequest | Unset = UNSET
+    """Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review
+    fingerprint fence stale edits. Preserve source status, owner, note and deadline; do not combine with other
+    actions. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original fulfillment
+    remains intact."""
     reaffirmation: OperationWorkflowObligationReaffirmationRequest | Unset = UNSET
     """Explicitly reaffirm a flagged latest fulfillment without reopening work. Preserve source status, owner, note
     and deadline and do not combine with other actions. Source revision, binding, fulfillment time and review
@@ -87,6 +95,10 @@ class OperationWorkflowReadinessCoordinationRequest:
 
         note = self.note
 
+        review_coordination: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_coordination, Unset):
+            review_coordination = self.review_coordination.to_dict()
+
         reaffirmation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.reaffirmation, Unset):
             reaffirmation = self.reaffirmation.to_dict()
@@ -125,6 +137,8 @@ class OperationWorkflowReadinessCoordinationRequest:
                 "note": note,
             }
         )
+        if review_coordination is not UNSET:
+            field_dict["review_coordination"] = review_coordination
         if reaffirmation is not UNSET:
             field_dict["reaffirmation"] = reaffirmation
         if reopening is not UNSET:
@@ -144,6 +158,9 @@ class OperationWorkflowReadinessCoordinationRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_fulfillment_review_coordination_request import (
+            OperationWorkflowFulfillmentReviewCoordinationRequest,
+        )
         from ..models.operation_workflow_obligation_fulfillment_request import (
             OperationWorkflowObligationFulfillmentRequest,
         )
@@ -163,6 +180,13 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = d.pop("owner")
 
         note = d.pop("note")
+
+        _review_coordination = d.pop("review_coordination", UNSET)
+        review_coordination: OperationWorkflowFulfillmentReviewCoordinationRequest | Unset
+        if isinstance(_review_coordination, Unset):
+            review_coordination = UNSET
+        else:
+            review_coordination = OperationWorkflowFulfillmentReviewCoordinationRequest.from_dict(_review_coordination)
 
         _reaffirmation = d.pop("reaffirmation", UNSET)
         reaffirmation: OperationWorkflowObligationReaffirmationRequest | Unset
@@ -218,6 +242,7 @@ class OperationWorkflowReadinessCoordinationRequest:
             status=status,
             owner=owner,
             note=note,
+            review_coordination=review_coordination,
             reaffirmation=reaffirmation,
             reopening=reopening,
             fulfillment=fulfillment,

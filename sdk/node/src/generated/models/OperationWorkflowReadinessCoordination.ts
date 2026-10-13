@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowFulfillmentReviewCoordinationChange } from './OperationWorkflowFulfillmentReviewCoordinationChange.js';
 import type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
 import type { OperationWorkflowObligationFulfillmentReview } from './OperationWorkflowObligationFulfillmentReview.js';
 import type { OperationWorkflowObligationReaffirmation } from './OperationWorkflowObligationReaffirmation.js';
@@ -12,6 +13,10 @@ import type { OperationWorkflowReadinessCompletion } from './OperationWorkflowRe
  * OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordination = {
+  /**
+   * Immutable review-cycle ownership/deadline changes. Capacity exhaustion rejects further writes without pruning decisions.
+   */
+  review_coordination_changes?: Array<OperationWorkflowFulfillmentReviewCoordinationChange>;
   fulfillment_reviews?: Array<OperationWorkflowObligationFulfillmentReview>;
   /**
    * Immutable human reaffirmations with fresh application evidence; capacity exhaustion rejects further writes.
