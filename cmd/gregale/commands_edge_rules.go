@@ -207,7 +207,7 @@ func cmdEdgeRulesCreate(args []string) int {
 	fs := newFlagSet("edge-rules create", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "rule kind: route|rewrite|redirect|headers|cors|jwt|ip|validate|limit|geo|throttle|budget|cache|respond|retry|circuit_breaker|async|waf (required)")
-	matchHost := fs.String("match-host", "", "host to match (required)")
+	matchHost := fs.String("match-host", "", "host to match (required; @app covers every host the app serves)")
 	matchPath := fs.String("match-path", "/", "path glob to match (default / covers only the root; /** covers every path)")
 	var matchMethods multiFlag
 	fs.Var(&matchMethods, "match-method", "HTTP method (repeat for multiple)")

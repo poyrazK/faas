@@ -7989,7 +7989,7 @@ Add an edge rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--kind <KIND>` | rule kind | required; one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` |
-| `--match-host <HOST>` | host to match | required |
+| `--match-host <HOST>` | host to match; @app covers every host the app serves | required |
 | `--match-path <PATH>` | path glob to match (default / covers only the root; /** covers every path) |  |
 | `--match-method <METHOD>` | HTTP method to match (repeat for multiple) |  |
 | `--match-header <Name=Value>` | exact request header selector (repeat) |  |
@@ -8113,7 +8113,7 @@ Update one edge rule
 
 | Flag | Meaning | |
 |---|---|---|
-| `--match-host <HOST>` | new host to match |  |
+| `--match-host <HOST>` | new host to match; @app covers every host the app serves |  |
 | `--match-path <PATH>` | new path to match |  |
 | `--match-method <METHOD>` | replacement HTTP method (repeatable) |  |
 | `--match-header <NAME=VALUE>` | replacement exact request header selector (repeatable) |  |
@@ -8256,7 +8256,7 @@ Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project context) |  |
-| `--host <HOST>` | hostname the rule matches (defaults to the app canonical URL) |  |
+| `--host <HOST>` | restrict the rule to one hostname (default: every host the app serves) |  |
 | `--set <NAME=VALUE>` | recipe parameter name=value (repeat) |  |
 | `--enforce` | enforce immediately instead of starting in log mode |  |
 

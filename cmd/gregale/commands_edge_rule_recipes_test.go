@@ -35,6 +35,15 @@ func TestEdgeRulesRecipeCommand(t *testing.T) {
 		t.Fatalf("create request = %s", f.sawBody)
 	}
 
+	// adr: 1166 — without --host the rule covers every host the app serves.
+	f = authedFakeAPI(t, `{"id":"r0","kind":"ip"}`, http.StatusCreated)
+	if code := cmdEdgeRules([]string{"recipe", "block-unverified-bots", "--app", "demo"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if err := json.Unmarshal(f.sawBody, &req); err != nil || req.MatchHost != api.EdgeRuleAppHosts || f.sawPath != "/v1/apps/demo/edge-rules" {
+		t.Fatalf("default-host request %s %s", f.sawPath, f.sawBody)
+	}
+
 	f = authedFakeAPI(t, `{"id":"r2","kind":"throttle"}`, http.StatusCreated)
 	if code := cmdEdgeRules([]string{"recipe", "rate-limit-path", "--app", "demo", "--host", "api.example.com", "--set", "per_minute=30", "--enforce"}); code != 0 {
 		t.Fatalf("exit = %d", code)

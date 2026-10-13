@@ -59,5 +59,5 @@ coherent.
 - The common protections are one click (or one CLI command,
   `gregale edge-rules recipe <id>`) and start safe.
 - Adding a recipe is a reviewed code change to the catalog.
-- Recipes attach to the app's default host; custom domains need the
-  `--host` flag or a hand-written rule.
+- Recipes cover every hostname the app serves, custom domains included
+  (`match_host: "@app"`, ADR-1166); `--host` restricts one to a single host.
