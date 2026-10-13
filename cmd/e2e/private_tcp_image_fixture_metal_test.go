@@ -8,7 +8,10 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -22,6 +25,11 @@ import (
 
 // privateTCPEchoPort is the internal listener the echo service declares.
 const privateTCPEchoPort = 5432
+
+// privateTCPDialTimeout bounds one dial through the caller. A restore that
+// fails falls back to a cold boot (ADR-005), which on a busy nested-KVM host
+// takes longer than the harness client's 30 s; that is slow, not wrong.
+const privateTCPDialTimeout = 2 * time.Minute
 
 type privateTCPImageFixture struct {
 	h       *e2etest.Harness
@@ -120,20 +128,46 @@ func (f *privateTCPImageFixture) deploy(t *testing.T, ctx context.Context, creat
 }
 
 // dial asks the caller to open a TCP session to the service's private
-// address from inside its guest and send payload.
+// address from inside its guest and send payload. A request that fails
+// outright comes back with Error set and status 0.
 func (f *privateTCPImageFixture) dial(t *testing.T, payload string) privateTCPDial {
 	t.Helper()
-	return privateTCPDialFrom(t, f.h, f.key, f.caller.Slug, f.address, privateTCPEchoPort, payload)
+	query := url.Values{"host": {f.address}, "port": {strconv.Itoa(privateTCPEchoPort)}, "payload": {payload}}
+	req, err := http.NewRequest(http.MethodGet, f.h.GatewayURL+"/dial?"+query.Encode(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = f.caller.Slug + ".apps.test.example"
+	req.Header.Set("Authorization", "Bearer "+f.key)
+	resp, err := (&http.Client{Timeout: privateTCPDialTimeout}).Do(req)
+	if err != nil {
+		return privateTCPDial{Error: err.Error()}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	var out privateTCPDial
+	if err := json.Unmarshal(body, &out); err != nil {
+		out.Error = "not the dialer's response: " + string(body)
+	}
+	out.status = resp.StatusCode
+	return out
 }
 
 func (f *privateTCPImageFixture) echoed(got privateTCPDial, payload string) bool {
 	return got.status == http.StatusOK && got.Reply == "tcp-echo:"+payload
 }
 
-// park parks app and waits until no instance of it is left running.
+// park parks app and waits until no instance of it is left running. A park
+// whose drain misses its deadline on a busy host is retried once.
 func (f *privateTCPImageFixture) park(t *testing.T, app state.App) {
 	t.Helper()
-	if raw, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+app.Slug+"/park", nil); status/100 != 2 {
+	raw, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+app.Slug+"/park", nil)
+	if status == http.StatusServiceUnavailable {
+		t.Logf("park %s: status=%d body=%s; retrying once", app.Slug, status, raw)
+		time.Sleep(5 * time.Second)
+		raw, status = doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+app.Slug+"/park", nil)
+	}
+	if status/100 != 2 {
 		t.Fatalf("park %s: status=%d body=%s", app.Slug, status, raw)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
