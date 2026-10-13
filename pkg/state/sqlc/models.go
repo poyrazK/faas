@@ -531,14 +531,15 @@ type AppBindingPromotionRevision struct {
 }
 
 type AppBindingReleasePolicy struct {
-	AppID                 pgtype.UUID
-	Scope                 string
-	Mode                  string
-	Revision              int64
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	UpdatedAt             pgtype.Timestamptz
+	AppID                     pgtype.UUID
+	Scope                     string
+	Mode                      string
+	Revision                  int64
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	UpdatedAt                 pgtype.Timestamptz
+	ObjectStorageRequirements []byte
 }
 
 type AppBindingReleasePolicyHistory struct {
@@ -5047,9 +5048,10 @@ type ObjectBucketMutation struct {
 }
 
 type ObjectBucketNotification struct {
-	BucketID pgtype.UUID
-	Revision int64
-	Rules    []byte
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
 }
 
 type ObjectBucketObjectLock struct {

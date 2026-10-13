@@ -1005,6 +1005,12 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// ArtifactCacheMinFreeBytes is the free space the node artifact cache
+	// (snapshots, app layers, bases) leaves on its filesystem. Builder drives
+	// and capture staging share that disk, so besides its byte budget
+	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
+	// the filesystem has less than this free.
+	ArtifactCacheMinFreeBytes int64 = 8 << 30
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.

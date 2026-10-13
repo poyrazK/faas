@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_response import AppResponse
+    from ..models.dev_bucket_response import DevBucketResponse
     from ..models.dev_postgres_response import DevPostgresResponse
 
 
@@ -29,6 +30,9 @@ class DevSessionResponse:
     postgres: DevPostgresResponse | Unset = UNSET
     """Safe receipt for the isolated developer database and its app binding. Credentials are injected into
     DATABASE_URL and never returned."""
+    buckets: list[DevBucketResponse] | Unset = UNSET
+    """Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for
+    principals with storage:manage or admin. Revoked bindings are excluded."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +44,13 @@ class DevSessionResponse:
         if not isinstance(self.postgres, Unset):
             postgres = self.postgres.to_dict()
 
+        buckets: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.buckets, Unset):
+            buckets = []
+            for buckets_item_data in self.buckets:
+                buckets_item = buckets_item_data.to_dict()
+                buckets.append(buckets_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -50,12 +61,15 @@ class DevSessionResponse:
         )
         if postgres is not UNSET:
             field_dict["postgres"] = postgres
+        if buckets is not UNSET:
+            field_dict["buckets"] = buckets
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_response import AppResponse
+        from ..models.dev_bucket_response import DevBucketResponse
         from ..models.dev_postgres_response import DevPostgresResponse
 
         d = dict(src_dict)
@@ -70,10 +84,20 @@ class DevSessionResponse:
         else:
             postgres = DevPostgresResponse.from_dict(_postgres)
 
+        _buckets = d.pop("buckets", UNSET)
+        buckets: list[DevBucketResponse] | Unset = UNSET
+        if _buckets is not UNSET:
+            buckets = []
+            for buckets_item_data in _buckets:
+                buckets_item = DevBucketResponse.from_dict(buckets_item_data)
+
+                buckets.append(buckets_item)
+
         dev_session_response = cls(
             app=app,
             expires_at=expires_at,
             postgres=postgres,
+            buckets=buckets,
         )
 
         dev_session_response.additional_properties = d

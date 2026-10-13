@@ -805,6 +805,7 @@ type UpsertDevSessionRequest struct {
 	Runtime     string              `json:"runtime,omitempty"`      // required for functions
 	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+	Buckets     []DevBucketRequest  `json:"buckets,omitempty"`
 	// LeaseSeconds chooses how long the environment survives after its
 	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
 	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
@@ -861,6 +862,7 @@ type DevSessionResponse struct {
 	App       AppResponse          `json:"app"`
 	ExpiresAt time.Time            `json:"expires_at"`
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
+	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.

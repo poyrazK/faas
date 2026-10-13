@@ -1,7 +1,6 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,11 @@ func readObjectNotifications(ctx context.Context, db sqlc.DBTX, b ObjectBucket) 
 	if err != nil {
 		return api.ObjectBucketNotifications{}, mapErr(err)
 	}
-	return decodeObjectNotificationPolicy(b.ID, r.Revision, r.Rules)
+	p, err := decodeObjectNotificationPolicy(b.ID, r.Revision, r.Rules)
+	if err != nil {
+		return p, err
+	}
+	return decodeManagedObjectNotifications(p, r.ManagedRules)
 }
 func (s *PgStore) GetObjectBucketNotifications(ctx context.Context, account, app, bucket string) (api.ObjectBucketNotifications, error) {
 	b, err := s.GetObjectBucket(ctx, account, app, bucket)
@@ -40,6 +43,12 @@ func pgNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.ObjectNotifica
 	return pgUUIDString(b.ID), b.RetryPolicy, nil
 }
 func (s *PgStore) SetObjectBucketNotifications(ctx context.Context, account, app, bucket string, rules []api.ObjectNotificationRule) (api.ObjectBucketNotifications, error) {
+	return s.changeObjectBucketNotifications(ctx, account, app, bucket, rules, nil)
+}
+func (s *PgStore) ReconcileObjectBucketComputeTriggers(ctx context.Context, account, app, bucket string, request api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
+	return s.changeObjectBucketNotifications(ctx, account, app, bucket, nil, &request)
+}
+func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, app, bucket string, rules []api.ObjectNotificationRule, request *api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
 	normal, err := api.NormalizeObjectNotificationRules(rules)
 	if err != nil {
 		return api.ObjectBucketNotifications{}, ErrObjectNotificationInvalid
@@ -63,7 +72,15 @@ func (s *PgStore) SetObjectBucketNotifications(ctx context.Context, account, app
 	if err != nil {
 		return p, err
 	}
-	for _, r := range normal {
+	next, err := objectNotificationChange(b, p, normal, request)
+	if err != nil {
+		return p, err
+	}
+	validateRules := next.Rules
+	if request != nil {
+		validateRules = managedObjectNotificationRules(next)
+	}
+	for _, r := range validateRules {
 		t, e := notificationTarget(r, b)
 		if e != nil || !notificationEntitled(api.Plan(plan), t.Kind) {
 			return p, ErrObjectNotificationInvalid
@@ -77,17 +94,17 @@ func (s *PgStore) SetObjectBucketNotifications(ctx context.Context, account, app
 			}
 		}
 	}
-	a, _ := json.Marshal(p.Rules)
-	z, _ := json.Marshal(normal)
-	if bytes.Equal(a, z) {
+	if sameObjectNotificationPolicy(p, next) {
 		return p, tx.Commit(ctx)
 	}
 	if p.Revision >= api.MaxObjectStoragePolicyValue {
 		return p, ErrConflict
 	}
-	p.Revision++
-	p.Rules = normal
-	err = q.ObjectNotificationsSave(ctx, tx, sqlc.ObjectNotificationsSaveParams{BucketID: mustPgUUID(bucket), Revision: p.Revision, Rules: z})
+	next.Revision = p.Revision + 1
+	p = next
+	z, _ := json.Marshal(p.Rules)
+	managed, _ := json.Marshal(managedObjectNotificationRules(p))
+	err = q.ObjectNotificationsSave(ctx, tx, sqlc.ObjectNotificationsSaveParams{BucketID: mustPgUUID(bucket), Revision: p.Revision, Rules: z, ManagedRules: managed})
 	if err != nil {
 		return p, mapErr(err)
 	}

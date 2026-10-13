@@ -9193,7 +9193,9 @@ VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  $11::jsonb->'deployment_inputs'->'override_healthcheck',$11::jsonb->'deployment_inputs'->'override_liveness_probe',
  $11::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce($11::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
  coalesce($11::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce($11::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
- coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+          nullif(($11::jsonb->'source'->>'full_rootfs')::boolean,false)),
  coalesce(($11::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  coalesce(($11::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
@@ -12677,6 +12679,42 @@ func (q *Queries) EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const environmentGitOpsHasServingManagedWorkload = `-- name: EnvironmentGitOpsHasServingManagedWorkload :one
+SELECT EXISTS (
+  SELECT 1 FROM deployments d
+  JOIN apps a ON a.id = d.app_id
+  WHERE a.account_id = $1::uuid
+    AND a.project_id = $2::uuid
+    AND d.scope = $3
+    AND d.environment_workload_runtime IS NOT NULL
+    AND (
+      (d.status = 'live' AND NOT d.environment_workload_held)
+      OR EXISTS (
+        SELECT 1 FROM project_release_sets rs
+        JOIN project_release_members rm ON rm.release_id = rs.id
+        WHERE rs.project_id = a.project_id AND rs.account_id = a.account_id
+          AND rs.environment_slug = $3 AND rs.active
+          AND rm.app_id = a.id AND rm.deployment_id = d.id
+      )
+    )
+) AS managed
+`
+
+type EnvironmentGitOpsHasServingManagedWorkloadParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Scope     string
+}
+
+// ADR-568: an empty definition cannot bypass a prior managed release or the
+// router's live-scope fallback when no active release exists.
+func (q *Queries) EnvironmentGitOpsHasServingManagedWorkload(ctx context.Context, db DBTX, arg EnvironmentGitOpsHasServingManagedWorkloadParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsHasServingManagedWorkload, arg.AccountID, arg.ProjectID, arg.Scope)
+	var managed bool
+	err := row.Scan(&managed)
+	return managed, err
 }
 
 const environmentGitOpsImageCandidate = `-- name: EnvironmentGitOpsImageCandidate :one
@@ -51101,18 +51139,19 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 }
 
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
 
 type ObjectNotificationsGetRow struct {
-	Revision  int64
-	Rules     []byte
-	Name      string
-	Region    string
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	Name         string
+	Region       string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -51121,6 +51160,7 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 	err := row.Scan(
 		&i.Revision,
 		&i.Rules,
+		&i.ManagedRules,
 		&i.Name,
 		&i.Region,
 		&i.AccountID,
@@ -51130,18 +51170,24 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
-INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
 `
 
 type ObjectNotificationsSaveParams struct {
-	BucketID pgtype.UUID
-	Revision int64
-	Rules    []byte
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
 }
 
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
-	_, err := db.Exec(ctx, objectNotificationsSave, arg.BucketID, arg.Revision, arg.Rules)
+	_, err := db.Exec(ctx, objectNotificationsSave,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
 	return err
 }
 
@@ -76237,21 +76283,22 @@ func (q *Queries) UpdateApp(ctx context.Context, db DBTX, arg UpdateAppParams) (
 
 const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one
 UPDATE app_binding_release_policies p SET mode=$1,revision=p.revision+1,max_age_seconds=$2,
- require_application_ack=$3,reason=$4,updated_at=clock_timestamp()
-FROM apps a WHERE p.app_id=a.id AND a.id=$5 AND a.account_id=$6 AND a.status<>'deleted'
- AND p.scope=$7 AND p.revision=$8
+ require_application_ack=$3,reason=$4,object_storage_requirements=$5::jsonb,updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=$6 AND a.account_id=$7 AND a.status<>'deleted'
+ AND p.scope=$8 AND p.revision=$9
 RETURNING to_jsonb(p)::jsonb AS policy
 `
 
 type UpdateBindingReleasePolicyParams struct {
-	Mode                  string
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
-	Scope                 string
-	ExpectedRevision      int64
+	Mode                      string
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
+	Scope                     string
+	ExpectedRevision          int64
 }
 
 func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error) {
@@ -76260,6 +76307,7 @@ func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg U
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 		arg.Scope,
@@ -78676,25 +78724,26 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 }
 
 const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
-INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
-SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6
-FROM apps a WHERE a.id=$7 AND a.account_id=$8 AND a.status<>'deleted'
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements)
+SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb
+FROM apps a WHERE a.id=$8 AND a.account_id=$9 AND a.status<>'deleted'
  AND $3::bigint=0
 ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
- max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,updated_at=clock_timestamp()
 WHERE app_binding_release_policies.revision=$3::bigint
 RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy
 `
 
 type WriteBindingReleasePolicyParams struct {
-	Scope                 string
-	Mode                  string
-	ExpectedRevision      int64
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
+	Scope                     string
+	Mode                      string
+	ExpectedRevision          int64
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
 }
 
 func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error) {
@@ -78705,6 +78754,7 @@ func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg Wr
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 	)

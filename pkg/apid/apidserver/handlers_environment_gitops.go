@@ -78,7 +78,7 @@ func (s *server) createEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 	if request.Mode == "" {
 		request.Mode = "report"
 	}
-	if rejectEnvironmentGitEnforcement(w, request.Mode) {
+	if s.rejectEnvironmentGitEnforcement(w, request.Mode) {
 		return
 	}
 	if request.ApprovalPolicy == "" {
@@ -297,7 +297,7 @@ func (s *server) updateEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrValidation("Invalid source controls."))
 		return
 	}
-	if rejectEnvironmentGitEnforcement(w, request.Mode) {
+	if s.rejectEnvironmentGitEnforcement(w, request.Mode) {
 		return
 	}
 	store, ok := s.store.(state.EnvironmentGitOpsControlStore)

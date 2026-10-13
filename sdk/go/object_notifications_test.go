@@ -45,3 +45,30 @@ func TestPublicObjectNotificationClient(t *testing.T) {
 		t.Fatal(calls)
 	}
 }
+
+func TestPublicObjectComputeTriggerClient(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != "PUT" || r.Header.Get("Authorization") != "Bearer token" || r.URL.EscapedPath() != "/v1/apps/demo%2Fx/buckets/bucket%2Fx/compute-triggers" {
+			t.Error(r.Method, r.URL)
+		}
+		var in faas.ReconcileObjectStorageComputeTriggersRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedRevision == nil || *in.ExpectedRevision != 3 || in.Triggers == nil || len(in.Triggers) != 0 {
+			t.Error(in, err)
+		}
+		_, _ = fmt.Fprint(w, `{"bucket_id":"bucket","revision":4,"rules":[],"managed_rule_ids":["managed"]}`)
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := int64(3)
+	p, err := client.ReconcileObjectStorageComputeTriggers(ctx, "demo/x", "bucket/x", faas.ReconcileObjectStorageComputeTriggersRequest{ExpectedRevision: &revision, Triggers: []faas.ObjectStorageComputeTrigger{}})
+	if err != nil || !called || p.Revision != 4 || len(p.ManagedRuleIDs) != 1 {
+		t.Fatal(p, err)
+	}
+}

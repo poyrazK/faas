@@ -52,6 +52,11 @@ env:
   PROTOC_SHA256_LINUX_AMD64: "9c49962391ff8b5754342509efc3885db91dfe11a358e1e98c9a71518f0ad199"
 
 jobs:
+  storage-node-starter:
+    uses: ./.github/workflows/storage-node-starter.yml
+    permissions:
+      contents: read
+
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
@@ -140,7 +145,7 @@ jobs:
           # internal test variant, so vetting them compiles apidserver with its
           # internal tests: ~5 GB of live heap. Next to three other vet
           # processes that lost the hosted runner, so vet it alone first under
-          # the full tier's vet bounds, then the rest as before.
+          # the full tier's vet bounds, then vet every remaining package serially.
           apid=./pkg/apid/apidserver
           rest=""
           for pkg in $PKGS; do

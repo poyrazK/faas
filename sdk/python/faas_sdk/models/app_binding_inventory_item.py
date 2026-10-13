@@ -40,8 +40,8 @@ class AppBindingInventoryItem:
     evidence. Inventory does not run probes."""
     verification: BindingVerification | Unset = UNSET
     """Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary.
-    Object-storage verification checks bucket-list read access only; resident application adoption is not checked.
-   """
+    Object-storage verification records bucket listing or explicitly requested permission-aware object operations
+    and cleanup; inspect checks for coverage. Resident application adoption is not checked."""
     refresh: BindingRefresh | Unset = UNSET
     """Durable rolling restart handoff for a pending PostgreSQL or object-storage rotation. Completion does not
     imply fresh resident instances or successful verification. Not_queued means no retained outbox record was found;

@@ -7,6 +7,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.binding_check_binding_result_object_storage_mode import (
+    BindingCheckBindingResultObjectStorageMode,
+    check_binding_check_binding_result_object_storage_mode,
+)
+from ..models.binding_check_binding_result_required_object_storage_mode import (
+    BindingCheckBindingResultRequiredObjectStorageMode,
+    check_binding_check_binding_result_required_object_storage_mode,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -25,6 +33,10 @@ class BindingCheckBindingResult:
     scope: str
     status: str
     """passed, blocked, unsupported or skipped."""
+    object_storage_mode: BindingCheckBindingResultObjectStorageMode | Unset = UNSET
+    """Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write
+    requirements."""
+    required_object_storage_mode: BindingCheckBindingResultRequiredObjectStorageMode | Unset = UNSET
     binding: str | Unset = UNSET
     reason: str | Unset = UNSET
     verification_status: str | Unset = UNSET
@@ -46,6 +58,14 @@ class BindingCheckBindingResult:
         scope = self.scope
 
         status = self.status
+
+        object_storage_mode: str | Unset = UNSET
+        if not isinstance(self.object_storage_mode, Unset):
+            object_storage_mode = self.object_storage_mode
+
+        required_object_storage_mode: str | Unset = UNSET
+        if not isinstance(self.required_object_storage_mode, Unset):
+            required_object_storage_mode = self.required_object_storage_mode
 
         binding = self.binding
 
@@ -73,6 +93,10 @@ class BindingCheckBindingResult:
                 "status": status,
             }
         )
+        if object_storage_mode is not UNSET:
+            field_dict["object_storage_mode"] = object_storage_mode
+        if required_object_storage_mode is not UNSET:
+            field_dict["required_object_storage_mode"] = required_object_storage_mode
         if binding is not UNSET:
             field_dict["binding"] = binding
         if reason is not UNSET:
@@ -101,6 +125,22 @@ class BindingCheckBindingResult:
 
         status = d.pop("status")
 
+        _object_storage_mode = d.pop("object_storage_mode", UNSET)
+        object_storage_mode: BindingCheckBindingResultObjectStorageMode | Unset
+        if isinstance(_object_storage_mode, Unset):
+            object_storage_mode = UNSET
+        else:
+            object_storage_mode = check_binding_check_binding_result_object_storage_mode(_object_storage_mode)
+
+        _required_object_storage_mode = d.pop("required_object_storage_mode", UNSET)
+        required_object_storage_mode: BindingCheckBindingResultRequiredObjectStorageMode | Unset
+        if isinstance(_required_object_storage_mode, Unset):
+            required_object_storage_mode = UNSET
+        else:
+            required_object_storage_mode = check_binding_check_binding_result_required_object_storage_mode(
+                _required_object_storage_mode
+            )
+
         binding = d.pop("binding", UNSET)
 
         reason = d.pop("reason", UNSET)
@@ -128,6 +168,8 @@ class BindingCheckBindingResult:
             name=name,
             scope=scope,
             status=status,
+            object_storage_mode=object_storage_mode,
+            required_object_storage_mode=required_object_storage_mode,
             binding=binding,
             reason=reason,
             verification_status=verification_status,

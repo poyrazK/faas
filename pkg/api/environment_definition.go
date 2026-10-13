@@ -58,6 +58,9 @@ type EnvironmentWorkloadSource struct {
 	Directory  string `json:"directory,omitempty"`
 	Dockerfile string `json:"dockerfile,omitempty"`
 	Image      string `json:"image,omitempty"`
+	// FullRootfs explicitly opts an immutable image into the full-rootfs
+	// dispatch path when its layers are not based on Gregale's runtime base.
+	FullRootfs bool `json:"full_rootfs,omitempty"`
 }
 
 type EnvironmentRouteContract struct {

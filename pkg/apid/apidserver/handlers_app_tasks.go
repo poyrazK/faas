@@ -143,7 +143,7 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 	if pinErr != nil {
 		return state.AppTask{}, api.ErrInternal("could not capture binding verification metadata")
 	}
-	if (resolved.VerificationDeploymentID != "" || len(resolved.Command) > 0 && resolved.Command[0] == api.AppTaskOutboundBindingProbeCommand) && pin == nil {
+	if (resolved.VerificationDeploymentID != "" || len(resolved.Command) > 0 && (resolved.Command[0] == api.AppTaskOutboundBindingProbeCommand || resolved.Command[0] == api.AppTaskObjectStorageWriteProbeCommand)) && pin == nil {
 		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Binding verification unavailable", "The selected binding is not available for verification with this request.")
 	}
 	command, err := bindingVerificationTaskCommand(resolved.Command, pin)

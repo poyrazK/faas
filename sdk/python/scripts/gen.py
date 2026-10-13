@@ -156,6 +156,8 @@ WRAPPER_MODULES = (
     "commit.py",
     "operations_runtime.py",
     "job_operations_runtime.py",
+    "object_storage_runtime.py",
+    "secret_reload_runtime.py",
     "operations.py",
     "event_consumer_transactions.py",
     "commit_subscriber_wait.py",
