@@ -642,6 +642,51 @@ unavailable/expired jobs and stale creation guards do not produce an artifact.
 JSON stdout summarizes the saved file and counts; the bundle is in `--file`.
 No API or schema migration is needed.
 
+## Inspect or compare saved history offline
+
+```sh
+gregale events subscription-lineage-retry-job-controls-inspect --file controls.json
+# controls-later.json is the target; controls.json is the earlier baseline:
+gregale --json events subscription-lineage-retry-job-controls-inspect --file controls-later.json --compare controls.json
+```
+
+This command reads local artifacts only. No login or API access is needed, and
+neither file is changed. Regular files must fit the existing 256-KiB export bound.
+The inspector rejects unsupported formats/versions, missing or null fields,
+unknown/case-aliased fields, duplicate keys at any level, trailing JSON, invalid
+scope/retention/filter metadata, duplicate command UUIDs, invalid original
+outcomes/attribution and unordered or out-of-bound sequences. Unfiltered exports
+must contain every observed sequence. Filtered exports may have gaps but all
+included receipts must match the recorded filters. Their omitted matching records
+cannot be independently proven from one unsigned file.
+
+The summary includes stable job scope, creation and retention, original filters,
+sequence boundary, observed and selected counts, actions, original recorded
+outcomes, actor identities and credential types, and a separate legacy-unattributed
+count. Counts summarize selected receipts, not current job state. Past server
+retention is allowed: the file remains inspectable after server pruning. Structural
+validation does not authenticate a file, prove tamper resistance or establish a
+complete historical audit.
+
+For comparison, use exports from the same stable app/subscription/job incarnation,
+with identical original creation/retention and normalized filters. `--compare` is
+the baseline; `--file` must have an equal or greater observed sequence boundary.
+Changing filters or reversing boundaries returns an error instead of inferring
+missing commands. App slug hints and local observation timestamps can differ;
+sequence determines order. Equivalent UUID casing/representations and timestamp
+offsets are normalized only in memory.
+
+Comparison reports unchanged receipts and added matching records beyond the
+baseline boundary. It flags immutable records that changed at an existing sequence,
+command UUIDs moved to another sequence, records missing from the target overlap,
+and records inside the old boundary that were missing from the baseline. Filtered
+exports still do not reveal later nonmatching records; `through_sequence` describes
+the full observed journal, while `added` includes selected matching additions.
+Valid inspection and consistent comparison exit 0. Conflicts return a comparison
+report and exit 1; malformed or incomparable inputs fail without a success report.
+JSON output contains the summary and optional comparison; human output lists the
+same counts and conflict reasons. No API or schema migration is required.
+
 ## Cancel a bulk retry job
 
 Read the retained job and copy its original `created_at`, then cancel with that

@@ -36,6 +36,8 @@ func cmdEvents(args []string) int {
 		return cmdEventsLineageCaseBackfill(args[1:], false)
 	case "subscription-lineage-case-backfill-request":
 		return cmdEventsLineageCaseBackfill(args[1:], true)
+	case "subscription-lineage-retry-job-controls-inspect":
+		return cmdEventsLineageControlHistoryInspect(args[1:])
 	case "subscription-lineage-retry-job-controls-export":
 		return cmdEventsLineageControlHistoryExport(args[1:])
 	case "subscription-lineage-retry-job-controls":

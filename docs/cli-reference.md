@@ -2388,6 +2388,17 @@ Submit a reviewed fixed lineage retry selection
 |---|---|---|
 | `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
 
+### events subscription-lineage-retry-job-controls-inspect
+
+Inspect or compare saved control history offline
+
+`gregale events subscription-lineage-retry-job-controls-inspect [--file <PATH>] [--compare <BASELINE_PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | saved control-history artifact (local read only) |  |
+| `--compare <BASELINE_PATH>` | earlier artifact with the same job scope and filters |  |
+
 ### events subscription-lineage-retry-job-controls-export
 
 Export a guarded private control-history snapshot
