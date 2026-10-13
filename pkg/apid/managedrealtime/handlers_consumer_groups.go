@@ -67,6 +67,9 @@ func (s *Service) writeRealtimeConsumerGroupError(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrRealtimeInvalid("invalid group, worker, sequence, claim token, idempotency key or retry policy"))
 	case errors.Is(err, state.ErrRealtimeSettlementKeyConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "realtime_settlement_key_conflict", "Settlement key reused", "reuse the key only with the original settlement request"))
+	case errors.Is(err, state.ErrRealtimeConsumerGroupBoundToTrigger):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "realtime_group_bound_to_trigger", "Consumer group is bound to a trigger",
+			"a realtime trigger consumes this group; delete the trigger to claim or settle its messages directly").WithDocs("https://gregale.dev/docs/realtime#function-triggers"))
 	case errors.Is(err, state.ErrRealtimeConsumerGroupLease):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "realtime_group_lease_lost", "Claim lease lost", "the claim expired, was already settled, or has been reassigned; this token can no longer complete it"))
 	case errors.Is(err, state.ErrRealtimeConsumerGroupGap):
