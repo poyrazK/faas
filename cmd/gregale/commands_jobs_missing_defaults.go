@@ -12,7 +12,7 @@ type missingSavedJobError struct {
 }
 
 func (err *missingSavedJobError) Error() string {
-	return fmt.Sprintf("no Job is saved for this checkout. Defaults path: %s. Provide a Job name, for example: %s. Or save one with: %s. Replace my-job with your Job name; these are examples, and no command was executed", oneLine(err.path), savedNameSuggestionCommand(err.example), savedNameSuggestionCommand([]string{"jobs", "defaults", "set", "my-job"}))
+	return fmt.Sprintf("no Job is saved for this checkout. Defaults path: %s. Provide a Job name, for example: %s. Or save one with: %s. Replace my-job with your Job name; these are examples, and no command was executed. Run gregale jobs --help for available commands", oneLine(err.path), savedNameSuggestionCommand(err.example), savedNameSuggestionCommand([]string{"jobs", "defaults", "set", "my-job"}))
 }
 
 func readJobDefaultsForCommand(example []string) (localJobDefaults, string, error) {

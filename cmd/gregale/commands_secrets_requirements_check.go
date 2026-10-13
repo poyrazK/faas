@@ -23,7 +23,7 @@ type requiredSecretConsistency struct {
 	ReviewRemoveCommand string   `json:"review_remove_command,omitempty"`
 }
 
-func cmdRequiredSecretConsistency(args []string) int {
+func cmdSecretsRequiredConsistency(args []string) int {
 	fs := newFlagSet("secrets requirements check", flag.ContinueOnError)
 	source := fs.String("from-env-file", "", "dotenv example (default: .env.example at the requirements project root)")
 	if err := fs.Parse(args); err != nil {

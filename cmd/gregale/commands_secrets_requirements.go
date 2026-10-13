@@ -15,7 +15,7 @@ import (
 
 func cmdSecretRequirements(args []string) int {
 	if len(args) > 0 && args[0] == "check" {
-		return cmdRequiredSecretConsistency(args[1:])
+		return cmdSecretsRequiredConsistency(args[1:])
 	}
 	if len(args) == 0 || args[0] != "set" && args[0] != "add" && args[0] != "remove" && args[0] != "show" && args[0] != "clear" {
 		return printErr("Invalid requirements command", errors.New("use secrets requirements set/add/remove KEY..., check --from-env-file PATH, show, or clear"))

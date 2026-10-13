@@ -34,7 +34,7 @@ func cmdWorkflows(args []string) int {
 	case "run":
 		return cmdWorkflowsRun(rest)
 	case "resume-wait":
-		return cmdResumeRecordedRun("workflow", rest)
+		return resumeRecordedRun("workflow", rest)
 	case "wait":
 		return cmdWorkflowsWait(rest)
 	case "diagnose":

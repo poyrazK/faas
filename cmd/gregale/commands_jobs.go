@@ -85,7 +85,7 @@ func cmdJobs(args []string) int {
 	case "next":
 		return cmdJobsNext(rest)
 	case "resume":
-		return cmdResumeRecordedRun("job", rest)
+		return resumeRecordedRun("job", rest)
 	case "run":
 		return cmdJobsRun(rest)
 	case subRuns:

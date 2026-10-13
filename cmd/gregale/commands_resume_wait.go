@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func cmdResumeRecordedRun(kind string, args []string) int {
+func resumeRecordedRun(kind string, args []string) int {
 	fs := newFlagSet("resume accepted run", flag.ContinueOnError)
 	readEvidence := new(bool)
 	results := new(bool)
