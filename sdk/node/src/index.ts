@@ -386,3 +386,7 @@ export type { OperationWorkflowNextActionQueueItem, OperationWorkflowNextActionC
 export type { OperationWorkflowNextActionDigestPolicy, OperationWorkflowNextActionDigest } from './customer-operations.js';
 
 export type { OperationWorkflowNextActionDigestExplanation } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestCheck } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestCheckItem } from './customer-operations.js';

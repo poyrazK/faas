@@ -80450,6 +80450,8 @@ components:
       description: Current advisory evidence check preserving the original notification. Global failures remain unavailable.
       additionalProperties: false
       properties:
+        next_action_digest:
+          $ref: '#/components/schemas/OperationWorkflowNextActionDigestCheck'
         business_outcome:
           $ref: '#/components/schemas/OperationWorkflowReadinessBusinessOutcome'
         handoff:
@@ -80462,7 +80464,7 @@ components:
           description: OperationWorkflowReadinessNotificationCheck.checked_at. Current check time.
         status:
           type: string
-          description: OperationWorkflowReadinessNotificationCheck.status. Ready or blocked only for a comparable retained
+          description: OperationWorkflowReadinessNotificationCheck.status. Digest_checked for per-item source reconciliation; ready or blocked only for a comparable retained
             edge; otherwise the explicit comparison boundary status.
         change:
           $ref: '#/components/schemas/OperationWorkflowReadinessChange'
@@ -82485,6 +82487,47 @@ components:
         retention_limited:
           type: boolean
           description: Queue and source inbox retention bound coverage. Deleted/pruned source work is unavailable.
+    OperationWorkflowNextActionDigestCheck:
+      type: object
+      additionalProperties: false
+      description: Read-only current source reconciliation of a saved digest, using independent retained source reads. No delivery snapshot or workflow is modified.
+      required: [items, retention_limited]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNextActionDigestCheckItem'
+        retention_limited:
+          type: boolean
+    OperationWorkflowNextActionDigestCheckItem:
+      type: object
+      additionalProperties: false
+      description: Current result for one saved source action. Completed requires a retained explicit resolved source follow-up closure; no-longer-outstanding and unavailable never imply completion. Current owner filters are intentionally not applied so reassignment remains visible. Linked evidence health and application success are not inferred.
+      required: [subscription_id, sequence, action_kind, status, explanation, changed_fields]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        action_kind:
+          type: string
+        status:
+          type: string
+          enum: [outstanding, changed, completed, no_longer_outstanding, unavailable]
+        explanation:
+          type: string
+        changed_fields:
+          type: array
+          maxItems: 10
+          items:
+            type: string
+        current:
+          $ref: '#/components/schemas/OperationWorkflowNextActionQueueItem'
+        completion:
+          $ref: '#/components/schemas/OperationWorkflowReadinessCompletion'
     OperationWorkflowNextActionDigestExplanation:
       type: object
       additionalProperties: false

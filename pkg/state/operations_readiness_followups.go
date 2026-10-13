@@ -404,6 +404,19 @@ func checkReadinessNotification(ctx context.Context, store readinessSubscription
 			return out, err
 		}
 	}
+	if out.Notification.NextActionDigest != nil {
+		workflow := ""
+		if policy := page.Subscription.NextActionDigest; policy != nil {
+			workflow = policy.Workflow
+		}
+		out.NextActionDigest, err = checkNextActionDigest(ctx, store, account, tenant, app, scope, page.Subscription.TenantID, workflow, operator, out.Notification.NextActionDigest)
+		if err != nil {
+			return out, err
+		}
+		out.Status = "digest_checked"
+		out.CheckedAt = time.Now().UTC()
+		return out, nil
+	}
 	saved := readinessNotificationBaseline(out.Notification)
 	if saved == nil {
 		return out, nil

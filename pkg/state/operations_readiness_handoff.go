@@ -8,6 +8,11 @@ func readinessHandoff(check api.OperationWorkflowReadinessNotificationCheck) api
 		"Advisory application reports only; the application owns decisions, authorization and execution.",
 		"Comparison starts at the saved notification observation, not at follow-up scheduling. Scheduling-time evidence was not retained.",
 	}}
+	if check.NextActionDigest != nil {
+		h.Summary = "Digest actions were checked against retained source coordination; consult each result before acting."
+		h.Limitations = []string{"Each source is an independent current observation; state may change after the read.", "Missing or no-longer-outstanding actions do not establish completion or application success.", "Completion confirms only an explicitly resolved source follow-up, not live evidence health or execution authority."}
+		return h
+	}
 	if event := check.Notification.PlaybookEvidence; event != nil {
 		h.Summary = "Checklist evidence changed. Consult the saved requirement observations and open the exact case for current evidence."
 		t := event.CheckedAt

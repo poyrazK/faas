@@ -115,12 +115,13 @@ type OperationWorkflowReadinessHandoff struct {
 	Limitations         []string   `json:"limitations"`
 }
 type OperationWorkflowReadinessNotificationCheck struct {
-	BusinessOutcome *OperationWorkflowReadinessBusinessOutcome `json:"business_outcome,omitempty"`
-	Handoff         OperationWorkflowReadinessHandoff          `json:"handoff"`
-	Notification    OperationWorkflowReadinessNotification     `json:"notification"`
-	CheckedAt       time.Time                                  `json:"checked_at"`
-	Status          string                                     `json:"status"`
-	Change          *OperationWorkflowReadinessChange          `json:"change,omitempty"`
+	NextActionDigest *OperationWorkflowNextActionDigestCheck    `json:"next_action_digest,omitempty"`
+	BusinessOutcome  *OperationWorkflowReadinessBusinessOutcome `json:"business_outcome,omitempty"`
+	Handoff          OperationWorkflowReadinessHandoff          `json:"handoff"`
+	Notification     OperationWorkflowReadinessNotification     `json:"notification"`
+	CheckedAt        time.Time                                  `json:"checked_at"`
+	Status           string                                     `json:"status"`
+	Change           *OperationWorkflowReadinessChange          `json:"change,omitempty"`
 }
 
 // Follow-up queues aggregate retained coordination, not application execution tasks.
@@ -892,4 +893,19 @@ type OperationWorkflowNextActionDigest struct {
 	ChangedCount          int                                            `json:"changed_count"`
 	RemainingChangedCount int                                            `json:"remaining_changed_count"`
 	RetentionLimited      bool                                           `json:"retention_limited"`
+}
+
+type OperationWorkflowNextActionDigestCheck struct {
+	Items            []OperationWorkflowNextActionDigestCheckItem `json:"items"`
+	RetentionLimited bool                                         `json:"retention_limited"`
+}
+type OperationWorkflowNextActionDigestCheckItem struct {
+	SubscriptionID string                                `json:"subscription_id"`
+	Sequence       int64                                 `json:"sequence"`
+	ActionKind     string                                `json:"action_kind"`
+	Status         string                                `json:"status"`
+	Explanation    string                                `json:"explanation"`
+	ChangedFields  []string                              `json:"changed_fields"`
+	Current        *OperationWorkflowNextActionQueueItem `json:"current,omitempty"`
+	Completion     *OperationWorkflowReadinessCompletion `json:"completion,omitempty"`
 }

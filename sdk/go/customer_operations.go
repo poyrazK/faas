@@ -435,3 +435,7 @@ type OperationWorkflowNextActionDigestPolicy = api.OperationWorkflowNextActionDi
 type OperationWorkflowNextActionDigest = api.OperationWorkflowNextActionDigest
 
 type OperationWorkflowNextActionDigestExplanation = api.OperationWorkflowNextActionDigestExplanation
+
+type OperationWorkflowNextActionDigestCheck = api.OperationWorkflowNextActionDigestCheck
+
+type OperationWorkflowNextActionDigestCheckItem = api.OperationWorkflowNextActionDigestCheckItem

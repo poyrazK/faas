@@ -586,9 +586,11 @@
   const operationLink = (parent, id, label) => {if(!id)return;const a=document.createElement('a');a.href=panel.dataset.listUrl+'/'+encodeURIComponent(id)+'?scope='+encodeURIComponent(scope);a.textContent=label;parent.append(a,document.createElement('br'));};
   parent.replaceChildren();
   const h=check.handoff;
-  text(parent,'Workflow handoff · '+check.status+' · checked '+new Date(check.checked_at).toLocaleString());
+  text(parent,(check.next_action_digest?'Current digest actions':'Workflow handoff · '+check.status)+' · checked '+new Date(check.checked_at).toLocaleString());
   if(!h){text(parent,'Handoff evidence is unavailable.');return;}
   text(parent,h.summary);
+  if(check.next_action_digest){for(const row of check.next_action_digest.items){text(parent,row.action_kind.replace(/_/g,' ')+' · '+row.status.replace(/_/g,' '));text(parent,row.explanation);if(row.current){const a=row.current.action;text(parent,a.summary);text(parent,'Current owner: '+(a.owner||'unassigned')+(a.due_at?' · Deadline '+new Date(a.due_at).toLocaleString():''));if(row.changed_fields.length)text(parent,'Changed: '+row.changed_fields.map(f=>f.replace(/_/g,' ')).join(', '));}if(row.completion)window.renderReadinessCompletion(parent,row.completion,scope);}for(const limitation of h.limitations||[])text(parent,limitation);return;}
+
   const coordination=check.notification.coordination;
   window.renderReadinessVerification(parent,check.notification,scope);
   window.renderReadinessBusinessOutcome(parent,check.business_outcome,scope,'Latest application business result');
@@ -681,6 +683,7 @@
   const handoff=document.createElement('div');li.append(handoff);
   const check=document.createElement('button');check.type='button';check.textContent='Show workflow handoff';li.append(check);
   check.addEventListener('click',async()=>{check.disabled=true;try{const current=await request(detailURL);if(select.value===subscriptionID && li.isConnected){window.renderReadinessHandoff(handoff,current);}}catch(error){result.textContent=error.message;}finally{check.disabled=false;}});
+  if(notification.next_action_digest){check.textContent='Refresh current digest actions';check.click();}
   window.mountReviewResponse(li,notification,detailURL,panel.dataset.scope,updated=>{Object.assign(c,updated.coordination);if(!updated.coordination.follow_up_at)delete c.follow_up_at;owner.value=c.owner;status.value=c.status;due.value='';if(c.follow_up_at){const date=new Date(c.follow_up_at);due.value=new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,-1);}savedDueInput=due.value;li.dataset.owner=c.owner;li.dataset.pending=String(!!c.follow_up_at);applyFollowupFilters();updateCoordinationStatus();describeReminder(updated.reminder);});
   inbox.append(li);applyFollowupFilters();
   while (inbox.children.length > 100) { ids.delete(inbox.firstElementChild.dataset.id); inbox.firstElementChild.remove(); }
