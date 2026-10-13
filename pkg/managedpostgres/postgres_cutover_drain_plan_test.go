@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -362,6 +363,40 @@ func TestPostgresCutoverDrainPlanStaleTransactionCannotBypassMembershipGuard(t *
 	// make a repeatable-read transaction see the newly committed plan.
 	if _, err := tx.Exec(t.Context(), `SELECT current_managed_postgres_drain_plan($1)`, c.AppID); err == nil {
 		t.Fatal("stale snapshot hid a committed drain plan")
+	}
+}
+
+func TestPostgresCutoverDrainPlanStaleTruncateCannotBypassMembershipGuard(t *testing.T) {
+	for _, isolation := range []pgx.TxIsoLevel{pgx.RepeatableRead, pgx.Serializable} {
+		t.Run(string(isolation), func(t *testing.T) {
+			s, ps, c, node, _ := cutoverDrainPlanFixture(t, drainPlanInstanceSpec{"default", "normal", "running"})
+			if _, err := s.FenceCutoverAdmission(t.Context(), c.AccountID, c.ID); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := s.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: isolation})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback(context.WithoutCancel(t.Context())) }()
+			var count int
+			if err := tx.QueryRow(t.Context(), `SELECT count(*) FROM managed_postgres_cutover_drain_plans`).Scan(&count); err != nil || count != 0 {
+				t.Fatal("could not establish pre-plan snapshot", count, err)
+			}
+			plan, err := ps.ReserveManagedPostgresDrainPlan(t.Context(), c.ID, node.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = tx.Exec(t.Context(), `TRUNCATE instances CASCADE`)
+			var pgerr *pgconn.PgError
+			if !errors.As(err, &pgerr) || pgerr.Code != "40001" {
+				t.Fatal("stale truncate bypassed current-snapshot guard", err)
+			}
+			_ = tx.Rollback(t.Context())
+			current, err := ps.ManagedPostgresDrainPlan(t.Context(), plan.Frame.ID)
+			if err != nil || current.Pending != 1 || current.Members[0].BlockerCode != "native_retirement_unconfirmed" {
+				t.Fatal("rejected truncate damaged the captured incarnation", current, err)
+			}
+		})
 	}
 }
 

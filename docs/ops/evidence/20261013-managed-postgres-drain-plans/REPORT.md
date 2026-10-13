@@ -31,6 +31,13 @@ require read-committed isolation. A separate concurrent test holds the app lock,
 queues capture followed by a late parked insertion, and proves the insertion
 observes the newly committed plan and fails.
 
+A further minimized PostgreSQL probe reproduced a stale repeatable-read TRUNCATE
+bypass: a committed plan was invisible and its instance table was emptied. The
+plan verdict still failed closed without native receipts. The table-wide guard
+now requires read-committed isolation before consulting any app snapshot. Both
+repeatable-read and serializable probes reject the operation with SQLSTATE 40001;
+the integrated regression also checks that the captured incarnation is preserved.
+
 Catalog guards reuse the existing typed admission-fence constraint so scheduler
 callers receive `ErrManagedPostgresAdmissionFenced`. SQLC verification also copies
 the new query file into its disposable generation workspace.
@@ -66,8 +73,8 @@ Pinned Go 1.26.9, SQLC 1.31.1, private PostgreSQL 16.15:
 - Before rebase: migration replay and complete up/down walk passed (6.670 s).
 - SQLC generation/verification, ADR uniqueness, runbook SQL, text encoding,
   shell quoting and diff whitespace checks: passed.
-- The final schema was regenerated from fresh migrations in a UTC database. Fresh regeneration also includes function/trigger changes from
-  already merged main migrations that its previous snapshot did not reflect.
+- The final schema was regenerated from fresh migrations in a UTC database.
+  Fresh regeneration also includes function/trigger changes from already merged main migrations that its previous snapshot did not reflect.
 
 An exploratory broader migration corpus exhausted local disk while creating
 schemas. Only the task-owned, idle disposable database was recreated; shared Go

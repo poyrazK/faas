@@ -9213,6 +9213,11 @@ CREATE FUNCTION public.guard_managed_postgres_drain_plan_inventory_truncate() RE
     LANGUAGE plpgsql
     AS $$
 BEGIN
+ -- TRUNCATE covers every app, including fenced apps created after a stale
+ -- transaction snapshot. Reject stale isolation before consulting that snapshot.
+ IF current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION 'drain inventory truncation requires a current snapshot' USING ERRCODE='40001';
+ END IF;
  IF EXISTS (SELECT 1 FROM apps a JOIN managed_postgres_cutover_drain_plans p ON p.app_id=a.id
   AND p.cutover_id=a.managed_postgres_admission_cutover_id AND p.fenced_at=a.managed_postgres_admission_fenced_at
   AND p.owner_node_id=a.node_id AND p.owner_revision=a.scaling_policy_revision) THEN

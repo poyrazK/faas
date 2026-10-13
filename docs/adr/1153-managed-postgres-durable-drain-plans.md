@@ -32,6 +32,8 @@ deletion, including parked/terminal insertion and TRUNCATE. A trigger locks the
 app even before the plan is visible, closing the capture/late-insert race.
 Fenced membership guards require read-committed isolation: a locked app tuple
 alone cannot refresh a repeatable-read snapshot after a plan-only insert.
+The table-wide TRUNCATE guard requires read-committed isolation before inspecting
+any app, because an older snapshot can hide both a new app and its fenced plan.
 Confirmed STOPPED members can be retained or deleted without erasing receipts.
 Cancellation releases the ordinary admission fence after credential revocation;
 retained plans do not keep the former catalog locked after that release.
