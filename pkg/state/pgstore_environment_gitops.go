@@ -25,6 +25,7 @@ func environmentGitSourceFromSQL(row sqlc.EnvironmentGitSource, environment stri
 		ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), ProjectID: pgUUIDString(row.ProjectID),
 		EnvironmentID: pgUUIDString(row.EnvironmentID), EnvironmentSlug: environment,
 		Spec: EnvironmentGitSourceSpec{
+			Provider:     row.Provider,
 			RepositoryID: row.RepositoryID, InstallationID: row.InstallationID,
 			Repository: row.Repository, Ref: row.SourceRef, ManifestPath: row.ManifestPath,
 			Mode: row.Mode, ApprovalPolicy: row.ApprovalPolicy, Prune: row.Prune,
@@ -70,6 +71,9 @@ func (s *PgStore) CreateEnvironmentGitSource(ctx context.Context, accountID, pro
 	if err := spec.Validate(); err != nil {
 		return EnvironmentGitSource{}, fmt.Errorf("git source: %w: %w", ErrInvalidArgument, err)
 	}
+	if spec.Provider == "" {
+		spec.Provider = "github"
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return EnvironmentGitSource{}, err
@@ -86,7 +90,7 @@ func (s *PgStore) CreateEnvironmentGitSource(ctx context.Context, accountID, pro
 	row, err := q.CreateEnvironmentGitSource(ctx, tx, sqlc.CreateEnvironmentGitSourceParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environment,
 		RepositoryID: spec.RepositoryID, InstallationID: spec.InstallationID, Repository: spec.Repository,
-		SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune,
+		SourceRef: spec.Ref, ManifestPath: spec.ManifestPath, Mode: spec.Mode, ApprovalPolicy: spec.ApprovalPolicy, Prune: spec.Prune, Provider: spec.Provider,
 	})
 	if err != nil {
 		return EnvironmentGitSource{}, mapErr(err)

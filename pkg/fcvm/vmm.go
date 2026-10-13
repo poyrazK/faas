@@ -7538,7 +7538,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	if v.storage == nil {
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
-	rc, err := v.storage.Get(ctx, key)
+	// A wake reads what it fetched from the page cache; the node cache
+	// makes the fill durable and installs it after the wake has it.
+	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}

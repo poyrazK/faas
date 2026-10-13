@@ -1018,6 +1018,32 @@ func TestMetricsPlatformWakeLatencyUsesDedicatedGateHistogram(t *testing.T) {
 	}
 }
 
+// TestMetricsWakeHistogramsResolveStalledWakes pins the tail buckets: a wake
+// held near the gate's 30 s TTL must land in a finite bucket, not in +Inf,
+// where histogram_quantile would report the old 10 s (or 3 s) ceiling.
+// spec: §12
+func TestMetricsWakeHistogramsResolveStalledWakes(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveColdBoot("app-1", 25*time.Second, "node-1")
+	m.ObservePlatformWakeWithTrace(25*time.Second, "")
+	m.ObserveWakePhase("vmmd_wake", 25*time.Second)
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_wake_latency_seconds_bucket{le="20"} 0`,
+		`gateway_wake_latency_seconds_bucket{le="30"} 1`,
+		`gateway_wake_latency_seconds_by_node_bucket{node_id="node-1",le="30"} 1`,
+		`gateway_wake_phase_duration_seconds_bucket{phase="vmmd_wake",le="30"} 1`,
+		`gateway_platform_wake_latency_seconds_bucket{le="10"} 0`,
+		`gateway_platform_wake_latency_seconds_bucket{le="30"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing exposition line %q", want)
+		}
+	}
+}
+
 // TestMetricsObserveWakePhaseRoundTrip (ADR-098 C11) asserts that
 // ObserveWakePhase increments the labelled histogram and that the
 // scalar (legacy) ObserveWakeQueueWait dual-writes into the

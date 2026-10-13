@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // errStore is a minimal state.Store stub used by the
@@ -30,7 +31,7 @@ import (
 // guarantees an accidental call to a different method from
 // evictAccount surfaces as a test crash instead of a silent pass.
 type errStore struct {
-	state.Store
+	Store   state.Store
 	listErr error
 }
 
@@ -61,7 +62,7 @@ func newSubscriberForTest(store state.Store) *DeletionSubscriber {
 // block the channel consumer.
 func TestEvictAccount_StoreErrorLogsWarning(t *testing.T) {
 	store := &errStore{listErr: errors.New("simulated store failure")}
-	sub := newSubscriberForTest(store)
+	sub := newSubscriberForTest(statetest.NewStore(store))
 
 	// Should return without panic. The warn log is captured via the
 	// discard-backed logger, so the assertion is "no panic + no row

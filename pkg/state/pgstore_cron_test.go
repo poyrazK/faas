@@ -18,6 +18,7 @@ package state_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -399,5 +400,56 @@ func TestPg_CronFirstFireAuditRow(t *testing.T) {
 	}
 	if !ok {
 		t.Errorf("events.data missing 'cron_id' key (full payload=%s)", body)
+	}
+}
+
+// TestPg_DeleteCron_DetachesLongHistoryInBatches pins H9-165: on
+// production-us an every-minute cron had 11,650 invocations, and deleting it
+// ran their ON DELETE SET NULL inside one statement that overran the request
+// budget and was cancelled on every attempt. DeleteCron now detaches history
+// in committed batches; a cron with more history than one batch must delete
+// and keep its invocations, and the wrong app must leave everything intact.
+func TestPg_DeleteCron_DetachesLongHistoryInBatches(t *testing.T) {
+	s, pool, ctx := cronPgStore(t)
+	appID := seedCronApp(t, ctx, s, "delete-long-history")
+	otherAppID := seedCronApp(t, ctx, s, "delete-long-history-other")
+	c, err := s.CreateCron(ctx, appID, "* * * * *", "/", true)
+	if err != nil {
+		t.Fatalf("CreateCron: %v", err)
+	}
+	const history = 2500 // more than two detach batches
+	if _, err := pool.Exec(ctx, `insert into invocations (app_id, account_id, source, deployment_scope, cron_id)
+		select a.id, a.account_id, 'cron', 'default', $2 from apps a, generate_series(1, $3) where a.id = $1`,
+		appID, c.ID, history); err != nil {
+		t.Fatalf("seed invocations: %v", err)
+	}
+	countLinked := func() int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `select count(*) from invocations where cron_id = $1`, c.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	if err := s.DeleteCron(ctx, c.ID, otherAppID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("DeleteCron(wrong app) = %v, want ErrNotFound", err)
+	}
+	if n := countLinked(); n != history {
+		t.Fatalf("wrong-app delete detached %d of %d invocations", history-n, history)
+	}
+
+	if err := s.DeleteCron(ctx, c.ID, appID); err != nil {
+		t.Fatalf("DeleteCron: %v", err)
+	}
+	if _, err := s.CronByID(ctx, c.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("CronByID after delete = %v, want ErrNotFound", err)
+	}
+	var kept int
+	if err := pool.QueryRow(ctx, `select count(*) from invocations where app_id = $1 and source = 'cron' and cron_id is null`, appID).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept != history {
+		t.Fatalf("invocation history after delete = %d, want %d kept and detached", kept, history)
 	}
 }

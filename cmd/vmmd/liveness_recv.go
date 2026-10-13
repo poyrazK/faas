@@ -235,6 +235,12 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 	if ctx.Err() != nil {
 		return true
 	}
+	// ADR-1151: a quiet-paused guest cannot answer, and its silence says
+	// nothing about its health. Skip the probe while it is paused.
+	pausedBefore, epochBefore := l.quietGate()
+	if pausedBefore {
+		return false
+	}
 	start := time.Now()
 	var outcome string
 	if l.probeFn != nil {
@@ -247,6 +253,11 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 	// whose teardown already won the race.
 	if ctx.Err() != nil {
 		return true
+	}
+	// Drop an outcome if the guest was quiet-paused at any point while the
+	// probe ran: a timeout then measures the pause, not the guest.
+	if pausedAfter, epochAfter := l.quietGate(); pausedAfter || epochAfter != epochBefore {
+		return false
 	}
 	elapsed := time.Since(start).Seconds()
 	l.mgr.ObserveLivenessProbe(outcome, elapsed)
@@ -599,6 +610,14 @@ func writeLivenessAll(conn net.Conn, b []byte) error {
 		}
 	}
 	return nil
+}
+
+// quietGate reads the instance's ADR-1151 quiet pause state.
+func (l *livenessProbeLoop) quietGate() (paused bool, epoch uint64) {
+	if l.mgr == nil {
+		return false, 0
+	}
+	return l.mgr.QuietGate(l.instance)
 }
 
 // startLivenessLoopHelper is the cmd-level goroutine launcher

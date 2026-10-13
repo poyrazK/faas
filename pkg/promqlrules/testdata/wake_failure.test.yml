@@ -81,7 +81,7 @@ tests:
         alertname: FaasColdBootRatioHigh
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: vmmd
               family: cold_boot_ratio
             exp_annotations:

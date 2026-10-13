@@ -26,6 +26,45 @@ var (
 	ErrUsageStale    = pgerrors.ErrUsageStale
 )
 
+// ErrProvisioningClosed reports that the operator rollout gate (canary
+// window, qualification or account allowlist) is closed for this account.
+// It wraps ErrUnavailable so retry semantics and existing errors.Is checks
+// hold, but it is not a provider outage: on production-us an expired canary
+// window answered "the configured provider is temporarily unavailable" with
+// outage advice (hunt #9, H9-P107).
+var ErrProvisioningClosed = fmt.Errorf("%w: provisioning is not open for this account", ErrUnavailable)
+
+// ErrNotInPlan refuses a compute target the account's plan does not include
+// (a class or always-on compute). It unwraps to ErrQuotaExceeded for existing
+// checks, but it is an entitlement, not a usage quota: on production-us
+// `compute-policy --scale-to-zero false` answered "quota exceeded" with a
+// hint about credentials (hunt #9, H9-P114).
+var ErrNotInPlan error = notInPlanError{}
+
+type notInPlanError struct{}
+
+func (notInPlanError) Error() string {
+	return "the requested service class or always-on compute is not included in this plan"
+}
+
+func (notInPlanError) Unwrap() error { return ErrQuotaExceeded }
+
+// QuotaProblem names an ErrQuotaExceeded refusal for API problems, telling a
+// plan entitlement apart from a usage quota.
+func QuotaProblem(err error) (status int, code, title string) {
+	if errors.Is(err, ErrNotInPlan) {
+		return 403, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	}
+	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
+}
+
+// ProvisioningClosedDetail and UnavailableDetail are the customer-facing
+// explanations for ErrProvisioningClosed and a real provider outage.
+const (
+	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
+	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+)
+
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
 // deleted database holds the gate until its final usage correction lands, so
 // without it a timed wait reads like an outage (production-us hunt #9,
@@ -505,6 +544,10 @@ type UsageProgress struct {
 	// Unresolved is snapshot metadata for an accounting obligation whose
 	// provider identity is still unknown. Ledger observations cannot settle it.
 	Unresolved bool
+	// CreatedAt is snapshot metadata: when the accounting root was reserved.
+	// A resource created inside the current window has no completed window
+	// to collect yet, so its missing first observation is not a gap.
+	CreatedAt time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an

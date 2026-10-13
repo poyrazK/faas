@@ -83,6 +83,9 @@ func (s *PgStore) ReserveProjectEnvironmentClonePostgresSnapshot(ctx context.Con
 	}
 	receipt, err := readClonePostgresSnapshotTx(ctx, tx, op, sourceID)
 	if errors.Is(err, ErrNotFound) {
+		if cloneHasCommonCheckpoint(op) {
+			return receipt, ErrConflict
+		}
 		if resource.TargetID != "" || resource.Status != "captured" {
 			return receipt, ErrConflict
 		}
@@ -271,6 +274,9 @@ func (s *PgStore) ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx contex
 	receipt, err := readClonePostgresSnapshotTx(ctx, tx, op, sourceID)
 	if err != nil {
 		return receipt, false, err
+	}
+	if cloneHasCommonCheckpoint(op) && receipt.State != "retained" {
+		return receipt, false, ErrConflict
 	}
 	dispatch := receipt.State == "capturing"
 	if dispatch {

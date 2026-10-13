@@ -82,6 +82,8 @@ const (
 	executionArtifactGrantsFile      = "execution_artifact_grants.go"  // ADR-171 — one-time cross-agent artifact capabilities
 	executionWorkflowManagedFile     = "execution_workflow_managed.go" // ADR-171 — server-managed sequential workflow DTOs
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
+	devBucketsFile                   = "dev_buckets.go"
+	imageRunsFile                    = "image_runs.go" // ADR-1161 — docker-run-shaped image run DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -93,12 +95,15 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /dashboard/apps/{slug}/profiles/deployment-policy":         true, // session + CSRF adapter for automatic profiling policy
-	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check": true, // session + CSRF adapter for the profiling regression API
-	"POST /dashboard/apps/{slug}/profiles/investigations":            true, // session + CSRF adapter for the profiling investigation API
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":          true, // scoped HTML/CSRF adapter for the public issue action API
-	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":         true, // scoped HTML/CSRF adapter for issue impact alert policy updates
-	"POST /dashboard/apps/{slug}/issues/ownership-rules":             true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
+	"POST /dashboard/apps/{slug}/profiles/deployment-policy":                   true, // session + CSRF adapter for automatic profiling policy
+	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
+	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
+	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
 
 	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
@@ -181,6 +186,11 @@ var routeExclude = map[string]bool{
 	"GET /auth/verify":                                           true, // magic-link consume (legacy; PR #1 closed; kept for compat)
 	"GET /oauth/callback":                                        true, // GitHub App install callback
 	"GET /oauth/code-callback":                                   true, // GitHub App user-to-server OAuth callback (PR-C)
+	"POST /v1/gitlab/connect":                                    true, // GitLab.com OAuth session + CSRF form
+	"GET /v1/gitlab/callback":                                    true, // GitLab.com OAuth browser callback
+	"GET /v1/gitlab/connection":                                  true, // GitLab.com session-only dashboard status
+	"DELETE /v1/gitlab/connection":                               true, // GitLab.com session-only disconnect
+	"POST /v1/gitlab/disconnect":                                 true, // GitLab.com session + CSRF form
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
 	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
@@ -614,6 +624,7 @@ var schemaSpecOnly = map[string]bool{
 	"DevBridgeCredentials":                  true,
 	"DevBridgeWebhookReplay":                true,
 	"EdgeRuleMatchExpr":                     true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
+	"ObjectStorageReleaseRequirements":      true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
 	// lives in pkg/state/feature_flags.go and handler-local request/evidence
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
@@ -1077,12 +1088,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
+		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
 		filepath.Join(root, "pkg", "api", "mcp_task_compatibility.go"),
 		filepath.Join(root, "pkg", "api", "event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", eventReplayBackfillFile),
 		filepath.Join(root, "pkg", "api", "event_circuit_breaker.go"),
 		filepath.Join(root, "pkg", "api", "event_consumer_execution_health.go"),
+		filepath.Join(root, "pkg", "api", "event_consumer_delivery_health.go"),
+		filepath.Join(root, "pkg", "api", "event_recipient_blocker.go"),
 		filepath.Join(root, "pkg", "api", "event_consumer_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery.go"),
 		filepath.Join(root, "pkg", "api", "event_workflow_recovery.go"),
@@ -1128,6 +1142,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
 		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
 		filepath.Join(root, "pkg", "api", "object_notifications.go"),
+		filepath.Join(root, "pkg", "api", "object_compute_triggers.go"),
 		filepath.Join(root, "pkg", "api", "object_version_delete.go"),
 		filepath.Join(root, "pkg", "api", "object_deletion.go"),
 		filepath.Join(root, "pkg", "api", "object_tagging.go"),
@@ -1184,6 +1199,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
 		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
+		filepath.Join(root, "pkg", "api", "realtime_access.go"),
+		filepath.Join(root, "pkg", "api", "realtime_tickets.go"),
+		filepath.Join(root, "pkg", "api", "realtime_release_sdk_models.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),
 		filepath.Join(root, "pkg", "api", "realtime_schedules.go"),
@@ -1218,6 +1236,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
+		filepath.Join(root, "pkg", "api", imageRunsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),

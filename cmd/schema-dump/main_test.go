@@ -95,6 +95,16 @@ func TestStripNoise_PreservesUnrelated(t *testing.T) {
 	}
 }
 
+func TestStripNoiseCanonicalizesDumpFooter(t *testing.T) {
+	const schema = "CREATE TABLE public.example (id bigint);\n"
+	for _, footer := range []string{"", "\n\n", "\n-- PostgreSQL database dump complete\n\n\\unrestrict xyz\n\n"} {
+		got := string(stripNoise([]byte(schema + footer)))
+		if got != schema {
+			t.Fatalf("footer %q changed canonical schema: %q", footer, got)
+		}
+	}
+}
+
 // fakeRunner returns canned bytes / errors so the run() error paths
 // can be asserted without a live Postgres. The poolCloser returned by
 // openPool is a no-op so defer Close() is safe.

@@ -228,5 +228,11 @@ func stripNoise(in []byte) []byte {
 	for _, re := range pgDumpNoise {
 		out = re.ReplaceAll(out, nil)
 	}
-	return out
+	// Removing version banners can leave different numbers of terminal
+	// blank lines across pg_dump releases. Keep one final newline.
+	out = bytes.TrimRight(out, "\n")
+	if len(out) == 0 {
+		return out
+	}
+	return append(out, '\n')
 }

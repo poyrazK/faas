@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Portable ordering fixtures do not establish Firecracker capture acceptance.
@@ -36,8 +37,8 @@ func (v *qualificationCaptureVMM) CaptureEnvironmentQualification(_ context.Cont
 }
 
 type lostCaptureResponseStore struct {
-	*state.MemStore
-	lost bool
+	MemStore *state.MemStore
+	lost     bool
 }
 
 func (s *lostCaptureResponseStore) RecordEnvironmentQualificationSnapshot(ctx context.Context, claimed state.EnvironmentWorkloadQualificationRequest, frame state.EnvironmentQualificationExecution, proof state.EnvironmentQualificationSnapshot) (state.EnvironmentQualificationSnapshotReceipt, error) {
@@ -55,7 +56,7 @@ func TestEnvironmentQualificationCaptureReplaysCommittedEvidenceWithoutVMEffects
 	v := &qualificationCaptureVMM{qualificationRuntimeVMM: newQualificationRuntimeVMM(&fakeVMM{})}
 	notify := &fakeNotifier{}
 	e := newEngine(t, store, v, notify, "test-fc")
-	e.store = wrapped
+	e.store = statetest.NewMem(wrapped)
 	err := e.WithEnvironmentWorkloadQualificationRuntime(t.Context(), request, func(ctx context.Context, ins state.Instance) error {
 		if _, err := e.CaptureEnvironmentWorkloadQualification(ctx, request, ins); err == nil {
 			t.Fatal("lost response was not surfaced")

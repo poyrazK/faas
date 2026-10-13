@@ -20,6 +20,7 @@ type BindingVerificationPin struct {
 	Revision             string                        `json:"revision"`
 	CredentialGeneration *int64                        `json:"credential_generation,omitempty"`
 	OutboundProbe        *api.OutboundBindingProbeSpec `json:"outbound_probe,omitempty"`
+	ObjectStorageMode    string                        `json:"object_storage_mode,omitempty"`
 }
 
 type BindingVerificationTask struct {
@@ -79,6 +80,12 @@ func validateBindingVerificationPin(params CreateAppTaskParams) error {
 		command = api.AppTaskOutboundBindingProbeCommand
 	}
 	commandLen := 2
+	if pin.ObjectStorageMode != "" {
+		if pin.Type != api.BindingTypeObjectStorage || !api.IsObjectStorageWriteProbeCommand(params.Command, params.CommandShell) || params.Command[2] != pin.ObjectStorageMode {
+			return fmt.Errorf("%w: invalid object-storage verification mode", ErrAppTaskInvalid)
+		}
+		command, commandLen = api.AppTaskObjectStorageWriteProbeCommand, 3
+	}
 	if pin.Type == api.BindingTypeOutbound {
 		commandLen = 3
 		var spec api.OutboundBindingProbeSpec

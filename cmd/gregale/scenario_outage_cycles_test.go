@@ -283,6 +283,7 @@ func TestOutageCyclesScheduledExecutionAndCancellation(t *testing.T) {
 			var mu sync.Mutex
 			active := false
 			generation := 0
+			probesInSecondFault := 0
 			ruleID := ""
 			clears := 0
 			ctx, cancel := context.WithCancel(context.Background())
@@ -292,8 +293,16 @@ func TestOutageCyclesScheduledExecutionAndCancellation(t *testing.T) {
 				defer mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/probe" {
+					// Cancel inside cycle 2's fault, a probe after its install has
+					// answered. Cancelling on the first probe raced the install PUT
+					// itself: the runner saw its own install cancelled at the cycle
+					// boundary and cycle 1's recovery phase ended unrecorded. The
+					// campaign variant cancels inside the install request instead.
 					if mode == "cancel" && generation == 2 {
-						cancel()
+						probesInSecondFault++
+						if probesInSecondFault == 2 {
+							cancel()
+						}
 					}
 					if active || (kind == "recovery-failure" && generation >= 2) {
 						w.WriteHeader(http.StatusServiceUnavailable)

@@ -52,6 +52,9 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 	if spec.Validate() != nil {
 		return EnvironmentGitSource{}, ErrInvalidArgument
 	}
+	if spec.Provider == "" {
+		spec.Provider = "github"
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.createEnvironmentGitSourceLocked(accountID, projectID, environment, spec)
@@ -59,7 +62,9 @@ func (m *MemStore) CreateEnvironmentGitSource(_ context.Context, accountID, proj
 
 func (m *MemStore) createEnvironmentGitSourceLocked(accountID, projectID, environment string, spec EnvironmentGitSourceSpec) (EnvironmentGitSource, error) {
 	project, ok := m.projects[projectID]
-	if !ok || project.AccountID != accountID || project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID {
+	if !ok || project.AccountID != accountID ||
+		(spec.Provider != "gitlab" && (project.RepoFullName != spec.Repository || project.InstallID != spec.InstallationID)) ||
+		(spec.Provider == "gitlab" && m.gitlabOAuthConnections[accountID].AccountID == "") {
 		return EnvironmentGitSource{}, ErrNotFound
 	}
 	env, err := m.projectEnvironmentBySlugLocked(projectID, environment)

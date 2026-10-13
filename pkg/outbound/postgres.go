@@ -388,6 +388,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		inflightTokens: inflightTokens, inflightBindingTokens: inflightBindingTokens, inflightCost: inflightCost,
 		userTokens: user.userTokens, userCost: user.userCost,
 		inflightUserTokens: user.inflightUserTokens, inflightUserCost: user.inflightUserCost,
+		userUntracked: user.userUntracked,
 	}, aiBudgetLimits{
 		dailyTokens: positiveLimit(storedDailyAITokenLimit), bindingTokens: positiveLimit(storedBindingAITokenLimit),
 		dailyCost: positiveLimit(storedDailyAICostLimit), monthlyCost: positiveLimit(storedMonthlyAICostLimit),

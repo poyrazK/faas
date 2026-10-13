@@ -1383,12 +1383,13 @@ func (d DatabaseDependency) EffectiveAccess() string {
 // only attaches an existing ready bucket, so adding a manifest entry cannot
 // unexpectedly create billable storage during CI.
 type BucketDependency struct {
-	Bucket     string `yaml:"bucket"`
-	App        string `yaml:"app,omitempty"`
-	Scope      string `yaml:"scope,omitempty"`
-	Permission string `yaml:"permission,omitempty"`
-	Label      string `yaml:"label,omitempty"`
-	Prefix     string `yaml:"prefix,omitempty"`
+	Triggers   *[]api.ObjectStorageComputeTrigger `yaml:"triggers,omitempty"`
+	Bucket     string                             `yaml:"bucket"`
+	App        string                             `yaml:"app,omitempty"`
+	Scope      string                             `yaml:"scope,omitempty"`
+	Permission string                             `yaml:"permission,omitempty"`
+	Label      string                             `yaml:"label,omitempty"`
+	Prefix     string                             `yaml:"prefix,omitempty"`
 }
 
 // EffectiveScope returns the scope used by the binding API when the manifest
@@ -1498,10 +1499,11 @@ func (c *ReleaseConfig) Validate() error {
 // manifest cannot reach outside the project by accident. Values are always
 // resolved locally by the CLI; this block never contains secret plaintext.
 type DevConfig struct {
-	EnvFile             string `yaml:"env_file,omitempty"`
-	ServiceOverrideFile string `yaml:"service_override_file,omitempty"`
-	Postgres            *bool  `yaml:"postgres,omitempty"`
-	PostgresRegion      string `yaml:"postgres_region,omitempty"`
+	Buckets             []api.DevBucketRequest `yaml:"buckets,omitempty"`
+	EnvFile             string                 `yaml:"env_file,omitempty"`
+	ServiceOverrideFile string                 `yaml:"service_override_file,omitempty"`
+	Postgres            *bool                  `yaml:"postgres,omitempty"`
+	PostgresRegion      string                 `yaml:"postgres_region,omitempty"`
 	// TTL is the environment lease as a Go duration (for example "72h").
 	// The plan ceiling is enforced by the API, not here.
 	TTL string `yaml:"ttl,omitempty"`
@@ -1511,6 +1513,9 @@ type DevConfig struct {
 	// Debug starts the Node.js inspector in the developer environment and
 	// exposes it on a local port (`gregale dev --debug`, ADR-741).
 	Debug *bool `yaml:"debug,omitempty"`
+	// Watch runs a development server instead of the production build
+	// (`gregale dev --watch`, ADR-1170).
+	Watch *DevWatchConfig `yaml:"watch,omitempty"`
 }
 
 // ParseDevTTL parses a `gregale dev` lease from `--ttl` or `dev.ttl`. It
@@ -1533,6 +1538,9 @@ func ParseDevTTL(raw string) (time.Duration, error) {
 func (c *DevConfig) Validate() error {
 	if c == nil {
 		return nil
+	}
+	if _, err := api.NormalizeDevBuckets(c.Buckets); err != nil {
+		return fmt.Errorf("dev.buckets: %w", err)
 	}
 	if err := validateDevConfigPath("env_file", c.EnvFile); err != nil {
 		return err
@@ -1562,7 +1570,7 @@ func (c *DevConfig) Validate() error {
 			return fmt.Errorf("dev: postgres_seed: %s", problem.Detail)
 		}
 	}
-	return nil
+	return c.Watch.Validate()
 }
 
 func validateDevConfigPath(field, raw string) error {
@@ -2397,6 +2405,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 
 	seenBuckets := make(map[string]struct{}, len(m.Buckets))
 	for i, dependency := range m.Buckets {
+		if dependency.Triggers != nil {
+			if _, err := api.NormalizeObjectStorageComputeTriggers(*dependency.Triggers); err != nil {
+				return fmt.Errorf("bucket[%d]: triggers: %w", i, err)
+			}
+		}
 		if strings.TrimSpace(dependency.Bucket) == "" {
 			return fmt.Errorf("bucket[%d]: bucket is required", i)
 		}

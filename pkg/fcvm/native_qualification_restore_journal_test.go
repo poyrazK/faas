@@ -170,6 +170,37 @@ func TestNativeQualificationRestoreDistinctBindingAndRetirement(t *testing.T) {
 	}
 }
 
+func TestNativeQualificationRestoreClaimMatchesOnlyItsOriginalPhysicalBinding(t *testing.T) {
+	j, frame, ctx := nativeQualificationRestoreFixture(t)
+	claim, err := j.claim(ctx, frame, "1.7.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := qualificationLease(frame.InstanceID)
+	if err := j.incoming.owner.prepare(nativeQualificationRestoreContext(ctx, claim), lease); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := j.read(frame.InstanceID)
+	if err != nil || !sameNativeQualificationRestoreClaim(claim, bound) || !sameNativeQualificationRestoreClaim(bound, bound) {
+		t.Fatal("original first-delivery capability lost its bound producer", err)
+	}
+	changed := claim
+	changed.Deadline = changed.Deadline.Add(time.Second)
+	if sameNativeQualificationRestoreClaim(changed, bound) {
+		t.Fatal("changed dispatch deadline borrowed the original producer")
+	}
+	changed = claim
+	changed.Capture.CaptureID = uuid.NewString()
+	if sameNativeQualificationRestoreClaim(changed, bound) {
+		t.Fatal("changed capture borrowed the original producer")
+	}
+	changed = bound
+	changed.NativeLease.MemoryMaxMiB++
+	if sameNativeQualificationRestoreClaim(changed, bound) {
+		t.Fatal("changed physical lease borrowed the original producer")
+	}
+}
+
 func TestNativeQualificationRestoreRequiresRetiredExactCapture(t *testing.T) {
 	for _, change := range []string{"capture", "instance_alias", "wake", "cleanup", "node", "ram", "artifact", "attempt", "graph", "source", "capture_completion", "source_revocation", "physical_exit", "physical_resources", "physical_generation", "physical_lease", "deadline", "canceled"} {
 		t.Run(change, func(t *testing.T) {

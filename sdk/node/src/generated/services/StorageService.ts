@@ -54,6 +54,7 @@ import type { ObjectVersionRetentionResult } from '../models/ObjectVersionRetent
 import type { ObjectWriteReceipt } from '../models/ObjectWriteReceipt.js';
 import type { ObjectWriteReceiptList } from '../models/ObjectWriteReceiptList.js';
 import type { Problem } from '../models/Problem.js';
+import type { ReconcileObjectStorageComputeTriggersRequest } from '../models/ReconcileObjectStorageComputeTriggersRequest.js';
 import type { SetObjectBucketAccessGrantRequest } from '../models/SetObjectBucketAccessGrantRequest.js';
 import type { SetObjectS3CopySourceRequest } from '../models/SetObjectS3CopySourceRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -1569,6 +1570,52 @@ export class StorageService {
     });
   }
   /**
+   * Reconcile managed ObjectCreated triggers for the bucket's owning app
+   * Requires MFA, storage manage scope and bucket write access. The destination
+   * is always this bucket's owning app in its region. expected_revision is
+   * mandatory and stale revisions return 409, including unchanged requests.
+   * Replaces only managed rules, preserving manual notification rules.
+   * Explicit triggers: [] clears managed ownership. Manual ID collisions
+   * return 409; overlapping filters return 400. Nonempty configuration
+   * requires object storage enabled and an async-invocation eligible plan.
+   * Accepted deliveries retain their original destination snapshots.
+   *
+   * @returns ObjectBucketNotifications Complete notification configuration including managed rule identities; Cache-Control no-store
+   * @returns Problem Missing owned bucket, storage disabled, or invalid request
+   * @throws ApiError
+   */
+  public static reconcileObjectStorageComputeTriggers({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App owning the bucket and trigger destination.
+     */
+    slug: string,
+    /**
+     * Bucket whose managed triggers are reconciled.
+     */
+    bucket: string,
+    requestBody: ReconcileObjectStorageComputeTriggersRequest,
+  }): CancelablePromise<ObjectBucketNotifications | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/compute-triggers',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
    * Read durable bucket notification rules
    * Requires storage manage scope and bucket write access. Reads owned notification intent without a provider call, including when ingress is disabled. Initial configuration has revision zero and no notification rules.
    * @returns ObjectBucketNotifications Persisted notification configuration; Cache-Control no-store
@@ -1599,7 +1646,7 @@ export class StorageService {
   }
   /**
    * Replace durable bucket notification rules
-   * Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+   * Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Full replacement clears managed compute-trigger ownership, including identical rules. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
    * @returns ObjectBucketNotifications Normalized notification destinations, filters and configuration revision
    * @returns Problem Invalid rule replacement, unavailable destination or unsupported event
    * @throws ApiError

@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testing.T) {
@@ -796,16 +797,16 @@ func TestProjectEnvironmentPromotionRejectsFlagEditDuringCreation(t *testing.T) 
 }
 
 type flagDriftDuringPromotionCreationStore struct {
-	*state.MemStore
-	scope state.FeatureFlagScope
+	MemStore *state.MemStore
+	scope    state.FeatureFlagScope
 }
 
 func (s *flagDriftDuringPromotionCreationStore) CreateProjectEnvironmentPromotion(ctx context.Context, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload) (state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload, error) {
-	current, err := s.GetFeatureFlags(ctx, s.scope, 0)
+	current, err := s.MemStore.GetFeatureFlags(ctx, s.scope, 0)
 	if err != nil {
 		return state.ProjectEnvironmentPromotion{}, nil, err
 	}
-	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: s.scope, ExpectedVersion: current.Version, Config: current.Config, Actor: "external"}); err != nil {
+	if _, err := s.MemStore.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: s.scope, ExpectedVersion: current.Version, Config: current.Config, Actor: "external"}); err != nil {
 		return state.ProjectEnvironmentPromotion{}, nil, err
 	}
 	return s.MemStore.CreateProjectEnvironmentPromotion(ctx, promotion, workloads)
@@ -978,7 +979,7 @@ func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, wi
 	req.Header.Set("Idempotency-Key", "promotion-graph-atomic")
 	creationRace := len(flagsOnly) > 1 && flagsOnly[1]
 	if creationRace {
-		(*srv.Store()) = &flagDriftDuringPromotionCreationStore{MemStore: store, scope: targetFlagScope}
+		(*srv.Store()) = statetest.NewMem(&flagDriftDuringPromotionCreationStore{MemStore: store, scope: targetFlagScope})
 	}
 	srv.PromoteProjectEnvironment(rec, req, acct)
 	if creationRace {

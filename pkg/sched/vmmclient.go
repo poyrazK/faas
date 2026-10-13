@@ -391,7 +391,9 @@ type VMInstanceStat struct {
 	// writes 0 to net_rx_bytes — safe under additive-merge).
 	NetRxBytes       *int64
 	InflightRequests int64
-	LastRequestAt    time.Time
+	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
+	QuietPaused   bool
+	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
 	// counter resets when vmmd or the instance is recreated.
@@ -511,6 +513,9 @@ type AppSpec struct {
 	// LivenessProbeJSON carries the deployment's primary-app liveness_probe
 	// override (ADR-078). Empty keeps the plan defaults.
 	LivenessProbeJSON string
+	// QuietPauseAfterMS asks vmmd to pause the instance's vCPUs between
+	// requests (ADR-1151); 0 keeps it running. See quietPauseAfterMS.
+	QuietPauseAfterMS int64
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on
 	// the live Instance so the framework_ready DGRAM receipt
@@ -1653,6 +1658,7 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		LeaseUID:         in.GetLeaseUid(),
 		HostIP:           in.GetHostIp(),
 		InflightRequests: in.GetInflightRequests(),
+		QuietPaused:      in.GetQuietPaused(),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()
@@ -1816,6 +1822,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,
+		QuietPauseAfterMs:        a.QuietPauseAfterMS,
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). vmmd stamps it on the live Instance
 		// so the framework_ready DGRAM receipt path can label

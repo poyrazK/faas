@@ -77,7 +77,7 @@ func TestBuilderRootOpacityRequiresSuccessfulGuestMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			opaque := false
-			err := applyLayerGzForBuild(root, gzLayer(t, []entry{{name: ".wh..wh..opq"}}), false, &opaque)
+			err := applyLayerGzForBuild(root, gzLayer(t, []entry{{name: ".wh..wh..opq"}}), false, &opaque, nil)
 			if denied {
 				if !errors.Is(err, syscall.EPERM) || opaque {
 					t.Fatal("unsupported opacity acquired authority", err)
@@ -121,7 +121,7 @@ func TestSidecarLayerWhiteoutsDoNotRequireNativeOverlayPrivileges(t *testing.T) 
 		gzLayer(t, []entry{{name: ".wh.removed"}, {name: "opaque/.wh..wh..opq"}, {name: "opaque/current", body: "replacement"}}),
 		gzLayer(t, []entry{{name: ".wh..wh..opq"}, {name: "current", body: "final layer"}}),
 	} {
-		if err := applyLayerGzForBuild(root, layer, true, &opaque); err != nil {
+		if err := applyLayerGzForBuild(root, layer, true, &opaque, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

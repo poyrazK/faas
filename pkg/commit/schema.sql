@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS public.gregale_outbox (
     event_type text NOT NULL CHECK (length(event_type) BETWEEN 1 AND 256),
     payload jsonb NOT NULL,
     routing jsonb,
+    schema_version text NOT NULL DEFAULT '',
+    publication_acceptance_id bigint CHECK (publication_acceptance_id>0),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     accepted_at timestamptz,
     receipt_id uuid,
@@ -21,9 +23,9 @@ CREATE TABLE IF NOT EXISTS public.gregale_outbox (
         AND jsonb_typeof(routing->'key') IN ('string','number','boolean')
         AND (NOT routing ? 'platform_tenant_id' OR jsonb_typeof(routing->'platform_tenant_id')='string'),false)),
     CONSTRAINT gregale_outbox_delivery_identity CHECK (
-        (accepted_at IS NULL AND receipt_id IS NULL AND invocation_id IS NULL AND operation_id IS NULL)
+        (accepted_at IS NULL AND receipt_id IS NULL AND invocation_id IS NULL AND operation_id IS NULL AND publication_acceptance_id IS NULL)
         OR (accepted_at IS NOT NULL AND receipt_id IS NOT NULL
-            AND (invocation_id IS NOT NULL)::integer + (operation_id IS NOT NULL)::integer = 1))
+            AND (invocation_id IS NOT NULL)::integer + (operation_id IS NOT NULL)::integer + (publication_acceptance_id IS NOT NULL)::integer = 1))
 );
 CREATE INDEX IF NOT EXISTS gregale_outbox_pending
     ON public.gregale_outbox(next_attempt_at, created_at, event_id)

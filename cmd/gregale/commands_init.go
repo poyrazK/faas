@@ -32,15 +32,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
@@ -266,7 +269,7 @@ func docsURLForTemplate(name string) string {
 		return functionsDocsURL
 	case "cron-example", "cron-worker", "event-worker", "queue-worker", "slack-bot", "webhook-receiver":
 		return eventDrivenDocsURL
-	case "s3-uploader", "rest-api-postgres":
+	case "s3-uploader", "object-storage-node", "rest-api-postgres":
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
@@ -316,6 +319,29 @@ func pluralY(n int) string {
 	return "ies"
 }
 
+// requireTemplateSecretsBeforeFirstStart refuses the first deploy of a
+// template that cannot start without secrets when none are supplied. On
+// production-us `gregale init --template ai-chat --deploy` built for 7.6
+// minutes and then failed with "no provider key set" (hunt #9, H9-164). An
+// existing app may already hold its secrets, so only a missing app is refused;
+// when the lookup fails for another reason the deploy proceeds as before.
+func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+}, tpl, secretsFile string, createOnly bool, slug string) error {
+	if tpl == "" || secretsFile != "" || createOnly {
+		return nil
+	}
+	missing := validateTemplateSecrets(tpl, nil)
+	if missing == nil {
+		return nil
+	}
+	var ae *APIError
+	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale secrets set --app %s ...`, then deploy", missing, tpl, slug)
+}
+
 // validateTemplateSecrets catches an incomplete first-deploy bundle before
 // CreateApp runs. The handler remains the runtime source of truth, but this
 // local guard turns the common missing-secret case into a no-side-effect CLI
@@ -328,12 +354,13 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 		values[pair.Key] = pair.Value
 	}
 	required := map[string][]string{
-		"s3-uploader":        []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
-		"slack-bot":          []string{"SLACK_SIGNING_SECRET"},
-		"rest-api-postgres":  []string{"DATABASE_URL"},
-		"secret-reload-node": []string{"DATABASE_URL"},
-		"customer-platform":  []string{"DATABASE_URL"},
-		"cron-worker":        []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
+		"object-storage-node": []string{"STORAGE_APP_TOKEN"},
+		"s3-uploader":         []string{"S3_BUCKET", "S3_REGION", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"},
+		"slack-bot":           []string{"SLACK_SIGNING_SECRET"},
+		"rest-api-postgres":   []string{"DATABASE_URL"},
+		"secret-reload-node":  []string{"DATABASE_URL"},
+		"customer-platform":   []string{"DATABASE_URL"},
+		"cron-worker":         []string{"QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"},
 	}
 	var missing []string
 	for _, key := range required[tpl] {
@@ -422,6 +449,16 @@ func nextStepsFor(tpl string) []string {
 			"The Procfile release command installs the tenant-scoped document schema before activation.",
 			"Onboard customers locally with `node tools/customer.js onboard <slug> <external-ref> <customer-name>`.",
 			"Read README.md for external database secrets, credential issuance, rotation, usage, and suspension.",
+		}
+	case "object-storage-node":
+		return []string{
+			"cd <dest> && npm ci --ignore-scripts && npm test",
+			"Reserve the app, then attach a private managed bucket:",
+			"  gregale deploy --create-only --template object-storage-node --name <slug>",
+			"  gregale add bucket assets --app <slug> --permission read_write --prefix GREGALE_S3_ASSETS",
+			"Set STORAGE_APP_TOKEN from a 0600 secrets file outside the source directory; see README.md.",
+			"  cd <dest> && gregale deploy --name <slug> --secrets-file <secrets-file>",
+			"Use a Bearer token for PUT/GET /objects/<key>; /readyz reports local storage adoption.",
 		}
 	case "s3-uploader":
 		return []string{

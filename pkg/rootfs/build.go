@@ -244,12 +244,17 @@ func (b *Builder) Build(ctx context.Context, in BuildInput) (BuildResult, error)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
+	budget := newExtractionBudget(limits.LayerExtractionBudgetBytes())
 	opaqueRoot := false
 	for i, layer := range in.Layers {
-		// The main workload overlays the shared base; a sidecar consumes all
-		// OCI layers as an independent root. Preserve whiteouts only for main.
-		if err := applyLayerGzForBuild(staging, layer, in.WorkloadManifest != nil, &opaqueRoot); err != nil {
-			return BuildResult{}, fmt.Errorf("rootfs: apply layer %d: %w", i, err)
+		// The main workload overlays the shared base: its artifact becomes
+		// overlayfs' upper directory after stageAppUpper, so OCI whiteouts stay
+		// overlayfs markers that can hide paths supplied by the base drive. A
+		// sidecar consumes all OCI layers as an independent root. Both filter
+		// image entries below /dev, /proc, /sys, and /tmp, which the shared base
+		// owns, before they can become mounted staging paths.
+		if err := applyLayerGzForBuild(staging, layer, in.WorkloadManifest != nil, &opaqueRoot, budget); err != nil {
+			return BuildResult{}, layerApplyError(limits, i, err)
 		}
 	}
 
@@ -798,6 +803,17 @@ func (e *ErrTarballExceedsCap) Error() string {
 func (e *ErrTarballExceedsCap) Is(target error) bool {
 	_, ok := target.(*ErrTarballExceedsCap)
 	return ok
+}
+
+// layerApplyError wraps a failure to apply image layer i. Exceeding the
+// extraction budget is reported as the plan's app-layer Problem so the
+// customer sees the limit and the observed size, as for the final cap.
+func layerApplyError(limits api.Limits, i int, err error) error {
+	var budgetErr *ErrLayerExtractionExceedsBudget
+	if errors.As(err, &budgetErr) {
+		return api.ErrAppLayerTooLarge(limits, budgetErr.UsedBytes+budgetErr.EntryBytes)
+	}
+	return fmt.Errorf("rootfs: apply layer %d: %w", i, err)
 }
 
 // applyTarballWithCap is the cap-aware variant of ApplyTarball. It

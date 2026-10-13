@@ -102,8 +102,8 @@ def sync_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence
-            and retry settings.
+        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence,
+            retry settings, and optional message TTL.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -150,8 +150,8 @@ def sync(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence
-            and retry settings.
+        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence,
+            retry settings, and optional message TTL.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,8 +193,8 @@ async def asyncio_detailed(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence
-            and retry settings.
+        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence,
+            retry settings, and optional message TTL.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -239,8 +239,8 @@ async def asyncio(
         id (UUID):
         channel (str):
         schedule_id (str):
-        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence
-            and retry settings.
+        body (ManagedRealtimeScheduleRequest): Scheduled channel publish payload with recurrence,
+            retry settings, and optional message TTL.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

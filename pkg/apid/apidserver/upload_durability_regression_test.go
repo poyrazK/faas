@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestUploadAppendStorageFailureDoesNotAcknowledgeMissingBytes(t *testing.T) {
@@ -82,7 +83,7 @@ func TestUploadAppendRejectsBytesPastDeclaredSize(t *testing.T) {
 }
 
 type uploadAppendFaultStore struct {
-	state.Store
+	Store        state.Store
 	beforeAppend func()
 	fail         bool
 }
@@ -110,7 +111,7 @@ func TestUploadAppendPersistsBytesBeforeOffsetCAS(t *testing.T) {
 			t.Errorf("offset CAS reached before spool write: bytes=%q, error=%v", data, readErr)
 		}
 	}}
-	(*(*e.S()).Store()) = fault
+	(*(*e.S()).Store()) = statetest.NewStore(fault)
 	if rec := appendChunk(t, e, session.UploadID, 0, []byte("abcd")); rec.Code != http.StatusInternalServerError {
 		t.Fatalf("injected CAS failure = %d: %s", rec.Code, rec.Body.String())
 	}

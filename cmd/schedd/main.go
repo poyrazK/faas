@@ -491,7 +491,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
-		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay())
+		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
+		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
+		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
+		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
 	// Tier A3: subscribe to compute_node_changed and refresh the
@@ -629,6 +632,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// owner that created each frame so an abandoned VM remains charged until
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
+	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -1531,9 +1535,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwnerNodeID(ownerNodeID).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithNodeRegistry(nodeRegistry).
-		WithEvents(eventsPlatform)
+		WithEvents(eventsPlatform).
+		WithReachableHook(engine.DestroyLostVMs)
 	hb.Interval = cfg.HeartbeatInterval
 	hb.Staleness = cfg.HeartbeatStaleness
+	// FAAS_HEARTBEAT_FAILURE_THRESHOLD overrides how many consecutive failed
+	// pings fail a node over (default sched.DefaultHeartbeatFailureThreshold;
+	// ADR-191 amendment 2026-10-12). Tests that pin failover latency set 1.
+	if v := os.Getenv("FAAS_HEARTBEAT_FAILURE_THRESHOLD"); v != "" {
+		n, parseErr := strconv.Atoi(v)
+		if parseErr != nil || n <= 0 {
+			log.Error("FAAS_HEARTBEAT_FAILURE_THRESHOLD must be a positive integer", "value", v)
+			return fmt.Errorf("FAAS_HEARTBEAT_FAILURE_THRESHOLD: %s", v)
+		}
+		hb.FailureThreshold = n
+	}
 	if deps.heartbeatInterval > 0 {
 		// Tests inject a sub-second cadence via runDeps to exercise
 		// the wiring without waiting 30s for production cadence.
@@ -1571,6 +1587,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+	}
+	if cfg.QuietPauseAdmission {
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return reader.QuietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
 	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on

@@ -18,10 +18,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneCaptureBarrierFailureStore struct {
-	*state.PgStore
+	PgStore                    *state.PgStore
 	loseAcquire                bool
 	objectFault, postgresFault string
 }
@@ -75,7 +76,7 @@ func (s *cloneCaptureBarrierFailureStore) ProjectEnvironmentClonePostgresWriteFe
 	return fences, err
 }
 
-func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCaptureBarrierFailureStore, *cloneCheckpointClosureProvider, []state.ObjectBucket) {
+func cloneCaptureBarrierFixture(t *testing.T, setup ...func(*cloneCoordinatorFixture, state.ObjectBucket)) (cloneCoordinatorFixture, *cloneCaptureBarrierFailureStore, *cloneCheckpointClosureProvider, []state.ObjectBucket) {
 	t.Helper()
 	f := newCloneCoordinatorFixture(t, true)
 	ctx := t.Context()
@@ -99,6 +100,9 @@ func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCa
 	}
 	if err := f.store.FinishObjectBucket(ctx, b.ID, "source", "ready"); err != nil {
 		t.Fatal(err)
+	}
+	for _, prepare := range setup {
+		prepare(&f, b)
 	}
 	op, err = f.store.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{
 		AccountID: op.AccountID, ProjectID: op.ProjectID, SourceEnvironment: "production", TargetEnvironment: "barriers", IdempotencyKey: "barriers"})
@@ -131,7 +135,7 @@ func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCa
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	f.srv.cloneWorkerAdmission = func(context.Context) error { return nil }
 	plans, err := f.srv.capturedProjectEnvironmentObjectPlans(ctx, f.lease.Operation)
 	if err != nil || len(plans) != 2 {
@@ -139,7 +143,7 @@ func cloneCaptureBarrierFixture(t *testing.T) (cloneCoordinatorFixture, *cloneCa
 	}
 	buckets := make([]state.ObjectBucket, 0, len(plans))
 	for _, plan := range plans {
-		bucket, err := store.GetObjectBucket(ctx, op.AccountID, plan.appID, plan.source.ID)
+		bucket, err := store.PgStore.GetObjectBucket(ctx, op.AccountID, plan.appID, plan.source.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -173,11 +177,11 @@ func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing
 	f, store, provider, buckets := cloneCaptureBarrierFixture(t)
 	configureCloneGrantProvider(t, f.srv, &cloneGrantRevocationProvider{Provider: f.objects})
 	ctx := t.Context()
-	request, err := store.BeginObjectBucketMutation(ctx, buckets[0], state.ObjectBucketMutationRequest)
+	request, err := store.PgStore.BeginObjectBucketMutation(ctx, buckets[0], state.ObjectBucketMutationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := store.BeginObjectBucketMutation(ctx, buckets[1], state.ObjectBucketMutationNativeGrant)
+	grant, err := store.PgStore.BeginObjectBucketMutation(ctx, buckets[1], state.ObjectBucketMutationNativeGrant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,10 +196,10 @@ func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing
 		t.Fatalf("lost acquisition discarded durable hold: %v", err)
 	}
 	stale := f.lease
-	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +222,7 @@ func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing
 	if err != nil || len(plans) != 1 {
 		t.Fatalf("shared bindings duplicated source: %v", err)
 	}
-	original, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(ctx, f.lease, plans[0].source.ID)
+	original, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(ctx, f.lease, plans[0].source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,12 +235,12 @@ func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing
 		t.Fatal("unknown writers were treated as drained")
 	}
 	for _, bucket := range buckets {
-		if _, err := store.BeginObjectBucketMutation(ctx, bucket, state.ObjectBucketMutationRequest); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		if _, err := store.PgStore.BeginObjectBucketMutation(ctx, bucket, state.ObjectBucketMutationRequest); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
 			t.Fatalf("source admitted another writer: %v", err)
 		}
 	}
 	provider.drained = true
-	if err := store.FinishObjectBucketMutation(ctx, request); err != nil {
+	if err := store.PgStore.FinishObjectBucketMutation(ctx, request); err != nil {
 		t.Fatal(err)
 	}
 	f.lease, observation, err = f.srv.prepareProjectEnvironmentCloneCaptureBarriers(ctx, f.lease)
@@ -244,14 +248,14 @@ func TestPGCloneCaptureBarriersRecoverAllSourcesAndOutstandingWriters(t *testing
 		t.Fatalf("completed request hid unresolved native grant: %v", err)
 	}
 	// Request completion cannot acknowledge a native grant's remote outcome.
-	if err := store.FinishObjectBucketMutation(ctx, grant); !errors.Is(err, state.ErrInvalidArgument) {
+	if err := store.PgStore.FinishObjectBucketMutation(ctx, grant); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("request completion cleared a native grant: %v", err)
 	}
 	f.lease, observation, err = f.srv.prepareProjectEnvironmentCloneCaptureBarriers(ctx, f.lease)
 	if err != nil || observation.instrumentedWritersDrained || observation.objects[1].NativeGrants != 1 {
 		t.Fatalf("invalid acknowledgement lost the native grant: %v", err)
 	}
-	recovered, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(ctx, f.lease, plans[0].source.ID)
+	recovered, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(ctx, f.lease, plans[0].source.ID)
 	if err != nil || !bytes.Equal(original.Sealed.Ciphertext, recovered.Sealed.Ciphertext) || original.Sealed.Fingerprint != recovered.Sealed.Fingerprint || provider.discoveries != 1 {
 		t.Fatalf("retry replaced original source selection: %v", err)
 	}
@@ -314,7 +318,7 @@ func TestPGCloneStableCaptureBarriersWaitForOriginalDeletionRecovery(t *testing.
 	b := buckets[0]
 	input := state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: uuid.NewString(), BucketID: b.ID, Key: "key"},
 		AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString()}
-	j, created, err := store.BeginObjectDeletion(ctx, input, api.ObjectStoragePolicy{})
+	j, created, err := store.PgStore.BeginObjectDeletion(ctx, input, api.ObjectStoragePolicy{})
 	if err != nil || !created {
 		t.Fatalf("admitted deletion fixture: %+v %v", j, err)
 	}
@@ -331,25 +335,25 @@ func TestPGCloneStableCaptureBarriersWaitForOriginalDeletionRecovery(t *testing.
 		assertCloneCaptureHasNoPointForContext(ctx, t, f)
 	}
 	observeBusy()
-	if replay, created, err := store.BeginObjectDeletion(ctx, input, api.ObjectStoragePolicy{}); err != nil || created || replay.ID != j.ID {
+	if replay, created, err := store.PgStore.BeginObjectDeletion(ctx, input, api.ObjectStoragePolicy{}); err != nil || created || replay.ID != j.ID {
 		t.Fatalf("capture hold replaced original deletion journal: %+v %v", replay, err)
 	}
 	other := input
 	other.ID = uuid.NewString()
-	if _, _, err := store.BeginObjectDeletion(ctx, other, api.ObjectStoragePolicy{}); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+	if _, _, err := store.PgStore.BeginObjectDeletion(ctx, other, api.ObjectStoragePolicy{}); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
 		t.Fatalf("held source admitted new deletion: %v", err)
 	}
-	j, err = store.DispatchObjectDeletion(ctx, j.ID, j.Token, "", nil)
+	j, err = store.PgStore.DispatchObjectDeletion(ctx, j.ID, j.Token, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RetryObjectDeletion(ctx, j.ID, j.Token, "provider_uncertain"); err != nil {
+	if err := store.PgStore.RetryObjectDeletion(ctx, j.ID, j.Token, "provider_uncertain"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,18 +361,18 @@ func TestPGCloneStableCaptureBarriersWaitForOriginalDeletionRecovery(t *testing.
 	if _, err := f.pool.Exec(ctx, `update object_deletions set retry_at=clock_timestamp()-interval '1 second' where id=$1`, j.ID); err != nil {
 		t.Fatal(err)
 	}
-	j, err = store.ClaimObjectDeletion(ctx, j.ID, uuid.NewString())
+	j, err = store.PgStore.ClaimObjectDeletion(ctx, j.ID, uuid.NewString())
 	if err != nil {
 		t.Fatal(err)
 	}
 	rejected := j
 	rejected.State, rejected.LastErrorCode = "failed", "provider_rejected"
-	if _, err := store.FinishObjectDeletion(ctx, rejected); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.PgStore.FinishObjectDeletion(ctx, rejected); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("recovery rejection erased original dispatched outcome: %v", err)
 	}
 	observeBusy()
 	j.State, j.LastErrorCode = "completed", ""
-	if _, err := store.FinishObjectDeletion(ctx, j); err != nil {
+	if _, err := store.PgStore.FinishObjectDeletion(ctx, j); err != nil {
 		t.Fatal(err)
 	}
 	var result cloneCaptureBarrierObservation
@@ -408,7 +412,7 @@ func TestPGCloneStableCaptureBarriersCountControlDeletionJournalOnce(t *testing.
 	if _, err := f.pool.Exec(ctx, `update object_deletions set retry_at=clock_timestamp()-interval '1 second' where id=$1`, j.ID); err != nil {
 		t.Fatal(err)
 	}
-	j, err = (objectstorage.DeletionService{Store: store, Provider: deletes}).Recover(ctx, b, j.ID)
+	j, err = (objectstorage.DeletionService{Store: statetest.NewPg(store), Provider: deletes}).Recover(ctx, b, j.ID)
 	if err == nil || j.State != "dispatched" || deletes.calls != 1 {
 		t.Fatalf("mutable recovery inferred completion or redispatched: %+v %v", j, err)
 	}
@@ -427,7 +431,7 @@ func TestPGCloneCaptureBarriersRejectConfigurationDriftAndLostAuthority(t *testi
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			edit := func(ctx context.Context) error {
-				return store.UpsertAppEnvInScope(ctx, f.lease.Operation.AccountID, f.apps[0].ID, "production", "CAPTURED", "changed")
+				return store.PgStore.UpsertAppEnvInScope(ctx, f.lease.Operation.AccountID, f.apps[0].ID, "production", "CAPTURED", "changed")
 			}
 			if fault == "config_before" {
 				if err := edit(ctx); err != nil {
@@ -440,11 +444,11 @@ func TestPGCloneCaptureBarriersRejectConfigurationDriftAndLostAuthority(t *testi
 			} else {
 				provider.onObserve = func(ctx context.Context) error {
 					handoff := func(ctx context.Context) error {
-						if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+						if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 							return err
 						}
 						var err error
-						f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+						f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 						return err
 					}
 					switch fault {

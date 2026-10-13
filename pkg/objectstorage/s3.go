@@ -26,6 +26,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 )
 
 type S3 struct {
@@ -635,6 +636,11 @@ func (p *S3) createMultipartEncrypted(ctx context.Context, bucket string, r Mult
 		ContentEncoding: stringPtrOrNil(r.Metadata.ContentEncoding), ContentLanguage: stringPtrOrNil(r.Metadata.ContentLanguage),
 		Metadata: metadata,
 	}
+	if !r.Checksum.Valid() {
+		return "", ErrInvalid
+	}
+	in.ChecksumAlgorithm = types.ChecksumAlgorithm(r.Checksum.Algorithm)
+	in.ChecksumType = types.ChecksumType(r.Checksum.Type)
 	applyMultipartEncryption(in, encryption)
 	applyMultipartProtection(ctx, in)
 	if tagging != "" {
@@ -685,6 +691,12 @@ func (p *S3) PresignMultipartPart(ctx context.Context, bucket string, r Multipar
 			return SignedRequest{}, ErrConfiguration
 		}
 		in.ContentMD5 = aws.String(checksum)
+	}
+	if !r.Checksum.Empty() {
+		if !r.Checksum.Policy.Valid() || !objectchecksum.ValidPart(r.Checksum.Algorithm, r.Checksum.Value) {
+			return SignedRequest{}, ErrInvalid
+		}
+		setPartChecksum(in, r.Checksum)
 	}
 	out, err := p.signer.PresignUploadPart(ctx, in, func(o *s3.PresignOptions) { o.Expires = ttl })
 	if err != nil || out.SignedHeader.Get("Content-Length") == "" {

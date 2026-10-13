@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Billing integrity: delivery finality, hard spend cap, plan history — 2026-10-13
+
+[ADR-1162](adr/1162-billing-delivery-finality-spend-cap-and-plan-history.md) closes four
+billing gaps. The provider pusher delivers an hour only once every minute up to its end
+is recorded compute-complete or older than the catch-up bound, so late catch-up rows
+can no longer land in a delivered hour. The spend cap bills exactly up to the cap,
+settles capped hours without later back-billing, and schedd parks capped accounts:
+explicit-deployment admissions check the cap, the reaper parks via `appMustPark`, warm
+pools are reclaimed and queued job tasks deferred. App purge keeps `usage_minutes` and
+`usage_daily`. The month's allowance follows recorded plan activations (largest grant
+so far) in the pusher, `CurrentMonthOverageCents` and `OverageMBSecondsForRange`.
+`pkg/meter`, `pkg/billing`, `pkg/billing/reconciler` and `pkg/api` tests pass locally
+(one known timing-flaky loop health test aside), as do the new `pkg/state` plan-history
+tests, the MemStore conformance suite and the full `pkg/sched` suite including the new
+spend-cap tests. PG-backed tests, `make lint` and a live Polar sandbox delivery remain
+unrun.
+No deployment setting or provider configuration changed.
+
 ## Combined PostgreSQL rollout readiness — 2026-10-12
 
 [ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider
@@ -329,6 +347,15 @@ passed 71 selected top-level tests, five real process-crash checkpoints,
 full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
+
+Managed PostgreSQL drain plans (2026-10-13, [ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md))
+capture the app instance catalog and native member reservations atomically under
+an existing admission fence and ownership epoch. Restart recovery reuses the
+original receipts. Unsupported members, empty/oversized inventories and stale
+authority block the catalog verdict; terminal rows alone are never receipts.
+The `catalog_retired` observation remains separate from external SQL-session
+isolation, route convergence and customer activation. Production provisioning
+and customer activation remain disabled; native KVM acceptance is outstanding.
 
 Startup can now retire absent, fully checkpointed, unclaimed prepared-network
 reservations from a different kernel boot

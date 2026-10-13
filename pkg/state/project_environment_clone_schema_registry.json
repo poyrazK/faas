@@ -449,6 +449,7 @@
       "app_id",
       "max_age_seconds",
       "mode",
+      "object_storage_requirements",
       "reason",
       "require_application_ack",
       "revision",
@@ -691,6 +692,7 @@
       "last_seen_at",
       "regression_count",
       "resolved_at",
+      "split_source_issue_id",
       "state",
       "title"
     ],
@@ -1007,6 +1009,18 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "app_task_attach_sessions",
+    "columns": [
+      "attach_token_sha256",
+      "created_at",
+      "node_id",
+      "node_recorded_at",
+      "task_id",
+      "tty"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_tasks",
@@ -1881,7 +1895,11 @@
       "operation_id",
       "operation_state",
       "payload",
+      "publication_acceptance_id",
+      "publication_event_id",
+      "publication_source",
       "routing",
+      "schema_version",
       "source_id"
     ],
     "kind": "operational"
@@ -1908,6 +1926,7 @@
       "contract_version",
       "created_at",
       "credential_revision",
+      "destination",
       "enabled",
       "id",
       "last_checked_at",
@@ -3097,6 +3116,15 @@
     "kind": "operational"
   },
   {
+    "table": "dev_watch_settings",
+    "columns": [
+      "app_id",
+      "command",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "developer_sync_history",
     "columns": [
       "app_id",
@@ -3339,6 +3367,7 @@
       "manifest_path",
       "mode",
       "project_id",
+      "provider",
       "prune",
       "repository",
       "repository_id",
@@ -3703,6 +3732,56 @@
       "account_id",
       "app_id",
       "invocation_id",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_coverage",
+    "columns": [
+      "account_id",
+      "app_id",
+      "baseline_known",
+      "ledger_baseline_known",
+      "ledger_lost_through_at",
+      "ledger_started_at",
+      "loss_reason",
+      "lost_at",
+      "started_at",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_outcomes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempt",
+      "finished_at",
+      "invocation_created_at",
+      "invocation_id",
+      "kind",
+      "latency_seconds",
+      "outcome",
+      "replay_generation",
+      "retain_until",
+      "root_created_at",
+      "root_invocation_id",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_roots",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "outbox_id",
+      "retention_seconds",
+      "root_created_at",
+      "root_invocation_id",
       "subscription_id"
     ],
     "kind": "operational"
@@ -4569,6 +4648,20 @@
     "kind": "account_identity"
   },
   {
+    "table": "gitlab_oauth_connections",
+    "columns": [
+      "account_id",
+      "connected_at",
+      "credentials_sealed",
+      "expires_at",
+      "gitlab_user_id",
+      "updated_at",
+      "username",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "goose_db_version",
     "columns": [
       "id",
@@ -4965,11 +5058,23 @@
       "id",
       "issue_id",
       "occurred_at",
+      "original_issue_id",
       "payload",
       "payload_hash",
       "received_at",
       "verified_consumer_id",
       "verified_platform_tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_group_links",
+    "columns": [
+      "app_id",
+      "canonical_issue_id",
+      "environment",
+      "issue_id",
+      "linked_at"
     ],
     "kind": "operational"
   },
@@ -5010,6 +5115,27 @@
       "id",
       "issue_id",
       "resolved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "issue_split_rules",
+    "columns": [
+      "app_id",
+      "created_at",
+      "enabled",
+      "environment",
+      "error_code",
+      "exception_type",
+      "id",
+      "initial_moved_event_count",
+      "priority",
+      "route",
+      "source_issue_id",
+      "source_kind",
+      "target_issue_id",
+      "unavailable_history_event_count",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -5134,6 +5260,8 @@
       "env_overrides",
       "failure_rules",
       "id",
+      "image_cmd",
+      "image_entrypoint",
       "image_materialization_attempts",
       "image_materialization_error",
       "image_materialization_lease_owner",
@@ -5330,6 +5458,61 @@
       "state",
       "value_hash",
       "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_drain_plan_members",
+    "columns": [
+      "blocker_code",
+      "deployment_id",
+      "deployment_scope",
+      "drain_id",
+      "instance_id",
+      "instance_kind",
+      "instance_mode",
+      "migrated_from_node_id",
+      "node_id",
+      "observed_state",
+      "plan_id",
+      "qualification_live",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_drain_plans",
+    "columns": [
+      "app_id",
+      "blocker_code",
+      "created_at",
+      "cutover_id",
+      "fenced_at",
+      "id",
+      "inventory_count",
+      "owner_node_id",
+      "owner_revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_drains",
+    "columns": [
+      "app_id",
+      "created_at",
+      "cutover_id",
+      "deployment_id",
+      "fenced_at",
+      "id",
+      "instance_id",
+      "kernel_boot_id",
+      "native_generation",
+      "node_id",
+      "owner_node_id",
+      "owner_revision",
+      "retired_at",
+      "state",
+      "wake_id"
     ],
     "kind": "operational"
   },
@@ -5629,6 +5812,29 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_channel_webhook_filters",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "metadata",
+      "webhook_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_commit_receipts",
+    "columns": [
+      "channel",
+      "content_hash",
+      "endpoint_id",
+      "event_id",
+      "published_at",
+      "sequence",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_connection_owners",
     "columns": [
       "connection_id",
@@ -5639,6 +5845,101 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_consumer_group_alerts",
+    "columns": [
+      "breached",
+      "cooldown_seconds",
+      "dead_letter_threshold",
+      "enabled",
+      "group_id",
+      "last_event_at",
+      "next_check_at",
+      "observed_age",
+      "observed_at",
+      "observed_backlog",
+      "observed_dead",
+      "oldest_pending_seconds",
+      "unassigned_threshold"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_consumer_group_messages",
+    "columns": [
+      "attempts",
+      "available_at",
+      "credential_id",
+      "dead_since",
+      "deadline_invalid",
+      "delivery_deadline",
+      "expiry_warned_at",
+      "failure_code",
+      "fencing_token",
+      "first_claim_observed",
+      "group_id",
+      "lease_until",
+      "message",
+      "ordered",
+      "ordering_key",
+      "priority",
+      "processing_started_at",
+      "release_count",
+      "sequence",
+      "status",
+      "token_hash",
+      "worker"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_consumer_groups",
+    "columns": [
+      "assigned_sequence",
+      "channel",
+      "circuit_cooldown_seconds",
+      "circuit_enabled",
+      "circuit_failures",
+      "circuit_open_until",
+      "circuit_probe_fencing_token",
+      "circuit_probe_sequence",
+      "circuit_reason",
+      "circuit_state",
+      "circuit_threshold",
+      "claim_rate_burst",
+      "claim_rate_per_second",
+      "claim_rate_tat",
+      "completed",
+      "created_at",
+      "dead_letter_policy",
+      "dead_letter_retention_seconds",
+      "deadline_metadata_key",
+      "deduplication_metadata_key",
+      "deduplication_window_seconds",
+      "draining",
+      "duplicate_messages",
+      "endpoint_id",
+      "expired_dead_letters",
+      "expired_deliveries",
+      "filtered_messages",
+      "history_pruned_events",
+      "id",
+      "last_fencing_token",
+      "lease_seconds",
+      "max_attempts",
+      "message_filter",
+      "name",
+      "next_retention_check_at",
+      "next_worker_health_check_at",
+      "ordering_metadata_key",
+      "paused_at",
+      "priority_metadata_key",
+      "priority_turn",
+      "retry_policy",
+      "throttled_claim_requests"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "managed_realtime_direct_message_deliveries",
@@ -5704,6 +6005,8 @@
   {
     "table": "managed_realtime_durable_cursors",
     "columns": [
+      "acknowledged_at",
+      "acknowledged_sequence",
       "channel",
       "endpoint_id",
       "principal",
@@ -5756,6 +6059,56 @@
     "kind": "configuration"
   },
   {
+    "table": "managed_realtime_group_delivery_history",
+    "columns": [
+      "attempt",
+      "event",
+      "failure_code",
+      "fencing_token",
+      "group_id",
+      "id",
+      "recorded_at",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_event_ids",
+    "columns": [
+      "event_hash",
+      "expires_at",
+      "group_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_metrics",
+    "columns": [
+      "bucket_at",
+      "completed",
+      "dead_letters",
+      "first_claims",
+      "group_id",
+      "processing_milliseconds",
+      "queue_milliseconds",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_settlement_receipts",
+    "columns": [
+      "created_at",
+      "expires_at",
+      "group_id",
+      "idempotency_key",
+      "principal",
+      "request_hash",
+      "result"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_inbox_cursors",
     "columns": [
       "channel",
@@ -5797,6 +6150,17 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_inbox_message_expirations",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "expires_at",
+      "sequence",
+      "ttl_seconds"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_inbox_messages",
     "columns": [
       "channel",
@@ -5823,6 +6187,17 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_message_expirations",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "expires_at",
+      "sequence",
+      "ttl_seconds"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_notification_timeline",
     "columns": [
       "attempts",
@@ -5842,6 +6217,20 @@
     "kind": "operational"
   },
   {
+    "table": "managed_realtime_outbox_observations",
+    "columns": [
+      "attempts",
+      "blocked_code",
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "event_id",
+      "observed_at",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_presence_leases",
     "columns": [
       "channel",
@@ -5854,6 +6243,57 @@
       "state",
       "state_updated_at",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_principal_access",
+    "columns": [
+      "denied_channels",
+      "endpoint_id",
+      "principal",
+      "revision",
+      "sessions_revoked_before",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_publisher_credentials",
+    "columns": [
+      "accepted_count",
+      "channels",
+      "endpoint_id",
+      "event_types",
+      "expires_at",
+      "generation",
+      "id",
+      "issued_at",
+      "last_channel",
+      "last_sequence",
+      "last_used_at",
+      "max_message_ttl_seconds",
+      "max_payload_bytes",
+      "name",
+      "publishes_per_minute",
+      "rate_count",
+      "rate_window",
+      "replay_count",
+      "revoked_at",
+      "token_hash"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_publisher_receipts",
+    "columns": [
+      "channel",
+      "content_hash",
+      "credential_id",
+      "expires_at",
+      "idempotency_key",
+      "published_at",
+      "sequence"
     ],
     "kind": "operational"
   },
@@ -5950,6 +6390,27 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_replay_jobs",
+    "columns": [
+      "created_at",
+      "dry_run",
+      "error_count",
+      "group_id",
+      "id",
+      "last_error",
+      "next_at",
+      "outcomes",
+      "position",
+      "rate",
+      "reviewed_job_id",
+      "selection",
+      "started_job_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_schedule_history",
     "columns": [
       "attempts",
@@ -6003,10 +6464,56 @@
       "skip_reason",
       "skipped_occurrences",
       "status",
+      "ttl_seconds",
       "updated_at",
       "version"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_subscription_tickets",
+    "columns": [
+      "channels",
+      "endpoint_id",
+      "expires_at",
+      "issued_at",
+      "principal",
+      "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_worker_credentials",
+    "columns": [
+      "expires_at",
+      "generation",
+      "group_id",
+      "id",
+      "issued_at",
+      "last_operation",
+      "last_used_at",
+      "name",
+      "permissions",
+      "revoked_at",
+      "token_hash",
+      "use_count"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_worker_heartbeats",
+    "columns": [
+      "credential_id",
+      "group_id",
+      "id",
+      "last_seen_at",
+      "lost",
+      "principal",
+      "ready",
+      "status_code",
+      "worker"
+    ],
+    "kind": "operational"
   },
   {
     "table": "meter_gateway_usage_events",
@@ -6244,6 +6751,7 @@
     "table": "object_bucket_notifications",
     "columns": [
       "bucket_id",
+      "managed_rules",
       "revision",
       "rules"
     ],
@@ -6606,6 +7114,8 @@
       "app_id",
       "attempt_count",
       "bucket_id",
+      "checksum_snapshot",
+      "checksum_verified",
       "completion_dispatched",
       "completion_error_code",
       "completion_etag",
@@ -7063,8 +7573,13 @@
     "columns": [
       "cache_write_millicents_per_mtok",
       "cached_input_millicents_per_mtok",
+      "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
+      "millicents_per_audio_minute",
+      "millicents_per_image",
+      "millicents_per_million_characters",
       "model_prefix",
+      "output_image_millicents_per_mtok",
       "output_millicents_per_mtok",
       "price_list_id"
     ],
@@ -7079,6 +7594,61 @@
       "integration_id"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_replay_results",
+    "columns": [
+      "cost_millicents",
+      "duration_ms",
+      "error_code",
+      "input_tokens",
+      "model",
+      "outcome",
+      "output_text",
+      "output_tokens",
+      "position",
+      "replay_id",
+      "response_body",
+      "response_content_type",
+      "response_truncated",
+      "status",
+      "target_integration_id",
+      "ttfb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_replays",
+    "columns": [
+      "account_id",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "integration_id",
+      "log_id",
+      "source_output_text",
+      "started_at",
+      "state",
+      "target_integration_ids",
+      "target_models"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_request_content",
+    "columns": [
+      "created_at",
+      "integration_id",
+      "log_id",
+      "request_body",
+      "request_path",
+      "request_truncated",
+      "response_body",
+      "response_content_type",
+      "response_truncated"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_request_log",
@@ -7128,11 +7698,14 @@
   {
     "table": "outbound_ai_usage_daily",
     "columns": [
+      "audio_seconds",
       "cache_write_tokens",
       "cached_input_tokens",
       "caller",
+      "characters",
       "cost_millicents",
       "error_requests",
+      "images",
       "input_tokens",
       "integration_id",
       "model",
@@ -7237,10 +7810,16 @@
     "table": "outbound_integrations",
     "columns": [
       "account_id",
+      "ai_content_blocked_terms",
+      "ai_content_email",
+      "ai_content_iban",
+      "ai_content_payment_card",
+      "ai_content_secret",
       "ai_daily_cost_limit_millicents",
       "ai_daily_token_limit",
       "ai_monthly_cost_limit_millicents",
       "ai_provider",
+      "ai_request_log_content",
       "ai_request_log_enabled",
       "ai_user_daily_cost_limit_millicents",
       "ai_user_daily_token_limit",
@@ -7743,12 +8322,341 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_checkpoint_capture_catalogues",
+    "columns": [
+      "operation_id",
+      "source_kind",
+      "source_id",
+      "capture_identity",
+      "source_resource_id",
+      "observation_sha256",
+      "retired_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_capture_retirements",
+    "columns": [
+      "operation_id",
+      "plan",
+      "state",
+      "requested_at",
+      "observation",
+      "observation_sha256",
+      "retired_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_copies",
+    "columns": [
+      "copied_at",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_credential_ids",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_publications",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "state",
+      "withdrawn_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_bucket_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_targets",
+    "columns": [
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "ready_at",
+      "requested_at",
+      "source_bucket_id",
+      "state",
+      "target_bucket_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_values",
+    "columns": [
+      "operation_id",
+      "payload",
+      "payload_sha256",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_object_verification",
+    "columns": [
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_bucket_id",
+      "state",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_activations",
+    "columns": [
+      "activated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_connection_values",
+    "columns": [
+      "activation_operation_id",
+      "ciphertext",
+      "ciphertext_sha256",
+      "key_id",
+      "operation_id",
+      "plan",
+      "sealed_at",
+      "source_binding_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_copy_retirements",
+    "kind": "operational",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_database_id",
+      "state"
+    ]
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_credential_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "source_binding_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_publications",
+    "columns": [
+      "operation_id",
+      "plan",
+      "plan_sha256",
+      "published_at",
+      "state",
+      "withdrawn_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_pg_target_compensations",
+    "columns": [
+      "compensated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_database_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_postgres_credentials",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "ciphertext_sha256",
+      "key_id",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "prepared_at",
+      "requested_at",
+      "source_binding_id",
+      "source_database_id",
+      "state",
+      "target_binding_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_postgres_isolation",
+    "columns": [
+      "adopted_at",
+      "adopted_database_id",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_database_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_postgres_runtime",
+    "columns": [
+      "data_resource_id",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "ready_at",
+      "requested_at",
+      "source_database_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_postgres_verification",
+    "columns": [
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "source_database_id",
+      "state",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_releases",
+    "columns": [
+      "adoption_sha256",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "receipt",
+      "released_at",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_source_compensations",
+    "columns": [
+      "compensated_at",
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_unused_object_reservations",
+    "columns": [
+      "completed_at",
+      "operation_id",
+      "reservation",
+      "source_bucket_id",
+      "target_bucket_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_checkpoint_workload_retirements",
+    "columns": [
+      "observation",
+      "observation_sha256",
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_compensation_receipts",
+    "columns": [
+      "completed_at",
+      "operation_id",
+      "receipt_sha256",
+      "report",
+      "worker_token_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_configuration_captures",
     "columns": [
       "configuration",
       "configuration_hash",
       "operation_id",
       "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_configuration_cleanups",
+    "columns": [
+      "cleaned_at",
+      "manifest",
+      "manifest_sha256",
+      "native_observation_sha256",
+      "native_plan_sha256",
+      "operation_id",
+      "ownership_sha256"
     ],
     "kind": "operational"
   },
@@ -7775,6 +8683,42 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_configuration_ownership",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "manifest",
+      "manifest_sha256",
+      "operation_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_deployment_cleanups",
+    "columns": [
+      "cleaned_at",
+      "environment_id",
+      "native_observation_sha256",
+      "native_plan_sha256",
+      "operation_id",
+      "removed_deployments",
+      "workload_cleanup_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_environment_cleanups",
+    "columns": [
+      "cleaned_at",
+      "environment_id",
+      "manifest",
+      "manifest_sha256",
+      "operation_id",
+      "workload_cleanup_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_layer_pins",
     "columns": [
       "app_id",
@@ -7791,6 +8735,43 @@
       "environment_id",
       "operation_id",
       "workload_settings"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_migration_adoptions",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "destination_node_id",
+      "dispatch_id",
+      "dispatched_at",
+      "instance_id",
+      "lease_created_at",
+      "lease_expires_at",
+      "lease_token",
+      "mem_storage_key",
+      "request_reason",
+      "source_node_id",
+      "vmstate_storage_key",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_migration_resumes",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "dispatch_id",
+      "dispatched_at",
+      "instance_id",
+      "lease_created_at",
+      "lease_expires_at",
+      "lease_token",
+      "request_reason",
+      "source_node_id",
+      "wake_id"
     ],
     "kind": "operational"
   },
@@ -7847,6 +8828,21 @@
       "operation_id",
       "source_bucket_id",
       "target_bucket_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_object_secret_withdrawals",
+    "columns": [
+      "manifest",
+      "manifest_sha256",
+      "operation_id",
+      "ownership_sha256",
+      "postgres_withdrawal_sha256",
+      "prior_manifest_sha256",
+      "publication_plan_sha256",
+      "publication_withdrawn_at",
+      "recorded_at"
     ],
     "kind": "operational"
   },
@@ -7963,6 +8959,7 @@
       "available",
       "capture_database_id",
       "capture_operation_ids",
+      "checkpoint_retirement_observation_sha256",
       "cleanup_dispatched_at",
       "cleanup_requested_at",
       "created_at",
@@ -7987,6 +8984,7 @@
     "columns": [
       "account_id",
       "capture_database_id",
+      "checkpoint_retirement_observation_sha256",
       "created_at",
       "deletion_observed_at",
       "deletion_started_at",
@@ -8133,6 +9131,19 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_clone_postgres_secret_withdrawals",
+    "columns": [
+      "manifest",
+      "manifest_sha256",
+      "operation_id",
+      "ownership_sha256",
+      "publication_plan_sha256",
+      "publication_withdrawn_at",
+      "recorded_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_clone_postgres_snapshot_restores",
     "columns": [
       "account_id",
@@ -8140,6 +9151,7 @@
       "adopted_database_id",
       "backend_fingerprint",
       "backend_id",
+      "checkpoint_compensation_observation_sha256",
       "created_at",
       "delete_operation_ids",
       "deleted_at",
@@ -8314,6 +9326,31 @@
       "source_version",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_wake_dispatches",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "dispatched_at",
+      "instance_id",
+      "method",
+      "node_id",
+      "request_reason",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_clone_workload_cleanups",
+    "columns": [
+      "cleaned_at",
+      "configuration_cleanup_sha256",
+      "manifest",
+      "manifest_sha256",
+      "operation_id"
     ],
     "kind": "operational"
   },

@@ -929,6 +929,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// stats surface and the liveness loop so load-correlated probe misses
 	// can receive the bounded infrastructure grace (issue #1267).
 	activityTracker := activity.NewWithDefaults()
+	if cfg.NativeImageStagingRoot != "" {
+		jailer.WithNativeImageStagingRoot(cfg.NativeImageStagingRoot)
+	}
 	if cfg.NativeSnapshotPublicationRoot != "" {
 		jailer.WithNativeSnapshotPublicationRoot(cfg.NativeSnapshotPublicationRoot)
 	}
@@ -959,6 +962,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	// Native recovery owns the physical inventory, but must also exclude a
+	// concurrent legacy daemon and refuse any outstanding legacy leases. Hold
+	// the legacy journal lock for this daemon's entire lifetime before native
+	// recovery starts. Its records never become native cleanup authority.
+	var resourceJournal *fcvm.ResourceJournal
+	if cfg.NativeProcessRecovery {
+		resourceJournal, err = fcvm.OpenResourceJournal(cfg.ResourceJournalDir)
+		if err != nil {
+			return fmt.Errorf("vmmd: lock legacy resources before native recovery: %w", err)
+		}
+		defer func() { _ = resourceJournal.Close() }()
+		if err := resourceJournal.RequireEmptyForNativeRecovery(); err != nil {
+			return fmt.Errorf("vmmd: native recovery mode transition: %w", err)
+		}
+	}
 	recoverNative := func(ctx context.Context, manager *fcvm.Manager) error { return manager.RecoverNativeProcesses(ctx) }
 	if cfg.NativeProcessRecovery && deps.recoverNativeProcesses != nil {
 		recoverNative = deps.recoverNativeProcesses
@@ -995,6 +1013,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		failureNodeID = localNode.ID
 	}
+	// The native qualification journal and RPC envelope must agree on the
+	// physical node that owns an attempt. A named node uses its registered
+	// identity; the single-box path uses the already-resolved default-local
+	// row without turning on unrelated multi-node lifecycle loops.
+	qualificationNodeID := ""
+	if cfg.NativeProcessRecovery {
+		qualificationNodeID = failureNodeID
+		mgr.WithNativeQualificationNodeID(qualificationNodeID)
+	}
 	// The schedd client mTLS material is loaded further down, after the
 	// node verifier exists; delivery reads it through this reference.
 	var failureReportTLS atomic.Pointer[tls.Config]
@@ -1006,21 +1033,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		defer func() { _ = failureReports.Close() }()
 	}
 	mgr.WithAppAdmissionGuard(managedPostgresAdmissionGuard(store))
+	mgr.WithManagedPostgresDrainNodeID(nodeID)
 	// ADR-472: preserve restart-survivor identities before a prepared pool
 	// or any Wake RPC can consume the new allocator's initially free slots.
-	recoverResources := deps.recoverResources
-	if recoverResources == nil {
-		recoverResources = recoverRestartResources
-	}
-	resourceJournal, err := recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
-	if err != nil {
-		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
-			return nil
+	if !cfg.NativeProcessRecovery {
+		recoverResources := deps.recoverResources
+		if recoverResources == nil {
+			recoverResources = recoverRestartResources
 		}
-		return err
-	}
-	if resourceJournal != nil {
-		defer func() { _ = resourceJournal.Close() }()
+		resourceJournal, err = recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+		if err != nil {
+			if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
+				return nil
+			}
+			return err
+		}
+		if resourceJournal != nil {
+			defer func() { _ = resourceJournal.Close() }()
+		}
 	}
 	// ADR-373: DNS-gated egress is on unless the operator turns it off for
 	// this node, e.g. while the node's resolver hook is unavailable.
@@ -1082,9 +1112,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	mgr.WithReadinessProbeStarter(func(ctx context.Context, instance string, slot int, appID string, cfg fcvm.ReadinessProbeConfig) {
 		startAppReadinessProbeLoop(ctx, log, appReadinessEvents, instance, appID, cfg,
-			jailer.VsockUDSSocketPath(instance))
+			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
+	// marks which instances are eligible; this flag lets an operator keep
+	// the whole node out of it.
+	if cfg.QuietPause {
+		mgr.WithQuietPause(fcvm.QuietPauseConfig{
+			Activity: activityTracker,
+			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
+		})
+		go mgr.RunQuietPause(ctx)
+		log.Info("quiet pause enabled (ADR-1151)")
+	}
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
 	// own WithStorage wiring at line 223 above; the VMM uses
@@ -1183,6 +1224,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		cloneGate := layerCloneOwnershipGate(vmmdRuntimeSourceLiveness(store), mgr, resourceJournal)
 		go runLayerCloneMaintenance(ctx, log, cloneRoot, layerCloneFlatDirs(cfg.KernelPath, os.TempDir()), cloneGate, mgr)
+		// ADR-191 amendment (H9-171): VMs that outlived their instance row.
+		go runLiveVMReap(ctx, log, mgr, store)
 	}
 
 	// §11: restore any per-VM cgroup fence reset outside vmmd.
@@ -1408,7 +1451,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-740: instances served a developer live patch are never snapshotted.
 	// The receiver marks them; the gRPC snapshot handlers refuse them.
 	divergedInstances := vmmdgrpc.NewDivergedInstances()
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer, divergedInstances)
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer, divergedInstances, newDevPatchMetrics(ops.Registry()))
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {
@@ -1569,6 +1612,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
 		WithNodeID(nodeID).
+		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
@@ -1579,6 +1623,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if store != nil {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
+		if authority, ok := store.(state.ManagedPostgresDrainAuthority); ok {
+			impl.WithManagedPostgresDrainAuthority(authority)
+		}
 	}
 	impl.Register(gsrv)
 	defer func() {

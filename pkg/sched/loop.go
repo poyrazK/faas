@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -2385,15 +2386,16 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
-	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps and
-	// suspended accounts from the table source of truth on every reaper tick so
-	// a restart or missed lifecycle notification cannot leave unbillable VMs
-	// live. This runs before the normal idle snapshot.
+	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
+	// suspended accounts and accounts at their spend cap (ADR-1162) from the
+	// table source of truth on every reaper tick so a restart or missed
+	// lifecycle notification cannot leave unbillable VMs live. This runs
+	// before the normal idle snapshot.
 	for _, app := range apps {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
-				mustPark = account.Status == state.AccountSuspended || account.AbuseHeld()
+				mustPark = l.engine.appMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
 			}
@@ -3311,7 +3313,7 @@ func DialGatewaySynth(socketPath string, log *slog.Logger) (GatewaySynth, error)
 			return net.Dial("unix", socketPath)
 		},
 	}
-	c := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	c := &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout}
 	return &httpGatewaySynth{
 		client:     c,
 		basePrefix: httpUnixBasePrefix,
@@ -3353,7 +3355,7 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			},
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: httpUnixBasePrefix,
 			log:        log,
 		}, nil
@@ -3364,10 +3366,10 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 		}
 		tr := &http.Transport{
 			TLSClientConfig:       tlsCfg,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: api.GatewaySynthDispatchTimeout,
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: scheme + "://" + t.Address,
 			log:        log,
 		}, nil
@@ -3570,6 +3572,18 @@ func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appI
 }
 
 func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, time.Time, error) {
+	// The step's own timeout (bounded per plan by WorkflowStepMaxTimeout) is
+	// the attempt deadline. The shared synth client's fixed Timeout used to
+	// cut every step at 30 s whatever it declared (production-us hunt #9,
+	// H9-151), so steps use a client bounded only by this context. A step
+	// without a timeout keeps that client's limit.
+	client := h.client
+	if timeout > 0 {
+		client = h.contextBoundClient()
+	} else if client != nil && client.Timeout > 0 {
+		timeout = client.Timeout
+		client = h.contextBoundClient()
+	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3601,11 +3615,46 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 		ManagedOperationGeneration: generation,
 		OperationResultVersion:     boolToProtocolVersion(operationID != ""),
 	}
-	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
+	out, statusCode, err := h.invokeWithStatusUsing(ctx, client, appID, inv, nil)
 	if err != nil {
 		return 0, nil, time.Time{}, err
 	}
 	return statusCode, out.Result, api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()), nil
+}
+
+// invocationDoError keeps transport detail out of the invocation's
+// customer-visible last_error when an attempt simply ran out of time. The
+// HTTP client's error names the internal unix-socket URL ("Post
+// \"http://unix/v1/invocations:dispatch\": … Client.Timeout exceeded") and
+// says nothing about the limit (production-us hunt #9, H9-135). A caller whose
+// own context ended keeps the original error.
+func invocationDoError(ctx context.Context, err error) error {
+	var netErr net.Error
+	if ctx.Err() == nil && errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("%w: the invocation attempt exceeded the %s dispatch limit", ErrDispatchTimeout, api.GatewaySynthDispatchTimeout)
+	}
+	return fmt.Errorf("sched: invocation do: %w", err)
+}
+
+// dispatchProblemSuffix carries a customer-facing problem from a failed
+// gateway dispatch into the invocation's last_error, e.g. " (plan_limit_
+// concurrency: scale app max_concurrency is 2; 2 already live.)". Plain-text
+// bodies are internal and stay out of customer-visible errors.
+func dispatchProblemSuffix(resp *http.Response) string {
+	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/problem+json") {
+		return ""
+	}
+	var p struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&p); err != nil || p.Code == "" {
+		return ""
+	}
+	if p.Detail == "" {
+		return " (" + safetext.Ellipsis(p.Code, invocationFailureDetailMaxBytes) + ")"
+	}
+	return " (" + safetext.Ellipsis(p.Code+": "+p.Detail, invocationFailureDetailMaxBytes) + ")"
 }
 
 func boolToProtocolVersion(enabled bool) int {
@@ -3640,6 +3689,21 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 }
 
 func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
+	return h.invokeWithStatusUsing(ctx, h.client, appID, inv, wake)
+}
+
+// contextBoundClient shares the synth transport but drops the client-wide
+// Timeout, leaving the request's context as the only deadline.
+func (h *httpGatewaySynth) contextBoundClient() *http.Client {
+	if h.client == nil {
+		return &http.Client{}
+	}
+	bound := *h.client
+	bound.Timeout = 0
+	return &bound
+}
+
+func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *http.Client, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
 	var headers map[string]string
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -3727,13 +3791,13 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 			}
 		}
 	}
-	resp, err := h.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return inv, 0, fmt.Errorf("sched: invocation do: %w", err)
+		return inv, 0, invocationDoError(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		err := fmt.Errorf("sched: invocation: gateway returned %d%s", resp.StatusCode, dispatchProblemSuffix(resp))
 		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
 		}

@@ -497,6 +497,10 @@ func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context
 	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
 }
 
+func (f *fakeVmmdClient) RetireManagedPostgresDrain(context.Context, *vmmdpb.RetireManagedPostgresDrainRequest, ...grpc.CallOption) (*vmmdpb.RetireManagedPostgresDrainResponse, error) {
+	panic("RetireManagedPostgresDrain: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }
@@ -529,6 +533,9 @@ func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskR
 }
 func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed")
+}
+func (f *fakeVmmdClient) AttachAppTask(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.AttachAppTaskRequest, vmmdpb.AttachAppTaskEvent], error) {
+	panic("AttachAppTask: not stubbed")
 }
 func (f *fakeVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed")

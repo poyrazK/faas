@@ -108,6 +108,20 @@ func TestEvaluateIgnoresLowerPriorityConditionalRule(t *testing.T) {
 	}
 }
 
+func TestEvaluateThrottlePreservesGatewayFractionalRate(t *testing.T) {
+	config := requirementConfig(t, `{"throttle":{"key_by":"none","max_rps":0.5}}`)
+	context := requirementContext()
+	context.Rules = []api.EdgeRuleResponse{requirementRule("limit", "throttle", `{"throttle":{"requests_per_second":0.2,"burst":1}}`, 10)}
+	report := Evaluate(config, "digest", context)
+	if report.Status != "satisfied" || !strings.Contains(report.Routes[0].Checks[0].Actual, "gateway_rps=0.2;") {
+		t.Fatalf("configured fractional gateway rate changed: %+v", report)
+	}
+	context.Rules[0] = requirementRule("limit", "throttle", `{"throttle":{"requests_per_second":0.7,"burst":1}}`, 10)
+	if report := Evaluate(config, "digest", context); report.Status != "violated" {
+		t.Fatalf("fractional rate exceeding the requirement was accepted: %+v", report)
+	}
+}
+
 // The gateway keeps fractional throttle rates (H9-45), so the requirement is
 // judged against the configured rate, not a 1 rps floor.
 func TestEvaluateThrottleUsesGatewayEffectiveRate(t *testing.T) {

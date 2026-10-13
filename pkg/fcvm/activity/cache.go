@@ -21,6 +21,10 @@ type instanceState struct {
 	// vmmd↔schedd stats path; it does not require Prometheus to reach
 	// across compute nodes.
 	total uint64
+	// quietAt is when inflight last dropped to zero: the end of the
+	// instance's last request. ADR-1151's quiet pause measures idleness
+	// from here, not from the request's start.
+	quietAt time.Time
 }
 
 // ActivityTracker tracks the in-flight ForwardHTTP request
@@ -82,8 +86,25 @@ func (a *ActivityTracker) End(instanceID string) {
 	}
 	if s.inflight > 0 {
 		s.inflight--
+		if s.inflight == 0 {
+			s.quietAt = a.now()
+		}
 	}
 	a.mu.Unlock()
+}
+
+// Quiet returns the in-flight count and, when it is zero, the time the
+// instance's last request ended. ok is false for an instance never seen.
+// A request that began but has not ended keeps inflight above zero, so a
+// zero count always pairs with a set quiet time.
+func (a *ActivityTracker) Quiet(instanceID string) (inflight int64, since time.Time, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s, ok := a.state[instanceID]
+	if !ok {
+		return 0, time.Time{}, false
+	}
+	return s.inflight, s.quietAt, true
 }
 
 // Inflight returns the current in-flight count and a

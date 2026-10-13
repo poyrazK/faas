@@ -27,14 +27,14 @@ func TestPostgresHelpShowsArgumentsAndParsedFlags(t *testing.T) {
 		positionals []string
 	}{
 		{args: []string{"create"}, fn: "cmdPostgresCreate", positionals: []string{"<name>"}},
-		{args: []string{"get"}, positionals: []string{"<database_id>"}},
-		{args: []string{"delete"}, positionals: []string{"<database_id>"}},
-		{args: []string{"restore"}, fn: "cmdPostgresRestore", positionals: []string{"<database_id>"}},
+		{args: []string{"get"}, positionals: []string{"<database>"}},
+		{args: []string{"delete"}, positionals: []string{"<database>"}},
+		{args: []string{"restore"}, fn: "cmdPostgresRestore", positionals: []string{"<database>"}},
 		{args: []string{"resize"}, fn: "cmdPostgresResize", positionals: []string{"<database>"}},
 		{args: []string{"compute-policy"}, fn: "cmdPostgresComputePolicy", positionals: []string{"<database>"}},
 		{args: []string{"compute-policy-status"}, positionals: []string{"<database>", "<request_uuid>"}},
 		{args: []string{"attach"}, fn: "cmdPostgresAttach", positionals: []string{"<database>", "<app>"}},
-		{args: []string{"bindings", "list"}, positionals: []string{"<database_id>"}},
+		{args: []string{"bindings", "list"}, positionals: []string{"<database>"}},
 		{args: []string{"bindings", "create"}, fn: "cmdPostgresBindingsCreate", positionals: []string{"<database_id>"}},
 		{args: []string{"bindings", "get"}, positionals: []string{"<id>"}},
 		{args: []string{"bindings", "delete"}, positionals: []string{"<id>"}},

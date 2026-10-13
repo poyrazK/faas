@@ -49,7 +49,7 @@ UPDATE project_environment_clone_configuration_guards g
 SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',held_at=NULL,generation=generation+1
 WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.operation_id=$3::uuid
  AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$3::uuid
-  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='compensating'
+  AND o.project_id=g.project_id AND o.account_id=g.account_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint'
   AND o.revision=$4::bigint AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp())
 `
 
@@ -537,6 +537,72 @@ func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, pu
 	return i, err
 }
 
+const adoptProjectEnvironmentCloneCheckpointSnapshot = `-- name: AdoptProjectEnvironmentCloneCheckpointSnapshot :one
+INSERT INTO project_environment_clone_postgres_snapshots(operation_id,source_database_id,source_version,backend_id,backend_fingerprint,
+    source_provider_resource_id,source_data_resource_id,capture_point,provider_snapshot_id,state,snapshot_created_at,observed_at,request_started_at)
+SELECT $1::uuid,$2::uuid,$3::text,$4::text,
+    $5::text,$6::text,$7::text,
+    $8::timestamptz,$9::text,'retained',$10::timestamptz,
+    clock_timestamp(),$11::timestamptz
+WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
+    AND o.status='capturing' AND o.revision=$12::bigint AND o.lease_token=$13::uuid
+    AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, capture_point, provider_snapshot_id, state, snapshot_created_at, observed_at, cleanup_observed_at, created_at, updated_at, request_started_at
+`
+
+type AdoptProjectEnvironmentCloneCheckpointSnapshotParams struct {
+	OperationID              pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	SourceVersion            string
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	CapturePoint             pgtype.Timestamptz
+	ProviderSnapshotID       string
+	SnapshotCreatedAt        pgtype.Timestamptz
+	RequestStartedAt         pgtype.Timestamptz
+	ExpectedRevision         int64
+	WorkerToken              pgtype.UUID
+}
+
+func (q *Queries) AdoptProjectEnvironmentCloneCheckpointSnapshot(ctx context.Context, db DBTX, arg AdoptProjectEnvironmentCloneCheckpointSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error) {
+	row := db.QueryRow(ctx, adoptProjectEnvironmentCloneCheckpointSnapshot,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.SourceVersion,
+		arg.BackendID,
+		arg.BackendFingerprint,
+		arg.SourceProviderResourceID,
+		arg.SourceDataResourceID,
+		arg.CapturePoint,
+		arg.ProviderSnapshotID,
+		arg.SnapshotCreatedAt,
+		arg.RequestStartedAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentClonePostgresSnapshot
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.SourceVersion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.SourceProviderResourceID,
+		&i.SourceDataResourceID,
+		&i.CapturePoint,
+		&i.ProviderSnapshotID,
+		&i.State,
+		&i.SnapshotCreatedAt,
+		&i.ObservedAt,
+		&i.CleanupObservedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RequestStartedAt,
+	)
+	return i, err
+}
+
 const adoptProjectEnvironmentClonePostgresSnapshotRestore = `-- name: AdoptProjectEnvironmentClonePostgresSnapshotRestore :one
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='adopted',adopted_database_id=r.target_owner_id,
     adopted_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -546,7 +612,7 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='res
         AND d.clone_resource_role='checkpoint' AND d.provider_resource_id=r.target_provider_resource_id AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
         AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL AND d.lease_token IS NULL)
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
-        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type AdoptProjectEnvironmentClonePostgresSnapshotRestoreParams struct {
@@ -584,6 +650,7 @@ func (q *Queries) AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx contex
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -755,6 +822,45 @@ func (q *Queries) AdvanceImagePreparation(ctx context.Context, db DBTX, arg Adva
 		arg.DeploymentID,
 		arg.ClaimToken,
 		arg.ExpectedPhase,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const advanceProjectEnvironmentCloneCheckpointIntent = `-- name: AdvanceProjectEnvironmentCloneCheckpointIntent :execrows
+UPDATE project_environment_clone_operations o
+SET resources=$1::jsonb, revision=revision+1, updated_at=clock_timestamp()
+WHERE o.id=$2::uuid AND o.account_id=$3::uuid
+  AND o.project_id=$4::uuid AND o.status='capturing'
+  AND o.revision=$5::bigint
+  AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+  AND EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g
+    WHERE g.project_id=o.project_id AND g.account_id=o.account_id AND g.operation_id=o.id
+      AND g.state='held' AND g.source_environment=o.source_environment AND g.source_revision_hash=o.source_revision_hash)
+  AND (EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id)
+    OR EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state='held'))
+  AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'held')
+`
+
+type AdvanceProjectEnvironmentCloneCheckpointIntentParams struct {
+	Resources        []byte
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) AdvanceProjectEnvironmentCloneCheckpointIntent(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneCheckpointIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, advanceProjectEnvironmentCloneCheckpointIntent,
+		arg.Resources,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
 	)
 	if err != nil {
 		return 0, err
@@ -964,7 +1070,7 @@ WITH resident AS (
  SELECT i.deployment_id, i.state, i.started_at FROM instances i
  JOIN apps a ON a.id = i.app_id AND a.account_id = $2
  WHERE i.app_id = $1 AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('running','waking','cold_booting','warm','snapshotting','draining','migrating')
+   AND i.state IN ('running','waking','cold_booting','warm','frozen','snapshotting','draining','migrating')
 ), selected AS (
  SELECT d.id, d.status, COALESCE(NULLIF(d.scope, ''), 'default') AS scope FROM deployments d
  WHERE d.app_id = $1
@@ -1718,6 +1824,33 @@ func (q *Queries) ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgt
 	return column_1, err
 }
 
+const attachCloneCheckpointPgActivationConnection = `-- name: AttachCloneCheckpointPgActivationConnection :execrows
+UPDATE project_environment_clone_checkpoint_pg_connection_values c SET activation_operation_id=c.operation_id
+WHERE c.operation_id=$1::uuid AND c.source_binding_id=$2::uuid AND c.state='sealed' AND c.activation_operation_id IS NULL
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp())
+`
+
+type AttachCloneCheckpointPgActivationConnectionParams struct {
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) AttachCloneCheckpointPgActivationConnection(ctx context.Context, db DBTX, arg AttachCloneCheckpointPgActivationConnectionParams) (int64, error) {
+	result, err := db.Exec(ctx, attachCloneCheckpointPgActivationConnection,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const attachProjectEnvironmentCloneDeployment = `-- name: AttachProjectEnvironmentCloneDeployment :execrows
 UPDATE project_environment_clone_workloads SET target_deployment_id = $1::uuid,
        target_settings_hash = $2::text
@@ -2026,7 +2159,7 @@ const beginClonePostgresWriteFenceAbandonment = `-- name: BeginClonePostgresWrit
 UPDATE project_environment_clone_postgres_write_fences f SET state='abandoning',updated_at=clock_timestamp()
 WHERE f.operation_id=$1::uuid AND f.source_database_id=$2::uuid
  AND f.state IN ('held','abandoning') AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
-  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+  WHERE o.id=f.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint' AND o.revision=$3::bigint
    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
 `
 
@@ -2186,7 +2319,7 @@ UPDATE project_environment_clone_postgres_copy_readers c SET state='deleting',av
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state NOT IN ('deleting','retired')
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=$3::text AND o.revision=$4::bigint
-        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at
+        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at, c.checkpoint_retirement_observation_sha256
 `
 
 type BeginProjectEnvironmentClonePostgresCopyReaderCleanupParams struct {
@@ -2227,6 +2360,7 @@ func (q *Queries) BeginProjectEnvironmentClonePostgresCopyReaderCleanup(ctx cont
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -2235,7 +2369,7 @@ const beginProjectEnvironmentClonePostgresCopyTargetCleanup = `-- name: BeginPro
 UPDATE project_environment_clone_postgres_copy_targets c SET state='deleting',deletion_started_at=coalesce(c.deletion_started_at,clock_timestamp()),updated_at=clock_timestamp()
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state IN ('requested','preparing','prepared','deleting') AND c.request_started_at IS NOT NULL
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
-        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at, c.checkpoint_retirement_observation_sha256
 `
 
 type BeginProjectEnvironmentClonePostgresCopyTargetCleanupParams struct {
@@ -2270,6 +2404,7 @@ func (q *Queries) BeginProjectEnvironmentClonePostgresCopyTargetCleanup(ctx cont
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -2323,11 +2458,11 @@ func (q *Queries) BeginProjectEnvironmentClonePostgresSnapshotCleanup(ctx contex
 const beginProjectEnvironmentClonePostgresSnapshotRestoreCleanup = `-- name: BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup :one
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleting',deletion_started_at=coalesce(r.deletion_started_at,clock_timestamp()),updated_at=clock_timestamp()
 WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state<>'deleted'
-    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint'
         AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp())
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id
-        AND c.state<>'retired' AND (c.state<>'deleting' OR c.endpoint_id IS NULL)) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND c.state<>'retired' AND (c.state<>'deleting' OR c.endpoint_id IS NULL)) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_credential_retirements retirement WHERE retirement.operation_id=credential.operation_id AND retirement.source_binding_id=credential.source_binding_id AND retirement.state='retired')) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams struct {
@@ -2365,6 +2500,7 @@ func (q *Queries) BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -3576,6 +3712,539 @@ func (q *Queries) ClaimAutomaticRouteCheck(ctx context.Context, db DBTX, arg Cla
 	var claim []byte
 	err := row.Scan(&claim)
 	return claim, err
+}
+
+const claimCloneCheckpointCaptureRetirement = `-- name: ClaimCloneCheckpointCaptureRetirement :one
+UPDATE project_environment_clone_checkpoint_capture_retirements c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$2::bigint AND o.lease_token=$3::uuid
+ AND o.lease_until>clock_timestamp()) RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type ClaimCloneCheckpointCaptureRetirementParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointCaptureRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointCaptureRetirement, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointCaptureRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointObjectCopy = `-- name: ClaimCloneCheckpointObjectCopy :one
+UPDATE project_environment_clone_checkpoint_object_copies i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_bucket_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.copied_at
+`
+
+type ClaimCloneCheckpointObjectCopyParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectCopy,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectCopy
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.CopiedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointObjectRetirement = `-- name: ClaimCloneCheckpointObjectRetirement :one
+UPDATE project_environment_clone_checkpoint_object_retirements i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='compensating'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_bucket_id, i.plan, i.state, i.requested_at, i.observation, i.observation_sha256, i.retired_at
+`
+
+type ClaimCloneCheckpointObjectRetirementParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectRetirement,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointObjectTarget = `-- name: ClaimCloneCheckpointObjectTarget :one
+UPDATE project_environment_clone_checkpoint_object_targets t SET state='requested',requested_at=clock_timestamp()
+WHERE t.operation_id=$1::uuid AND t.source_bucket_id=$2::uuid AND t.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=t.operation_id AND o.status='capturing'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING t.operation_id, t.source_bucket_id, t.target_bucket_id, t.plan, t.state, t.requested_at, t.observation_sha256, t.ready_at
+`
+
+type ClaimCloneCheckpointObjectTargetParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectTarget,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.TargetBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointObjectVerification = `-- name: ClaimCloneCheckpointObjectVerification :one
+UPDATE project_environment_clone_checkpoint_object_verification i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_bucket_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_bucket_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.verified_at
+`
+
+type ClaimCloneCheckpointObjectVerificationParams struct {
+	OperationID      pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointObjectVerification,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPgActivation = `-- name: ClaimCloneCheckpointPgActivation :one
+UPDATE project_environment_clone_checkpoint_pg_activations i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$2::bigint AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.plan, i.state, i.requested_at, i.observation, i.observation_sha256, i.activated_at
+`
+
+type ClaimCloneCheckpointPgActivationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPgActivationParams) (ProjectEnvironmentCloneCheckpointPgActivation, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPgActivation, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointPgActivation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.ActivatedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPgCopyRetirement = `-- name: ClaimCloneCheckpointPgCopyRetirement :one
+UPDATE project_environment_clone_checkpoint_pg_copy_retirements c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.plan, c.state, c.requested_at, c.observation, c.observation_sha256, c.retired_at
+`
+
+type ClaimCloneCheckpointPgCopyRetirementParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPgCopyRetirementParams) (ProjectEnvironmentCloneCheckpointPgCopyRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPgCopyRetirement,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgCopyRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPgTargetCompensation = `-- name: ClaimCloneCheckpointPgTargetCompensation :one
+UPDATE project_environment_clone_checkpoint_pg_target_compensations c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.plan, c.state, c.requested_at, c.observation, c.observation_sha256, c.compensated_at
+`
+
+type ClaimCloneCheckpointPgTargetCompensationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPgTargetCompensationParams) (ProjectEnvironmentCloneCheckpointPgTargetCompensation, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPgTargetCompensation,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgTargetCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPostgresCredential = `-- name: ClaimCloneCheckpointPostgresCredential :one
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_binding_id=$2::uuid AND i.state='sealed'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.source_database_id, i.account_id, i.target_binding_id, i.plan, i.state, i.ciphertext, i.key_id, i.ciphertext_sha256, i.requested_at, i.observation_sha256, i.prepared_at
+`
+
+type ClaimCloneCheckpointPostgresCredentialParams struct {
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresCredential,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPostgresCredentialRetirement = `-- name: ClaimCloneCheckpointPostgresCredentialRetirement :one
+UPDATE project_environment_clone_checkpoint_pg_credential_retirements i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_binding_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='compensating'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.plan, i.state, i.requested_at, i.observation, i.observation_sha256, i.retired_at
+`
+
+type ClaimCloneCheckpointPostgresCredentialRetirementParams struct {
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresCredentialRetirementParams) (ProjectEnvironmentCloneCheckpointPgCredentialRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresCredentialRetirement,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgCredentialRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPostgresIsolation = `-- name: ClaimCloneCheckpointPostgresIsolation :one
+UPDATE project_environment_clone_checkpoint_postgres_isolation i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.adopted_database_id, i.adopted_at
+`
+
+type ClaimCloneCheckpointPostgresIsolationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresIsolation,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresIsolation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.AdoptedDatabaseID,
+		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPostgresRuntime = `-- name: ClaimCloneCheckpointPostgresRuntime :one
+UPDATE project_environment_clone_checkpoint_postgres_runtime i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.plan, i.state, i.requested_at, i.observation, i.observation_sha256, i.data_resource_id, i.ready_at
+`
+
+type ClaimCloneCheckpointPostgresRuntimeParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresRuntime,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresRuntime
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.DataResourceID,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointPostgresVerification = `-- name: ClaimCloneCheckpointPostgresVerification :one
+UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='requested',requested_at=clock_timestamp()
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_database_id, i.plan, i.state, i.requested_at, i.observation_sha256, i.verified_at
+`
+
+type ClaimCloneCheckpointPostgresVerificationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ClaimCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointPostgresVerification,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointRelease = `-- name: ClaimCloneCheckpointRelease :one
+UPDATE project_environment_clone_checkpoint_releases r SET state='requested',requested_at=clock_timestamp()
+WHERE r.operation_id=$1::uuid AND r.state='planned'
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
+ AND o.revision=$2::bigint AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.plan, r.receipt, r.adoption_sha256, r.state, r.requested_at, r.observation_sha256, r.released_at
+`
+
+type ClaimCloneCheckpointReleaseParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointRelease(ctx context.Context, db DBTX, arg ClaimCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointRelease, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointRelease
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.Receipt,
+		&i.AdoptionSha256,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointSourceCompensation = `-- name: ClaimCloneCheckpointSourceCompensation :one
+UPDATE project_environment_clone_checkpoint_source_compensations c SET state='requested',requested_at=clock_timestamp()
+WHERE c.operation_id=$1::uuid AND c.state='planned'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$2::bigint AND o.lease_token=$3::uuid
+ AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.plan, c.state, c.requested_at, c.observation, c.observation_sha256, c.compensated_at
+`
+
+type ClaimCloneCheckpointSourceCompensationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointSourceCompensation, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointSourceCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const claimCloneCheckpointWorkloadRetirement = `-- name: ClaimCloneCheckpointWorkloadRetirement :one
+UPDATE project_environment_clone_checkpoint_workload_retirements r SET state='requested',requested_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE r.operation_id=$1::uuid AND r.state='planned' AND o.id=r.operation_id
+ AND o.status='compensating' AND o.revision=$2::bigint
+ AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()
+RETURNING r.operation_id, r.plan, r.state, r.requested_at, r.observation, r.observation_sha256, r.retired_at
+`
+
+type ClaimCloneCheckpointWorkloadRetirementParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ClaimCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
+	row := db.QueryRow(ctx, claimCloneCheckpointWorkloadRetirement, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	var i ProjectEnvironmentCloneCheckpointWorkloadRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
 }
 
 const claimClonePostgresMaintenanceDispatch = `-- name: ClaimClonePostgresMaintenanceDispatch :one
@@ -4980,7 +5649,7 @@ UPDATE project_environment_clone_postgres_copy_readers c SET cleanup_dispatched_
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='deleting' AND c.endpoint_id IS NOT NULL AND c.cleanup_dispatched_at IS NULL
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=$3::text AND o.revision=$4::bigint
-        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at
+        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at, c.checkpoint_retirement_observation_sha256
 `
 
 type ClaimProjectEnvironmentClonePostgresCopyReaderCleanupParams struct {
@@ -5021,6 +5690,7 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresCopyReaderCleanup(ctx cont
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -5030,7 +5700,7 @@ UPDATE project_environment_clone_postgres_copy_readers c SET state='requested',r
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=$3::text AND o.revision=$4::bigint
-        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at
+        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at, c.checkpoint_retirement_observation_sha256
 `
 
 type ClaimProjectEnvironmentClonePostgresCopyReaderRequestParams struct {
@@ -5071,6 +5741,7 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresCopyReaderRequest(ctx cont
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -5079,7 +5750,7 @@ const claimProjectEnvironmentClonePostgresCopyTargetRequest = `-- name: ClaimPro
 UPDATE project_environment_clone_postgres_copy_targets c SET state='requested',request_started_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
-        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at, c.checkpoint_retirement_observation_sha256
 `
 
 type ClaimProjectEnvironmentClonePostgresCopyTargetRequestParams struct {
@@ -5114,6 +5785,7 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresCopyTargetRequest(ctx cont
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -5216,7 +5888,7 @@ WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='res
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_postgres_snapshots s ON s.operation_id=o.id
         WHERE o.id=r.operation_id AND s.source_database_id=r.source_database_id AND s.state='retained' AND o.status='capturing'
         AND o.revision=$3::bigint AND o.lease_token::text=$4::text
-        AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequestParams struct {
@@ -5254,6 +5926,7 @@ func (q *Queries) ClaimProjectEnvironmentClonePostgresSnapshotRestoreRequest(ctx
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -5789,6 +6462,401 @@ func (q *Queries) ClearUploadSessionPartPath(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const cloneCheckpointCaptureRetirementCatalogueCounts = `-- name: CloneCheckpointCaptureRetirementCatalogueCounts :one
+SELECT (SELECT count(*) FROM project_environment_clone_postgres_snapshots r WHERE r.operation_id=$1::uuid) AS snapshots,
+ (SELECT count(*) FROM project_environment_clone_object_manifests r WHERE r.operation_id=$1::uuid) AS manifests,
+ (SELECT count(*) FROM project_environment_clone_checkpoint_capture_catalogues r WHERE r.operation_id=$1::uuid) AS retirements,
+ (SELECT count(*) FROM object_buckets b WHERE b.environment_clone_operation_id=$1::uuid) AS target_buckets
+`
+
+type CloneCheckpointCaptureRetirementCatalogueCountsRow struct {
+	Snapshots     int64
+	Manifests     int64
+	Retirements   int64
+	TargetBuckets int64
+}
+
+func (q *Queries) CloneCheckpointCaptureRetirementCatalogueCounts(ctx context.Context, db DBTX, operationID pgtype.UUID) (CloneCheckpointCaptureRetirementCatalogueCountsRow, error) {
+	row := db.QueryRow(ctx, cloneCheckpointCaptureRetirementCatalogueCounts, operationID)
+	var i CloneCheckpointCaptureRetirementCatalogueCountsRow
+	err := row.Scan(
+		&i.Snapshots,
+		&i.Manifests,
+		&i.Retirements,
+		&i.TargetBuckets,
+	)
+	return i, err
+}
+
+const cloneCheckpointCaptureRetirementHasAdoption = `-- name: CloneCheckpointCaptureRetirementHasAdoption :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshots r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_object_manifests r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_capture_catalogues r WHERE r.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.environment_clone_operation_id=$1::uuid)
+`
+
+func (q *Queries) CloneCheckpointCaptureRetirementHasAdoption(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointCaptureRetirementHasAdoption, operationID)
+	var column_1 pgtype.Bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneCheckpointCaptureRetirementHasBorrowers = `-- name: CloneCheckpointCaptureRetirementHasBorrowers :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers r WHERE r.operation_id=$1::uuid AND (r.state<>'retired' OR r.checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets r WHERE r.operation_id=$1::uuid AND (r.state<>'retired' OR r.checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_copy_retirements r WHERE r.operation_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers b WHERE b.operation_id=r.operation_id AND b.source_database_id=r.source_database_id) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets b WHERE b.operation_id=r.operation_id AND b.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshots s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_target_compensations r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshot_restores s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_isolation r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshot_restores s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_postgres_snapshot_restores s WHERE s.operation_id=r.operation_id AND s.source_database_id=r.source_database_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_object_manifests m WHERE m.operation_id=r.operation_id AND m.source_bucket_id=r.source_bucket_id AND m.target_bucket_id=r.target_bucket_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_copies r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_checkpoint_object_targets c WHERE c.operation_id=r.operation_id AND c.source_bucket_id=r.source_bucket_id))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_retirements r WHERE r.operation_id=$1::uuid AND NOT EXISTS(
+  SELECT 1 FROM project_environment_clone_checkpoint_object_targets c WHERE c.operation_id=r.operation_id AND c.source_bucket_id=r.source_bucket_id))
+`
+
+// All borrower intents require original catalogue owners and authenticated
+// terminal proof in Go; missing copy catalogue proof links remain blockers.
+func (q *Queries) CloneCheckpointCaptureRetirementHasBorrowers(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointCaptureRetirementHasBorrowers, operationID)
+	var column_1 pgtype.Bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneCheckpointCompensationHasWorkloadCleanup = `-- name: CloneCheckpointCompensationHasWorkloadCleanup :one
+SELECT (EXISTS(SELECT 1 FROM project_environment_clone_configuration_cleanups c WHERE c.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_workload_cleanups w WHERE w.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups d WHERE d.operation_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_environment_cleanups e WHERE e.operation_id=$1::uuid))::boolean
+`
+
+func (q *Queries) CloneCheckpointCompensationHasWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointCompensationHasWorkloadCleanup, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneCheckpointObjectCredentialIdentityExists = `-- name: CloneCheckpointObjectCredentialIdentityExists :one
+SELECT EXISTS(SELECT 1 FROM object_storage_s3_credentials WHERE id=$1::uuid)::boolean
+`
+
+func (q *Queries) CloneCheckpointObjectCredentialIdentityExists(ctx context.Context, db DBTX, credentialID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointObjectCredentialIdentityExists, credentialID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneCheckpointObjectTargetHasGrants = `-- name: CloneCheckpointObjectTargetHasGrants :one
+SELECT (EXISTS(SELECT 1 FROM object_storage_s3_credentials c WHERE c.bucket_id=$1::uuid) OR EXISTS(SELECT 1 FROM object_storage_access_grants g WHERE g.bucket_id=$1::uuid))::boolean AS has_grants
+`
+
+func (q *Queries) CloneCheckpointObjectTargetHasGrants(ctx context.Context, db DBTX, targetBucketID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointObjectTargetHasGrants, targetBucketID)
+	var has_grants bool
+	err := row.Scan(&has_grants)
+	return has_grants, err
+}
+
+const cloneCheckpointPgCopyRetirementHasBorrowers = `-- name: CloneCheckpointPgCopyRetirementHasBorrowers :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN project_environment_clone_postgres_copy_targets r ON r.target_database_id=b.database_id WHERE r.operation_id=$1 AND r.source_database_id=$2 AND b.state<>'deleted')
+ OR EXISTS(SELECT 1 FROM app_secrets s JOIN managed_postgres_bindings b ON b.id=s.managed_postgres_binding_id JOIN project_environment_clone_postgres_copy_targets r ON r.target_database_id=b.database_id WHERE r.operation_id=$1 AND r.source_database_id=$2)
+ OR EXISTS(SELECT 1 FROM managed_postgres_databases d JOIN project_environment_clone_postgres_copy_targets r ON r.target_database_id=d.restore_source_database_id WHERE r.operation_id=$1 AND r.source_database_id=$2 AND d.state<>'deleted') AS blocked
+`
+
+type CloneCheckpointPgCopyRetirementHasBorrowersParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) CloneCheckpointPgCopyRetirementHasBorrowers(ctx context.Context, db DBTX, arg CloneCheckpointPgCopyRetirementHasBorrowersParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointPgCopyRetirementHasBorrowers, arg.OperationID, arg.SourceDatabaseID)
+	var blocked pgtype.Bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
+const cloneCheckpointPgTargetCompensationBlocked = `-- name: CloneCheckpointPgTargetCompensationBlocked :one
+SELECT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1::uuid AND source_database_id=$2::uuid AND (state<>'retired' OR checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers WHERE operation_id=$1::uuid AND source_database_id=$2::uuid AND (state<>'retired' OR checkpoint_retirement_observation_sha256 IS NULL))
+ OR EXISTS(SELECT 1 FROM managed_postgres_databases WHERE restore_source_database_id=$3::uuid AND state<>'deleted')
+ OR EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$3::uuid AND state<>'deleted')
+ OR EXISTS(SELECT 1 FROM app_secrets s JOIN managed_postgres_bindings b ON b.id=s.managed_postgres_binding_id WHERE b.database_id=$3::uuid) AS blocked
+`
+
+type CloneCheckpointPgTargetCompensationBlockedParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	OwnerID          pgtype.UUID
+}
+
+func (q *Queries) CloneCheckpointPgTargetCompensationBlocked(ctx context.Context, db DBTX, arg CloneCheckpointPgTargetCompensationBlockedParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointPgTargetCompensationBlocked, arg.OperationID, arg.SourceDatabaseID, arg.OwnerID)
+	var blocked pgtype.Bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
+const cloneCheckpointPostgresCredentialPublished = `-- name: CloneCheckpointPostgresCredentialPublished :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE id=$1 AND state<>'deleted') OR EXISTS(SELECT 1 FROM app_secrets WHERE managed_postgres_binding_id=$1)
+`
+
+func (q *Queries) CloneCheckpointPostgresCredentialPublished(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointPostgresCredentialPublished, id)
+	var column_1 pgtype.Bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneCheckpointSourceCompensationHasHolds = `-- name: CloneCheckpointSourceCompensationHasHolds :one
+SELECT EXISTS(SELECT 1 FROM object_bucket_write_fences WHERE clone_operation_id=$1)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE operation_id=$1 AND state<>'released')
+ OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_guards WHERE operation_id=$1 AND state='held') AS held
+`
+
+func (q *Queries) CloneCheckpointSourceCompensationHasHolds(ctx context.Context, db DBTX, cloneOperationID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointSourceCompensationHasHolds, cloneOperationID)
+	var held pgtype.Bool
+	err := row.Scan(&held)
+	return held, err
+}
+
+const cloneCheckpointWorkloadRetirementHasOrphanDeployments = `-- name: CloneCheckpointWorkloadRetirementHasOrphanDeployments :one
+SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.reason='environment-clone:'||$1::uuid::text
+ AND NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$1::uuid AND w.target_deployment_id=d.id))::boolean
+`
+
+func (q *Queries) CloneCheckpointWorkloadRetirementHasOrphanDeployments(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointWorkloadRetirementHasOrphanDeployments, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneCheckpointWorkloadSchedulerClosed = `-- name: CloneCheckpointWorkloadSchedulerClosed :one
+WITH retirement AS (
+ SELECT operation_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_workload_retirements WHERE operation_id=$1::uuid AND state IN ('requested','retired')
+)
+SELECT EXISTS(SELECT 1 FROM retirement) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,instances i LEFT JOIN deployments d ON d.id=i.deployment_id
+ WHERE d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',i.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,environment_qualification_executions e
+ LEFT JOIN deployments d ON d.id::text=e.frame->>'deployment_id'
+ WHERE e.retired_at IS NULL AND (
+ (coalesce(r.plan->>'EnvironmentID','')<>'' AND r.plan->>'EnvironmentID'=e.frame->>'environment_id') OR
+ d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',e.frame->>'deployment_id'))))) AND NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_wake_dispatches w
+ WHERE w.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_migration_adoptions a
+ WHERE a.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text)))) AND
+ NOT EXISTS(SELECT 1 FROM retirement r,project_environment_clone_migration_resumes s
+ WHERE s.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',s.deployment_id::text)))) AS closed
+`
+
+// No instance state label proves native closure. Any remaining original row or
+// unresolved immutable execution frame blocks accepting a retirement receipt.
+func (q *Queries) CloneCheckpointWorkloadSchedulerClosed(ctx context.Context, db DBTX, operationID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneCheckpointWorkloadSchedulerClosed, operationID)
+	var closed pgtype.Bool
+	err := row.Scan(&closed)
+	return closed, err
+}
+
+const cloneConfigurationCleanupHasBorrowers = `-- name: CloneConfigurationCleanupHasBorrowers :one
+SELECT EXISTS(SELECT 1 FROM app_secrets s WHERE s.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND s.scope=$2::text
+ AND (s.managed_postgres_binding_id IS NOT NULL OR s.managed_object_storage_credential_id IS NOT NULL OR s.managed_credential_ref IS NOT NULL))
+ OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations s WHERE s.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND s.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=$3::uuid)
+ OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=$3::uuid)
+ OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=$3::uuid)::boolean AS blocked
+`
+
+type CloneConfigurationCleanupHasBorrowersParams struct {
+	ProjectID     pgtype.UUID
+	Environment   string
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) CloneConfigurationCleanupHasBorrowers(ctx context.Context, db DBTX, arg CloneConfigurationCleanupHasBorrowersParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneConfigurationCleanupHasBorrowers, arg.ProjectID, arg.Environment, arg.EnvironmentID)
+	var blocked pgtype.Bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
+const cloneConfigurationOwnershipScopeIsForeign = `-- name: CloneConfigurationOwnershipScopeIsForeign :one
+SELECT EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM app_envs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text)
+ OR EXISTS(SELECT 1 FROM app_secrets t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text AND NOT ($3::boolean AND t.account_id=(SELECT o.account_id FROM project_environment_clone_operations o WHERE o.id=$4::uuid) AND t.app_id IN (SELECT w.app_id FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid)))
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text)
+ OR EXISTS(SELECT 1 FROM project_environment_edge_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text)
+ OR EXISTS(SELECT 1 FROM project_environment_route_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text) AS foreign_scope
+`
+
+type CloneConfigurationOwnershipScopeIsForeignParams struct {
+	ProjectID       pgtype.UUID
+	Environment     string
+	ManagedPrepared bool
+	OperationID     pgtype.UUID
+}
+
+func (q *Queries) CloneConfigurationOwnershipScopeIsForeign(ctx context.Context, db DBTX, arg CloneConfigurationOwnershipScopeIsForeignParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneConfigurationOwnershipScopeIsForeign,
+		arg.ProjectID,
+		arg.Environment,
+		arg.ManagedPrepared,
+		arg.OperationID,
+	)
+	var foreign_scope pgtype.Bool
+	err := row.Scan(&foreign_scope)
+	return foreign_scope, err
+}
+
+const cloneDeploymentCleanupHasLiveTarget = `-- name: CloneDeploymentCleanupHasLiveTarget :one
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN project_environment_clone_workloads w ON w.target_deployment_id=d.id WHERE w.operation_id=$1)::boolean
+`
+
+func (q *Queries) CloneDeploymentCleanupHasLiveTarget(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneDeploymentCleanupHasLiveTarget, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneDeploymentCleanupHasRuntimeOwner = `-- name: CloneDeploymentCleanupHasRuntimeOwner :one
+SELECT EXISTS(SELECT 1 FROM deployment_runtime_environment_owners WHERE deployment_id=$1::uuid AND environment_id=$2::uuid)::boolean
+`
+
+type CloneDeploymentCleanupHasRuntimeOwnerParams struct {
+	DeploymentID  pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) CloneDeploymentCleanupHasRuntimeOwner(ctx context.Context, db DBTX, arg CloneDeploymentCleanupHasRuntimeOwnerParams) (bool, error) {
+	row := db.QueryRow(ctx, cloneDeploymentCleanupHasRuntimeOwner, arg.DeploymentID, arg.EnvironmentID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneEnvironmentCleanupHasReplacement = `-- name: CloneEnvironmentCleanupHasReplacement :one
+SELECT EXISTS(SELECT 1 FROM project_environments WHERE id=$1::uuid OR (project_id=$2::uuid AND slug=$3::text))::boolean
+`
+
+type CloneEnvironmentCleanupHasReplacementParams struct {
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	Environment   string
+}
+
+func (q *Queries) CloneEnvironmentCleanupHasReplacement(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasReplacementParams) (bool, error) {
+	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasReplacement, arg.EnvironmentID, arg.ProjectID, arg.Environment)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const cloneEnvironmentCleanupHasScopeBorrowers = `-- name: CloneEnvironmentCleanupHasScopeBorrowers :one
+WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=$3::uuid)
+SELECT
+ (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_tasks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_webhooks p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_definitions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_operation_workflow_states p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM customer_workflow_readiness_subscriptions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM data_upstreams p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_openapi_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_rollback_operations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_route_policy_snapshots p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM environment_gitops_runtime_effects p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM issue_ingest_tokens p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=$1::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_bindings p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_cutovers p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM object_buckets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_issues p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.environment=$1::text)
+ OR EXISTS(SELECT 1 FROM app_secret_runtime_reload_observations p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM deployment_runtime_environment_owners p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM environment_management_overrides p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM exclusive_work_keys p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM queue_bindings p WHERE p.environment_id::text=($2::uuid)::text OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$1::text))
+ OR EXISTS(SELECT 1 FROM triggers p WHERE p.queue_binding_environment_id=$2::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.queue_binding_scope=$1::text))
+ OR EXISTS(SELECT 1 FROM runtime_instance_config_proofs p JOIN instances i ON i.id=p.instance_id WHERE p.environment_id::text=($2::uuid)::text OR (i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text))
+ OR EXISTS(SELECT 1 FROM instance_runtime_config_receipts p JOIN instances i ON i.id=p.instance_id WHERE i.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM snapshot_runtime_config_receipts p JOIN snapshots s ON s.id=p.snapshot_id JOIN deployments d ON d.id=s.deployment_id WHERE d.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM github_deploy_branches p WHERE p.project_id=$3::uuid AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_cleanup_jobs p WHERE p.project_id=$3::uuid AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_promotions p WHERE p.project_id=$3::uuid AND (p.from_environment=$1::text OR p.to_environment=$1::text))
+ OR EXISTS(SELECT 1 FROM project_environment_approvals p WHERE p.account_id=$4::uuid AND p.project_slug=(SELECT slug FROM projects WHERE id=$3::uuid) AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM object_storage_s3_credentials p WHERE p.managed_app_id IN (SELECT id FROM scoped_apps) AND p.managed_scope=$1::text)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_operations p WHERE p.project_id=$3::uuid AND p.id<>$5::uuid AND p.status<>'compensated' AND (p.source_environment=$1::text OR p.target_environment=$1::text))
+ OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=($2::uuid)::text AND p.operation_id<>$5::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=($2::uuid)::text AND p.operation_id<>$5::uuid)
+ OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=($2::uuid)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=$3::uuid AND p.environment_slug=$1::text)
+ OR EXISTS(SELECT 1 FROM app_envs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_secrets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_refs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM app_environment_secret_ref_suppressions p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
+ OR EXISTS(SELECT 1 FROM managed_postgres_databases p WHERE p.environment_clone_operation_id=$5::uuid))::boolean AS blocked
+`
+
+type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
+	Environment   string
+	EnvironmentID pgtype.UUID
+	ProjectID     pgtype.UUID
+	AccountID     pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+// Original clone journals and historical secret/runtime-change tombstones are
+// retained evidence, as are production_lifecycle_reviews attached to retained
+// deployments. All other known operational references must close first.
+func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
+	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
+		arg.Environment,
+		arg.EnvironmentID,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+	)
+	var blocked bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
+const cloneManagedSecretWithdrawalHasExternalOwners = `-- name: CloneManagedSecretWithdrawalHasExternalOwners :one
+SELECT EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.environment_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM environment_external_field_owners f WHERE f.environment_id=$1::uuid)
+ OR EXISTS(SELECT 1 FROM environment_git_sources f WHERE f.environment_id=$1::uuid)::boolean AS blocked
+`
+
+func (q *Queries) CloneManagedSecretWithdrawalHasExternalOwners(ctx context.Context, db DBTX, environmentID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, cloneManagedSecretWithdrawalHasExternalOwners, environmentID)
+	var blocked pgtype.Bool
+	err := row.Scan(&blocked)
+	return blocked, err
+}
+
 const cloneObjectGrantRevocationDispatch = `-- name: CloneObjectGrantRevocationDispatch :one
 UPDATE project_environment_clone_object_grant_revocations
 SET state=CASE WHEN state='reserved' THEN 'dispatched' ELSE state END,
@@ -6028,7 +7096,7 @@ DELETE FROM object_bucket_write_fences f USING project_environment_clone_operati
 WHERE f.bucket_id=$1 AND f.clone_operation_id=op.id AND f.token=op.id
 AND f.backend_id=$2 AND f.backend_fingerprint=$3
 AND f.physical_name=$4
-AND op.id=$5 AND op.status='compensating'
+AND op.id=$5 AND op.status='compensating' AND coalesce(op.resources->0->>'kind','')<>'data_checkpoint'
 AND op.revision=$6 AND op.lease_token=$7::uuid
 AND op.lease_until > clock_timestamp()
 AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations r
@@ -6095,6 +7163,17 @@ func (q *Queries) CloneObjectWriteFenceInsert(ctx context.Context, db DBTX, arg 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const cloneRetiredWorkloadHasPins = `-- name: CloneRetiredWorkloadHasPins :one
+SELECT EXISTS(SELECT 1 FROM project_environment_workload_deployment_specs p JOIN project_environment_clone_workloads w ON w.target_deployment_id=p.deployment_id WHERE w.operation_id=$1)::boolean
+`
+
+func (q *Queries) CloneRetiredWorkloadHasPins(ctx context.Context, db DBTX, operationID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, cloneRetiredWorkloadHasPins, operationID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const closeApplicationStandardLogConsumer = `-- name: CloseApplicationStandardLogConsumer :one
@@ -6278,6 +7357,7 @@ FROM apps WHERE id=$6::text::uuid AND account_id=$1::text::uuid
 ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
 WHERE commit_sources.app_id=excluded.app_id AND commit_sources.operation_policy=excluded.operation_policy
  AND commit_sources.contract_version=excluded.contract_version AND commit_sources.allow_tenant_selection=excluded.allow_tenant_selection
+ AND commit_sources.destination='operation'
 RETURNING id::text, enabled
 `
 
@@ -6374,10 +7454,183 @@ func (q *Queries) CommitPolicyWouldInvalidateSource(ctx context.Context, db DBTX
 	return incompatible, err
 }
 
+const commitPublicationAcceptance = `-- name: CommitPublicationAcceptance :one
+SELECT id,created_at FROM event_fanout_outbox
+WHERE account_id=$1::text::uuid AND source=$2::text AND event_id=$3::text
+`
+
+type CommitPublicationAcceptanceParams struct {
+	AccountID string
+	Source    string
+	EventID   string
+}
+
+type CommitPublicationAcceptanceRow struct {
+	ID        int64
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CommitPublicationAcceptance(ctx context.Context, db DBTX, arg CommitPublicationAcceptanceParams) (CommitPublicationAcceptanceRow, error) {
+	row := db.QueryRow(ctx, commitPublicationAcceptance, arg.AccountID, arg.Source, arg.EventID)
+	var i CommitPublicationAcceptanceRow
+	err := row.Scan(&i.ID, &i.CreatedAt)
+	return i, err
+}
+
+const commitPublicationReceipt = `-- name: CommitPublicationReceipt :exec
+INSERT INTO commit_receipts(id,account_id,source_id,event_id,event_type,payload,schema_version,
+ publication_acceptance_id,publication_source,publication_event_id,accepted_at)
+VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,
+ $4::text::uuid,$5::text,$6::jsonb,$7::text,
+ $8::bigint,$9::text,$10::text,$11::timestamptz)
+`
+
+type CommitPublicationReceiptParams struct {
+	ID                 string
+	AccountID          string
+	SourceID           string
+	EventID            string
+	EventType          string
+	Payload            []byte
+	SchemaVersion      string
+	AcceptanceID       int64
+	PublicationSource  string
+	PublicationEventID string
+	AcceptedAt         pgtype.Timestamptz
+}
+
+func (q *Queries) CommitPublicationReceipt(ctx context.Context, db DBTX, arg CommitPublicationReceiptParams) error {
+	_, err := db.Exec(ctx, commitPublicationReceipt,
+		arg.ID,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+		arg.EventType,
+		arg.Payload,
+		arg.SchemaVersion,
+		arg.AcceptanceID,
+		arg.PublicationSource,
+		arg.PublicationEventID,
+		arg.AcceptedAt,
+	)
+	return err
+}
+
+const commitPublicationReplay = `-- name: CommitPublicationReplay :one
+SELECT id::text,accepted_at,publication_acceptance_id,
+ publication_source,publication_event_id,
+ event_type=$1::text AND payload=$2::jsonb
+ AND schema_version=$3::text AND routing IS NULL AS matches
+FROM commit_receipts WHERE account_id=$4::text::uuid
+ AND source_id=$5::text::uuid AND event_id=$6::text::uuid
+`
+
+type CommitPublicationReplayParams struct {
+	EventType     string
+	Payload       []byte
+	SchemaVersion string
+	AccountID     string
+	SourceID      string
+	EventID       string
+}
+
+type CommitPublicationReplayRow struct {
+	ID                      string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+	Matches                 pgtype.Bool
+}
+
+func (q *Queries) CommitPublicationReplay(ctx context.Context, db DBTX, arg CommitPublicationReplayParams) (CommitPublicationReplayRow, error) {
+	row := db.QueryRow(ctx, commitPublicationReplay,
+		arg.EventType,
+		arg.Payload,
+		arg.SchemaVersion,
+		arg.AccountID,
+		arg.SourceID,
+		arg.EventID,
+	)
+	var i CommitPublicationReplayRow
+	err := row.Scan(
+		&i.ID,
+		&i.AcceptedAt,
+		&i.PublicationAcceptanceID,
+		&i.PublicationSource,
+		&i.PublicationEventID,
+		&i.Matches,
+	)
+	return i, err
+}
+
+const commitPublicationSchema = `-- name: CommitPublicationSchema :one
+SELECT EXISTS(SELECT 1 FROM event_schemas WHERE account_id=$1::text::uuid
+ AND source=$2::text AND event_type=$3::text) AS required,
+ (SELECT schema FROM event_schemas WHERE account_id=$1::text::uuid
+ AND source=$2::text AND event_type=$3::text AND version=$4::text) AS schema
+`
+
+type CommitPublicationSchemaParams struct {
+	AccountID string
+	Source    string
+	EventType string
+	Version   string
+}
+
+type CommitPublicationSchemaRow struct {
+	Required bool
+	Schema   []byte
+}
+
+func (q *Queries) CommitPublicationSchema(ctx context.Context, db DBTX, arg CommitPublicationSchemaParams) (CommitPublicationSchemaRow, error) {
+	row := db.QueryRow(ctx, commitPublicationSchema,
+		arg.AccountID,
+		arg.Source,
+		arg.EventType,
+		arg.Version,
+	)
+	var i CommitPublicationSchemaRow
+	err := row.Scan(&i.Required, &i.Schema)
+	return i, err
+}
+
+const commitPublicationSource = `-- name: CommitPublicationSource :one
+INSERT INTO commit_sources(account_id,app_id,name,destination,contract_version)
+SELECT $1::text::uuid,id,$2::text,'event',3
+FROM apps WHERE id=$3::text::uuid AND account_id=$1::text::uuid
+ AND status<>'deleted' AND NOT platform_tenant_required
+ON CONFLICT(account_id,name) DO UPDATE SET name=commit_sources.name
+WHERE commit_sources.app_id=excluded.app_id AND commit_sources.destination='event'
+ AND commit_sources.contract_version=3 AND NOT commit_sources.allow_tenant_selection AND commit_sources.operation_policy IS NULL
+RETURNING id::text,enabled
+`
+
+type CommitPublicationSourceParams struct {
+	AccountID string
+	Name      string
+	AppID     string
+}
+
+type CommitPublicationSourceRow struct {
+	ID      string
+	Enabled bool
+}
+
+func (q *Queries) CommitPublicationSource(ctx context.Context, db DBTX, arg CommitPublicationSourceParams) (CommitPublicationSourceRow, error) {
+	row := db.QueryRow(ctx, commitPublicationSource, arg.AccountID, arg.Name, arg.AppID)
+	var i CommitPublicationSourceRow
+	err := row.Scan(&i.ID, &i.Enabled)
+	return i, err
+}
+
 const commitReceiptIdentity = `-- name: CommitReceiptIdentity :one
 SELECT id::text,source_id::text,event_id::text,
  COALESCE(invocation_id::text,'')::text AS invocation_id,
- COALESCE(operation_id::text,'')::text AS operation_id,accepted_at
+ COALESCE(operation_id::text,'')::text AS operation_id,accepted_at,
+ COALESCE(publication_acceptance_id,0)::bigint AS publication_acceptance_id,
+ COALESCE(publication_source,'')::text AS publication_source,
+ COALESCE(publication_event_id,'')::text AS publication_event_id
 FROM commit_receipts WHERE account_id=$1::text::uuid
  AND source_id=$2::text::uuid AND event_id=$3::text::uuid
 `
@@ -6389,12 +7642,15 @@ type CommitReceiptIdentityParams struct {
 }
 
 type CommitReceiptIdentityRow struct {
-	ID           string
-	SourceID     string
-	EventID      string
-	InvocationID string
-	OperationID  string
-	AcceptedAt   pgtype.Timestamptz
+	ID                      string
+	SourceID                string
+	EventID                 string
+	InvocationID            string
+	OperationID             string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID int64
+	PublicationSource       string
+	PublicationEventID      string
 }
 
 func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg CommitReceiptIdentityParams) (CommitReceiptIdentityRow, error) {
@@ -6407,6 +7663,9 @@ func (q *Queries) CommitReceiptIdentity(ctx context.Context, db DBTX, arg Commit
 		&i.InvocationID,
 		&i.OperationID,
 		&i.AcceptedAt,
+		&i.PublicationAcceptanceID,
+		&i.PublicationSource,
+		&i.PublicationEventID,
 	)
 	return i, err
 }
@@ -6454,7 +7713,7 @@ func (q *Queries) CommitRelayObservationSummary(ctx context.Context, db DBTX, fr
 
 const commitSourceForManagedAdmission = `-- name: CommitSourceForManagedAdmission :one
 SELECT c.app_id::text, c.enabled, COALESCE(c.operation_policy,'')::text AS operation_policy,
- c.contract_version, c.allow_tenant_selection, a.platform_tenant_required
+ c.contract_version, c.allow_tenant_selection, c.destination, a.platform_tenant_required
 FROM commit_sources c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id
 WHERE c.account_id=$1::text::uuid AND c.id=$2::text::uuid
 FOR UPDATE OF c FOR SHARE OF a
@@ -6471,6 +7730,7 @@ type CommitSourceForManagedAdmissionRow struct {
 	OperationPolicy        string
 	ContractVersion        int32
 	AllowTenantSelection   bool
+	Destination            string
 	PlatformTenantRequired bool
 }
 
@@ -6483,6 +7743,7 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 		&i.OperationPolicy,
 		&i.ContractVersion,
 		&i.AllowTenantSelection,
+		&i.Destination,
 		&i.PlatformTenantRequired,
 	)
 	return i, err
@@ -6490,7 +7751,7 @@ func (q *Queries) CommitSourceForManagedAdmission(ctx context.Context, db DBTX, 
 
 const commitSourceIdentity = `-- name: CommitSourceIdentity :one
 SELECT id::text,app_id::text,name,enabled,COALESCE(operation_policy,'')::text AS operation_policy,
- contract_version,allow_tenant_selection,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
+ contract_version,allow_tenant_selection,destination,relay_status,last_checked_at,pending_events,blocked_events,oldest_pending_at
 FROM commit_sources WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
@@ -6507,6 +7768,7 @@ type CommitSourceIdentityRow struct {
 	OperationPolicy      string
 	ContractVersion      int32
 	AllowTenantSelection bool
+	Destination          string
 	RelayStatus          string
 	LastCheckedAt        pgtype.Timestamptz
 	PendingEvents        pgtype.Int8
@@ -6525,6 +7787,7 @@ func (q *Queries) CommitSourceIdentity(ctx context.Context, db DBTX, arg CommitS
 		&i.OperationPolicy,
 		&i.ContractVersion,
 		&i.AllowTenantSelection,
+		&i.Destination,
 		&i.RelayStatus,
 		&i.LastCheckedAt,
 		&i.PendingEvents,
@@ -6553,6 +7816,110 @@ func (q *Queries) CommitTenantAppScope(ctx context.Context, db DBTX, arg CommitT
 	var s_id string
 	err := row.Scan(&s_id)
 	return s_id, err
+}
+
+const compensateCloneCheckpointConfiguration = `-- name: CompensateCloneCheckpointConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
+ held_at=NULL,generation=g.generation+1
+WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.state='held'
+ AND g.operation_id=$3::uuid AND g.generation=$4::bigint AND g.held_at=$5::timestamptz
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_source_compensations c ON c.operation_id=o.id
+ WHERE o.id=g.operation_id AND o.status='compensating' AND c.state='compensated'
+ AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+ AND NOT EXISTS(SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=g.operation_id)
+ AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=g.operation_id AND f.state<>'released')
+`
+
+type CompensateCloneCheckpointConfigurationParams struct {
+	ProjectID        pgtype.UUID
+	AccountID        pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int64
+	HeldAt           pgtype.Timestamptz
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompensateCloneCheckpointConfiguration(ctx context.Context, db DBTX, arg CompensateCloneCheckpointConfigurationParams) (int64, error) {
+	result, err := db.Exec(ctx, compensateCloneCheckpointConfiguration,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.Generation,
+		arg.HeldAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const compensateCloneCheckpointObjectFence = `-- name: CompensateCloneCheckpointObjectFence :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations o,project_environment_clone_checkpoint_source_compensations c
+WHERE f.clone_operation_id=o.id AND f.token=o.id AND c.operation_id=o.id AND c.state='compensated'
+ AND o.id=$1::uuid AND f.bucket_id=$2::uuid
+ AND o.status='compensating' AND o.revision=$3::bigint
+ AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM project_environment_clone_object_grant_revocations g
+ WHERE g.operation_id=o.id AND g.source_bucket_id=f.bucket_id AND g.request_started_at IS NOT NULL AND g.state<>'drained')
+`
+
+type CompensateCloneCheckpointObjectFenceParams struct {
+	OperationID      pgtype.UUID
+	BucketID         pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompensateCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointObjectFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, compensateCloneCheckpointObjectFence,
+		arg.OperationID,
+		arg.BucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const compensateCloneCheckpointPostgresFence = `-- name: CompensateCloneCheckpointPostgresFence :execrows
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',
+ remote_terminal_state=$1::text,remote_released_at=$2::timestamptz,
+ released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=$3::uuid AND f.source_database_id=$4::uuid AND f.state='held'
+ AND $2::timestamptz<=clock_timestamp()
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_source_compensations c ON c.operation_id=o.id
+ WHERE o.id=f.operation_id AND o.status='compensating' AND c.state='compensated'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type CompensateCloneCheckpointPostgresFenceParams struct {
+	RemoteTerminalState string
+	RemoteReleasedAt    pgtype.Timestamptz
+	OperationID         pgtype.UUID
+	SourceDatabaseID    pgtype.UUID
+	ExpectedRevision    int64
+	WorkerToken         pgtype.UUID
+}
+
+func (q *Queries) CompensateCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg CompensateCloneCheckpointPostgresFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, compensateCloneCheckpointPostgresFence,
+		arg.RemoteTerminalState,
+		arg.RemoteReleasedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const completeAutomaticRouteCheck = `-- name: CompleteAutomaticRouteCheck :execrows
@@ -6602,6 +7969,70 @@ func (q *Queries) CompleteAutomaticRouteCheck(ctx context.Context, db DBTX, arg 
 		arg.AccountID,
 		arg.RequestID,
 		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeCloneCheckpointUnusedObjectReservation = `-- name: CompleteCloneCheckpointUnusedObjectReservation :execrows
+INSERT INTO project_environment_clone_checkpoint_unused_object_reservations(operation_id,source_bucket_id,target_bucket_id,reservation)
+SELECT o.id,$1::uuid,$2::uuid,$3::jsonb
+FROM project_environment_clone_operations o
+WHERE o.id=$4::uuid AND o.status='compensating'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=$1::uuid)
+`
+
+type CompleteCloneCheckpointUnusedObjectReservationParams struct {
+	SourceBucketID   pgtype.UUID
+	TargetBucketID   pgtype.UUID
+	Reservation      []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompleteCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg CompleteCloneCheckpointUnusedObjectReservationParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCloneCheckpointUnusedObjectReservation,
+		arg.SourceBucketID,
+		arg.TargetBucketID,
+		arg.Reservation,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeCloneTerminalCompensation = `-- name: CompleteCloneTerminalCompensation :execrows
+UPDATE project_environment_clone_operations SET status='compensated',revision=revision+1,
+ lease_token=NULL,lease_until=NULL,updated_at=clock_timestamp()
+WHERE id=$1::uuid AND account_id=$2::uuid AND project_id=$3::uuid
+ AND status='compensating' AND revision=$4::bigint
+ AND lease_token=$5::uuid AND lease_until>clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_compensation_receipts r WHERE r.operation_id=project_environment_clone_operations.id)
+`
+
+type CompleteCloneTerminalCompensationParams struct {
+	OperationID      pgtype.UUID
+	AccountID        pgtype.UUID
+	ProjectID        pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) CompleteCloneTerminalCompensation(ctx context.Context, db DBTX, arg CompleteCloneTerminalCompensationParams) (int64, error) {
+	result, err := db.Exec(ctx, completeCloneTerminalCompensation,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
 	)
 	if err != nil {
 		return 0, err
@@ -7250,6 +8681,17 @@ type CountAppEnvironmentIntentInScopeParams struct {
 
 func (q *Queries) CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error) {
 	row := db.QueryRow(ctx, countAppEnvironmentIntentInScope, arg.AccountID, arg.AppID, arg.Scope)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countCloneCheckpointPostgresCredentials = `-- name: CountCloneCheckpointPostgresCredentials :one
+SELECT count(*) FROM project_environment_clone_checkpoint_postgres_credentials WHERE account_id=$1
+`
+
+func (q *Queries) CountCloneCheckpointPostgresCredentials(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, countCloneCheckpointPostgresCredentials, accountID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -8413,7 +9855,9 @@ VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  $11::jsonb->'deployment_inputs'->'override_healthcheck',$11::jsonb->'deployment_inputs'->'override_liveness_probe',
  $11::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce($11::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
  coalesce($11::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce($11::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
- coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),
+ coalesce(($11::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+          nullif(($11::jsonb->'source'->>'full_rootfs')::boolean,false)),
  coalesce(($11::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  coalesce(($11::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
@@ -8458,17 +9902,21 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 const createEnvironmentGitSource = `-- name: CreateEnvironmentGitSource :one
 INSERT INTO environment_git_sources
     (account_id, project_id, environment_id, repository_id, installation_id,
-     repository, source_ref, manifest_path, mode, approval_policy, prune, generation)
+     repository, source_ref, manifest_path, mode, approval_policy, prune, generation, provider)
 SELECT p.account_id, p.id, e.id, $1::bigint,
        $2::bigint, $3::text,
        $4::text, $5::text,
        $6::text, $7::text, $8::boolean,
-       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0)
+       coalesce((SELECT max(old.generation)+1 FROM environment_git_sources old WHERE old.environment_id=e.id),0),
+       $9::text
 FROM projects p JOIN project_environments e ON e.project_id = p.id AND e.account_id = p.account_id
-WHERE p.account_id = $9::uuid AND p.id = $10::uuid
-  AND e.slug = $11::text
-  AND p.repo_full_name = $3::text AND p.install_id = $2::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE p.account_id = $10::uuid AND p.id = $11::uuid
+  AND e.slug = $12::text
+  AND (($9::text = 'github' AND p.repo_full_name = $3::text
+       AND p.install_id = $2::bigint)
+    OR ($9::text = 'gitlab' AND EXISTS (
+       SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -8480,6 +9928,7 @@ type CreateEnvironmentGitSourceParams struct {
 	Mode            string
 	ApprovalPolicy  string
 	Prune           bool
+	Provider        string
 	AccountID       pgtype.UUID
 	ProjectID       pgtype.UUID
 	EnvironmentSlug string
@@ -8495,6 +9944,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		arg.Mode,
 		arg.ApprovalPolicy,
 		arg.Prune,
+		arg.Provider,
 		arg.AccountID,
 		arg.ProjectID,
 		arg.EnvironmentSlug,
@@ -8526,6 +9976,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -9615,7 +11066,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -9657,6 +11108,8 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.SchedulePolicy,
 		&i.FailureRules,
 		&i.ScheduleRevision,
+		&i.ImageEntrypoint,
+		&i.ImageCmd,
 	)
 	return i, err
 }
@@ -10253,6 +11706,301 @@ func (q *Queries) DeleteAutomationScheduleCursor(ctx context.Context, db DBTX, a
 	return err
 }
 
+const deleteCloneCheckpointObjectPublicationGrant = `-- name: DeleteCloneCheckpointObjectPublicationGrant :execrows
+DELETE FROM object_storage_access_grants WHERE account_id=$1::uuid AND bucket_id=$2::uuid
+AND api_key_id=$3::uuid AND permission=$4::text
+`
+
+type DeleteCloneCheckpointObjectPublicationGrantParams struct {
+	AccountID  pgtype.UUID
+	BucketID   pgtype.UUID
+	ApiKeyID   pgtype.UUID
+	Permission string
+}
+
+func (q *Queries) DeleteCloneCheckpointObjectPublicationGrant(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointObjectPublicationGrant,
+		arg.AccountID,
+		arg.BucketID,
+		arg.ApiKeyID,
+		arg.Permission,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneCheckpointObjectPublicationSecret = `-- name: DeleteCloneCheckpointObjectPublicationSecret :execrows
+DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1::uuid
+AND account_id=$2::uuid AND app_id=$3::uuid AND scope=$4::text AND key=$5::text
+`
+
+type DeleteCloneCheckpointObjectPublicationSecretParams struct {
+	CredentialID pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Key          string
+}
+
+func (q *Queries) DeleteCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointObjectPublicationSecretParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointObjectPublicationSecret,
+		arg.CredentialID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneCheckpointPgAppSecret = `-- name: DeleteCloneCheckpointPgAppSecret :execrows
+DELETE FROM app_secrets WHERE managed_postgres_binding_id=$1 AND account_id=$2 AND app_id=$3 AND scope=$4 AND key=$5
+`
+
+type DeleteCloneCheckpointPgAppSecretParams struct {
+	ManagedPostgresBindingID pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+}
+
+func (q *Queries) DeleteCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg DeleteCloneCheckpointPgAppSecretParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointPgAppSecret,
+		arg.ManagedPostgresBindingID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneCheckpointUnusedObjectReservationBucket = `-- name: DeleteCloneCheckpointUnusedObjectReservationBucket :execrows
+UPDATE object_buckets b SET state='deleted',attempt_count=0,last_error_code='',retry_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE b.id=$1::uuid AND b.environment_clone_operation_id=o.id AND b.account_id=o.account_id
+AND b.environment_clone_source_bucket_id=$2::uuid AND b.state='provisioning'
+AND b.lease_token IS NULL AND b.lease_until IS NULL AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=$3::uuid AND o.status='compensating'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp()
+AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_unused_object_reservations u WHERE u.operation_id=o.id AND u.source_bucket_id=b.environment_clone_source_bucket_id AND u.target_bucket_id=b.id)
+AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t WHERE t.operation_id=o.id AND t.source_bucket_id=b.environment_clone_source_bucket_id)
+`
+
+type DeleteCloneCheckpointUnusedObjectReservationBucketParams struct {
+	TargetBucketID   pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) DeleteCloneCheckpointUnusedObjectReservationBucket(ctx context.Context, db DBTX, arg DeleteCloneCheckpointUnusedObjectReservationBucketParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneCheckpointUnusedObjectReservationBucket,
+		arg.TargetBucketID,
+		arg.SourceBucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneConfigurationAppEnvironmentSecretRefSuppressions = `-- name: DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions :exec
+DELETE FROM app_environment_secret_ref_suppressions WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppEnvironmentSecretRefSuppressionsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppEnvironmentSecretRefSuppressions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvironmentSecretRefSuppressionsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppEnvironmentSecretRefSuppressions, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationAppEnvironmentSecretRefs = `-- name: DeleteCloneConfigurationAppEnvironmentSecretRefs :exec
+DELETE FROM app_environment_secret_refs WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppEnvironmentSecretRefsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppEnvironmentSecretRefs(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvironmentSecretRefsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppEnvironmentSecretRefs, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationAppEnvs = `-- name: DeleteCloneConfigurationAppEnvs :exec
+DELETE FROM app_envs WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppEnvsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppEnvs(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppEnvsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppEnvs, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationAppSecrets = `-- name: DeleteCloneConfigurationAppSecrets :exec
+DELETE FROM app_secrets WHERE app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND scope=$2::text
+`
+
+type DeleteCloneConfigurationAppSecretsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationAppSecrets(ctx context.Context, db DBTX, arg DeleteCloneConfigurationAppSecretsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationAppSecrets, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationFeatureFlagVersions = `-- name: DeleteCloneConfigurationFeatureFlagVersions :exec
+DELETE FROM feature_flag_versions WHERE environment_id=$1::uuid
+`
+
+func (q *Queries) DeleteCloneConfigurationFeatureFlagVersions(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationFeatureFlagVersions, environmentID)
+	return err
+}
+
+const deleteCloneConfigurationProjectEnvironmentConfigVersions = `-- name: DeleteCloneConfigurationProjectEnvironmentConfigVersions :exec
+DELETE FROM project_environment_config_versions WHERE project_id=$1::uuid AND environment_slug=$2::text
+`
+
+type DeleteCloneConfigurationProjectEnvironmentConfigVersionsParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationProjectEnvironmentConfigVersions(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentConfigVersionsParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentConfigVersions, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationProjectEnvironmentEdgePolicies = `-- name: DeleteCloneConfigurationProjectEnvironmentEdgePolicies :exec
+DELETE FROM project_environment_edge_policies WHERE project_id=$1::uuid AND environment_slug=$2::text
+`
+
+type DeleteCloneConfigurationProjectEnvironmentEdgePoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationProjectEnvironmentEdgePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentEdgePoliciesParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentEdgePolicies, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneConfigurationProjectEnvironmentRoutePolicies = `-- name: DeleteCloneConfigurationProjectEnvironmentRoutePolicies :exec
+DELETE FROM project_environment_route_policies WHERE project_id=$1::uuid AND environment_slug=$2::text
+`
+
+type DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneConfigurationProjectEnvironmentRoutePolicies(ctx context.Context, db DBTX, arg DeleteCloneConfigurationProjectEnvironmentRoutePoliciesParams) error {
+	_, err := db.Exec(ctx, deleteCloneConfigurationProjectEnvironmentRoutePolicies, arg.ProjectID, arg.Environment)
+	return err
+}
+
+const deleteCloneOwnedDeployments = `-- name: DeleteCloneOwnedDeployments :execrows
+DELETE FROM deployments d USING project_environment_clone_workloads w
+WHERE w.operation_id=$1::uuid AND w.target_deployment_id=d.id AND w.app_id=d.app_id
+ AND d.scope=$2::text AND d.reason='environment-clone:'||$1::uuid::text
+`
+
+type DeleteCloneOwnedDeploymentsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteCloneOwnedDeployments(ctx context.Context, db DBTX, arg DeleteCloneOwnedDeploymentsParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneOwnedDeployments, arg.OperationID, arg.Environment)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneOwnedEnvironment = `-- name: DeleteCloneOwnedEnvironment :execrows
+DELETE FROM project_environments WHERE id=$1 AND account_id=$2 AND project_id=$3 AND slug=$4 AND NOT protected
+`
+
+type DeleteCloneOwnedEnvironmentParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) DeleteCloneOwnedEnvironment(ctx context.Context, db DBTX, arg DeleteCloneOwnedEnvironmentParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteCloneOwnedEnvironment,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Slug,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteCloneOwnedWorkloadHeads = `-- name: DeleteCloneOwnedWorkloadHeads :exec
+DELETE FROM project_environment_workload_heads WHERE environment_id=$1
+`
+
+func (q *Queries) DeleteCloneOwnedWorkloadHeads(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCloneOwnedWorkloadHeads, environmentID)
+	return err
+}
+
+const deleteCloneOwnedWorkloadPins = `-- name: DeleteCloneOwnedWorkloadPins :exec
+DELETE FROM project_environment_workload_deployment_specs p USING project_environment_workload_specs s,project_environment_clone_workloads w
+WHERE p.spec_id=s.id AND s.environment_id=$1::uuid AND w.operation_id=$2::uuid AND w.target_deployment_id=p.deployment_id AND w.app_id=s.app_id
+`
+
+type DeleteCloneOwnedWorkloadPinsParams struct {
+	EnvironmentID pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+func (q *Queries) DeleteCloneOwnedWorkloadPins(ctx context.Context, db DBTX, arg DeleteCloneOwnedWorkloadPinsParams) error {
+	_, err := db.Exec(ctx, deleteCloneOwnedWorkloadPins, arg.EnvironmentID, arg.OperationID)
+	return err
+}
+
+const deleteCloneOwnedWorkloadSpecs = `-- name: DeleteCloneOwnedWorkloadSpecs :exec
+DELETE FROM project_environment_workload_specs WHERE environment_id=$1
+`
+
+func (q *Queries) DeleteCloneOwnedWorkloadSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteCloneOwnedWorkloadSpecs, environmentID)
+	return err
+}
+
 const deleteCron = `-- name: DeleteCron :exec
 delete from crons where id = $1 and app_id = $2
 `
@@ -10633,6 +12381,18 @@ where d.record_id=$1::uuid and r.id=d.record_id and t.id=r.trigger_id
 func (q *Queries) DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteExternalTriggerDeadLetterAudit, recordID)
 	return err
+}
+
+const deleteGitLabOAuthConnection = `-- name: DeleteGitLabOAuthConnection :execrows
+DELETE FROM gitlab_oauth_connections WHERE account_id=$1::uuid
+`
+
+func (q *Queries) DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, deleteGitLabOAuthConnection, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
@@ -11660,6 +13420,42 @@ func (q *Queries) EnvironmentGitOpsCandidateByInput(ctx context.Context, db DBTX
 	return id, err
 }
 
+const environmentGitOpsHasServingManagedWorkload = `-- name: EnvironmentGitOpsHasServingManagedWorkload :one
+SELECT EXISTS (
+  SELECT 1 FROM deployments d
+  JOIN apps a ON a.id = d.app_id
+  WHERE a.account_id = $1::uuid
+    AND a.project_id = $2::uuid
+    AND d.scope = $3
+    AND d.environment_workload_runtime IS NOT NULL
+    AND (
+      (d.status = 'live' AND NOT d.environment_workload_held)
+      OR EXISTS (
+        SELECT 1 FROM project_release_sets rs
+        JOIN project_release_members rm ON rm.release_id = rs.id
+        WHERE rs.project_id = a.project_id AND rs.account_id = a.account_id
+          AND rs.environment_slug = $3 AND rs.active
+          AND rm.app_id = a.id AND rm.deployment_id = d.id
+      )
+    )
+) AS managed
+`
+
+type EnvironmentGitOpsHasServingManagedWorkloadParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	Scope     string
+}
+
+// ADR-568: an empty definition cannot bypass a prior managed release or the
+// router's live-scope fallback when no active release exists.
+func (q *Queries) EnvironmentGitOpsHasServingManagedWorkload(ctx context.Context, db DBTX, arg EnvironmentGitOpsHasServingManagedWorkloadParams) (bool, error) {
+	row := db.QueryRow(ctx, environmentGitOpsHasServingManagedWorkload, arg.AccountID, arg.ProjectID, arg.Scope)
+	var managed bool
+	err := row.Scan(&managed)
+	return managed, err
+}
+
 const environmentGitOpsImageCandidate = `-- name: EnvironmentGitOpsImageCandidate :one
 SELECT id,app_id,status,coalesce(build_id::text,'')::text AS build_id,coalesce(rootfs_path,'')::text AS rootfs_path,coalesce(rootfs_key,'')::text AS rootfs_key
 FROM deployments WHERE id=$1::uuid AND environment_workload_runtime IS NOT NULL
@@ -12594,7 +14390,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -12628,6 +14424,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -15395,6 +17192,622 @@ func (q *Queries) FinishAppHealthCollection(ctx context.Context, db DBTX, arg Fi
 	return err
 }
 
+const finishCloneCheckpointCaptureRetirement = `-- name: FinishCloneCheckpointCaptureRetirement :execrows
+UPDATE project_environment_clone_checkpoint_capture_retirements c SET state='retired',observation=$1::jsonb,
+ observation_sha256=$2::text,retired_at=$3::timestamptz
+WHERE c.operation_id=$4::uuid AND c.state='requested' AND $3::timestamptz>=c.requested_at
+ AND $3::timestamptz<=clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointCaptureRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	RetiredAt         pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointCaptureRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointCaptureRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.RetiredAt,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointObjectCopy = `-- name: FinishCloneCheckpointObjectCopy :execrows
+UPDATE project_environment_clone_checkpoint_object_copies i SET state='copied',observation_sha256=$1::text,copied_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_bucket_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectCopyParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectCopyParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectCopy,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointObjectRetirement = `-- name: FinishCloneCheckpointObjectRetirement :execrows
+UPDATE project_environment_clone_checkpoint_object_retirements i SET state='retired',observation=$1::jsonb,observation_sha256=$2::text,retired_at=clock_timestamp()
+WHERE i.operation_id=$3::uuid AND i.source_bucket_id=$4::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='compensating'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointObjectRetirementBucket = `-- name: FinishCloneCheckpointObjectRetirementBucket :execrows
+UPDATE object_buckets b SET state='deleted',attempt_count=0,last_error_code='',retry_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_operations o
+WHERE b.id=$1::uuid AND b.environment_clone_operation_id=o.id
+AND b.environment_clone_source_bucket_id=$2::uuid AND b.account_id=o.account_id
+AND b.state IN ('provisioning','ready','deleting') AND b.lease_token IS NULL AND b.lease_until IS NULL
+AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=$3::uuid AND o.status='compensating' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp()
+AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_retirements i WHERE i.operation_id=o.id AND i.source_bucket_id=b.environment_clone_source_bucket_id AND i.state='retired')
+`
+
+type FinishCloneCheckpointObjectRetirementBucketParams struct {
+	TargetBucketID   pgtype.UUID
+	SourceBucketID   pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectRetirementBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectRetirementBucketParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectRetirementBucket,
+		arg.TargetBucketID,
+		arg.SourceBucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointObjectTargetBucket = `-- name: FinishCloneCheckpointObjectTargetBucket :execrows
+UPDATE object_buckets b SET state='ready',updated_at=clock_timestamp()
+WHERE b.id=$1::uuid AND b.environment_clone_operation_id=$2::uuid
+ AND b.state='provisioning' AND b.lease_token IS NULL AND b.lease_until IS NULL AND NOT b.public_read AND b.serve_at IS NULL
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_object_targets t ON t.operation_id=o.id
+ WHERE o.id=b.environment_clone_operation_id AND t.target_bucket_id=b.id AND t.state='ready'
+ AND o.status='capturing' AND o.revision=$3::bigint AND o.lease_token=$4::uuid
+ AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectTargetBucketParams struct {
+	TargetBucketID   pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectTargetBucket(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectTargetBucketParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectTargetBucket,
+		arg.TargetBucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointObjectVerification = `-- name: FinishCloneCheckpointObjectVerification :execrows
+UPDATE project_environment_clone_checkpoint_object_verification i SET state='verified',observation_sha256=$1::text,verified_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_bucket_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointObjectVerificationParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointObjectVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointObjectVerification,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPgActivation = `-- name: FinishCloneCheckpointPgActivation :execrows
+UPDATE project_environment_clone_checkpoint_pg_activations i SET state='active',observation=$1::jsonb,observation_sha256=$2::text,activated_at=clock_timestamp()
+WHERE i.operation_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPgActivationParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgActivationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPgActivation,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPgCopyRetirement = `-- name: FinishCloneCheckpointPgCopyRetirement :execrows
+UPDATE project_environment_clone_checkpoint_pg_copy_retirements c SET state='retired',
+ observation=$1::jsonb,observation_sha256=$2::text,retired_at=$3::timestamptz
+WHERE c.operation_id=$4::uuid AND c.source_database_id=$5::uuid AND c.state='requested'
+ AND $3::timestamptz BETWEEN c.requested_at AND clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPgCopyRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	RetiredAt         pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgCopyRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPgCopyRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.RetiredAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPgTargetCompensation = `-- name: FinishCloneCheckpointPgTargetCompensation :execrows
+UPDATE project_environment_clone_checkpoint_pg_target_compensations c SET state='compensated',
+ observation=$1::jsonb,observation_sha256=$2::text,compensated_at=$3::timestamptz
+WHERE c.operation_id=$4::uuid AND c.source_database_id=$5::uuid AND c.state='requested'
+ AND $3::timestamptz BETWEEN c.requested_at AND clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPgTargetCompensationParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	CompensatedAt     pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgTargetCompensationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPgTargetCompensation,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.CompensatedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPgTargetRestore = `-- name: FinishCloneCheckpointPgTargetRestore :execrows
+UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleted',
+ deletion_started_at=coalesce(r.deletion_started_at,clock_timestamp()),deleted_at=coalesce(r.deleted_at,clock_timestamp()),updated_at=clock_timestamp(),
+ checkpoint_compensation_observation_sha256=$1::text
+WHERE r.operation_id=$2::uuid AND r.source_database_id=$3::uuid
+ AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_target_compensations c JOIN project_environment_clone_operations o ON o.id=c.operation_id
+ WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='compensated' AND c.observation_sha256=$1::text
+ AND o.status='compensating' AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPgTargetRestoreParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPgTargetRestore(ctx context.Context, db DBTX, arg FinishCloneCheckpointPgTargetRestoreParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPgTargetRestore,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresCredential = `-- name: FinishCloneCheckpointPostgresCredential :execrows
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='prepared',observation_sha256=$1::text,prepared_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_binding_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresCredentialParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBindingID   pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresCredentialParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresCredential,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresCredentialRetirement = `-- name: FinishCloneCheckpointPostgresCredentialRetirement :execrows
+UPDATE project_environment_clone_checkpoint_pg_credential_retirements i SET state='retired',observation=$1::jsonb,observation_sha256=$2::text,retired_at=clock_timestamp()
+WHERE i.operation_id=$3::uuid AND i.source_binding_id=$4::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='compensating'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresCredentialRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBindingID   pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresCredentialRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresCredentialRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresIsolation = `-- name: FinishCloneCheckpointPostgresIsolation :execrows
+UPDATE project_environment_clone_checkpoint_postgres_isolation i SET state='adopted',observation_sha256=$1::text,
+adopted_database_id=$2::uuid,adopted_at=clock_timestamp()
+WHERE i.operation_id=$3::uuid AND i.source_database_id=$4::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_postgres_snapshot_restores r ON r.operation_id=o.id
+WHERE o.id=i.operation_id AND r.source_database_id=i.source_database_id AND r.state='adopted' AND r.adopted_database_id=$2::uuid
+AND o.status='capturing' AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresIsolationParams struct {
+	ObservationSha256 string
+	AdoptedDatabaseID pgtype.UUID
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresIsolationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresIsolation,
+		arg.ObservationSha256,
+		arg.AdoptedDatabaseID,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresRuntime = `-- name: FinishCloneCheckpointPostgresRuntime :execrows
+UPDATE project_environment_clone_checkpoint_postgres_runtime i SET state='ready',observation=$1::jsonb,observation_sha256=$2::text,
+data_resource_id=$3::text,ready_at=clock_timestamp()
+WHERE i.operation_id=$4::uuid AND i.source_database_id=$5::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresRuntimeParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	DataResourceID    string
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresRuntime,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.DataResourceID,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresRuntimeDatabase = `-- name: FinishCloneCheckpointPostgresRuntimeDatabase :execrows
+UPDATE managed_postgres_databases d SET state='ready',data_resource_id=i.data_resource_id,observed_generation=1,updated_at=clock_timestamp()
+FROM project_environment_clone_checkpoint_postgres_runtime i,project_environment_clone_postgres_snapshot_restores r,project_environment_clone_operations o
+WHERE i.operation_id=$1::uuid AND i.source_database_id=$2::uuid AND i.state='ready'
+AND r.operation_id=i.operation_id AND r.source_database_id=i.source_database_id AND r.state='adopted'
+AND d.id=r.target_owner_id AND d.id=r.adopted_database_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
+AND d.clone_resource_role='checkpoint' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+AND d.lease_token IS NULL AND d.lease_until IS NULL AND d.deleted_at IS NULL
+AND d.provider_resource_id=r.target_provider_resource_id AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
+AND o.id=i.operation_id AND o.status='capturing' AND o.revision=$3::bigint
+AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+`
+
+type FinishCloneCheckpointPostgresRuntimeDatabaseParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresRuntimeDatabase(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresRuntimeDatabaseParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresRuntimeDatabase,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointPostgresVerification = `-- name: FinishCloneCheckpointPostgresVerification :execrows
+UPDATE project_environment_clone_checkpoint_postgres_verification i SET state='verified',observation_sha256=$1::text,verified_at=clock_timestamp()
+WHERE i.operation_id=$2::uuid AND i.source_database_id=$3::uuid AND i.state='requested'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointPostgresVerificationParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg FinishCloneCheckpointPostgresVerificationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointPostgresVerification,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointRelease = `-- name: FinishCloneCheckpointRelease :execrows
+UPDATE project_environment_clone_operations o SET resources=$1::jsonb,revision=o.revision+1,updated_at=clock_timestamp()
+WHERE o.id=$2::uuid AND o.account_id=$3::uuid AND o.project_id=$4::uuid
+ AND o.status='capturing' AND o.revision=$5::bigint
+ AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+ AND EXISTS (SELECT 1 FROM project_environment_clone_checkpoint_releases r WHERE r.operation_id=o.id AND r.state='released'
+ AND r.observation_sha256=$7::text)
+ AND EXISTS (SELECT 1 FROM project_environment_clone_configuration_guards g WHERE g.project_id=o.project_id AND g.account_id=o.account_id
+ AND g.state='open' AND g.operation_id IS NULL AND g.generation=$8::bigint)
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_postgres_write_fences f WHERE f.operation_id=o.id AND f.state<>'released')
+ AND NOT EXISTS (SELECT 1 FROM object_bucket_write_fences f WHERE f.clone_operation_id=o.id)
+`
+
+type FinishCloneCheckpointReleaseParams struct {
+	Resources          []byte
+	OperationID        pgtype.UUID
+	AccountID          pgtype.UUID
+	ProjectID          pgtype.UUID
+	ExpectedRevision   int64
+	WorkerToken        pgtype.UUID
+	ObservationSha256  string
+	ReleasedGeneration int64
+}
+
+func (q *Queries) FinishCloneCheckpointRelease(ctx context.Context, db DBTX, arg FinishCloneCheckpointReleaseParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointRelease,
+		arg.Resources,
+		arg.OperationID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+		arg.ObservationSha256,
+		arg.ReleasedGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointSourceCompensation = `-- name: FinishCloneCheckpointSourceCompensation :execrows
+UPDATE project_environment_clone_checkpoint_source_compensations c SET state='compensated',
+ observation=$1::jsonb,observation_sha256=$2::text,
+ compensated_at=$3::timestamptz
+WHERE c.operation_id=$4::uuid AND c.state='requested'
+ AND $3::timestamptz BETWEEN c.requested_at AND clock_timestamp()
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp())
+`
+
+type FinishCloneCheckpointSourceCompensationParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	CompensatedAt     pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg FinishCloneCheckpointSourceCompensationParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointSourceCompensation,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.CompensatedAt,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishCloneCheckpointWorkloadRetirement = `-- name: FinishCloneCheckpointWorkloadRetirement :execrows
+UPDATE project_environment_clone_checkpoint_workload_retirements r SET state='retired',observation=$1::jsonb,
+ observation_sha256=$2::text,retired_at=$3::timestamptz
+FROM project_environment_clone_operations o
+WHERE r.operation_id=$4::uuid AND r.state='requested' AND o.id=r.operation_id
+ AND o.status='compensating' AND o.revision=$5::bigint
+ AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+`
+
+type FinishCloneCheckpointWorkloadRetirementParams struct {
+	Observation       []byte
+	ObservationSha256 string
+	RetiredAt         pgtype.Timestamptz
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) FinishCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg FinishCloneCheckpointWorkloadRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, finishCloneCheckpointWorkloadRetirement,
+		arg.Observation,
+		arg.ObservationSha256,
+		arg.RetiredAt,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishClonePostgresWriteFenceAbandonment = `-- name: FinishClonePostgresWriteFenceAbandonment :one
 UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state=$1::text,
  remote_released_at=$2::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -15402,7 +17815,7 @@ WHERE f.operation_id=$3::uuid AND f.source_database_id=$4::uuid
  AND f.state='abandoning' AND $2::timestamptz<=clock_timestamp()
  AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
  AND EXISTS (SELECT 1 FROM project_environment_clone_operations o
-  WHERE o.id=f.operation_id AND o.status='compensating' AND o.revision=$5::bigint
+  WHERE o.id=f.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint' AND o.revision=$5::bigint
    AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING f.operation_id, f.source_database_id, f.source_version, f.backend_id, f.backend_fingerprint, f.source_provider_resource_id, f.source_data_resource_id, f.state, f.remote_terminal_state, f.remote_released_at, f.released_at, f.created_at, f.updated_at
 `
 
@@ -16199,7 +18612,7 @@ UPDATE project_environment_clone_postgres_copy_readers c SET state='retired',ava
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='deleting'
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=$3::text AND o.revision=$4::bigint
-        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at
+        AND o.lease_token::text=$5::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at, c.checkpoint_retirement_observation_sha256
 `
 
 type FinishProjectEnvironmentClonePostgresCopyReaderCleanupParams struct {
@@ -16240,6 +18653,7 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresCopyReaderCleanup(ctx con
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -16250,7 +18664,7 @@ WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='del
     AND c.provider_resource_id=$3::text AND c.provider_created_at=$4::timestamptz
     AND EXISTS(SELECT 1 FROM managed_postgres_databases d WHERE d.id=c.target_database_id AND d.state='deleted' AND d.deleted_at IS NOT NULL AND d.provider_resource_id=c.provider_resource_id)
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
-        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at, c.checkpoint_retirement_observation_sha256
 `
 
 type FinishProjectEnvironmentClonePostgresCopyTargetCleanupParams struct {
@@ -16289,6 +18703,7 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresCopyTargetCleanup(ctx con
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -16347,9 +18762,9 @@ const finishProjectEnvironmentClonePostgresSnapshotRestoreCleanup = `-- name: Fi
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='deleting'
     AND (r.request_started_at IS NULL OR (r.target_provider_resource_id=$3::text AND jsonb_array_length(r.delete_operation_ids)>0 AND r.delete_operation_ids=$4::jsonb))
-    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint'
         AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp())
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams struct {
@@ -16391,6 +18806,7 @@ func (q *Queries) FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ct
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -17240,6 +19656,28 @@ func (q *Queries) GetBuildRuntimeBaseRef(ctx context.Context, db DBTX, buildID p
 	var runtime_base_ref string
 	err := row.Scan(&runtime_base_ref)
 	return runtime_base_ref, err
+}
+
+const getCloneCheckpointWakeDispatch = `-- name: GetCloneCheckpointWakeDispatch :one
+SELECT instance_id, app_id, deployment_id, node_id, wake_id, request_reason, method, dispatched_at FROM project_environment_clone_wake_dispatches WHERE instance_id=$1::uuid
+`
+
+// A sender reads only the dispatch just retained in its admission transaction.
+// This is original ownership, not a re-read of current instance metadata.
+func (q *Queries) GetCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ProjectEnvironmentCloneWakeDispatch, error) {
+	row := db.QueryRow(ctx, getCloneCheckpointWakeDispatch, instanceID)
+	var i ProjectEnvironmentCloneWakeDispatch
+	err := row.Scan(
+		&i.InstanceID,
+		&i.AppID,
+		&i.DeploymentID,
+		&i.NodeID,
+		&i.WakeID,
+		&i.RequestReason,
+		&i.Method,
+		&i.DispatchedAt,
+	)
+	return i, err
 }
 
 const getCurrentApplicationStandardRuntimeReceipt = `-- name: GetCurrentApplicationStandardRuntimeReceipt :one
@@ -18954,7 +21392,7 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text AND NOT s.detached
@@ -18995,12 +21433,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -19032,6 +21471,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -19146,6 +21586,26 @@ func (q *Queries) GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFre
 		&i.ResultSnapshot,
 		&i.ScannedAt,
 		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const getGitLabOAuthConnection = `-- name: GetGitLabOAuthConnection :one
+SELECT account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at FROM gitlab_oauth_connections WHERE account_id = $1::uuid
+`
+
+func (q *Queries) GetGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, getGitLabOAuthConnection, accountID)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -22029,6 +24489,1043 @@ func (q *Queries) InsertCheckedRollback(ctx context.Context, db DBTX, arg Insert
 	return err
 }
 
+const insertCloneCheckpointCaptureCatalogueRetirement = `-- name: InsertCloneCheckpointCaptureCatalogueRetirement :execrows
+INSERT INTO project_environment_clone_checkpoint_capture_catalogues(operation_id,source_kind,source_id,capture_identity,source_resource_id,observation_sha256,retired_at)
+SELECT c.operation_id,$1::text,$2::uuid,$3::text,$4::text,c.observation_sha256,c.retired_at
+FROM project_environment_clone_checkpoint_capture_retirements c JOIN project_environment_clone_operations o ON o.id=c.operation_id
+WHERE c.operation_id=$5::uuid AND c.state='retired' AND c.observation_sha256=$6::text
+ AND o.status='compensating' AND o.revision=$7::bigint AND o.lease_token=$8::uuid AND o.lease_until>clock_timestamp()
+`
+
+type InsertCloneCheckpointCaptureCatalogueRetirementParams struct {
+	SourceKind        string
+	SourceID          pgtype.UUID
+	CaptureIdentity   string
+	SourceResourceID  string
+	OperationID       pgtype.UUID
+	ObservationSha256 string
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointCaptureCatalogueRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointCaptureCatalogueRetirementParams) (int64, error) {
+	result, err := db.Exec(ctx, insertCloneCheckpointCaptureCatalogueRetirement,
+		arg.SourceKind,
+		arg.SourceID,
+		arg.CaptureIdentity,
+		arg.SourceResourceID,
+		arg.OperationID,
+		arg.ObservationSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertCloneCheckpointCaptureRetirement = `-- name: InsertCloneCheckpointCaptureRetirement :one
+INSERT INTO project_environment_clone_checkpoint_capture_retirements(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='compensating'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointCaptureRetirementParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointCaptureRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointCaptureRetirement,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointCaptureRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectCopy = `-- name: InsertCloneCheckpointObjectCopy :one
+INSERT INTO project_environment_clone_checkpoint_object_copies(operation_id,source_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, copied_at
+`
+
+type InsertCloneCheckpointObjectCopyParams struct {
+	SourceBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectCopy,
+		arg.SourceBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectCopy
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.CopiedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectCredentialReservation = `-- name: InsertCloneCheckpointObjectCredentialReservation :one
+INSERT INTO project_environment_clone_checkpoint_object_credential_ids(operation_id,plan,plan_sha256)
+SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state
+`
+
+type InsertCloneCheckpointObjectCredentialReservationParams struct {
+	Plan             []byte
+	PlanSha256       string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectCredentialReservationParams) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectCredentialReservation,
+		arg.Plan,
+		arg.PlanSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectCredentialID
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectPublication = `-- name: InsertCloneCheckpointObjectPublication :one
+INSERT INTO project_environment_clone_checkpoint_object_publications(operation_id,plan,plan_sha256)
+SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state, withdrawn_at
+`
+
+type InsertCloneCheckpointObjectPublicationParams struct {
+	Plan             []byte
+	PlanSha256       string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationParams) (ProjectEnvironmentCloneCheckpointObjectPublication, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectPublication,
+		arg.Plan,
+		arg.PlanSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.WithdrawnAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectPublicationGrant = `-- name: InsertCloneCheckpointObjectPublicationGrant :execrows
+INSERT INTO object_storage_access_grants(account_id,bucket_id,api_key_id,permission)
+SELECT b.account_id,b.id,k.id,$1::text
+FROM object_buckets b JOIN api_keys k ON k.account_id=b.account_id
+JOIN project_environment_clone_operations o ON o.id=b.environment_clone_operation_id AND o.account_id=b.account_id
+WHERE b.account_id=$2::uuid AND b.id=$3::uuid AND b.state='ready'
+AND b.scope=o.target_environment AND NOT b.public_read AND b.serve_at IS NULL
+AND o.id=$4::uuid AND o.status='capturing'
+AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+AND k.id=$7::uuid AND k.status IN('active','grace') AND NOT('admin'=ANY(k.scopes))
+AND ($1::text<>'read' OR k.scopes @> ARRAY['storage:read']::text[])
+AND ($1::text<>'write' OR k.scopes @> ARRAY['storage:write']::text[])
+AND ($1::text<>'read_write' OR k.scopes @> ARRAY['storage:read','storage:write']::text[])
+`
+
+type InsertCloneCheckpointObjectPublicationGrantParams struct {
+	Permission       string
+	AccountID        pgtype.UUID
+	BucketID         pgtype.UUID
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+	ApiKeyID         pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectPublicationGrant(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationGrantParams) (int64, error) {
+	result, err := db.Exec(ctx, insertCloneCheckpointObjectPublicationGrant,
+		arg.Permission,
+		arg.AccountID,
+		arg.BucketID,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+		arg.ApiKeyID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const insertCloneCheckpointObjectPublicationSecret = `-- name: InsertCloneCheckpointObjectPublicationSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_object_storage_credential_id,secret_class,secret_version)
+VALUES($1::uuid,$2::uuid,$3::text,$4::text,
+$5::bytea,$6::text,$7::text,$8::uuid,'persistent',1)
+`
+
+type InsertCloneCheckpointObjectPublicationSecretParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+	Key          string
+	Ciphertext   []byte
+	Kid          string
+	ValueHash    string
+	CredentialID pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectPublicationSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectPublicationSecretParams) error {
+	_, err := db.Exec(ctx, insertCloneCheckpointObjectPublicationSecret,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.CredentialID,
+	)
+	return err
+}
+
+const insertCloneCheckpointObjectRetirement = `-- name: InsertCloneCheckpointObjectRetirement :one
+INSERT INTO project_environment_clone_checkpoint_object_retirements(operation_id,source_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='compensating' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointObjectRetirementParams struct {
+	SourceBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectRetirement,
+		arg.SourceBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectTarget = `-- name: InsertCloneCheckpointObjectTarget :one
+INSERT INTO project_environment_clone_checkpoint_object_targets(operation_id,source_bucket_id,target_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::uuid,$3::jsonb
+FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+WHERE o.id=$4::uuid AND o.status='capturing' AND r.state='released'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, target_bucket_id, plan, state, requested_at, observation_sha256, ready_at
+`
+
+type InsertCloneCheckpointObjectTargetParams struct {
+	SourceBucketID   pgtype.UUID
+	TargetBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectTarget,
+		arg.SourceBucketID,
+		arg.TargetBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.TargetBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectValues = `-- name: InsertCloneCheckpointObjectValues :one
+INSERT INTO project_environment_clone_checkpoint_object_values(operation_id,payload,payload_sha256)
+SELECT o.id,$1::jsonb,$2::text FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, payload, payload_sha256, state
+`
+
+type InsertCloneCheckpointObjectValuesParams struct {
+	Payload          []byte
+	PayloadSha256    string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectValues(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectValuesParams) (ProjectEnvironmentCloneCheckpointObjectValue, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectValues,
+		arg.Payload,
+		arg.PayloadSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.Payload,
+		&i.PayloadSha256,
+		&i.State,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointObjectVerification = `-- name: InsertCloneCheckpointObjectVerification :one
+INSERT INTO project_environment_clone_checkpoint_object_verification(operation_id,source_bucket_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, verified_at
+`
+
+type InsertCloneCheckpointObjectVerificationParams struct {
+	SourceBucketID   pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointObjectVerification,
+		arg.SourceBucketID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointObjectVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPgActivation = `-- name: InsertCloneCheckpointPgActivation :one
+INSERT INTO project_environment_clone_checkpoint_pg_activations(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='capturing' AND o.revision=$3::bigint
+AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, activated_at
+`
+
+type InsertCloneCheckpointPgActivationParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgActivation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgActivationParams) (ProjectEnvironmentCloneCheckpointPgActivation, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgActivation,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgActivation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.ActivatedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPgAppSecret = `-- name: InsertCloneCheckpointPgAppSecret :exec
+INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,managed_credential_ref,managed_credential_generation,secret_class,secret_version)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,1,'persistent',1)
+`
+
+type InsertCloneCheckpointPgAppSecretParams struct {
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	Scope                    string
+	Key                      string
+	Ciphertext               []byte
+	Kid                      pgtype.Text
+	ValueHash                pgtype.Text
+	ManagedPostgresBindingID pgtype.UUID
+	ManagedCredentialRef     pgtype.Text
+}
+
+func (q *Queries) InsertCloneCheckpointPgAppSecret(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgAppSecretParams) error {
+	_, err := db.Exec(ctx, insertCloneCheckpointPgAppSecret,
+		arg.AccountID,
+		arg.AppID,
+		arg.Scope,
+		arg.Key,
+		arg.Ciphertext,
+		arg.Kid,
+		arg.ValueHash,
+		arg.ManagedPostgresBindingID,
+		arg.ManagedCredentialRef,
+	)
+	return err
+}
+
+const insertCloneCheckpointPgConnectionValue = `-- name: InsertCloneCheckpointPgConnectionValue :one
+INSERT INTO project_environment_clone_checkpoint_pg_connection_values(operation_id,source_binding_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, sealed_at, activation_operation_id
+`
+
+type InsertCloneCheckpointPgConnectionValueParams struct {
+	SourceBindingID  pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgConnectionValue,
+		arg.SourceBindingID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgConnectionValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.SealedAt,
+		&i.ActivationOperationID,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPgCopyRetirement = `-- name: InsertCloneCheckpointPgCopyRetirement :one
+INSERT INTO project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='compensating' AND o.resources->0->>'kind'='data_checkpoint'
+ AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointPgCopyRetirementParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgCopyRetirementParams) (ProjectEnvironmentCloneCheckpointPgCopyRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgCopyRetirement,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgCopyRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPgPublication = `-- name: InsertCloneCheckpointPgPublication :one
+INSERT INTO project_environment_clone_checkpoint_pg_publications(operation_id,plan,plan_sha256,state)
+SELECT o.id,$1::jsonb,$2::text,'published' FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, plan_sha256, state, published_at, withdrawn_at
+`
+
+type InsertCloneCheckpointPgPublicationParams struct {
+	Plan             []byte
+	PlanSha256       string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgPublicationParams) (ProjectEnvironmentCloneCheckpointPgPublication, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgPublication,
+		arg.Plan,
+		arg.PlanSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.PublishedAt,
+		&i.WithdrawnAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPgTargetCompensation = `-- name: InsertCloneCheckpointPgTargetCompensation :one
+INSERT INTO project_environment_clone_checkpoint_pg_target_compensations(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='compensating' AND o.resources->0->>'kind'='data_checkpoint'
+ AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, compensated_at
+`
+
+type InsertCloneCheckpointPgTargetCompensationParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPgTargetCompensationParams) (ProjectEnvironmentCloneCheckpointPgTargetCompensation, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPgTargetCompensation,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgTargetCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresCredential = `-- name: InsertCloneCheckpointPostgresCredential :one
+INSERT INTO project_environment_clone_checkpoint_postgres_credentials(operation_id,source_binding_id,source_database_id,account_id,target_binding_id,plan)
+SELECT o.id,$1::uuid,$2::uuid,o.account_id,$3::uuid,$4::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$5::uuid AND o.status='capturing' AND o.revision=$6::bigint
+AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at
+`
+
+type InsertCloneCheckpointPostgresCredentialParams struct {
+	SourceBindingID  pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	TargetBindingID  pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresCredential,
+		arg.SourceBindingID,
+		arg.SourceDatabaseID,
+		arg.TargetBindingID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresCredentialRetirement = `-- name: InsertCloneCheckpointPostgresCredentialRetirement :one
+INSERT INTO project_environment_clone_checkpoint_pg_credential_retirements(operation_id,source_binding_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='compensating' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_binding_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointPostgresCredentialRetirementParams struct {
+	SourceBindingID  pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresCredentialRetirementParams) (ProjectEnvironmentCloneCheckpointPgCredentialRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresCredentialRetirement,
+		arg.SourceBindingID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgCredentialRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresIsolation = `-- name: InsertCloneCheckpointPostgresIsolation :one
+INSERT INTO project_environment_clone_checkpoint_postgres_isolation(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation_sha256, adopted_database_id, adopted_at
+`
+
+type InsertCloneCheckpointPostgresIsolationParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresIsolation,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresIsolation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.AdoptedDatabaseID,
+		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresRuntime = `-- name: InsertCloneCheckpointPostgresRuntime :one
+INSERT INTO project_environment_clone_checkpoint_postgres_runtime(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, data_resource_id, ready_at
+`
+
+type InsertCloneCheckpointPostgresRuntimeParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresRuntime,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresRuntime
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.DataResourceID,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointPostgresVerification = `-- name: InsertCloneCheckpointPostgresVerification :one
+INSERT INTO project_environment_clone_checkpoint_postgres_verification(operation_id,source_database_id,plan)
+SELECT o.id,$1::uuid,$2::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$3::uuid AND o.status='capturing' AND o.revision=$4::bigint
+AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, plan, state, requested_at, observation_sha256, verified_at
+`
+
+type InsertCloneCheckpointPostgresVerificationParams struct {
+	SourceDatabaseID pgtype.UUID
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg InsertCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointPostgresVerification,
+		arg.SourceDatabaseID,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointRelease = `-- name: InsertCloneCheckpointRelease :one
+INSERT INTO project_environment_clone_checkpoint_releases(operation_id,plan,receipt,adoption_sha256)
+SELECT o.id,$1::jsonb,$2::jsonb,$3::text
+FROM project_environment_clone_operations o WHERE o.id=$4::uuid AND o.status='capturing'
+ AND o.revision=$5::bigint AND o.lease_token=$6::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, receipt, adoption_sha256, state, requested_at, observation_sha256, released_at
+`
+
+type InsertCloneCheckpointReleaseParams struct {
+	Plan             []byte
+	Receipt          []byte
+	AdoptionSha256   string
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointRelease(ctx context.Context, db DBTX, arg InsertCloneCheckpointReleaseParams) (ProjectEnvironmentCloneCheckpointRelease, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointRelease,
+		arg.Plan,
+		arg.Receipt,
+		arg.AdoptionSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointRelease
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.Receipt,
+		&i.AdoptionSha256,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointSourceCompensation = `-- name: InsertCloneCheckpointSourceCompensation :one
+INSERT INTO project_environment_clone_checkpoint_source_compensations(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='compensating'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid
+ AND o.lease_until>clock_timestamp() RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, compensated_at
+`
+
+type InsertCloneCheckpointSourceCompensationParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg InsertCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointSourceCompensation,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointSourceCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const insertCloneCheckpointWorkloadRetirement = `-- name: InsertCloneCheckpointWorkloadRetirement :one
+INSERT INTO project_environment_clone_checkpoint_workload_retirements(operation_id,plan)
+SELECT o.id,$1::jsonb FROM project_environment_clone_operations o
+WHERE o.id=$2::uuid AND o.status='compensating' AND o.revision=$3::bigint
+ AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+RETURNING operation_id, plan, state, requested_at, observation, observation_sha256, retired_at
+`
+
+type InsertCloneCheckpointWorkloadRetirementParams struct {
+	Plan             []byte
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) InsertCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg InsertCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
+	row := db.QueryRow(ctx, insertCloneCheckpointWorkloadRetirement,
+		arg.Plan,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointWorkloadRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const insertCloneConfigurationCleanup = `-- name: InsertCloneConfigurationCleanup :exec
+INSERT INTO project_environment_clone_configuration_cleanups(operation_id,ownership_sha256,native_plan_sha256,native_observation_sha256,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type InsertCloneConfigurationCleanupParams struct {
+	OperationID             pgtype.UUID
+	OwnershipSha256         string
+	NativePlanSha256        string
+	NativeObservationSha256 string
+	Manifest                []byte
+	ManifestSha256          string
+}
+
+func (q *Queries) InsertCloneConfigurationCleanup(ctx context.Context, db DBTX, arg InsertCloneConfigurationCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneConfigurationCleanup,
+		arg.OperationID,
+		arg.OwnershipSha256,
+		arg.NativePlanSha256,
+		arg.NativeObservationSha256,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
+const insertCloneConfigurationOwnership = `-- name: InsertCloneConfigurationOwnership :exec
+INSERT INTO project_environment_clone_configuration_ownership(operation_id,environment_id,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4)
+`
+
+type InsertCloneConfigurationOwnershipParams struct {
+	OperationID    pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	Manifest       []byte
+	ManifestSha256 string
+}
+
+func (q *Queries) InsertCloneConfigurationOwnership(ctx context.Context, db DBTX, arg InsertCloneConfigurationOwnershipParams) error {
+	_, err := db.Exec(ctx, insertCloneConfigurationOwnership,
+		arg.OperationID,
+		arg.EnvironmentID,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
+const insertCloneDeploymentCleanup = `-- name: InsertCloneDeploymentCleanup :exec
+INSERT INTO project_environment_clone_deployment_cleanups(operation_id,environment_id,workload_cleanup_sha256,native_plan_sha256,native_observation_sha256,removed_deployments)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type InsertCloneDeploymentCleanupParams struct {
+	OperationID             pgtype.UUID
+	EnvironmentID           pgtype.UUID
+	WorkloadCleanupSha256   string
+	NativePlanSha256        string
+	NativeObservationSha256 string
+	RemovedDeployments      int64
+}
+
+func (q *Queries) InsertCloneDeploymentCleanup(ctx context.Context, db DBTX, arg InsertCloneDeploymentCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneDeploymentCleanup,
+		arg.OperationID,
+		arg.EnvironmentID,
+		arg.WorkloadCleanupSha256,
+		arg.NativePlanSha256,
+		arg.NativeObservationSha256,
+		arg.RemovedDeployments,
+	)
+	return err
+}
+
+const insertCloneEnvironmentCleanup = `-- name: InsertCloneEnvironmentCleanup :exec
+INSERT INTO project_environment_clone_environment_cleanups(operation_id,environment_id,workload_cleanup_sha256,manifest,manifest_sha256) VALUES($1,$2,$3,$4,$5)
+`
+
+type InsertCloneEnvironmentCleanupParams struct {
+	OperationID           pgtype.UUID
+	EnvironmentID         pgtype.UUID
+	WorkloadCleanupSha256 string
+	Manifest              []byte
+	ManifestSha256        string
+}
+
+func (q *Queries) InsertCloneEnvironmentCleanup(ctx context.Context, db DBTX, arg InsertCloneEnvironmentCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneEnvironmentCleanup,
+		arg.OperationID,
+		arg.EnvironmentID,
+		arg.WorkloadCleanupSha256,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
+const insertCloneObjectSecretWithdrawal = `-- name: InsertCloneObjectSecretWithdrawal :exec
+INSERT INTO project_environment_clone_object_secret_withdrawals(operation_id,ownership_sha256,postgres_withdrawal_sha256,prior_manifest_sha256,publication_plan_sha256,publication_withdrawn_at,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type InsertCloneObjectSecretWithdrawalParams struct {
+	OperationID              pgtype.UUID
+	OwnershipSha256          string
+	PostgresWithdrawalSha256 string
+	PriorManifestSha256      string
+	PublicationPlanSha256    string
+	PublicationWithdrawnAt   pgtype.Timestamptz
+	Manifest                 []byte
+	ManifestSha256           string
+}
+
+func (q *Queries) InsertCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, arg InsertCloneObjectSecretWithdrawalParams) error {
+	_, err := db.Exec(ctx, insertCloneObjectSecretWithdrawal,
+		arg.OperationID,
+		arg.OwnershipSha256,
+		arg.PostgresWithdrawalSha256,
+		arg.PriorManifestSha256,
+		arg.PublicationPlanSha256,
+		arg.PublicationWithdrawnAt,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
 const insertClonePostgresCheckpointSelection = `-- name: InsertClonePostgresCheckpointSelection :one
 INSERT INTO project_environment_clone_postgres_checkpoint_selections(operation_id,source_database_id,maintenance_id,scope,fingerprint,key_id,ciphertext_sha256,ciphertext)
 SELECT o.id,$1::uuid,$2::uuid,$3::jsonb,$4::text,
@@ -22126,6 +25623,32 @@ func (q *Queries) InsertClonePostgresMaintenance(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const insertClonePostgresSecretWithdrawal = `-- name: InsertClonePostgresSecretWithdrawal :exec
+INSERT INTO project_environment_clone_postgres_secret_withdrawals(operation_id,ownership_sha256,publication_plan_sha256,publication_withdrawn_at,manifest,manifest_sha256)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type InsertClonePostgresSecretWithdrawalParams struct {
+	OperationID            pgtype.UUID
+	OwnershipSha256        string
+	PublicationPlanSha256  string
+	PublicationWithdrawnAt pgtype.Timestamptz
+	Manifest               []byte
+	ManifestSha256         string
+}
+
+func (q *Queries) InsertClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, arg InsertClonePostgresSecretWithdrawalParams) error {
+	_, err := db.Exec(ctx, insertClonePostgresSecretWithdrawal,
+		arg.OperationID,
+		arg.OwnershipSha256,
+		arg.PublicationPlanSha256,
+		arg.PublicationWithdrawnAt,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
+}
+
 const insertClonePostgresWriteFence = `-- name: InsertClonePostgresWriteFence :one
 INSERT INTO project_environment_clone_postgres_write_fences(operation_id,source_database_id,source_version,
  backend_id,backend_fingerprint,source_provider_resource_id,source_data_resource_id)
@@ -22177,6 +25700,51 @@ func (q *Queries) InsertClonePostgresWriteFence(ctx context.Context, db DBTX, ar
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertCloneTerminalCompensationReceipt = `-- name: InsertCloneTerminalCompensationReceipt :exec
+INSERT INTO project_environment_clone_compensation_receipts(operation_id,worker_token_sha256,report,receipt_sha256,completed_at)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type InsertCloneTerminalCompensationReceiptParams struct {
+	OperationID       pgtype.UUID
+	WorkerTokenSha256 string
+	Report            []byte
+	ReceiptSha256     string
+	CompletedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) InsertCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, arg InsertCloneTerminalCompensationReceiptParams) error {
+	_, err := db.Exec(ctx, insertCloneTerminalCompensationReceipt,
+		arg.OperationID,
+		arg.WorkerTokenSha256,
+		arg.Report,
+		arg.ReceiptSha256,
+		arg.CompletedAt,
+	)
+	return err
+}
+
+const insertCloneWorkloadCleanup = `-- name: InsertCloneWorkloadCleanup :exec
+INSERT INTO project_environment_clone_workload_cleanups(operation_id,configuration_cleanup_sha256,manifest,manifest_sha256) VALUES($1,$2,$3,$4)
+`
+
+type InsertCloneWorkloadCleanupParams struct {
+	OperationID                pgtype.UUID
+	ConfigurationCleanupSha256 string
+	Manifest                   []byte
+	ManifestSha256             string
+}
+
+func (q *Queries) InsertCloneWorkloadCleanup(ctx context.Context, db DBTX, arg InsertCloneWorkloadCleanupParams) error {
+	_, err := db.Exec(ctx, insertCloneWorkloadCleanup,
+		arg.OperationID,
+		arg.ConfigurationCleanupSha256,
+		arg.Manifest,
+		arg.ManifestSha256,
+	)
+	return err
 }
 
 const insertComputeNodeHeartbeat = `-- name: InsertComputeNodeHeartbeat :exec
@@ -25079,7 +28647,7 @@ SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,
     $5::uuid,$6::jsonb,$7::uuid
 WHERE EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=$1::uuid
     AND o.account_id=$3::uuid AND o.project_id=$4::uuid AND o.status='capturing'
-    AND o.revision=$8::bigint AND o.lease_token::text=$9::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, account_id, project_id, capture_database_id, scope, owner_id, state, request_started_at, endpoint_id, endpoint_created_at, available, observed_at, cleanup_requested_at, cleanup_dispatched_at, delete_operation_ids, capture_operation_ids, retired_at, created_at, updated_at
+    AND o.revision=$8::bigint AND o.lease_token::text=$9::text AND o.lease_until>clock_timestamp()) RETURNING operation_id, source_database_id, account_id, project_id, capture_database_id, scope, owner_id, state, request_started_at, endpoint_id, endpoint_created_at, available, observed_at, cleanup_requested_at, cleanup_dispatched_at, delete_operation_ids, capture_operation_ids, retired_at, created_at, updated_at, checkpoint_retirement_observation_sha256
 `
 
 type InsertProjectEnvironmentClonePostgresCopyReaderParams struct {
@@ -25128,13 +28696,14 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresCopyReader(ctx context.Co
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
 
 const insertProjectEnvironmentClonePostgresCopyTarget = `-- name: InsertProjectEnvironmentClonePostgresCopyTarget :one
 INSERT INTO project_environment_clone_postgres_copy_targets(operation_id,source_database_id,account_id,capture_database_id,target_database_id)
-VALUES($1,$2,$3,$4,$5) RETURNING operation_id, source_database_id, account_id, capture_database_id, target_database_id, state, request_started_at, provider_resource_id, provider_created_at, observed_at, prepared_at, retired_at, created_at, updated_at, deletion_started_at, deletion_observed_at
+VALUES($1,$2,$3,$4,$5) RETURNING operation_id, source_database_id, account_id, capture_database_id, target_database_id, state, request_started_at, provider_resource_id, provider_created_at, observed_at, prepared_at, retired_at, created_at, updated_at, deletion_started_at, deletion_observed_at, checkpoint_retirement_observation_sha256
 `
 
 type InsertProjectEnvironmentClonePostgresCopyTargetParams struct {
@@ -25171,6 +28740,7 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresCopyTarget(ctx context.Co
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -25691,7 +29261,7 @@ SELECT s.operation_id,s.source_database_id,o.account_id,s.backend_id,s.backend_f
 FROM project_environment_clone_postgres_snapshots s JOIN project_environment_clone_operations o ON o.id=s.operation_id
 WHERE s.operation_id=$1::uuid AND s.source_database_id=$2::uuid AND s.state='retained'
     AND o.status='capturing' AND o.revision=$3::bigint AND o.lease_token::text=$4::text
-    AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, account_id, target_owner_id, backend_id, backend_fingerprint, state, target_provider_resource_id, target_created_at, request_started_at, observed_at, restored_at, created_at, updated_at, deletion_started_at, deleted_at, delete_operation_ids, adopted_database_id, adopted_at
+    AND o.lease_until>clock_timestamp() RETURNING operation_id, source_database_id, account_id, target_owner_id, backend_id, backend_fingerprint, state, target_provider_resource_id, target_created_at, request_started_at, observed_at, restored_at, created_at, updated_at, deletion_started_at, deleted_at, delete_operation_ids, adopted_database_id, adopted_at, checkpoint_compensation_observation_sha256
 `
 
 type InsertProjectEnvironmentClonePostgresSnapshotRestoreParams struct {
@@ -25729,6 +29299,7 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresSnapshotRestore(ctx conte
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -27600,7 +31171,7 @@ const instanceListByNodeForRecovery = `-- name: InstanceListByNodeForRecovery :m
 SELECT id, state, app_id, deployment_id, kind
 FROM instances
 WHERE node_id = $1
-  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
+  AND state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm', 'frozen')
 ORDER BY started_at
 `
 
@@ -27861,6 +31432,66 @@ func (q *Queries) IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddT
 	return err
 }
 
+const issueApplySplitRule = `-- name: IssueApplySplitRule :one
+WITH selected AS MATERIALIZED (
+ SELECT e.id,e.deployment_id,e.occurred_at FROM issue_events e WHERE e.issue_id=$1
+ AND ($2::text='' OR e.payload->>'exception_type'=$2)
+ AND ($3::text='' OR e.payload->>'error_code'=$3)
+ AND ($4::text='' OR e.payload->>'route'=$4)
+ AND ($5::text='' OR e.payload->>'source_kind'=$5)
+ AND NOT EXISTS (
+  SELECT 1 FROM issue_split_rules r WHERE r.source_issue_id=$1 AND r.enabled
+  AND (r.exception_type='' OR r.exception_type=e.payload->>'exception_type')
+  AND (r.error_code='' OR r.error_code=e.payload->>'error_code')
+  AND (r.route='' OR r.route=e.payload->>'route')
+  AND (r.source_kind='' OR r.source_kind=e.payload->>'source_kind')
+ )
+), transferred AS MATERIALIZED (
+ SELECT deployment_id,count(*)::bigint AS event_count,min(occurred_at) AS first_seen_at,max(occurred_at) AS last_seen_at FROM selected GROUP BY deployment_id
+), moved AS (
+ UPDATE issue_events e SET original_issue_id=COALESCE(e.original_issue_id,e.issue_id),issue_id=$6
+ WHERE e.id IN (SELECT s.id FROM selected s)
+), branch_releases AS (
+ INSERT INTO issue_releases(issue_id,deployment_id,commit_sha,image_digest,event_count,first_seen_at,last_seen_at)
+ SELECT $6,t.deployment_id,r.commit_sha,r.image_digest,t.event_count,t.first_seen_at,t.last_seen_at
+ FROM transferred t JOIN issue_releases r ON r.issue_id=$1 AND r.deployment_id=t.deployment_id
+), delete_empty_releases AS (
+ DELETE FROM issue_releases r USING transferred t WHERE r.issue_id=$1 AND r.deployment_id=t.deployment_id AND r.event_count=t.event_count
+), reduce_source_releases AS (
+ UPDATE issue_releases r SET event_count=r.event_count-t.event_count FROM transferred t
+ WHERE r.issue_id=$1 AND r.deployment_id=t.deployment_id AND r.event_count>t.event_count
+), reduce_source AS (
+ UPDATE app_issues SET event_count=event_count-(SELECT count(*) FROM selected) WHERE id=$1
+), branch_counts AS (
+ UPDATE app_issues SET event_count=(SELECT count(*) FROM selected),first_seen_at=COALESCE((SELECT min(occurred_at) FROM selected),first_seen_at),last_seen_at=COALESCE((SELECT max(occurred_at) FROM selected),last_seen_at)
+ WHERE id=$6
+)
+SELECT count(*)::bigint AS moved_event_count FROM selected
+`
+
+type IssueApplySplitRuleParams struct {
+	SourceIssueID pgtype.UUID
+	ExceptionType string
+	ErrorCode     string
+	Route         string
+	SourceKind    string
+	TargetIssueID pgtype.UUID
+}
+
+func (q *Queries) IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApplySplitRuleParams) (int64, error) {
+	row := db.QueryRow(ctx, issueApplySplitRule,
+		arg.SourceIssueID,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+		arg.TargetIssueID,
+	)
+	var moved_event_count int64
+	err := row.Scan(&moved_event_count)
+	return moved_event_count, err
+}
+
 const issueAssigneeAllowed = `-- name: IssueAssigneeAllowed :one
 SELECT EXISTS(SELECT 1 FROM apps a LEFT JOIN org_memberships m ON m.org_id=a.org_id AND m.account_id=$1 AND m.removed_at IS NULL
 WHERE a.id=$2 AND (a.account_id=$1 OR m.account_id IS NOT NULL))
@@ -27925,6 +31556,23 @@ func (q *Queries) IssueAttribution(ctx context.Context, db DBTX, arg IssueAttrib
 	return items, nil
 }
 
+const issueCanonicalID = `-- name: IssueCanonicalID :one
+SELECT a.canonical_issue_id FROM issue_group_assignments a JOIN app_issues i ON i.id=a.original_issue_id
+WHERE i.app_id=$1 AND i.id=$2
+`
+
+type IssueCanonicalIDParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueCanonicalID(ctx context.Context, db DBTX, arg IssueCanonicalIDParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, issueCanonicalID, arg.AppID, arg.ID)
+	var canonical_issue_id pgtype.UUID
+	err := row.Scan(&canonical_issue_id)
+	return canonical_issue_id, err
+}
+
 const issueCount = `-- name: IssueCount :one
 SELECT count(*) FROM app_issues WHERE app_id = $1
 `
@@ -27976,7 +31624,7 @@ func (q *Queries) IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UU
 
 const issueCreate = `-- name: IssueCreate :one
 INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+VALUES($1,$2,$3,$4,$5,$6,$7,$7) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueCreateParams struct {
@@ -28018,6 +31666,118 @@ func (q *Queries) IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParam
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
+	)
+	return i, err
+}
+
+const issueCreateSplitGroup = `-- name: IssueCreateSplitGroup :one
+INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at,assignee_account_id,split_source_issue_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9) RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
+`
+
+type IssueCreateSplitGroupParams struct {
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Environment       string
+	Fingerprint       string
+	GroupingVersion   int32
+	Title             string
+	Now               pgtype.Timestamptz
+	AssigneeAccountID pgtype.UUID
+	SourceIssueID     pgtype.UUID
+}
+
+func (q *Queries) IssueCreateSplitGroup(ctx context.Context, db DBTX, arg IssueCreateSplitGroupParams) (AppIssue, error) {
+	row := db.QueryRow(ctx, issueCreateSplitGroup,
+		arg.AccountID,
+		arg.AppID,
+		arg.Environment,
+		arg.Fingerprint,
+		arg.GroupingVersion,
+		arg.Title,
+		arg.Now,
+		arg.AssigneeAccountID,
+		arg.SourceIssueID,
+	)
+	var i AppIssue
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
+	)
+	return i, err
+}
+
+const issueCreateSplitRule = `-- name: IssueCreateSplitRule :one
+INSERT INTO issue_split_rules(id,app_id,environment,source_issue_id,target_issue_id,priority,exception_type,error_code,route,source_kind,initial_moved_event_count,unavailable_history_event_count,created_at,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at
+`
+
+type IssueCreateSplitRuleParams struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	Environment      string
+	SourceIssueID    pgtype.UUID
+	TargetIssueID    pgtype.UUID
+	Priority         int32
+	ExceptionType    string
+	ErrorCode        string
+	Route            string
+	SourceKind       string
+	MovedCount       int64
+	UnavailableCount int64
+	Now              pgtype.Timestamptz
+}
+
+func (q *Queries) IssueCreateSplitRule(ctx context.Context, db DBTX, arg IssueCreateSplitRuleParams) (IssueSplitRule, error) {
+	row := db.QueryRow(ctx, issueCreateSplitRule,
+		arg.ID,
+		arg.AppID,
+		arg.Environment,
+		arg.SourceIssueID,
+		arg.TargetIssueID,
+		arg.Priority,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+		arg.MovedCount,
+		arg.UnavailableCount,
+		arg.Now,
+	)
+	var i IssueSplitRule
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Environment,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.Priority,
+		&i.ExceptionType,
+		&i.ErrorCode,
+		&i.Route,
+		&i.SourceKind,
+		&i.Enabled,
+		&i.InitialMovedEventCount,
+		&i.UnavailableHistoryEventCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -28154,7 +31914,9 @@ func (q *Queries) IssueEnrichAttribution(ctx context.Context, db DBTX, arg Issue
 }
 
 const issueExpiredIgnores = `-- name: IssueExpiredIgnores :many
-SELECT app_id,id FROM app_issues WHERE state='ignored' AND ignored_until <= $1 ORDER BY ignored_until LIMIT $2
+SELECT app_id,id FROM app_issues i WHERE state='ignored' AND ignored_until <= $1
+AND NOT EXISTS (SELECT 1 FROM issue_group_links l WHERE l.issue_id=i.id)
+ORDER BY ignored_until LIMIT $2
 `
 
 type IssueExpiredIgnoresParams struct {
@@ -28210,7 +31972,7 @@ func (q *Queries) IssueFindEvent(ctx context.Context, db DBTX, arg IssueFindEven
 }
 
 const issueFindGroup = `-- name: IssueFindGroup :one
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND environment = $2
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM app_issues WHERE app_id = $1 AND environment = $2
 AND grouping_version = $3 AND fingerprint = $4 FOR UPDATE
 `
 
@@ -28247,8 +32009,39 @@ func (q *Queries) IssueFindGroup(ctx context.Context, db DBTX, arg IssueFindGrou
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
+}
+
+const issueFindSplitTarget = `-- name: IssueFindSplitTarget :one
+SELECT target_issue_id FROM issue_split_rules WHERE source_issue_id=$1 AND enabled
+AND (exception_type='' OR exception_type=$2::text)
+AND (error_code='' OR error_code=$3::text)
+AND (route='' OR route=$4::text)
+AND (source_kind='' OR source_kind=$5::text)
+ORDER BY priority LIMIT 1
+`
+
+type IssueFindSplitTargetParams struct {
+	SourceIssueID pgtype.UUID
+	ExceptionType string
+	ErrorCode     string
+	Route         string
+	SourceKind    string
+}
+
+func (q *Queries) IssueFindSplitTarget(ctx context.Context, db DBTX, arg IssueFindSplitTargetParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, issueFindSplitTarget,
+		arg.SourceIssueID,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+	)
+	var target_issue_id pgtype.UUID
+	err := row.Scan(&target_issue_id)
+	return target_issue_id, err
 }
 
 const issueFindToken = `-- name: IssueFindToken :one
@@ -28279,7 +32072,7 @@ func (q *Queries) IssueFindToken(ctx context.Context, db DBTX, arg IssueFindToke
 }
 
 const issueGet = `-- name: IssueGet :one
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM app_issues WHERE app_id = $1 AND id = $2
 `
 
 type IssueGetParams struct {
@@ -28308,6 +32101,42 @@ func (q *Queries) IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (Ap
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
+	)
+	return i, err
+}
+
+const issueGetGroup = `-- name: IssueGetGroup :one
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM issue_group_rollups WHERE app_id=$1 AND id=$2
+`
+
+type IssueGetGroupParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) IssueGetGroup(ctx context.Context, db DBTX, arg IssueGetGroupParams) (IssueGroupRollup, error) {
+	row := db.QueryRow(ctx, issueGetGroup, arg.AppID, arg.ID)
+	var i IssueGroupRollup
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Environment,
+		&i.Fingerprint,
+		&i.GroupingVersion,
+		&i.Title,
+		&i.State,
+		&i.AssigneeAccountID,
+		&i.FirstSeenAt,
+		&i.LastSeenAt,
+		&i.EventCount,
+		&i.RegressionCount,
+		&i.ResolvedAt,
+		&i.FixedDeploymentID,
+		&i.FixedDeploymentCreatedAt,
+		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
@@ -28324,7 +32153,7 @@ func (q *Queries) IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID 
 }
 
 const issueGetLocked = `-- name: IssueGetLocked :one
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1 AND id = $2 FOR UPDATE
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM app_issues WHERE app_id = $1 AND id = $2 FOR UPDATE
 `
 
 type IssueGetLockedParams struct {
@@ -28353,14 +32182,110 @@ func (q *Queries) IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLocke
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
 
+const issueGetSplitRule = `-- name: IssueGetSplitRule :one
+SELECT id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at FROM issue_split_rules WHERE app_id=$1 AND source_issue_id=$2 AND id=$3
+`
+
+type IssueGetSplitRuleParams struct {
+	AppID         pgtype.UUID
+	SourceIssueID pgtype.UUID
+	ID            pgtype.UUID
+}
+
+func (q *Queries) IssueGetSplitRule(ctx context.Context, db DBTX, arg IssueGetSplitRuleParams) (IssueSplitRule, error) {
+	row := db.QueryRow(ctx, issueGetSplitRule, arg.AppID, arg.SourceIssueID, arg.ID)
+	var i IssueSplitRule
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Environment,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.Priority,
+		&i.ExceptionType,
+		&i.ErrorCode,
+		&i.Route,
+		&i.SourceKind,
+		&i.Enabled,
+		&i.InitialMovedEventCount,
+		&i.UnavailableHistoryEventCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueGroupMembers = `-- name: IssueGroupMembers :many
+SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id FROM app_issues i
+WHERE i.id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) ORDER BY (i.id=$1) DESC,i.id
+`
+
+func (q *Queries) IssueGroupMembers(ctx context.Context, db DBTX, id pgtype.UUID) ([]AppIssue, error) {
+	rows, err := db.Query(ctx, issueGroupMembers, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppIssue{}
+	for rows.Next() {
+		var i AppIssue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Environment,
+			&i.Fingerprint,
+			&i.GroupingVersion,
+			&i.Title,
+			&i.State,
+			&i.AssigneeAccountID,
+			&i.FirstSeenAt,
+			&i.LastSeenAt,
+			&i.EventCount,
+			&i.RegressionCount,
+			&i.ResolvedAt,
+			&i.FixedDeploymentID,
+			&i.FixedDeploymentCreatedAt,
+			&i.IgnoredUntil,
+			&i.SplitSourceIssueID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueHasSplitAudit = `-- name: IssueHasSplitAudit :one
+SELECT EXISTS(SELECT 1 FROM issue_activity WHERE issue_id=$1 AND action='split'
+AND details->>'canonical_issue_id'=$2::text)
+`
+
+type IssueHasSplitAuditParams struct {
+	MemberID    pgtype.UUID
+	CanonicalID string
+}
+
+func (q *Queries) IssueHasSplitAudit(ctx context.Context, db DBTX, arg IssueHasSplitAuditParams) (bool, error) {
+	row := db.QueryRow(ctx, issueHasSplitAudit, arg.MemberID, arg.CanonicalID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const issueImpact = `-- name: IssueImpact :one
-SELECT count(*) AS observed_events,count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
-count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
+SELECT count(*) AS observed_events,count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_events e
+WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
 `
 
 type IssueImpactParams struct {
@@ -28383,11 +32308,9 @@ func (q *Queries) IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParam
 }
 
 const issueImpactCustomerCount = `-- name: IssueImpactCustomerCount :one
-SELECT count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id))
-FROM issue_events
-WHERE issue_id=$1
-  AND occurred_at >= $2
-  AND occurred_at <= $3
+SELECT count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id))
+FROM issue_events e
+WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
 `
 
 type IssueImpactCustomerCountParams struct {
@@ -28404,15 +32327,14 @@ func (q *Queries) IssueImpactCustomerCount(ctx context.Context, db DBTX, arg Iss
 }
 
 const issueImpactSummaries = `-- name: IssueImpactSummaries :many
-SELECT issue_id,
-       count(*) AS observed_events,
-       count(DISTINCT COALESCE(verified_platform_tenant_id,verified_consumer_id)) AS identified_customers,
-       count(*) FILTER(WHERE verified_platform_tenant_id IS NULL AND verified_consumer_id IS NULL) AS unattributed_events
-FROM issue_events
-WHERE issue_id = ANY($1::uuid[])
-  AND occurred_at >= $2::timestamptz
-  AND occurred_at <= $3::timestamptz
-GROUP BY issue_id
+SELECT a.canonical_issue_id AS issue_id,
+ count(*) AS observed_events,
+ count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
+ count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
+FROM issue_group_assignments a JOIN issue_events e ON e.issue_id=a.original_issue_id
+WHERE a.canonical_issue_id = ANY($1::uuid[])
+ AND e.occurred_at >= $2::timestamptz AND e.occurred_at <= $3::timestamptz
+GROUP BY a.canonical_issue_id
 `
 
 type IssueImpactSummariesParams struct {
@@ -28454,21 +32376,22 @@ func (q *Queries) IssueImpactSummaries(ctx context.Context, db DBTX, arg IssueIm
 }
 
 const issueInsertEvent = `-- name: IssueInsertEvent :exec
-INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO issue_events(app_id,deployment_id,event_id,issue_id,original_issue_id,payload_hash,payload,occurred_at,received_at,verified_consumer_id,verified_platform_tenant_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 `
 
 type IssueInsertEventParams struct {
-	AppID        pgtype.UUID
-	DeploymentID pgtype.UUID
-	EventID      pgtype.UUID
-	IssueID      pgtype.UUID
-	PayloadHash  string
-	Payload      []byte
-	OccurredAt   pgtype.Timestamptz
-	ReceivedAt   pgtype.Timestamptz
-	ConsumerID   pgtype.UUID
-	TenantID     pgtype.UUID
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	EventID         pgtype.UUID
+	IssueID         pgtype.UUID
+	OriginalIssueID pgtype.UUID
+	PayloadHash     string
+	Payload         []byte
+	OccurredAt      pgtype.Timestamptz
+	ReceivedAt      pgtype.Timestamptz
+	ConsumerID      pgtype.UUID
+	TenantID        pgtype.UUID
 }
 
 func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsertEventParams) error {
@@ -28477,6 +32400,7 @@ func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsert
 		arg.DeploymentID,
 		arg.EventID,
 		arg.IssueID,
+		arg.OriginalIssueID,
 		arg.PayloadHash,
 		arg.Payload,
 		arg.OccurredAt,
@@ -28576,8 +32500,32 @@ func (q *Queries) IssueInvocationScope(ctx context.Context, db DBTX, arg IssueIn
 	return i, err
 }
 
+const issueLinkGroup = `-- name: IssueLinkGroup :exec
+INSERT INTO issue_group_links(issue_id,canonical_issue_id,app_id,environment,linked_at)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type IssueLinkGroupParams struct {
+	SourceID    pgtype.UUID
+	TargetID    pgtype.UUID
+	AppID       pgtype.UUID
+	Environment string
+	Now         pgtype.Timestamptz
+}
+
+func (q *Queries) IssueLinkGroup(ctx context.Context, db DBTX, arg IssueLinkGroupParams) error {
+	_, err := db.Exec(ctx, issueLinkGroup,
+		arg.SourceID,
+		arg.TargetID,
+		arg.AppID,
+		arg.Environment,
+		arg.Now,
+	)
+	return err
+}
+
 const issueList = `-- name: IssueList :many
-SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until FROM app_issues WHERE app_id = $1
+SELECT id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id FROM issue_group_rollups WHERE app_id = $1
 AND ($2::text = '' OR state = $2)
 AND ($3::text = '' OR environment = $3)
 AND ($4::uuid IS NULL OR assignee_account_id = $4)
@@ -28597,7 +32545,7 @@ type IssueListParams struct {
 	PageLimit         int32
 }
 
-func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]AppIssue, error) {
+func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) ([]IssueGroupRollup, error) {
 	rows, err := db.Query(ctx, issueList,
 		arg.AppID,
 		arg.State,
@@ -28612,9 +32560,9 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppIssue{}
+	items := []IssueGroupRollup{}
 	for rows.Next() {
-		var i AppIssue
+		var i IssueGroupRollup
 		if err := rows.Scan(
 			&i.ID,
 			&i.AccountID,
@@ -28633,6 +32581,7 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 			&i.FixedDeploymentID,
 			&i.FixedDeploymentCreatedAt,
 			&i.IgnoredUntil,
+			&i.SplitSourceIssueID,
 		); err != nil {
 			return nil, err
 		}
@@ -28645,7 +32594,10 @@ func (q *Queries) IssueList(ctx context.Context, db DBTX, arg IssueListParams) (
 }
 
 const issueListActivity = `-- name: IssueListActivity :many
-SELECT id, issue_id, action, actor_account_id, created_at, details FROM issue_activity WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (created_at,id) < ($2,$3::uuid)) ORDER BY created_at DESC,id DESC LIMIT $4
+SELECT t.id, t.issue_id, t.action, t.actor_account_id, t.created_at, t.details FROM issue_activity t
+WHERE t.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
+AND ($2::timestamptz IS NULL OR (t.created_at,t.id) < ($2,$3::uuid))
+ORDER BY t.created_at DESC,t.id DESC LIMIT $4
 `
 
 type IssueListActivityParams struct {
@@ -28689,24 +32641,25 @@ func (q *Queries) IssueListActivity(ctx context.Context, db DBTX, arg IssueListA
 
 const issueListByImpact = `-- name: IssueListByImpact :many
 WITH candidate_issues AS MATERIALIZED (
-    SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until FROM app_issues i
+    SELECT i.id,i.account_id,i.app_id,i.environment,i.fingerprint,i.grouping_version,i.title,i.state,i.assignee_account_id,i.first_seen_at::timestamptz AS first_seen_at,i.last_seen_at::timestamptz AS last_seen_at,i.event_count,i.regression_count,i.resolved_at,i.fixed_deployment_id,i.fixed_deployment_created_at,i.ignored_until,i.split_source_issue_id FROM issue_group_rollups i
     WHERE i.app_id = $7
       AND ($8::text = '' OR i.state = $8)
       AND ($9::text = '' OR i.environment = $9)
       AND ($10::uuid IS NULL OR i.assignee_account_id = $10)
       AND (NOT $11::bool OR i.assignee_account_id IS NULL)
 ), issue_impact AS (
-    SELECT e.issue_id,
+    SELECT a.canonical_issue_id AS issue_id,
            count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
            count(*) AS observed_events,
            count(*) FILTER(WHERE e.verified_platform_tenant_id IS NULL AND e.verified_consumer_id IS NULL) AS unattributed_events
       FROM candidate_issues i
-      JOIN issue_events e ON e.issue_id = i.id
+      JOIN issue_group_assignments a ON a.canonical_issue_id = i.id
+      JOIN issue_events e ON e.issue_id = a.original_issue_id
      WHERE e.occurred_at >= $12::timestamptz
        AND e.occurred_at <= $13::timestamptz
-     GROUP BY e.issue_id
+     GROUP BY a.canonical_issue_id
 )
-SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until,
+SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id,
        COALESCE(impact.identified_customers,0)::bigint AS identified_customers,
        COALESCE(impact.observed_events,0)::bigint AS observed_events,
        COALESCE(impact.unattributed_events,0)::bigint AS unattributed_events
@@ -28762,6 +32715,7 @@ type IssueListByImpactRow struct {
 	FixedDeploymentID        pgtype.UUID
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
+	SplitSourceIssueID       pgtype.UUID
 	IdentifiedCustomers      int64
 	ObservedEvents           int64
 	UnattributedEvents       int64
@@ -28808,6 +32762,7 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 			&i.FixedDeploymentID,
 			&i.FixedDeploymentCreatedAt,
 			&i.IgnoredUntil,
+			&i.SplitSourceIssueID,
 			&i.IdentifiedCustomers,
 			&i.ObservedEvents,
 			&i.UnattributedEvents,
@@ -28823,9 +32778,11 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 }
 
 const issueListEvents = `-- name: IssueListEvents :many
-SELECT id, app_id, deployment_id, event_id, issue_id, payload_hash, payload, occurred_at, received_at, attribution_checked_at, verified_consumer_id, verified_platform_tenant_id FROM issue_events WHERE issue_id=$1 AND occurred_at >= $2 AND occurred_at <= $3
-AND ($4::timestamptz IS NULL OR (occurred_at,id) < ($4,$5::uuid))
-ORDER BY occurred_at DESC,id DESC LIMIT $6
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id,COALESCE(e.original_issue_id,e.issue_id) AS provenance_issue_id,i.fingerprint,i.grouping_version FROM issue_events e
+JOIN app_issues i ON i.id=COALESCE(e.original_issue_id,e.issue_id)
+WHERE e.issue_id IN (SELECT $1::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1) AND e.occurred_at >= $2 AND e.occurred_at <= $3
+AND ($4::timestamptz IS NULL OR (e.occurred_at,e.id) < ($4,$5::uuid))
+ORDER BY e.occurred_at DESC,e.id DESC LIMIT $6
 `
 
 type IssueListEventsParams struct {
@@ -28837,7 +32794,26 @@ type IssueListEventsParams struct {
 	PageLimit  int32
 }
 
-func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEventsParams) ([]IssueEvent, error) {
+type IssueListEventsRow struct {
+	ID                       pgtype.UUID
+	AppID                    pgtype.UUID
+	DeploymentID             pgtype.UUID
+	EventID                  pgtype.UUID
+	IssueID                  pgtype.UUID
+	PayloadHash              string
+	Payload                  []byte
+	OccurredAt               pgtype.Timestamptz
+	ReceivedAt               pgtype.Timestamptz
+	AttributionCheckedAt     pgtype.Timestamptz
+	VerifiedConsumerID       pgtype.UUID
+	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
+	ProvenanceIssueID        pgtype.UUID
+	Fingerprint              string
+	GroupingVersion          int32
+}
+
+func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEventsParams) ([]IssueListEventsRow, error) {
 	rows, err := db.Query(ctx, issueListEvents,
 		arg.IssueID,
 		arg.Since,
@@ -28850,9 +32826,9 @@ func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEve
 		return nil, err
 	}
 	defer rows.Close()
-	items := []IssueEvent{}
+	items := []IssueListEventsRow{}
 	for rows.Next() {
-		var i IssueEvent
+		var i IssueListEventsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.AppID,
@@ -28866,6 +32842,53 @@ func (q *Queries) IssueListEvents(ctx context.Context, db DBTX, arg IssueListEve
 			&i.AttributionCheckedAt,
 			&i.VerifiedConsumerID,
 			&i.VerifiedPlatformTenantID,
+			&i.OriginalIssueID,
+			&i.ProvenanceIssueID,
+			&i.Fingerprint,
+			&i.GroupingVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListGroupSplitRules = `-- name: IssueListGroupSplitRules :many
+SELECT id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at FROM issue_split_rules
+WHERE source_issue_id IN (SELECT $1::uuid UNION ALL SELECT l.issue_id FROM issue_group_links l WHERE l.canonical_issue_id=$1)
+OR target_issue_id IN (SELECT $1::uuid UNION ALL SELECT l.issue_id FROM issue_group_links l WHERE l.canonical_issue_id=$1)
+ORDER BY source_issue_id,priority
+`
+
+func (q *Queries) IssueListGroupSplitRules(ctx context.Context, db DBTX, issueID pgtype.UUID) ([]IssueSplitRule, error) {
+	rows, err := db.Query(ctx, issueListGroupSplitRules, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueSplitRule{}
+	for rows.Next() {
+		var i IssueSplitRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Environment,
+			&i.SourceIssueID,
+			&i.TargetIssueID,
+			&i.Priority,
+			&i.ExceptionType,
+			&i.ErrorCode,
+			&i.Route,
+			&i.SourceKind,
+			&i.Enabled,
+			&i.InitialMovedEventCount,
+			&i.UnavailableHistoryEventCount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -28919,30 +32942,49 @@ func (q *Queries) IssueListOwnershipRules(ctx context.Context, db DBTX, appID pg
 }
 
 const issueListReleases = `-- name: IssueListReleases :many
-SELECT issue_id, deployment_id, commit_sha, image_digest, event_count, first_seen_at, last_seen_at FROM issue_releases WHERE issue_id=$1 AND ($2::timestamptz IS NULL OR (first_seen_at,deployment_id) < ($2,$3::uuid)) ORDER BY first_seen_at DESC,deployment_id DESC LIMIT $4
+WITH releases AS (
+ SELECT $4::uuid AS issue_id,r.deployment_id,
+ max(r.commit_sha)::text AS commit_sha,max(r.image_digest)::text AS image_digest,
+ sum(r.event_count)::bigint AS event_count,min(r.first_seen_at)::timestamptz AS first_seen_at,max(r.last_seen_at)::timestamptz AS last_seen_at
+ FROM issue_releases r
+ WHERE r.issue_id IN (SELECT $4::uuid UNION ALL SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$4)
+ GROUP BY r.deployment_id
+)
+SELECT issue_id, deployment_id, commit_sha, image_digest, event_count, first_seen_at, last_seen_at FROM releases WHERE ($1::timestamptz IS NULL OR (first_seen_at,deployment_id) < ($1,$2::uuid))
+ORDER BY first_seen_at DESC,deployment_id DESC LIMIT $3
 `
 
 type IssueListReleasesParams struct {
-	IssueID    pgtype.UUID
 	CursorTime pgtype.Timestamptz
 	CursorID   pgtype.UUID
 	PageLimit  int32
+	IssueID    pgtype.UUID
 }
 
-func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueRelease, error) {
+type IssueListReleasesRow struct {
+	IssueID      pgtype.UUID
+	DeploymentID pgtype.UUID
+	CommitSha    string
+	ImageDigest  string
+	EventCount   int64
+	FirstSeenAt  pgtype.Timestamptz
+	LastSeenAt   pgtype.Timestamptz
+}
+
+func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueListReleasesRow, error) {
 	rows, err := db.Query(ctx, issueListReleases,
-		arg.IssueID,
 		arg.CursorTime,
 		arg.CursorID,
 		arg.PageLimit,
+		arg.IssueID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []IssueRelease{}
+	items := []IssueListReleasesRow{}
 	for rows.Next() {
-		var i IssueRelease
+		var i IssueListReleasesRow
 		if err := rows.Scan(
 			&i.IssueID,
 			&i.DeploymentID,
@@ -28951,6 +32993,46 @@ func (q *Queries) IssueListReleases(ctx context.Context, db DBTX, arg IssueListR
 			&i.EventCount,
 			&i.FirstSeenAt,
 			&i.LastSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const issueListSourceSplitRules = `-- name: IssueListSourceSplitRules :many
+SELECT id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at FROM issue_split_rules WHERE source_issue_id=$1 ORDER BY priority
+`
+
+func (q *Queries) IssueListSourceSplitRules(ctx context.Context, db DBTX, sourceIssueID pgtype.UUID) ([]IssueSplitRule, error) {
+	rows, err := db.Query(ctx, issueListSourceSplitRules, sourceIssueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IssueSplitRule{}
+	for rows.Next() {
+		var i IssueSplitRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Environment,
+			&i.SourceIssueID,
+			&i.TargetIssueID,
+			&i.Priority,
+			&i.ExceptionType,
+			&i.ErrorCode,
+			&i.Route,
+			&i.SourceKind,
+			&i.Enabled,
+			&i.InitialMovedEventCount,
+			&i.UnavailableHistoryEventCount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -29018,7 +33100,7 @@ const issueObserve = `-- name: IssueObserve :one
 UPDATE app_issues SET event_count=event_count+1,first_seen_at=LEAST(first_seen_at,$1),last_seen_at=GREATEST(last_seen_at,$1),
 state=CASE WHEN $2::boolean THEN 'open' ELSE state END,
 regression_count=regression_count+CASE WHEN $2::boolean THEN 1 ELSE 0 END
-WHERE id=$3 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+WHERE id=$3 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueObserveParams struct {
@@ -29048,6 +33130,7 @@ func (q *Queries) IssueObserve(ctx context.Context, db DBTX, arg IssueObservePar
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
@@ -29126,6 +33209,32 @@ func (q *Queries) IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePu
 	return result.RowsAffected(), nil
 }
 
+const issueReopenGroup = `-- name: IssueReopenGroup :exec
+UPDATE app_issues SET state='open' WHERE id=$1
+OR id IN (SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=$1)
+`
+
+func (q *Queries) IssueReopenGroup(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueReopenGroup, id)
+	return err
+}
+
+const issueReparentGroup = `-- name: IssueReparentGroup :exec
+UPDATE issue_group_links SET canonical_issue_id=$1,linked_at=$2
+WHERE canonical_issue_id=$3
+`
+
+type IssueReparentGroupParams struct {
+	TargetID pgtype.UUID
+	Now      pgtype.Timestamptz
+	SourceID pgtype.UUID
+}
+
+func (q *Queries) IssueReparentGroup(ctx context.Context, db DBTX, arg IssueReparentGroupParams) error {
+	_, err := db.Exec(ctx, issueReparentGroup, arg.TargetID, arg.Now, arg.SourceID)
+	return err
+}
+
 const issueRequestAttribution = `-- name: IssueRequestAttribution :many
 SELECT DISTINCT consumer_key,platform_tenant_id FROM request_audit_events
 WHERE account_id=$1 AND app_id=$2 AND deployment_id=$3
@@ -29188,7 +33297,7 @@ func (q *Queries) IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevoke
 
 const issueSetNewIssueAssignee = `-- name: IssueSetNewIssueAssignee :one
 UPDATE app_issues SET assignee_account_id=$1
- WHERE id=$2 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+ WHERE id=$2 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueSetNewIssueAssigneeParams struct {
@@ -29217,8 +33326,115 @@ func (q *Queries) IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg Iss
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
+}
+
+const issueSetSplitRuleEnabled = `-- name: IssueSetSplitRuleEnabled :one
+UPDATE issue_split_rules SET enabled=$1,updated_at=$2 WHERE id=$3 RETURNING id, app_id, environment, source_issue_id, target_issue_id, priority, exception_type, error_code, route, source_kind, enabled, initial_moved_event_count, unavailable_history_event_count, created_at, updated_at
+`
+
+type IssueSetSplitRuleEnabledParams struct {
+	Enabled bool
+	Now     pgtype.Timestamptz
+	ID      pgtype.UUID
+}
+
+func (q *Queries) IssueSetSplitRuleEnabled(ctx context.Context, db DBTX, arg IssueSetSplitRuleEnabledParams) (IssueSplitRule, error) {
+	row := db.QueryRow(ctx, issueSetSplitRuleEnabled, arg.Enabled, arg.Now, arg.ID)
+	var i IssueSplitRule
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Environment,
+		&i.SourceIssueID,
+		&i.TargetIssueID,
+		&i.Priority,
+		&i.ExceptionType,
+		&i.ErrorCode,
+		&i.Route,
+		&i.SourceKind,
+		&i.Enabled,
+		&i.InitialMovedEventCount,
+		&i.UnavailableHistoryEventCount,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const issueSplitPreviewCounts = `-- name: IssueSplitPreviewCounts :one
+WITH evidence AS MATERIALIZED (
+ SELECT e.id,e.occurred_at,
+  NOT EXISTS (SELECT 1 FROM issue_split_rules r WHERE r.source_issue_id=$2 AND r.enabled
+   AND (r.exception_type='' OR r.exception_type=e.payload->>'exception_type')
+   AND (r.error_code='' OR r.error_code=e.payload->>'error_code')
+   AND (r.route='' OR r.route=e.payload->>'route')
+   AND (r.source_kind='' OR r.source_kind=e.payload->>'source_kind')) AS eligible,
+  ($3::text = '' OR payload->>'exception_type' = $3)
+  AND ($4::text = '' OR payload->>'error_code' = $4)
+  AND ($5::text = '' OR payload->>'route' = $5)
+  AND ($6::text = '' OR payload->>'source_kind' = $6) AS matches
+ FROM issue_events e WHERE e.issue_id = $2
+)
+SELECT count(*)::bigint AS retained_event_count,
+ count(*) FILTER (WHERE matches)::bigint AS matching_event_count,
+ count(*) FILTER (WHERE matches AND eligible)::bigint AS eligible_event_count,
+ count(*) FILTER (WHERE matches AND NOT eligible)::bigint AS shadowed_event_count,
+ ARRAY(SELECT id FROM evidence WHERE matches AND eligible ORDER BY occurred_at DESC,id DESC LIMIT $1)::uuid[] AS eligible_event_ids,
+ ARRAY(SELECT id FROM evidence WHERE matches ORDER BY occurred_at DESC,id DESC LIMIT $1)::uuid[] AS matching_event_ids
+FROM evidence
+`
+
+type IssueSplitPreviewCountsParams struct {
+	SampleLimit   int32
+	IssueID       pgtype.UUID
+	ExceptionType string
+	ErrorCode     string
+	Route         string
+	SourceKind    string
+}
+
+type IssueSplitPreviewCountsRow struct {
+	RetainedEventCount int64
+	MatchingEventCount int64
+	EligibleEventCount int64
+	ShadowedEventCount int64
+	EligibleEventIds   []pgtype.UUID
+	MatchingEventIds   []pgtype.UUID
+}
+
+func (q *Queries) IssueSplitPreviewCounts(ctx context.Context, db DBTX, arg IssueSplitPreviewCountsParams) (IssueSplitPreviewCountsRow, error) {
+	row := db.QueryRow(ctx, issueSplitPreviewCounts,
+		arg.SampleLimit,
+		arg.IssueID,
+		arg.ExceptionType,
+		arg.ErrorCode,
+		arg.Route,
+		arg.SourceKind,
+	)
+	var i IssueSplitPreviewCountsRow
+	err := row.Scan(
+		&i.RetainedEventCount,
+		&i.MatchingEventCount,
+		&i.EligibleEventCount,
+		&i.ShadowedEventCount,
+		&i.EligibleEventIds,
+		&i.MatchingEventIds,
+	)
+	return i, err
+}
+
+const issueSyncGroupAction = `-- name: IssueSyncGroupAction :exec
+UPDATE app_issues i SET state=r.state,assignee_account_id=r.assignee_account_id,resolved_at=r.resolved_at,
+fixed_deployment_id=r.fixed_deployment_id,fixed_deployment_created_at=r.fixed_deployment_created_at,ignored_until=r.ignored_until
+FROM app_issues r WHERE r.id=$1 AND i.id IN (SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=r.id)
+`
+
+func (q *Queries) IssueSyncGroupAction(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, issueSyncGroupAction, id)
+	return err
 }
 
 const issueTokenStillValid = `-- name: IssueTokenStillValid :one
@@ -29245,7 +33461,7 @@ func (q *Queries) IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTo
 }
 
 const issueUnattributedEvents = `-- name: IssueUnattributedEvents :many
-SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
+SELECT e.id, e.app_id, e.deployment_id, e.event_id, e.issue_id, e.payload_hash, e.payload, e.occurred_at, e.received_at, e.attribution_checked_at, e.verified_consumer_id, e.verified_platform_tenant_id, e.original_issue_id,i.account_id,i.environment FROM issue_events e JOIN app_issues i ON i.id=e.issue_id
 WHERE e.verified_consumer_id IS NULL AND e.verified_platform_tenant_id IS NULL
 AND e.attribution_checked_at < $1 ORDER BY e.attribution_checked_at LIMIT $2
 `
@@ -29268,6 +33484,7 @@ type IssueUnattributedEventsRow struct {
 	AttributionCheckedAt     pgtype.Timestamptz
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
+	OriginalIssueID          pgtype.UUID
 	AccountID                pgtype.UUID
 	Environment              string
 }
@@ -29294,6 +33511,7 @@ func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg Issu
 			&i.AttributionCheckedAt,
 			&i.VerifiedConsumerID,
 			&i.VerifiedPlatformTenantID,
+			&i.OriginalIssueID,
 			&i.AccountID,
 			&i.Environment,
 		); err != nil {
@@ -29307,9 +33525,26 @@ func (q *Queries) IssueUnattributedEvents(ctx context.Context, db DBTX, arg Issu
 	return items, nil
 }
 
+const issueUnlinkGroup = `-- name: IssueUnlinkGroup :execrows
+DELETE FROM issue_group_links WHERE issue_id=$1 AND canonical_issue_id=$2
+`
+
+type IssueUnlinkGroupParams struct {
+	MemberID pgtype.UUID
+	ID       pgtype.UUID
+}
+
+func (q *Queries) IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error) {
+	result, err := db.Exec(ctx, issueUnlinkGroup, arg.MemberID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const issueUpdateAction = `-- name: IssueUpdateAction :one
 UPDATE app_issues SET state=$1,assignee_account_id=$2,resolved_at=$3,
-fixed_deployment_id=$4,fixed_deployment_created_at=$5,ignored_until=$6 WHERE id=$7 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until
+fixed_deployment_id=$4,fixed_deployment_created_at=$5,ignored_until=$6 WHERE id=$7 RETURNING id, account_id, app_id, environment, fingerprint, grouping_version, title, state, assignee_account_id, first_seen_at, last_seen_at, event_count, regression_count, resolved_at, fixed_deployment_id, fixed_deployment_created_at, ignored_until, split_source_issue_id
 `
 
 type IssueUpdateActionParams struct {
@@ -29351,6 +33586,7 @@ func (q *Queries) IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdat
 		&i.FixedDeploymentID,
 		&i.FixedDeploymentCreatedAt,
 		&i.IgnoredUntil,
+		&i.SplitSourceIssueID,
 	)
 	return i, err
 }
@@ -29702,7 +33938,7 @@ SELECT EXISTS (
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
-           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
@@ -31129,7 +35365,7 @@ select o.scope, o.key, o.instance_id::text AS instance_id, o.workload_name, o.se
 	   join app_secrets s on s.app_id = o.app_id and s.scope = o.scope and s.key = o.key
 	   join instances i on i.id = o.instance_id and i.app_id = o.app_id
 	  where s.account_id = $1::uuid and o.app_id = $2::uuid and ($3::text = '' or o.scope = $3::text)
-	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+	    and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 	  order by o.scope asc, o.key asc, o.instance_id asc, o.workload_name asc
 `
 
@@ -31222,7 +35458,7 @@ SELECT s.scope,
    AND ($3::text = '' OR s.scope = $3::text)
    AND ($4::text = '' OR s.key = $4::text)
    AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
         OR d.override_env_secrets ? s.key)
@@ -31260,7 +35496,7 @@ SELECT s.scope,
    AND ($3::text = '' OR s.scope = $3::text)
    AND ($4::text = '' OR s.key = $4::text)
    AND NOT EXISTS (SELECT 1 FROM managed_postgres_bindings b WHERE b.id = s.managed_postgres_binding_id AND b.access = 'migration')
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND sidecar.value->>'type' = 'sidecar'
    AND coalesce(sidecar.value->'env_secrets', '{}'::jsonb) ? s.key
 ORDER BY scope ASC, key ASC, instance_id ASC, workload_name ASC
@@ -32313,6 +36549,222 @@ func (q *Queries) ListBuildsAwaitingImage(ctx context.Context, db DBTX, arg List
 	return items, nil
 }
 
+const listCloneCheckpointMigrationAdoptionsForRetirement = `-- name: ListCloneCheckpointMigrationAdoptionsForRetirement :many
+SELECT a.dispatch_id, a.instance_id, a.app_id, a.deployment_id, a.wake_id, a.request_reason, a.lease_token, a.source_node_id, a.destination_node_id, a.lease_created_at, a.lease_expires_at, a.mem_storage_key, a.vmstate_storage_key, a.dispatched_at FROM project_environment_clone_migration_adoptions a
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ a.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',a.deployment_id::text))))
+AND ($2::text='' OR a.dispatch_id>NULLIF($2::text,'')::uuid)
+ORDER BY a.dispatch_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointMigrationAdoptionsForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterDispatchID string
+	PageLimit       int32
+}
+
+// Original dispatch ownership survives source lease and catalog cleanup.
+func (q *Queries) ListCloneCheckpointMigrationAdoptionsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationAdoptionsForRetirementParams) ([]ProjectEnvironmentCloneMigrationAdoption, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointMigrationAdoptionsForRetirement, arg.OperationID, arg.AfterDispatchID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneMigrationAdoption{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneMigrationAdoption
+		if err := rows.Scan(
+			&i.DispatchID,
+			&i.InstanceID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WakeID,
+			&i.RequestReason,
+			&i.LeaseToken,
+			&i.SourceNodeID,
+			&i.DestinationNodeID,
+			&i.LeaseCreatedAt,
+			&i.LeaseExpiresAt,
+			&i.MemStorageKey,
+			&i.VmstateStorageKey,
+			&i.DispatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCloneCheckpointMigrationHoldingsForRetirement = `-- name: ListCloneCheckpointMigrationHoldingsForRetirement :many
+SELECT m.instance_id, m.lease_token, m.source_node_id, m.created_at, m.lease_expires_at, m.mem_storage_key, m.vmstate_storage_key, m.pending,i.app_id,i.deployment_id,i.wake_id,i.node_id AS scheduling_node_id
+FROM migration_leases m JOIN instances i ON i.id=m.instance_id
+LEFT JOIN deployments d ON d.id=i.deployment_id
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ d.reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',i.deployment_id::text))))
+AND ($2::text='' OR m.instance_id>NULLIF($2::text,'')::uuid)
+ORDER BY m.instance_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointMigrationHoldingsForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterInstanceID string
+	PageLimit       int32
+}
+
+type ListCloneCheckpointMigrationHoldingsForRetirementRow struct {
+	InstanceID        pgtype.UUID
+	LeaseToken        string
+	SourceNodeID      string
+	CreatedAt         pgtype.Timestamptz
+	LeaseExpiresAt    pgtype.Timestamptz
+	MemStorageKey     string
+	VmstateStorageKey string
+	Pending           bool
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	WakeID            pgtype.UUID
+	SchedulingNodeID  pgtype.UUID
+}
+
+// The permanent fence retains original source leases and their instance owners.
+// Do not filter expiry or terminal state, or infer destination launch ownership.
+func (q *Queries) ListCloneCheckpointMigrationHoldingsForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationHoldingsForRetirementParams) ([]ListCloneCheckpointMigrationHoldingsForRetirementRow, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointMigrationHoldingsForRetirement, arg.OperationID, arg.AfterInstanceID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCloneCheckpointMigrationHoldingsForRetirementRow{}
+	for rows.Next() {
+		var i ListCloneCheckpointMigrationHoldingsForRetirementRow
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.LeaseToken,
+			&i.SourceNodeID,
+			&i.CreatedAt,
+			&i.LeaseExpiresAt,
+			&i.MemStorageKey,
+			&i.VmstateStorageKey,
+			&i.Pending,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WakeID,
+			&i.SchedulingNodeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCloneCheckpointMigrationResumesForRetirement = `-- name: ListCloneCheckpointMigrationResumesForRetirement :many
+SELECT s.dispatch_id, s.instance_id, s.app_id, s.deployment_id, s.wake_id, s.request_reason, s.lease_token, s.source_node_id, s.lease_created_at, s.lease_expires_at, s.dispatched_at FROM project_environment_clone_migration_resumes s
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ s.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',s.deployment_id::text))))
+AND ($2::text='' OR s.dispatch_id>NULLIF($2::text,'')::uuid)
+ORDER BY s.dispatch_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointMigrationResumesForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterDispatchID string
+	PageLimit       int32
+}
+
+// Original source resume requests survive lease and catalog deletion.
+func (q *Queries) ListCloneCheckpointMigrationResumesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointMigrationResumesForRetirementParams) ([]ProjectEnvironmentCloneMigrationResume, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointMigrationResumesForRetirement, arg.OperationID, arg.AfterDispatchID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneMigrationResume{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneMigrationResume
+		if err := rows.Scan(
+			&i.DispatchID,
+			&i.InstanceID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WakeID,
+			&i.RequestReason,
+			&i.LeaseToken,
+			&i.SourceNodeID,
+			&i.LeaseCreatedAt,
+			&i.LeaseExpiresAt,
+			&i.DispatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCloneCheckpointWakeDispatchesForRetirement = `-- name: ListCloneCheckpointWakeDispatchesForRetirement :many
+SELECT w.instance_id, w.app_id, w.deployment_id, w.node_id, w.wake_id, w.request_reason, w.method, w.dispatched_at FROM project_environment_clone_wake_dispatches w
+JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
+WHERE r.state IN ('requested','retired') AND (
+ w.request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',w.deployment_id::text))))
+AND ($2::text='' OR w.instance_id>NULLIF($2::text,'')::uuid)
+ORDER BY w.instance_id LIMIT $3::integer
+`
+
+type ListCloneCheckpointWakeDispatchesForRetirementParams struct {
+	OperationID     pgtype.UUID
+	AfterInstanceID string
+	PageLimit       int32
+}
+
+// Original dispatch rows survive metadata deletion; never join current instances
+// or infer ownership from their current state or a caller-supplied deployment.
+func (q *Queries) ListCloneCheckpointWakeDispatchesForRetirement(ctx context.Context, db DBTX, arg ListCloneCheckpointWakeDispatchesForRetirementParams) ([]ProjectEnvironmentCloneWakeDispatch, error) {
+	rows, err := db.Query(ctx, listCloneCheckpointWakeDispatchesForRetirement, arg.OperationID, arg.AfterInstanceID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneWakeDispatch{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneWakeDispatch
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.NodeID,
+			&i.WakeID,
+			&i.RequestReason,
+			&i.Method,
+			&i.DispatchedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listClonePostgresWriteFences = `-- name: ListClonePostgresWriteFences :many
 SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at FROM project_environment_clone_postgres_write_fences
 WHERE operation_id=$1 ORDER BY source_database_id FOR UPDATE
@@ -32341,6 +36793,72 @@ func (q *Queries) ListClonePostgresWriteFences(ctx context.Context, db DBTX, ope
 			&i.ReleasedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCommitPublications = `-- name: ListCommitPublications :many
+SELECT id::text,source_id::text,event_id::text,event_type,schema_version,accepted_at,
+ publication_acceptance_id,publication_source,publication_event_id
+FROM commit_receipts
+WHERE account_id=$1::text::uuid AND source_id=$2::text::uuid
+ AND publication_acceptance_id IS NOT NULL
+ AND (accepted_at,id) < ($3::timestamptz,$4::text::uuid)
+ORDER BY accepted_at DESC,id DESC LIMIT $5::int
+`
+
+type ListCommitPublicationsParams struct {
+	AccountID string
+	SourceID  string
+	BeforeAt  pgtype.Timestamptz
+	BeforeID  string
+	PageLimit int32
+}
+
+type ListCommitPublicationsRow struct {
+	ID                      string
+	SourceID                string
+	EventID                 string
+	EventType               string
+	SchemaVersion           string
+	AcceptedAt              pgtype.Timestamptz
+	PublicationAcceptanceID pgtype.Int8
+	PublicationSource       pgtype.Text
+	PublicationEventID      pgtype.Text
+}
+
+func (q *Queries) ListCommitPublications(ctx context.Context, db DBTX, arg ListCommitPublicationsParams) ([]ListCommitPublicationsRow, error) {
+	rows, err := db.Query(ctx, listCommitPublications,
+		arg.AccountID,
+		arg.SourceID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCommitPublicationsRow{}
+	for rows.Next() {
+		var i ListCommitPublicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.EventID,
+			&i.EventType,
+			&i.SchemaVersion,
+			&i.AcceptedAt,
+			&i.PublicationAcceptanceID,
+			&i.PublicationSource,
+			&i.PublicationEventID,
 		); err != nil {
 			return nil, err
 		}
@@ -38004,11 +42522,11 @@ const listReadinessFollowUps = `-- name: ListReadinessFollowUps :many
 SELECT jsonb_strip_nulls(jsonb_build_object(
  'subscription_id',s.id,'subscription_name',s.payload #>> '{subscription,name}',
  'subscription_tenant_id',CASE WHEN s.operator THEN s.tenant_id::text ELSE NULL END,
- 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{escalation_response,source,platform_tenant_id}',''),s.tenant_id::text),
+ 'platform_tenant_id',COALESCE(NULLIF(n.payload #>> '{change,baseline,platform_tenant_id}',''),NULLIF(n.payload #>> '{verification,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{business_outcome,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{escalation_response,source,platform_tenant_id}',''),NULLIF(n.payload #>> '{playbook_evidence,platform_tenant_id}',''),s.tenant_id::text),
  'scope',s.scope,'notification_id',n.payload->>'id','sequence',n.sequence,'kind',n.payload->>'kind',
- 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation',
- 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}',n.payload #>> '{escalation_response,source,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}',n.payload #>> '{escalation_response,source,instance_id}'),
- 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}',n.payload #> '{escalation_response,source,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}',n.payload #>> '{escalation_response,source,operation}'),
+ 'created_at',n.payload->'created_at','coordination',n.payload->'coordination','reminder',n.payload->'reminder','outcome_escalation',n.payload->'outcome_escalation','playbook_escalation',n.payload->'playbook_escalation','playbook_step',n.payload->'playbook_step','business_impact',n.payload->'business_impact','review_response',n.payload->'review_response',
+ 'workflow',COALESCE(n.payload #>> '{change,baseline,workflow}',n.payload #>> '{verification,source,workflow}',n.payload #>> '{business_outcome,source,workflow}',n.payload #>> '{escalation_response,source,workflow}',n.payload #>> '{playbook_evidence,workflow}',n.payload #>> '{business_impact,workflow}'),'instance_id',COALESCE(n.payload #>> '{change,baseline,instance_id}',n.payload #>> '{verification,source,instance_id}',n.payload #>> '{business_outcome,source,instance_id}',n.payload #>> '{escalation_response,source,instance_id}',n.payload #>> '{playbook_evidence,instance_id}'),
+ 'subject',COALESCE(n.payload #> '{change,baseline,subject}',n.payload #> '{verification,source,subject}',n.payload #> '{business_outcome,source,subject}',n.payload #> '{escalation_response,source,subject}',n.payload #> '{playbook_evidence,subject}'),'operation',COALESCE(n.payload #>> '{change,baseline,operation}',n.payload #>> '{verification,source,operation}',n.payload #>> '{business_outcome,source,operation}',n.payload #>> '{escalation_response,source,operation}'),
  'from_state',COALESCE(n.payload #>> '{change,baseline,from_state}',n.payload #>> '{verification,source,from_state}',n.payload #>> '{business_outcome,source,from_state}',n.payload #>> '{escalation_response,source,from_state}'),'to_state',COALESCE(n.payload #>> '{change,baseline,to_state}',n.payload #>> '{verification,source,to_state}',n.payload #>> '{business_outcome,source,to_state}',n.payload #>> '{escalation_response,source,to_state}')
 ))::jsonb AS item
 FROM customer_workflow_readiness_subscriptions s
@@ -38016,7 +42534,7 @@ JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
 WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid
  AND s.scope=$3::text AND s.operator=$4::boolean
  AND (s.operator OR s.tenant_id::text=$5::text)
- AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ AND (n.payload #>> '{coordination,follow_up_at}' IS NOT NULL OR n.payload #> '{coordination,fulfillment_reviews}' @> '[{"review_required":true}]'::jsonb)
 ORDER BY s.id,n.sequence LIMIT $6::integer
 `
 
@@ -40963,6 +45481,158 @@ func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg Loc
 	return items, nil
 }
 
+const lockCloneCheckpointObjectPublicationBucket = `-- name: LockCloneCheckpointObjectPublicationBucket :one
+SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets WHERE id=$1 AND account_id=$2 AND app_id=$3 AND environment_clone_operation_id=$4 FOR UPDATE
+`
+
+type LockCloneCheckpointObjectPublicationBucketParams struct {
+	ID                          pgtype.UUID
+	AccountID                   pgtype.UUID
+	AppID                       pgtype.UUID
+	EnvironmentCloneOperationID pgtype.UUID
+}
+
+func (q *Queries) LockCloneCheckpointObjectPublicationBucket(ctx context.Context, db DBTX, arg LockCloneCheckpointObjectPublicationBucketParams) (ObjectBucket, error) {
+	row := db.QueryRow(ctx, lockCloneCheckpointObjectPublicationBucket,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentCloneOperationID,
+	)
+	var i ObjectBucket
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Scope,
+		&i.Region,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.State,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AttemptCount,
+		&i.RetryAt,
+		&i.LastErrorCode,
+		&i.PublicRead,
+		&i.ServeAt,
+		&i.EnvironmentCloneSourceBucketID,
+		&i.EnvironmentCloneOperationID,
+	)
+	return i, err
+}
+
+const lockCloneCheckpointObjectPublicationKeys = `-- name: LockCloneCheckpointObjectPublicationKeys :many
+SELECT id FROM api_keys WHERE account_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockCloneCheckpointObjectPublicationKeys(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCloneCheckpointObjectPublicationKeys, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCloneCheckpointSchedulerAdmission = `-- name: LockCloneCheckpointSchedulerAdmission :exec
+SELECT lock_clone_checkpoint_scheduler_admission()
+`
+
+func (q *Queries) LockCloneCheckpointSchedulerAdmission(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneCheckpointSchedulerAdmission)
+	return err
+}
+
+const lockCloneCheckpointUnusedReservationClock = `-- name: LockCloneCheckpointUnusedReservationClock :one
+SELECT generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE
+`
+
+func (q *Queries) LockCloneCheckpointUnusedReservationClock(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, lockCloneCheckpointUnusedReservationClock)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
+const lockCloneCheckpointWakeDispatchInstance = `-- name: LockCloneCheckpointWakeDispatchInstance :one
+SELECT id FROM instances WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) LockCloneCheckpointWakeDispatchInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockCloneCheckpointWakeDispatchInstance, instanceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const lockCloneCheckpointWakeDispatchTables = `-- name: LockCloneCheckpointWakeDispatchTables :exec
+LOCK TABLE deployments, instances IN ROW EXCLUSIVE MODE
+`
+
+// Match the permanent retirement fence's table-before-instance lock order.
+func (q *Queries) LockCloneCheckpointWakeDispatchTables(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneCheckpointWakeDispatchTables)
+	return err
+}
+
+const lockCloneDeploymentCleanupBorrowerWriters = `-- name: LockCloneDeploymentCleanupBorrowerWriters :exec
+SELECT lock_clone_deployment_cleanup_borrower_writers()
+`
+
+func (q *Queries) LockCloneDeploymentCleanupBorrowerWriters(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneDeploymentCleanupBorrowerWriters)
+	return err
+}
+
+const lockCloneEnvironmentCleanupScopeBorrowers = `-- name: LockCloneEnvironmentCleanupScopeBorrowers :exec
+SELECT lock_clone_environment_cleanup_scope_borrowers()
+`
+
+func (q *Queries) LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneEnvironmentCleanupScopeBorrowers)
+	return err
+}
+
+const lockCloneWorkloadCleanupSpecs = `-- name: LockCloneWorkloadCleanupSpecs :many
+SELECT id FROM project_environment_workload_specs WHERE environment_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, lockCloneWorkloadCleanupSpecs, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCreditConsumption = `-- name: LockCreditConsumption :exec
 SELECT pg_advisory_xact_lock(hashtextextended('consume-account-credit:' || $1::text, 0))
 `
@@ -41776,7 +46446,7 @@ func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DB
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -41815,6 +46485,7 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -41973,6 +46644,15 @@ func (q *Queries) LockEnvironmentQualificationAccount(ctx context.Context, db DB
 	var may_deploy pgtype.Bool
 	err := row.Scan(&may_deploy)
 	return may_deploy, err
+}
+
+const lockEnvironmentQualificationCleanupWriters = `-- name: LockEnvironmentQualificationCleanupWriters :exec
+SELECT lock_environment_qualification_cleanup_writers()
+`
+
+func (q *Queries) LockEnvironmentQualificationCleanupWriters(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockEnvironmentQualificationCleanupWriters)
+	return err
 }
 
 const lockEnvironmentQualificationExecution = `-- name: LockEnvironmentQualificationExecution :one
@@ -44359,7 +49039,7 @@ const lockRuntimeSecretDeliveryAttempt = `-- name: LockRuntimeSecretDeliveryAtte
 SELECT id FROM instances
 WHERE id=$1::uuid AND app_id=$2::uuid
     AND deployment_id=$3::uuid AND wake_id=$4::uuid
-    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+    AND (state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
         OR (NOT $5::boolean AND state='failed'))
 FOR SHARE
 `
@@ -44419,7 +49099,7 @@ SELECT d.id AS deployment_id,COALESCE(NULLIF(d.scope,''),'default')::text AS sco
 FROM apps a JOIN deployments d ON d.app_id=a.id JOIN instances i ON i.deployment_id=d.id AND i.app_id=a.id
 WHERE a.account_id=$1::uuid AND a.id=$2::uuid AND i.id=$3::uuid AND a.status<>'deleted'
     AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
-    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm'))
+    AND (NOT $4::boolean OR i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen'))
 FOR SHARE OF a,d FOR KEY SHARE OF i
 `
 
@@ -46552,7 +51232,7 @@ WHERE lifecycle = 'active'
   AND NOT EXISTS (
       SELECT 1 FROM instances
       WHERE instances.node_id = compute_nodes.id
-        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm')
+        AND instances.state IN ('running', 'cold_booting', 'waking', 'draining', 'snapshotting', 'migrating', 'warm', 'frozen')
   )
 ORDER BY name
 `
@@ -47307,6 +51987,11 @@ AND ($1 <> 'deleting' OR NOT EXISTS (
     SELECT 1 FROM object_storage_multipart_uploads m WHERE m.id = w.multipart_upload_id
     AND m.state IN ('initiating','active','completing','completing_conditional','aborting')
   ))
+))
+AND ($1 <> 'provisioning' OR NOT EXISTS (
+ SELECT 1 FROM project_environment_clone_operations o
+ WHERE o.id=object_buckets.environment_clone_operation_id
+ AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind'='data_checkpoint')
 ))
 AND (NOT $7::boolean OR object_buckets.state = $1)
 AND (object_buckets.retry_at <= now() OR object_buckets.state <> $1) RETURNING id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id
@@ -48241,7 +52926,10 @@ func (q *Queries) ObjectBucketWriteFenceRead(ctx context.Context, db DBTX, bucke
 
 const objectBucketsDue = `-- name: ObjectBucketsDue :many
 SELECT id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, state, lease_token, lease_until, created_at, updated_at, attempt_count, retry_at, last_error_code, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id FROM object_buckets
-WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'))
+WHERE (state = 'deleting' OR ($1::boolean AND state = 'provisioning'
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_operations o
+ WHERE o.id=object_buckets.environment_clone_operation_id
+ AND EXISTS (SELECT 1 FROM jsonb_array_elements(o.resources) r WHERE r->>'kind'='data_checkpoint'))))
 AND retry_at <= now() AND (lease_until IS NULL OR lease_until < now())
 ORDER BY retry_at, id LIMIT $2::int
 `
@@ -49461,7 +54149,7 @@ func (q *Queries) ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, ar
 }
 
 const objectLifecycleMultipartList = `-- name: ObjectLifecycleMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND state='active' AND provider_upload_id<>'' AND created_at<=$4 AND id>$5
 ORDER BY id LIMIT $6::int
 `
@@ -49533,6 +54221,8 @@ func (q *Queries) ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -49793,7 +54483,7 @@ func (q *Queries) ObjectMultipartActivate(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartByKey = `-- name: ObjectMultipartByKey :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND object_key=$4
 AND state IN ('initiating','active','completing','completing_conditional','aborting')
 `
@@ -49855,12 +54545,14 @@ func (q *Queries) ObjectMultipartByKey(ctx context.Context, db DBTX, arg ObjectM
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
 
 const objectMultipartCapacityLock = `-- name: ObjectMultipartCapacityLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE id=$1 AND account_id=$2 AND bucket_id=$3 FOR UPDATE
 `
 
@@ -49915,6 +54607,8 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -49922,36 +54616,38 @@ func (q *Queries) ObjectMultipartCapacityLock(ctx context.Context, db DBTX, arg 
 const objectMultipartClaim = `-- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=$1, lease_token=$2,
+checksum_snapshot=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional') THEN $3::jsonb ELSE checksum_snapshot END,
 encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE $2::text END,
 protection_lease_token=CASE WHEN protection_snapshot='{}' THEN '' ELSE $2::text END,
-lease_until=now()+($3::int * interval '1 second'),
-completion_if_match=CASE WHEN state='active' THEN $4::text ELSE completion_if_match END,
-completion_if_none_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_none_match END,
+lease_until=now()+($4::int * interval '1 second'),
+completion_if_match=CASE WHEN state='active' THEN $5::text ELSE completion_if_match END,
+completion_if_none_match=CASE WHEN state='active' THEN $6::text ELSE completion_if_none_match END,
 completion_parts=CASE WHEN state='active' AND $1::text IN ('completing','completing_conditional')
-  THEN $6::jsonb ELSE completion_parts END,
+  THEN $7::jsonb ELSE completion_parts END,
 attempt_count=CASE WHEN state<>$1::text THEN 1 ELSE least(attempt_count+1,30) END,
 last_error_code=CASE WHEN state<>$1::text THEN '' ELSE last_error_code END,
 retry_at=now(), updated_at=now()
-WHERE account_id=$7 AND app_id=$8
-AND bucket_id=$9 AND id=$10
+WHERE account_id=$8 AND app_id=$9
+AND bucket_id=$10 AND id=$11
 AND (lease_until IS NULL OR lease_until<now())
 AND (encryption_snapshot='{}' OR octet_length($2::text)<=128)
 AND (retry_at<=now() OR state<>$1::text)
-AND (NOT $11::boolean OR state=$1::text
+AND (NOT $12::boolean OR state=$1::text
   OR (state='active' AND $1::text='aborting'))
 AND (
   ($1::text='initiating' AND state='initiating' AND provider_upload_id='') OR
   ($1::text IN ('completing','completing_conditional') AND (state='active' OR state=$1::text)
-    AND (state<>'active' OR (($1::text='completing') = ($4::text='' AND $5::text='')))
+    AND (state<>'active' OR (($1::text='completing') = ($5::text='' AND $6::text='')))
     AND (state<>'active' OR expires_at>now())
-    AND (state<>'active' OR jsonb_array_length($6::jsonb)>0)) OR
+    AND (state<>'active' OR jsonb_array_length($7::jsonb)>0)) OR
   ($1::text='aborting' AND state IN ('active','aborting') AND provider_upload_id<>'')
-) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartClaimParams struct {
 	Operation             string
 	Token                 pgtype.Text
+	ChecksumSnapshot      []byte
 	LeaseSeconds          int32
 	CompletionIfMatch     string
 	CompletionIfNoneMatch string
@@ -49967,6 +54663,7 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 	row := db.QueryRow(ctx, objectMultipartClaim,
 		arg.Operation,
 		arg.Token,
+		arg.ChecksumSnapshot,
 		arg.LeaseSeconds,
 		arg.CompletionIfMatch,
 		arg.CompletionIfNoneMatch,
@@ -50020,6 +54717,8 @@ func (q *Queries) ObjectMultipartClaim(ctx context.Context, db DBTX, arg ObjectM
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -50099,7 +54798,7 @@ func (q *Queries) ObjectMultipartDispatch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectMultipartDue = `-- name: ObjectMultipartDue :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE (((state IN ('initiating','completing','completing_conditional','aborting')) AND retry_at<=now())
   OR (state='active' AND expires_at<=now()))
 AND (lease_until IS NULL OR lease_until<now())
@@ -50157,6 +54856,8 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -50190,13 +54891,14 @@ func (q *Queries) ObjectMultipartFinish(ctx context.Context, db DBTX, arg Object
 }
 
 const objectMultipartFinishResult = `-- name: ObjectMultipartFinishResult :one
-UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=$1::boolean,protection_verified=$2::boolean,completion_etag=$3,completion_version_id=$4,
- completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $5::boolean,
+UPDATE object_storage_multipart_uploads SET state='completed',checksum_verified=$1::boolean,encryption_verified=$2::boolean,protection_verified=$3::boolean,completion_etag=$4,completion_version_id=$5,
+ completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR $6::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$6 AND lease_token=$7 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+WHERE id=$7 AND lease_token=$8 AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartFinishResultParams struct {
+	ChecksumVerified   bool
 	EncryptionVerified bool
 	ProtectionVerified bool
 	Etag               string
@@ -50208,6 +54910,7 @@ type ObjectMultipartFinishResultParams struct {
 
 func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg ObjectMultipartFinishResultParams) (ObjectStorageMultipartUpload, error) {
 	row := db.QueryRow(ctx, objectMultipartFinishResult,
+		arg.ChecksumVerified,
 		arg.EncryptionVerified,
 		arg.ProtectionVerified,
 		arg.Etag,
@@ -50259,6 +54962,8 @@ func (q *Queries) ObjectMultipartFinishResult(ctx context.Context, db DBTX, arg 
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -50284,7 +54989,7 @@ func (q *Queries) ObjectMultipartFinishVerifiedAbort(ctx context.Context, db DBT
 }
 
 const objectMultipartGet = `-- name: ObjectMultipartGet :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id=$4
 `
 
@@ -50345,6 +55050,8 @@ func (q *Queries) ObjectMultipartGet(ctx context.Context, db DBTX, arg ObjectMul
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -50404,8 +55111,8 @@ func (q *Queries) ObjectMultipartInitiationRead(ctx context.Context, db DBTX, mu
 
 const objectMultipartInsert = `-- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision,checksum_snapshot)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::boolean,$15::bigint,$16::jsonb) RETURNING id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified
 `
 
 type ObjectMultipartInsertParams struct {
@@ -50424,6 +55131,7 @@ type ObjectMultipartInsertParams struct {
 	ProtectionSnapshot        []byte
 	FixedAdmission            bool
 	EncryptionDefaultRevision int64
+	ChecksumSnapshot          []byte
 }
 
 func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg ObjectMultipartInsertParams) (ObjectStorageMultipartUpload, error) {
@@ -50443,6 +55151,7 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		arg.ProtectionSnapshot,
 		arg.FixedAdmission,
 		arg.EncryptionDefaultRevision,
+		arg.ChecksumSnapshot,
 	)
 	var i ObjectStorageMultipartUpload
 	err := row.Scan(
@@ -50487,12 +55196,14 @@ func (q *Queries) ObjectMultipartInsert(ctx context.Context, db DBTX, arg Object
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
 
 const objectMultipartList = `-- name: ObjectMultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3 AND id>$4
 ORDER BY id LIMIT $5::int
 `
@@ -50562,6 +55273,8 @@ func (q *Queries) ObjectMultipartList(ctx context.Context, db DBTX, arg ObjectMu
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -51049,7 +55762,7 @@ func (q *Queries) ObjectMultipartReleaseTrackedParts(ctx context.Context, db DBT
 }
 
 const objectMultipartResultLock = `-- name: ObjectMultipartResultLock :one
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads WHERE id=$1 AND account_id=$2 AND app_id=$3 AND bucket_id=$4 FOR UPDATE
 `
 
 type ObjectMultipartResultLockParams struct {
@@ -51109,6 +55822,8 @@ func (q *Queries) ObjectMultipartResultLock(ctx context.Context, db DBTX, arg Ob
 		&i.ProtectionSnapshot,
 		&i.ProtectionLeaseToken,
 		&i.ProtectionVerified,
+		&i.ChecksumSnapshot,
+		&i.ChecksumVerified,
 	)
 	return i, err
 }
@@ -51398,18 +56113,19 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 }
 
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
 
 type ObjectNotificationsGetRow struct {
-	Revision  int64
-	Rules     []byte
-	Name      string
-	Region    string
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	Name         string
+	Region       string
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -51418,6 +56134,7 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 	err := row.Scan(
 		&i.Revision,
 		&i.Rules,
+		&i.ManagedRules,
 		&i.Name,
 		&i.Region,
 		&i.AccountID,
@@ -51427,18 +56144,24 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
-INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
 `
 
 type ObjectNotificationsSaveParams struct {
-	BucketID pgtype.UUID
-	Revision int64
-	Rules    []byte
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
 }
 
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
-	_, err := db.Exec(ctx, objectNotificationsSave, arg.BucketID, arg.Revision, arg.Rules)
+	_, err := db.Exec(ctx, objectNotificationsSave,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
 	return err
 }
 
@@ -52245,7 +56968,7 @@ func (q *Queries) ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg Obje
 }
 
 const objectS3MultipartList = `-- name: ObjectS3MultipartList :many
-SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified FROM object_storage_multipart_uploads
+SELECT id, account_id, app_id, bucket_id, object_key, size_bytes, part_size_bytes, part_count, content_type, provider_upload_id, completion_parts, state, expires_at, lease_token, lease_until, attempt_count, retry_at, last_error_code, created_at, updated_at, object_metadata, part_revision, completion_if_match, completion_if_none_match, completion_error_code, completion_etag, completion_version_id, completion_recovery_cursor, completion_versions_observed, completion_dispatched, part_url_unsafe_until, lifecycle_scan_id, lifecycle_binding, encryption_snapshot, encryption_lease_token, encryption_verified, fixed_admission, encryption_default_revision, protection_snapshot, protection_lease_token, protection_verified, checksum_snapshot, checksum_verified FROM object_storage_multipart_uploads
 WHERE account_id=$1 AND app_id=$2 AND bucket_id=$3
 AND part_count=0 AND state IN ('active','completing','completing_conditional','aborting')
 AND starts_with(object_key,$4::text)
@@ -52323,6 +57046,8 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 			&i.ProtectionSnapshot,
 			&i.ProtectionLeaseToken,
 			&i.ProtectionVerified,
+			&i.ChecksumSnapshot,
+			&i.ChecksumVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -56729,7 +61454,7 @@ UPDATE instances SET netns=$1::text, host_ip=$2::inet,
 WHERE id=$5::uuid AND app_id=$6::uuid
     AND deployment_id=$7::uuid AND node_id=$8::uuid
     AND wake_id=$9::uuid AND state=$10::text
-    AND ($10::text<>'warm' OR EXISTS (
+    AND ($10::text NOT IN ('warm','frozen') OR EXISTS (
         SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
             AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
             AND proof.deployment_id=instances.deployment_id
@@ -57218,6 +61943,46 @@ func (q *Queries) PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg
 		&i.Schedule,
 		&i.Variables,
 		&i.JobID,
+	)
+	return i, err
+}
+
+const putGitLabOAuthConnection = `-- name: PutGitLabOAuthConnection :one
+INSERT INTO gitlab_oauth_connections (account_id, gitlab_user_id, username, credentials_sealed, expires_at)
+VALUES ($1::uuid, $2::bigint,
+        $3::text, $4::bytea, $5::timestamptz)
+ON CONFLICT (account_id) DO UPDATE SET gitlab_user_id=EXCLUDED.gitlab_user_id,
+    username=EXCLUDED.username, credentials_sealed=EXCLUDED.credentials_sealed,
+    expires_at=EXCLUDED.expires_at, version=gitlab_oauth_connections.version+1, updated_at=now()
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type PutGitLabOAuthConnectionParams struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+}
+
+func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, putGitLabOAuthConnection,
+		arg.AccountID,
+		arg.GitlabUserID,
+		arg.Username,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -59110,7 +63875,7 @@ SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND ((coalesce(d.override_env_secrets, '{}'::jsonb) = '{}'::jsonb
          AND jsonb_array_length(coalesce(d.sidecars, '[]'::jsonb)) = 0)
         OR d.override_env_secrets ? s.key)
@@ -59149,7 +63914,7 @@ SELECT s.binding_type, s.binding_id, s.delivery_version AS current_version, d.id
  WHERE s.account_id = $1::uuid
    AND i.app_id = $2::uuid
    AND i.kind = 'wake' AND i.mode <> 'mirror'
-   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
    AND sidecar.value->>'type' = 'sidecar'
    AND sidecar.value->'env_secrets'->>s.key = 'secret:' || s.key
 )
@@ -59419,6 +64184,1115 @@ func (q *Queries) ReadCheckedRollback(ctx context.Context, db DBTX, arg ReadChec
 	return receipt, err
 }
 
+const readCloneCheckpointCaptureCatalogueRetirement = `-- name: ReadCloneCheckpointCaptureCatalogueRetirement :one
+SELECT operation_id, source_kind, source_id, capture_identity, source_resource_id, observation_sha256, retired_at FROM project_environment_clone_checkpoint_capture_catalogues
+WHERE operation_id=$1::uuid AND source_kind=$2::text AND source_id=$3::uuid FOR UPDATE
+`
+
+type ReadCloneCheckpointCaptureCatalogueRetirementParams struct {
+	OperationID pgtype.UUID
+	SourceKind  string
+	SourceID    pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointCaptureCatalogueRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointCaptureCatalogueRetirementParams) (ProjectEnvironmentCloneCheckpointCaptureCatalogue, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointCaptureCatalogueRetirement, arg.OperationID, arg.SourceKind, arg.SourceID)
+	var i ProjectEnvironmentCloneCheckpointCaptureCatalogue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceKind,
+		&i.SourceID,
+		&i.CaptureIdentity,
+		&i.SourceResourceID,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointCaptureRetirement = `-- name: ReadCloneCheckpointCaptureRetirement :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_capture_retirements WHERE operation_id=$1 FOR UPDATE
+`
+
+// ADR-590: pre-adoption capture retirement, claimed once before native IO.
+func (q *Queries) ReadCloneCheckpointCaptureRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointCaptureRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointCaptureRetirement, operationID)
+	var i ProjectEnvironmentCloneCheckpointCaptureRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectCopy = `-- name: ReadCloneCheckpointObjectCopy :one
+SELECT operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, copied_at FROM project_environment_clone_checkpoint_object_copies WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectCopyParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectCopy(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectCopyParams) (ProjectEnvironmentCloneCheckpointObjectCopy, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectCopy, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectCopy
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.CopiedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectCredentialReservation = `-- name: ReadCloneCheckpointObjectCredentialReservation :one
+SELECT operation_id, plan, plan_sha256, state FROM project_environment_clone_checkpoint_object_credential_ids WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectCredentialReservation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectCredentialID, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectCredentialReservation, operationID)
+	var i ProjectEnvironmentCloneCheckpointObjectCredentialID
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectPublication = `-- name: ReadCloneCheckpointObjectPublication :one
+SELECT operation_id, plan, plan_sha256, state, withdrawn_at FROM project_environment_clone_checkpoint_object_publications WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectPublication, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectPublication, operationID)
+	var i ProjectEnvironmentCloneCheckpointObjectPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.WithdrawnAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectPublicationCredentials = `-- name: ReadCloneCheckpointObjectPublicationCredentials :many
+SELECT id, account_id, bucket_id, access_key_id, secret_sealed, kid, label, permission, status, created_at, last_used_at, revoked_at, managed_app_id, managed_scope, managed_prefix, rotation_parent_id, rotation_wake_id, rotation_stamped_at, url_request, url_api_key_id, url_expires_at, url_receipt_id FROM object_storage_s3_credentials WHERE bucket_id=$1 ORDER BY id FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublicationCredentials(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectStorageS3Credential, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationCredentials, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageS3Credential{}
+	for rows.Next() {
+		var i ObjectStorageS3Credential
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.BucketID,
+			&i.AccessKeyID,
+			&i.SecretSealed,
+			&i.Kid,
+			&i.Label,
+			&i.Permission,
+			&i.Status,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+			&i.ManagedAppID,
+			&i.ManagedScope,
+			&i.ManagedPrefix,
+			&i.RotationParentID,
+			&i.RotationWakeID,
+			&i.RotationStampedAt,
+			&i.UrlRequest,
+			&i.UrlApiKeyID,
+			&i.UrlExpiresAt,
+			&i.UrlReceiptID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readCloneCheckpointObjectPublicationGrants = `-- name: ReadCloneCheckpointObjectPublicationGrants :many
+SELECT account_id, bucket_id, api_key_id, permission, created_at, updated_at FROM object_storage_access_grants WHERE bucket_id=$1 ORDER BY api_key_id FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublicationGrants(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]ObjectStorageAccessGrant, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationGrants, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectStorageAccessGrant{}
+	for rows.Next() {
+		var i ObjectStorageAccessGrant
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.BucketID,
+			&i.ApiKeyID,
+			&i.Permission,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readCloneCheckpointObjectPublicationSecrets = `-- name: ReadCloneCheckpointObjectPublicationSecrets :many
+SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation, managed_object_storage_credential_id, delivery_version, delivered_version, delivery_status, last_delivery_attempt_at, last_delivered_at, last_delivery_error_code, last_delivered_wake_id, last_delivered_instance_id, last_runtime_reload_version, last_runtime_reload_revision, last_runtime_reload_projection, last_runtime_reload_signal, last_runtime_reload_at, last_runtime_reload_error_code, last_runtime_reload_instance_id, secret_version, secret_class FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) ([]AppSecret, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationSecrets, managedObjectStorageCredentialID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSecret{}
+	for rows.Next() {
+		var i AppSecret
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.AppID,
+			&i.Key,
+			&i.Ciphertext,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrgID,
+			&i.Kid,
+			&i.Scope,
+			&i.ValueHash,
+			&i.ManagedPostgresBindingID,
+			&i.ManagedCredentialRef,
+			&i.ManagedCredentialGeneration,
+			&i.ManagedObjectStorageCredentialID,
+			&i.DeliveryVersion,
+			&i.DeliveredVersion,
+			&i.DeliveryStatus,
+			&i.LastDeliveryAttemptAt,
+			&i.LastDeliveredAt,
+			&i.LastDeliveryErrorCode,
+			&i.LastDeliveredWakeID,
+			&i.LastDeliveredInstanceID,
+			&i.LastRuntimeReloadVersion,
+			&i.LastRuntimeReloadRevision,
+			&i.LastRuntimeReloadProjection,
+			&i.LastRuntimeReloadSignal,
+			&i.LastRuntimeReloadAt,
+			&i.LastRuntimeReloadErrorCode,
+			&i.LastRuntimeReloadInstanceID,
+			&i.SecretVersion,
+			&i.SecretClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readCloneCheckpointObjectRetirement = `-- name: ReadCloneCheckpointObjectRetirement :one
+SELECT operation_id, source_bucket_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_object_retirements WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectRetirementParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectRetirementParams) (ProjectEnvironmentCloneCheckpointObjectRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectRetirement, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectTarget = `-- name: ReadCloneCheckpointObjectTarget :one
+SELECT operation_id, source_bucket_id, target_bucket_id, plan, state, requested_at, observation_sha256, ready_at FROM project_environment_clone_checkpoint_object_targets
+WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectTargetParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectTargetParams) (ProjectEnvironmentCloneCheckpointObjectTarget, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectTarget, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectTarget
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.TargetBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectValues = `-- name: ReadCloneCheckpointObjectValues :one
+SELECT operation_id, payload, payload_sha256, state FROM project_environment_clone_checkpoint_object_values WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointObjectValues(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointObjectValue, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectValues, operationID)
+	var i ProjectEnvironmentCloneCheckpointObjectValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.Payload,
+		&i.PayloadSha256,
+		&i.State,
+	)
+	return i, err
+}
+
+const readCloneCheckpointObjectVerification = `-- name: ReadCloneCheckpointObjectVerification :one
+SELECT operation_id, source_bucket_id, plan, state, requested_at, observation_sha256, verified_at FROM project_environment_clone_checkpoint_object_verification WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointObjectVerificationParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointObjectVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointObjectVerificationParams) (ProjectEnvironmentCloneCheckpointObjectVerification, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointObjectVerification, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointObjectVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPgActivation = `-- name: ReadCloneCheckpointPgActivation :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, activated_at FROM project_environment_clone_checkpoint_pg_activations WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointPgActivation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgActivation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgActivation, operationID)
+	var i ProjectEnvironmentCloneCheckpointPgActivation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.ActivatedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPgConnectionValue = `-- name: ReadCloneCheckpointPgConnectionValue :one
+SELECT operation_id, source_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, sealed_at, activation_operation_id FROM project_environment_clone_checkpoint_pg_connection_values WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPgConnectionValueParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgConnectionValue, arg.OperationID, arg.SourceBindingID)
+	var i ProjectEnvironmentCloneCheckpointPgConnectionValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.SealedAt,
+		&i.ActivationOperationID,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPgCopyRetirement = `-- name: ReadCloneCheckpointPgCopyRetirement :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_pg_copy_retirements WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPgCopyRetirementParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPgCopyRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgCopyRetirementParams) (ProjectEnvironmentCloneCheckpointPgCopyRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgCopyRetirement, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPgCopyRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPgPublication = `-- name: ReadCloneCheckpointPgPublication :one
+SELECT operation_id, plan, plan_sha256, state, published_at, withdrawn_at FROM project_environment_clone_checkpoint_pg_publications WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointPgPublication(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointPgPublication, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgPublication, operationID)
+	var i ProjectEnvironmentCloneCheckpointPgPublication
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.PlanSha256,
+		&i.State,
+		&i.PublishedAt,
+		&i.WithdrawnAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPgTargetCompensation = `-- name: ReadCloneCheckpointPgTargetCompensation :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, compensated_at FROM project_environment_clone_checkpoint_pg_target_compensations WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPgTargetCompensationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPgTargetCompensation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgTargetCompensationParams) (ProjectEnvironmentCloneCheckpointPgTargetCompensation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPgTargetCompensation, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPgTargetCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPgTargetCredentials = `-- name: ReadCloneCheckpointPgTargetCredentials :many
+SELECT operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_database_id=$2 ORDER BY source_binding_id FOR UPDATE
+`
+
+type ReadCloneCheckpointPgTargetCredentialsParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPgTargetCredentials(ctx context.Context, db DBTX, arg ReadCloneCheckpointPgTargetCredentialsParams) ([]ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	rows, err := db.Query(ctx, readCloneCheckpointPgTargetCredentials, arg.OperationID, arg.SourceDatabaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectEnvironmentCloneCheckpointPostgresCredential{}
+	for rows.Next() {
+		var i ProjectEnvironmentCloneCheckpointPostgresCredential
+		if err := rows.Scan(
+			&i.OperationID,
+			&i.SourceBindingID,
+			&i.SourceDatabaseID,
+			&i.AccountID,
+			&i.TargetBindingID,
+			&i.Plan,
+			&i.State,
+			&i.Ciphertext,
+			&i.KeyID,
+			&i.CiphertextSha256,
+			&i.RequestedAt,
+			&i.ObservationSha256,
+			&i.PreparedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readCloneCheckpointPostgresCredential = `-- name: ReadCloneCheckpointPostgresCredential :one
+SELECT operation_id, source_binding_id, source_database_id, account_id, target_binding_id, plan, state, ciphertext, key_id, ciphertext_sha256, requested_at, observation_sha256, prepared_at FROM project_environment_clone_checkpoint_postgres_credentials WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresCredentialParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresCredential, arg.OperationID, arg.SourceBindingID)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPostgresCredentialRetirement = `-- name: ReadCloneCheckpointPostgresCredentialRetirement :one
+SELECT operation_id, source_binding_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_pg_credential_retirements WHERE operation_id=$1 AND source_binding_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresCredentialRetirementParams struct {
+	OperationID     pgtype.UUID
+	SourceBindingID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresCredentialRetirement(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresCredentialRetirementParams) (ProjectEnvironmentCloneCheckpointPgCredentialRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresCredentialRetirement, arg.OperationID, arg.SourceBindingID)
+	var i ProjectEnvironmentCloneCheckpointPgCredentialRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPostgresIsolation = `-- name: ReadCloneCheckpointPostgresIsolation :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation_sha256, adopted_database_id, adopted_at FROM project_environment_clone_checkpoint_postgres_isolation WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresIsolationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresIsolation(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresIsolationParams) (ProjectEnvironmentCloneCheckpointPostgresIsolation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresIsolation, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPostgresIsolation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.AdoptedDatabaseID,
+		&i.AdoptedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPostgresRuntime = `-- name: ReadCloneCheckpointPostgresRuntime :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation, observation_sha256, data_resource_id, ready_at FROM project_environment_clone_checkpoint_postgres_runtime WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresRuntimeParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresRuntime(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresRuntimeParams) (ProjectEnvironmentCloneCheckpointPostgresRuntime, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresRuntime, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPostgresRuntime
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.DataResourceID,
+		&i.ReadyAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointPostgresVerification = `-- name: ReadCloneCheckpointPostgresVerification :one
+SELECT operation_id, source_database_id, plan, state, requested_at, observation_sha256, verified_at FROM project_environment_clone_checkpoint_postgres_verification WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointPostgresVerificationParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointPostgresVerification(ctx context.Context, db DBTX, arg ReadCloneCheckpointPostgresVerificationParams) (ProjectEnvironmentCloneCheckpointPostgresVerification, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointPostgresVerification, arg.OperationID, arg.SourceDatabaseID)
+	var i ProjectEnvironmentCloneCheckpointPostgresVerification
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceDatabaseID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.VerifiedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointRelease = `-- name: ReadCloneCheckpointRelease :one
+SELECT operation_id, plan, receipt, adoption_sha256, state, requested_at, observation_sha256, released_at FROM project_environment_clone_checkpoint_releases WHERE operation_id=$1 FOR UPDATE
+`
+
+// ADR-590: once-only successful release, using the original durable plan.
+func (q *Queries) ReadCloneCheckpointRelease(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointRelease, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointRelease, operationID)
+	var i ProjectEnvironmentCloneCheckpointRelease
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.Receipt,
+		&i.AdoptionSha256,
+		&i.State,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.ReleasedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointSourceCompensation = `-- name: ReadCloneCheckpointSourceCompensation :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, compensated_at FROM project_environment_clone_checkpoint_source_compensations WHERE operation_id=$1 FOR UPDATE
+`
+
+// ADR-590: original source compensation is claimed once before native IO.
+func (q *Queries) ReadCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointSourceCompensation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointSourceCompensation, operationID)
+	var i ProjectEnvironmentCloneCheckpointSourceCompensation
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.CompensatedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointUnusedObjectReservation = `-- name: ReadCloneCheckpointUnusedObjectReservation :one
+SELECT operation_id, source_bucket_id, target_bucket_id, reservation, completed_at FROM project_environment_clone_checkpoint_unused_object_reservations WHERE operation_id=$1 AND source_bucket_id=$2 FOR UPDATE
+`
+
+type ReadCloneCheckpointUnusedObjectReservationParams struct {
+	OperationID    pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneCheckpointUnusedObjectReservation(ctx context.Context, db DBTX, arg ReadCloneCheckpointUnusedObjectReservationParams) (ProjectEnvironmentCloneCheckpointUnusedObjectReservation, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointUnusedObjectReservation, arg.OperationID, arg.SourceBucketID)
+	var i ProjectEnvironmentCloneCheckpointUnusedObjectReservation
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBucketID,
+		&i.TargetBucketID,
+		&i.Reservation,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointWorkloadRetirement = `-- name: ReadCloneCheckpointWorkloadRetirement :one
+SELECT operation_id, plan, state, requested_at, observation, observation_sha256, retired_at FROM project_environment_clone_checkpoint_workload_retirements WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointWorkloadRetirement, operationID)
+	var i ProjectEnvironmentCloneCheckpointWorkloadRetirement
+	err := row.Scan(
+		&i.OperationID,
+		&i.Plan,
+		&i.State,
+		&i.RequestedAt,
+		&i.Observation,
+		&i.ObservationSha256,
+		&i.RetiredAt,
+	)
+	return i, err
+}
+
+const readCloneCheckpointWorkloadRetirementMaterialization = `-- name: ReadCloneCheckpointWorkloadRetirementMaterialization :one
+SELECT operation_id, environment_id, workload_settings, created_at FROM project_environment_clone_materializations WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneCheckpointWorkloadRetirementMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error) {
+	row := db.QueryRow(ctx, readCloneCheckpointWorkloadRetirementMaterialization, operationID)
+	var i ProjectEnvironmentCloneMaterialization
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadSettings,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readCloneConfigurationCleanup = `-- name: ReadCloneConfigurationCleanup :one
+SELECT operation_id, ownership_sha256, native_plan_sha256, native_observation_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_configuration_cleanups WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneConfigurationCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationCleanup, error) {
+	row := db.QueryRow(ctx, readCloneConfigurationCleanup, operationID)
+	var i ProjectEnvironmentCloneConfigurationCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.OwnershipSha256,
+		&i.NativePlanSha256,
+		&i.NativeObservationSha256,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CleanedAt,
+	)
+	return i, err
+}
+
+const readCloneConfigurationOwnership = `-- name: ReadCloneConfigurationOwnership :one
+SELECT operation_id, environment_id, manifest, manifest_sha256, created_at FROM project_environment_clone_configuration_ownership WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneConfigurationOwnership(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneConfigurationOwnership, error) {
+	row := db.QueryRow(ctx, readCloneConfigurationOwnership, operationID)
+	var i ProjectEnvironmentCloneConfigurationOwnership
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const readCloneConfigurationOwnershipSnapshot = `-- name: ReadCloneConfigurationOwnershipSnapshot :one
+SELECT jsonb_build_object(
+ 'app_environment_secret_ref_suppressions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_environment_secret_ref_suppressions t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'app_environment_secret_refs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_environment_secret_refs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'app_envs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_envs t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'app_secrets', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM app_secrets t WHERE t.app_id IN (SELECT a.id FROM apps a WHERE a.project_id=$1::uuid) AND t.scope=$2::text),
+ 'feature_flag_versions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM feature_flag_versions t WHERE t.environment_id=$3::uuid),
+ 'project_environment_config_versions', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_config_versions t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text),
+ 'project_environment_edge_policies', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_edge_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text),
+ 'project_environment_route_policies', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_route_policies t WHERE t.project_id=$1::uuid AND t.environment_slug=$2::text),
+ 'project_environment_workload_heads', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_workload_heads t WHERE t.environment_id=$3::uuid),
+ 'project_environment_workload_specs', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environment_workload_specs t WHERE t.environment_id=$3::uuid),
+ 'project_environments', (SELECT encode(sha256(convert_to(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb)::text,'UTF8')),'hex') FROM project_environments t WHERE t.id=$3::uuid)
+)::jsonb AS manifest
+`
+
+type ReadCloneConfigurationOwnershipSnapshotParams struct {
+	ProjectID     pgtype.UUID
+	Environment   string
+	EnvironmentID pgtype.UUID
+}
+
+func (q *Queries) ReadCloneConfigurationOwnershipSnapshot(ctx context.Context, db DBTX, arg ReadCloneConfigurationOwnershipSnapshotParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCloneConfigurationOwnershipSnapshot, arg.ProjectID, arg.Environment, arg.EnvironmentID)
+	var manifest []byte
+	err := row.Scan(&manifest)
+	return manifest, err
+}
+
+const readCloneDeploymentBorrowers = `-- name: ReadCloneDeploymentBorrowers :one
+SELECT (jsonb_build_object(
+    'deployment_mcp_task_holds_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_holds WHERE deployment_id = $1::uuid),
+    'deployment_mcp_task_migration_overrides_deployment_id_fkey', (SELECT count(*) FROM deployment_mcp_task_migration_overrides WHERE deployment_id = $1::uuid),
+    'dev_source_manifests_deployment_id_fkey', (SELECT count(*) FROM dev_source_manifests WHERE deployment_id = $1::uuid),
+    'dev_source_patches_base_deployment_id_fkey', (SELECT count(*) FROM dev_source_patches WHERE base_deployment_id = $1::uuid),
+    'profile_canary_checks_deployment_id_fkey', (SELECT count(*) FROM profile_canary_checks WHERE deployment_id = $1::uuid),
+    'profile_deployment_checks_deployment_id_fkey', (SELECT count(*) FROM profile_deployment_checks WHERE deployment_id = $1::uuid),
+    'profile_periodic_monitors_deployment_id_fkey', (SELECT count(*) FROM profile_periodic_monitors WHERE deployment_id = $1::uuid),
+    'profile_route_alert_state_deployment_id_fkey', (SELECT count(*) FROM profile_route_alert_state WHERE deployment_id = $1::uuid),
+    'runtime_upgrade_gateway_drains_serving_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE serving_deployment_id = $1::uuid),
+    'runtime_upgrade_operations_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_operations WHERE deployment_id = $1::uuid),
+    'runtime_upgrade_operations_serving_deployment_id_fkey', (SELECT count(*) FROM runtime_upgrade_operations WHERE serving_deployment_id = $1::uuid),
+    'app_route_removal_policies_baseline_deployment_id_fkey', (SELECT count(*) FROM app_route_removal_policies WHERE baseline_deployment_id = $1::uuid),
+    'route_removal_approvals_baseline_deployment_id_fkey', (SELECT count(*) FROM route_removal_approvals WHERE baseline_deployment_id = $1::uuid),
+    'route_removal_approvals_candidate_deployment_id_fkey', (SELECT count(*) FROM route_removal_approvals WHERE candidate_deployment_id = $1::uuid),
+    'route_lifecycle_approvals_baseline_deployment_id_fkey', (SELECT count(*) FROM route_lifecycle_approvals WHERE baseline_deployment_id = $1::uuid),
+    'route_lifecycle_approvals_candidate_deployment_id_fkey', (SELECT count(*) FROM route_lifecycle_approvals WHERE candidate_deployment_id = $1::uuid),
+    'production_lifecycle_reviews_deployment_id_fkey', (SELECT count(*) FROM production_lifecycle_reviews WHERE deployment_id = $1::uuid),
+    'deployment_dependency_gates_deployment_id_fkey', (SELECT count(*) FROM deployment_dependency_gates WHERE deployment_id = $1::uuid),
+    'deployment_runtime_upgrade_baselines_serving_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE serving_deployment_id = $1::uuid),
+    'deployment_runtime_upgrade_cutovers_serving_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE serving_deployment_id = $1::uuid),
+    'deployment_runtime_upgrade_targets_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_upgrade_targets WHERE deployment_id = $1::uuid),
+    'workflow_code_pins_deployment_id_app_id_fkey', (SELECT count(*) FROM workflow_code_pins WHERE deployment_id = $1::uuid),
+    'workflow_event_code_refs_deployment_id_app_id_fkey', (SELECT count(*) FROM workflow_event_code_refs WHERE deployment_id = $1::uuid),
+    'workflow_runs_deployment_owner_fk', (SELECT count(*) FROM workflow_runs WHERE deployment_id = $1::uuid)
+) || jsonb_build_object(
+    'alert_historical_rollback_claims_deployment_id_fkey', (SELECT count(*) FROM alert_historical_rollback_claims WHERE deployment_id = $1::uuid),
+    'app_error_requests_deployment_id_fkey', (SELECT count(*) FROM app_error_requests WHERE deployment_id = $1::uuid),
+    'app_errors_deployment_id_fkey', (SELECT count(*) FROM app_errors WHERE deployment_id = $1::uuid),
+    'app_tasks_deployment_id_fkey', (SELECT count(*) FROM app_tasks WHERE deployment_id = $1::uuid),
+    'automatic_route_checks_deployment_id_fkey', (SELECT count(*) FROM automatic_route_checks WHERE deployment_id = $1::uuid),
+    'builds_deployment_id_fkey', (SELECT count(*) FROM builds WHERE deployment_id = $1::uuid),
+    'customer_operation_code_pins_owner_fk', (SELECT count(*) FROM customer_operation_code_pins WHERE deployment_id = $1::uuid),
+    'customer_operation_definitions_deployment_id_fkey', (SELECT count(*) FROM customer_operation_definitions WHERE deployment_id = $1::uuid),
+    'deployment_aliases_deployment_id_fkey', (SELECT count(*) FROM deployment_aliases WHERE deployment_id = $1::uuid),
+    'deployment_image_preparations_deployment_id_fkey', (SELECT count(*) FROM deployment_image_preparations WHERE deployment_id = $1::uuid),
+    'deployment_logs_deployment_id_fkey', (SELECT count(*) FROM deployment_logs WHERE deployment_id = $1::uuid),
+    'deployment_openapi_docs_deployment_id_fkey', (SELECT count(*) FROM deployment_openapi_docs WHERE deployment_id = $1::uuid),
+    'deployment_openapi_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_openapi_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_recovery_lineage_deployment_id_fkey', (SELECT count(*) FROM deployment_recovery_lineage WHERE deployment_id = $1::uuid),
+    'deployment_recovery_lineage_predecessor_deployment_id_fkey', (SELECT count(*) FROM deployment_recovery_lineage WHERE predecessor_deployment_id = $1::uuid),
+    'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = $1::uuid),
+    'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = $1::uuid),
+    'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = $1::uuid),
+    'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = $1::uuid),
+    'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = $1::uuid),
+    'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = $1::uuid),
+    'deployment_sidecar_secret_reload_signals_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_secret_reload_signals WHERE deployment_id = $1::uuid),
+    'developer_sync_history_deployment_id_fkey', (SELECT count(*) FROM developer_sync_history WHERE deployment_id = $1::uuid),
+    'environment_workload_qualification_requests_deployment_id_fkey', (SELECT count(*) FROM environment_workload_qualification_requests WHERE deployment_id = $1::uuid),
+    'github_check_updates_deployment_id_fkey', (SELECT count(*) FROM github_check_updates WHERE deployment_id = $1::uuid),
+    'github_deployments_deployment_id_fkey', (SELECT count(*) FROM github_deployments WHERE deployment_id = $1::uuid),
+    'instances_deployment_id_fkey', (SELECT count(*) FROM instances WHERE deployment_id = $1::uuid),
+    'invocation_environment_queue_admissions_deployment_id_fkey', (SELECT count(*) FROM invocation_environment_queue_admissions WHERE deployment_id = $1::uuid),
+    'issue_ingest_tokens_deployment_id_fkey', (SELECT count(*) FROM issue_ingest_tokens WHERE deployment_id = $1::uuid),
+    'mirror_rules_mirror_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE mirror_deployment_id = $1::uuid),
+    'mirror_rules_source_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE source_deployment_id = $1::uuid),
+    'project_environment_promotion_workload_specs_deployment_id_fkey', (SELECT count(*) FROM project_environment_promotion_workload_specs WHERE deployment_id = $1::uuid),
+    'project_environment_queue_runtime_sets_deployment_id_fkey', (SELECT count(*) FROM project_environment_queue_runtime_sets WHERE deployment_id = $1::uuid),
+    'project_environment_workload_deployment_spec_deployment_id_fkey', (SELECT count(*) FROM project_environment_workload_deployment_specs WHERE deployment_id = $1::uuid),
+    'project_release_members_deployment_id_fkey', (SELECT count(*) FROM project_release_members WHERE deployment_id = $1::uuid),
+    'route_check_history_deployment_id_fkey', (SELECT count(*) FROM route_check_history WHERE deployment_id = $1::uuid),
+    'route_health_history_deployment_id_fkey', (SELECT count(*) FROM route_health_history WHERE deployment_id = $1::uuid),
+    'route_health_notification_state_deployment_id_fkey', (SELECT count(*) FROM route_health_notification_state WHERE deployment_id = $1::uuid),
+    'route_monitor_incidents_deployment_id_fkey', (SELECT count(*) FROM route_monitor_incidents WHERE deployment_id = $1::uuid),
+    'route_monitors_last_deployment_id_fkey', (SELECT count(*) FROM route_monitors WHERE last_deployment_id = $1::uuid),
+    'runtime_instance_config_proofs_deployment_id_fkey', (SELECT count(*) FROM runtime_instance_config_proofs WHERE deployment_id = $1::uuid),
+    'snapshots_deployment_id_fkey', (SELECT count(*) FROM snapshots WHERE deployment_id = $1::uuid),
+    'platform_tenant_workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM platform_tenant_workflow_schedule_cursors WHERE deployment_id = $1::uuid),
+    'workflow_schedule_cursors_deployment_id_fkey', (SELECT count(*) FROM workflow_schedule_cursors WHERE deployment_id = $1::uuid)
+))::jsonb AS borrowers
+`
+
+func (q *Queries) ReadCloneDeploymentBorrowers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, readCloneDeploymentBorrowers, deploymentID)
+	var borrowers []byte
+	err := row.Scan(&borrowers)
+	return borrowers, err
+}
+
+const readCloneDeploymentCleanup = `-- name: ReadCloneDeploymentCleanup :one
+SELECT operation_id, environment_id, workload_cleanup_sha256, native_plan_sha256, native_observation_sha256, removed_deployments, cleaned_at FROM project_environment_clone_deployment_cleanups WHERE operation_id=$1
+`
+
+func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneDeploymentCleanup, error) {
+	row := db.QueryRow(ctx, readCloneDeploymentCleanup, operationID)
+	var i ProjectEnvironmentCloneDeploymentCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadCleanupSha256,
+		&i.NativePlanSha256,
+		&i.NativeObservationSha256,
+		&i.RemovedDeployments,
+		&i.CleanedAt,
+	)
+	return i, err
+}
+
+const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
+SELECT jsonb_build_object(
+ 'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=$1::uuid::text),
+ 'deployment_runtime_upgrade_baselines.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_baselines WHERE deployment_id::text=$1::uuid::text),
+ 'deployment_runtime_upgrade_cutovers.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_cutovers WHERE deployment_id::text=$1::uuid::text),
+ 'environment_workload_serving_queue_acks.deployment_id', (SELECT count(*) FROM environment_workload_serving_queue_acks WHERE deployment_id::text=$1::uuid::text),
+ 'environment_workload_serving_routes.deployment_id', (SELECT count(*) FROM environment_workload_serving_routes WHERE deployment_id::text=$1::uuid::text),
+ 'project_environment_clone_migration_adoptions.deployment_id', (SELECT count(*) FROM project_environment_clone_migration_adoptions WHERE deployment_id::text=$1::uuid::text AND request_reason<>('environment-clone:'||$2::uuid::text)),
+ 'project_environment_clone_migration_resumes.deployment_id', (SELECT count(*) FROM project_environment_clone_migration_resumes WHERE deployment_id::text=$1::uuid::text AND request_reason<>('environment-clone:'||$2::uuid::text)),
+ 'project_environment_clone_wake_dispatches.deployment_id', (SELECT count(*) FROM project_environment_clone_wake_dispatches WHERE deployment_id::text=$1::uuid::text AND request_reason<>('environment-clone:'||$2::uuid::text)),
+ 'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=$1::uuid::text),
+ 'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=$1::uuid::text),
+ 'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=$1::uuid::text),
+ 'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=$1::uuid::text),
+ 'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=$1::uuid),
+ 'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=$1::uuid),
+ 'deployment_audit.deployment_id', (SELECT count(*) FROM deployment_audit WHERE deployment_id=$1::uuid),
+ 'issue_events.deployment_id', (SELECT count(*) FROM issue_events WHERE deployment_id=$1::uuid),
+ 'issue_releases.deployment_id', (SELECT count(*) FROM issue_releases WHERE deployment_id=$1::uuid),
+ 'issue_resolutions.fixed_deployment_id', (SELECT count(*) FROM issue_resolutions WHERE fixed_deployment_id=$1::uuid),
+ 'log_events.deployment_id', (SELECT count(*) FROM log_events WHERE deployment_id=$1::uuid),
+ 'managed_postgres_cutover_drain_plan_members.deployment_id', (SELECT count(*) FROM managed_postgres_cutover_drain_plan_members WHERE deployment_id=$1::uuid),
+ 'managed_postgres_cutover_drains.deployment_id', (SELECT count(*) FROM managed_postgres_cutover_drains WHERE deployment_id=$1::uuid),
+ 'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=$1::uuid),
+ 'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=$1::uuid),
+ 'org_activity.deployment_id', (SELECT count(*) FROM org_activity WHERE deployment_id=$1::uuid),
+ 'project_environment_clone_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE source_deployment_id=$1::uuid),
+ 'project_environment_clone_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE target_deployment_id=$1::uuid AND (operation_id<>$2::uuid)),
+ 'project_environment_promotion_workloads.previous_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE previous_target_deployment_id=$1::uuid::text),
+ 'project_environment_promotion_workloads.restored_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE restored_target_deployment_id=$1::uuid::text),
+ 'project_environment_promotion_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE source_deployment_id=$1::uuid::text),
+ 'project_environment_promotion_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE target_deployment_id=$1::uuid::text),
+ 'request_audit_events.deployment_id', (SELECT count(*) FROM request_audit_events WHERE deployment_id=$1::uuid),
+ 'request_telemetry.deployment_id', (SELECT count(*) FROM request_telemetry WHERE deployment_id=$1::uuid),
+ 'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
+ 'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=$1::uuid::text)
+)::jsonb AS borrowers
+`
+
+type ReadCloneDeploymentSoftBorrowersParams struct {
+	DeploymentID pgtype.UUID
+	OperationID  pgtype.UUID
+}
+
+// Original clone native journals remain retained evidence; other owners block cleanup.
+func (q *Queries) ReadCloneDeploymentSoftBorrowers(ctx context.Context, db DBTX, arg ReadCloneDeploymentSoftBorrowersParams) ([]byte, error) {
+	row := db.QueryRow(ctx, readCloneDeploymentSoftBorrowers, arg.DeploymentID, arg.OperationID)
+	var borrowers []byte
+	err := row.Scan(&borrowers)
+	return borrowers, err
+}
+
+const readCloneEnvironmentCleanup = `-- name: ReadCloneEnvironmentCleanup :one
+SELECT operation_id, environment_id, workload_cleanup_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_environment_cleanups WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneEnvironmentCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneEnvironmentCleanup, error) {
+	row := db.QueryRow(ctx, readCloneEnvironmentCleanup, operationID)
+	var i ProjectEnvironmentCloneEnvironmentCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.EnvironmentID,
+		&i.WorkloadCleanupSha256,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CleanedAt,
+	)
+	return i, err
+}
+
+const readCloneEnvironmentMetadataBorrowers = `-- name: ReadCloneEnvironmentMetadataBorrowers :one
+WITH scoped_apps AS (
+ SELECT id FROM apps WHERE project_id=$3::uuid
+), scoped_deployments AS (
+ SELECT d.id,d.app_id FROM deployments d WHERE d.app_id IN (SELECT id FROM scoped_apps) AND d.scope=$2::text
+)
+SELECT
+ (SELECT count(*) FROM app_environment_secret_ref_suppressions p WHERE p.environment_id=$1::uuid) AS app_environment_secret_ref_suppressions,
+ (SELECT count(*) FROM app_environment_secret_refs p WHERE p.environment_id=$1::uuid) AS app_environment_secret_refs,
+ (SELECT count(*) FROM app_environment_workload_intents p WHERE p.environment_id=$1::uuid) AS app_environment_workload_intents,
+ (SELECT count(*) FROM custom_domains p WHERE p.environment_id=$1::uuid) AS custom_domains,
+ (SELECT count(*) FROM dev_bridge_sessions p WHERE p.environment_id=$1::uuid) AS dev_bridge_sessions,
+ (SELECT count(*) FROM environment_external_field_owners p WHERE p.environment_id=$1::uuid) AS environment_external_field_owners,
+ (SELECT count(*) FROM environment_git_sources p WHERE p.environment_id=$1::uuid) AS environment_git_sources,
+ (SELECT count(*) FROM environment_managed_fields p WHERE p.environment_id=$1::uuid) AS environment_managed_fields,
+ (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=$1::uuid) AS environment_workload_graphs,
+ (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=$1::uuid) AS feature_flag_versions,
+ (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid) AS invocation_environment_queue_admissions,
+ (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
+ (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_domains,
+ (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$2::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_edge_policies,
+ (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_qualifications,
+ (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid) AS project_environment_queue_runtime_sets,
+ (SELECT count(*) FROM project_environment_route_policies p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_environment_route_policies,
+ (SELECT count(*) FROM project_environment_workload_specs p WHERE p.environment_id=$1::uuid) AS project_environment_workload_specs,
+ (SELECT count(*) FROM project_release_sets p WHERE p.project_id=$3::uuid AND p.environment_slug=$2::text) AS project_release_sets,
+ (SELECT count(*) FROM runtime_environment_scaling_states p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$2::text)) AS runtime_environment_scaling_states,
+ (SELECT count(*) FROM scoped_deployments d WHERE EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS owned_deployments,
+ (SELECT count(*) FROM scoped_deployments d WHERE NOT EXISTS(SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$4::uuid AND w.app_id=d.app_id AND w.target_deployment_id=d.id)) AS foreign_deployments
+`
+
+type ReadCloneEnvironmentMetadataBorrowersParams struct {
+	EnvironmentID pgtype.UUID
+	Environment   string
+	ProjectID     pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+type ReadCloneEnvironmentMetadataBorrowersRow struct {
+	AppEnvironmentSecretRefSuppressions  int64
+	AppEnvironmentSecretRefs             int64
+	AppEnvironmentWorkloadIntents        int64
+	CustomDomains                        int64
+	DevBridgeSessions                    int64
+	EnvironmentExternalFieldOwners       int64
+	EnvironmentGitSources                int64
+	EnvironmentManagedFields             int64
+	EnvironmentWorkloadGraphs            int64
+	FeatureFlagVersions                  int64
+	InvocationEnvironmentQueueAdmissions int64
+	InvocationWorkEnvironmentAdmissions  int64
+	InvocationWorkEnvironmentDomains     int64
+	Invocations                          int64
+	ProjectEnvironmentEdgePolicies       int64
+	ProjectEnvironmentQualifications     int64
+	ProjectEnvironmentQueueRuntimeSets   int64
+	ProjectEnvironmentRoutePolicies      int64
+	ProjectEnvironmentWorkloadSpecs      int64
+	ProjectReleaseSets                   int64
+	RuntimeEnvironmentScalingStates      int64
+	OwnedDeployments                     int64
+	ForeignDeployments                   int64
+}
+
+// Counts retained rows regardless of runtime status, TTL or tenant metadata.
+// Scope-only invocation/scaling rows are included even without the target UUID.
+func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db DBTX, arg ReadCloneEnvironmentMetadataBorrowersParams) (ReadCloneEnvironmentMetadataBorrowersRow, error) {
+	row := db.QueryRow(ctx, readCloneEnvironmentMetadataBorrowers,
+		arg.EnvironmentID,
+		arg.Environment,
+		arg.ProjectID,
+		arg.OperationID,
+	)
+	var i ReadCloneEnvironmentMetadataBorrowersRow
+	err := row.Scan(
+		&i.AppEnvironmentSecretRefSuppressions,
+		&i.AppEnvironmentSecretRefs,
+		&i.AppEnvironmentWorkloadIntents,
+		&i.CustomDomains,
+		&i.DevBridgeSessions,
+		&i.EnvironmentExternalFieldOwners,
+		&i.EnvironmentGitSources,
+		&i.EnvironmentManagedFields,
+		&i.EnvironmentWorkloadGraphs,
+		&i.FeatureFlagVersions,
+		&i.InvocationEnvironmentQueueAdmissions,
+		&i.InvocationWorkEnvironmentAdmissions,
+		&i.InvocationWorkEnvironmentDomains,
+		&i.Invocations,
+		&i.ProjectEnvironmentEdgePolicies,
+		&i.ProjectEnvironmentQualifications,
+		&i.ProjectEnvironmentQueueRuntimeSets,
+		&i.ProjectEnvironmentRoutePolicies,
+		&i.ProjectEnvironmentWorkloadSpecs,
+		&i.ProjectReleaseSets,
+		&i.RuntimeEnvironmentScalingStates,
+		&i.OwnedDeployments,
+		&i.ForeignDeployments,
+	)
+	return i, err
+}
+
+const readCloneManagedSecretConfigurationBorrowers = `-- name: ReadCloneManagedSecretConfigurationBorrowers :one
+WITH scoped_apps AS (
+ SELECT a.id FROM apps a WHERE a.project_id=$2::uuid
+), scoped_secrets AS (
+ SELECT s.managed_postgres_binding_id,s.managed_object_storage_credential_id,s.managed_credential_ref
+ FROM app_secrets s WHERE s.app_id IN (SELECT id FROM scoped_apps) AND s.scope=$1::text
+)
+SELECT
+ (SELECT count(*) FROM scoped_secrets WHERE managed_postgres_binding_id IS NOT NULL)::bigint AS postgres_secrets,
+ (SELECT count(*) FROM scoped_secrets WHERE managed_object_storage_credential_id IS NOT NULL)::bigint AS object_storage_secrets,
+ (SELECT count(*) FROM scoped_secrets WHERE managed_credential_ref IS NOT NULL)::bigint AS credential_references,
+ (SELECT count(*) FROM app_secret_runtime_reload_observations s WHERE s.app_id IN (SELECT id FROM scoped_apps) AND s.scope=$1::text)::bigint AS runtime_observations
+`
+
+type ReadCloneManagedSecretConfigurationBorrowersParams struct {
+	Environment string
+	ProjectID   pgtype.UUID
+}
+
+type ReadCloneManagedSecretConfigurationBorrowersRow struct {
+	PostgresSecrets      int64
+	ObjectStorageSecrets int64
+	CredentialReferences int64
+	RuntimeObservations  int64
+}
+
+func (q *Queries) ReadCloneManagedSecretConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneManagedSecretConfigurationBorrowersParams) (ReadCloneManagedSecretConfigurationBorrowersRow, error) {
+	row := db.QueryRow(ctx, readCloneManagedSecretConfigurationBorrowers, arg.Environment, arg.ProjectID)
+	var i ReadCloneManagedSecretConfigurationBorrowersRow
+	err := row.Scan(
+		&i.PostgresSecrets,
+		&i.ObjectStorageSecrets,
+		&i.CredentialReferences,
+		&i.RuntimeObservations,
+	)
+	return i, err
+}
+
+const readCloneObjectSecretWithdrawal = `-- name: ReadCloneObjectSecretWithdrawal :one
+SELECT operation_id, ownership_sha256, postgres_withdrawal_sha256, prior_manifest_sha256, publication_plan_sha256, publication_withdrawn_at, manifest, manifest_sha256, recorded_at FROM project_environment_clone_object_secret_withdrawals WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneObjectSecretWithdrawal(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneObjectSecretWithdrawal, error) {
+	row := db.QueryRow(ctx, readCloneObjectSecretWithdrawal, operationID)
+	var i ProjectEnvironmentCloneObjectSecretWithdrawal
+	err := row.Scan(
+		&i.OperationID,
+		&i.OwnershipSha256,
+		&i.PostgresWithdrawalSha256,
+		&i.PriorManifestSha256,
+		&i.PublicationPlanSha256,
+		&i.PublicationWithdrawnAt,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const readClonePostgresCheckpointSelection = `-- name: ReadClonePostgresCheckpointSelection :one
 SELECT operation_id, source_database_id, maintenance_id, scope, fingerprint, key_id, ciphertext_sha256, ciphertext, retained_at FROM project_environment_clone_postgres_checkpoint_selections
 WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
@@ -59476,6 +65350,25 @@ func (q *Queries) ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sou
 	return i, err
 }
 
+const readClonePostgresSecretWithdrawal = `-- name: ReadClonePostgresSecretWithdrawal :one
+SELECT operation_id, ownership_sha256, publication_plan_sha256, publication_withdrawn_at, manifest, manifest_sha256, recorded_at FROM project_environment_clone_postgres_secret_withdrawals WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadClonePostgresSecretWithdrawal(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentClonePostgresSecretWithdrawal, error) {
+	row := db.QueryRow(ctx, readClonePostgresSecretWithdrawal, operationID)
+	var i ProjectEnvironmentClonePostgresSecretWithdrawal
+	err := row.Scan(
+		&i.OperationID,
+		&i.OwnershipSha256,
+		&i.PublicationPlanSha256,
+		&i.PublicationWithdrawnAt,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.RecordedAt,
+	)
+	return i, err
+}
+
 const readClonePostgresWriteFence = `-- name: ReadClonePostgresWriteFence :one
 SELECT operation_id, source_database_id, source_version, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, remote_terminal_state, remote_released_at, released_at, created_at, updated_at FROM project_environment_clone_postgres_write_fences
 WHERE operation_id=$1::uuid AND source_database_id=$2::uuid FOR UPDATE
@@ -59504,6 +65397,80 @@ func (q *Queries) ReadClonePostgresWriteFence(ctx context.Context, db DBTX, arg 
 		&i.ReleasedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const readCloneTerminalCompensationReceipt = `-- name: ReadCloneTerminalCompensationReceipt :one
+SELECT operation_id, worker_token_sha256, report, receipt_sha256, completed_at FROM project_environment_clone_compensation_receipts WHERE operation_id=$1
+`
+
+func (q *Queries) ReadCloneTerminalCompensationReceipt(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneCompensationReceipt, error) {
+	row := db.QueryRow(ctx, readCloneTerminalCompensationReceipt, operationID)
+	var i ProjectEnvironmentCloneCompensationReceipt
+	err := row.Scan(
+		&i.OperationID,
+		&i.WorkerTokenSha256,
+		&i.Report,
+		&i.ReceiptSha256,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const readCloneWorkloadCleanup = `-- name: ReadCloneWorkloadCleanup :one
+SELECT operation_id, configuration_cleanup_sha256, manifest, manifest_sha256, cleaned_at FROM project_environment_clone_workload_cleanups WHERE operation_id=$1 FOR UPDATE
+`
+
+func (q *Queries) ReadCloneWorkloadCleanup(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneWorkloadCleanup, error) {
+	row := db.QueryRow(ctx, readCloneWorkloadCleanup, operationID)
+	var i ProjectEnvironmentCloneWorkloadCleanup
+	err := row.Scan(
+		&i.OperationID,
+		&i.ConfigurationCleanupSha256,
+		&i.Manifest,
+		&i.ManifestSha256,
+		&i.CleanedAt,
+	)
+	return i, err
+}
+
+const readCloneWorkloadConfigurationBorrowers = `-- name: ReadCloneWorkloadConfigurationBorrowers :one
+SELECT
+ (SELECT count(*) FROM project_environment_workload_deployment_specs p JOIN project_environment_workload_specs s ON s.id=p.spec_id
+  WHERE s.environment_id=$1::uuid AND NOT EXISTS(
+   SELECT 1 FROM project_environment_clone_workloads w WHERE w.operation_id=$2::uuid AND w.target_deployment_id=p.deployment_id AND w.app_id=s.app_id)) AS foreign_deployment_pins,
+ (SELECT count(*) FROM project_environment_promotion_workload_specs p WHERE p.prepared_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS promotion_prepared_specs,
+ (SELECT count(*) FROM project_environment_promotion_workload_specs p WHERE p.previous_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS promotion_previous_specs,
+ (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS queue_runtime_sets,
+ (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS invocation_work_admissions,
+ (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=$1::uuid OR p.workload_spec_id IN (SELECT id FROM project_environment_workload_specs WHERE environment_id=$1::uuid)) AS invocation_queue_admissions
+`
+
+type ReadCloneWorkloadConfigurationBorrowersParams struct {
+	EnvironmentID pgtype.UUID
+	OperationID   pgtype.UUID
+}
+
+type ReadCloneWorkloadConfigurationBorrowersRow struct {
+	ForeignDeploymentPins     int64
+	PromotionPreparedSpecs    int64
+	PromotionPreviousSpecs    int64
+	QueueRuntimeSets          int64
+	InvocationWorkAdmissions  int64
+	InvocationQueueAdmissions int64
+}
+
+func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, db DBTX, arg ReadCloneWorkloadConfigurationBorrowersParams) (ReadCloneWorkloadConfigurationBorrowersRow, error) {
+	row := db.QueryRow(ctx, readCloneWorkloadConfigurationBorrowers, arg.EnvironmentID, arg.OperationID)
+	var i ReadCloneWorkloadConfigurationBorrowersRow
+	err := row.Scan(
+		&i.ForeignDeploymentPins,
+		&i.PromotionPreparedSpecs,
+		&i.PromotionPreviousSpecs,
+		&i.QueueRuntimeSets,
+		&i.InvocationWorkAdmissions,
+		&i.InvocationQueueAdmissions,
 	)
 	return i, err
 }
@@ -62275,7 +68242,7 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresContents(ctx context.Contex
 }
 
 const readProjectEnvironmentClonePostgresCopyReader = `-- name: ReadProjectEnvironmentClonePostgresCopyReader :one
-SELECT operation_id, source_database_id, account_id, project_id, capture_database_id, scope, owner_id, state, request_started_at, endpoint_id, endpoint_created_at, available, observed_at, cleanup_requested_at, cleanup_dispatched_at, delete_operation_ids, capture_operation_ids, retired_at, created_at, updated_at FROM project_environment_clone_postgres_copy_readers WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+SELECT operation_id, source_database_id, account_id, project_id, capture_database_id, scope, owner_id, state, request_started_at, endpoint_id, endpoint_created_at, available, observed_at, cleanup_requested_at, cleanup_dispatched_at, delete_operation_ids, capture_operation_ids, retired_at, created_at, updated_at, checkpoint_retirement_observation_sha256 FROM project_environment_clone_postgres_copy_readers WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
 `
 
 type ReadProjectEnvironmentClonePostgresCopyReaderParams struct {
@@ -62307,12 +68274,13 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresCopyReader(ctx context.Cont
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
 
 const readProjectEnvironmentClonePostgresCopyTarget = `-- name: ReadProjectEnvironmentClonePostgresCopyTarget :one
-SELECT operation_id, source_database_id, account_id, capture_database_id, target_database_id, state, request_started_at, provider_resource_id, provider_created_at, observed_at, prepared_at, retired_at, created_at, updated_at, deletion_started_at, deletion_observed_at FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+SELECT operation_id, source_database_id, account_id, capture_database_id, target_database_id, state, request_started_at, provider_resource_id, provider_created_at, observed_at, prepared_at, retired_at, created_at, updated_at, deletion_started_at, deletion_observed_at, checkpoint_retirement_observation_sha256 FROM project_environment_clone_postgres_copy_targets WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
 `
 
 type ReadProjectEnvironmentClonePostgresCopyTargetParams struct {
@@ -62340,6 +68308,7 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresCopyTarget(ctx context.Cont
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -62575,7 +68544,7 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresSnapshot(ctx context.Contex
 }
 
 const readProjectEnvironmentClonePostgresSnapshotRestore = `-- name: ReadProjectEnvironmentClonePostgresSnapshotRestore :one
-SELECT operation_id, source_database_id, account_id, target_owner_id, backend_id, backend_fingerprint, state, target_provider_resource_id, target_created_at, request_started_at, observed_at, restored_at, created_at, updated_at, deletion_started_at, deleted_at, delete_operation_ids, adopted_database_id, adopted_at FROM project_environment_clone_postgres_snapshot_restores WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
+SELECT operation_id, source_database_id, account_id, target_owner_id, backend_id, backend_fingerprint, state, target_provider_resource_id, target_created_at, request_started_at, observed_at, restored_at, created_at, updated_at, deletion_started_at, deleted_at, delete_operation_ids, adopted_database_id, adopted_at, checkpoint_compensation_observation_sha256 FROM project_environment_clone_postgres_snapshot_restores WHERE operation_id=$1 AND source_database_id=$2 FOR UPDATE
 `
 
 type ReadProjectEnvironmentClonePostgresSnapshotRestoreParams struct {
@@ -62606,6 +68575,7 @@ func (q *Queries) ReadProjectEnvironmentClonePostgresSnapshotRestore(ctx context
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -65709,6 +71679,130 @@ func (q *Queries) RecordApplicationStandardSnapshotCapture(ctx context.Context, 
 	return result.RowsAffected(), nil
 }
 
+const recordCloneCheckpointMigrationAdoption = `-- name: RecordCloneCheckpointMigrationAdoption :exec
+SELECT record_clone_checkpoint_migration_adoption($1::uuid,$2::uuid,
+ $3::uuid,$4::uuid,$5::text,
+ $6::text,$7::text)
+`
+
+type RecordCloneCheckpointMigrationAdoptionParams struct {
+	InstanceID        pgtype.UUID
+	AppID             pgtype.UUID
+	DeploymentID      pgtype.UUID
+	DestinationNodeID pgtype.UUID
+	MemStorageKey     string
+	VmstateStorageKey string
+	LeaseToken        string
+}
+
+func (q *Queries) RecordCloneCheckpointMigrationAdoption(ctx context.Context, db DBTX, arg RecordCloneCheckpointMigrationAdoptionParams) error {
+	_, err := db.Exec(ctx, recordCloneCheckpointMigrationAdoption,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.DestinationNodeID,
+		arg.MemStorageKey,
+		arg.VmstateStorageKey,
+		arg.LeaseToken,
+	)
+	return err
+}
+
+const recordCloneCheckpointMigrationResume = `-- name: RecordCloneCheckpointMigrationResume :exec
+SELECT record_clone_checkpoint_migration_resume($1::uuid,$2::text,$3::text)
+`
+
+type RecordCloneCheckpointMigrationResumeParams struct {
+	InstanceID   pgtype.UUID
+	SourceNodeID string
+	LeaseToken   string
+}
+
+func (q *Queries) RecordCloneCheckpointMigrationResume(ctx context.Context, db DBTX, arg RecordCloneCheckpointMigrationResumeParams) error {
+	_, err := db.Exec(ctx, recordCloneCheckpointMigrationResume, arg.InstanceID, arg.SourceNodeID, arg.LeaseToken)
+	return err
+}
+
+const recordCloneCheckpointObjectTarget = `-- name: RecordCloneCheckpointObjectTarget :execrows
+UPDATE project_environment_clone_checkpoint_object_targets t SET state='ready',observation_sha256=$1::text,ready_at=clock_timestamp()
+WHERE t.operation_id=$2::uuid AND t.source_bucket_id=$3::uuid AND t.state='requested'
+ AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=t.operation_id AND o.status='capturing'
+ AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type RecordCloneCheckpointObjectTargetParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	SourceBucketID    pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RecordCloneCheckpointObjectTarget(ctx context.Context, db DBTX, arg RecordCloneCheckpointObjectTargetParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCloneCheckpointObjectTarget,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.SourceBucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordCloneCheckpointRelease = `-- name: RecordCloneCheckpointRelease :execrows
+UPDATE project_environment_clone_checkpoint_releases r SET state='released',observation_sha256=$1::text,released_at=clock_timestamp()
+WHERE r.operation_id=$2::uuid AND r.state='requested'
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='capturing'
+ AND o.revision=$3::bigint AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp())
+`
+
+type RecordCloneCheckpointReleaseParams struct {
+	ObservationSha256 string
+	OperationID       pgtype.UUID
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RecordCloneCheckpointRelease(ctx context.Context, db DBTX, arg RecordCloneCheckpointReleaseParams) (int64, error) {
+	result, err := db.Exec(ctx, recordCloneCheckpointRelease,
+		arg.ObservationSha256,
+		arg.OperationID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordCloneCheckpointWakeDispatch = `-- name: RecordCloneCheckpointWakeDispatch :exec
+SELECT record_clone_checkpoint_wake_dispatch($1::uuid,$2::uuid,
+ $3::uuid,$4::uuid,$5::text)
+`
+
+type RecordCloneCheckpointWakeDispatchParams struct {
+	InstanceID   pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	NodeID       pgtype.UUID
+	Method       string
+}
+
+func (q *Queries) RecordCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, arg RecordCloneCheckpointWakeDispatchParams) error {
+	_, err := db.Exec(ctx, recordCloneCheckpointWakeDispatch,
+		arg.InstanceID,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.NodeID,
+		arg.Method,
+	)
+	return err
+}
+
 const recordClonePostgresMaintenance = `-- name: RecordClonePostgresMaintenance :one
 UPDATE managed_postgres_checkpoint_maintenance m SET state=$1::text,
  owner_oid=$2::bigint,database_oid=$3::bigint,
@@ -66431,7 +72525,7 @@ WHERE c.operation_id=$4::uuid AND c.source_database_id=$5::uuid AND c.state IN (
     AND (c.endpoint_id IS NULL OR (c.endpoint_id=$1::text AND c.endpoint_created_at=$2::timestamptz))
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=$6::text AND o.revision=$7::bigint
-        AND o.lease_token::text=$8::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at
+        AND o.lease_token::text=$8::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at, c.checkpoint_retirement_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresCopyReaderParams struct {
@@ -66478,6 +72572,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresCopyReader(ctx context.Co
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -66490,7 +72585,7 @@ WHERE c.operation_id=$3::uuid AND c.source_database_id=$4::uuid AND c.state='del
     AND (c.capture_operation_ids='[]' OR c.capture_operation_ids=$2::jsonb)
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.account_id=c.account_id AND o.project_id=c.project_id
         AND o.status=$7::text AND o.revision=$8::bigint
-        AND o.lease_token::text=$9::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at
+        AND o.lease_token::text=$9::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.project_id, c.capture_database_id, c.scope, c.owner_id, c.state, c.request_started_at, c.endpoint_id, c.endpoint_created_at, c.available, c.observed_at, c.cleanup_requested_at, c.cleanup_dispatched_at, c.delete_operation_ids, c.capture_operation_ids, c.retired_at, c.created_at, c.updated_at, c.checkpoint_retirement_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresCopyReaderDeletionOperationsParams struct {
@@ -66539,6 +72634,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresCopyReaderDeletionOperati
 		&i.RetiredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -66551,7 +72647,7 @@ WHERE c.operation_id=$4::uuid AND c.source_database_id=$5::uuid AND c.state IN (
     AND (c.state<>'prepared' OR $1::boolean) AND $3::timestamptz<=clock_timestamp()
     AND (c.provider_resource_id IS NULL OR (c.provider_resource_id=$2::text AND c.provider_created_at=$3::timestamptz))
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='capturing'
-        AND o.revision=$6::bigint AND o.lease_token::text=$7::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at
+        AND o.revision=$6::bigint AND o.lease_token::text=$7::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at, c.checkpoint_retirement_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresCopyTargetParams struct {
@@ -66592,6 +72688,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresCopyTarget(ctx context.Co
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -66603,7 +72700,7 @@ WHERE c.operation_id=$3::uuid AND c.source_database_id=$4::uuid AND c.state='del
     AND $2::timestamptz<=clock_timestamp()
     AND (c.provider_resource_id IS NULL OR (c.provider_resource_id=$1::text AND c.provider_created_at=$2::timestamptz))
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
-        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at, c.checkpoint_retirement_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresCopyTargetCleanupIdentityParams struct {
@@ -66642,6 +72739,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresCopyTargetCleanupIdentity
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -66757,7 +72855,7 @@ WHERE r.operation_id=$4::uuid AND r.source_database_id=$5::uuid
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_postgres_snapshots s ON s.operation_id=o.id
         WHERE o.id=r.operation_id AND s.source_database_id=r.source_database_id AND s.state='retained' AND o.status='capturing'
         AND o.revision=$6::bigint AND o.lease_token::text=$7::text
-        AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+        AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresSnapshotRestoreParams struct {
@@ -66801,6 +72899,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresSnapshotRestore(ctx conte
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -66811,8 +72910,8 @@ UPDATE project_environment_clone_postgres_snapshot_restores r SET target_provide
 WHERE r.operation_id=$3::uuid AND r.source_database_id=$4::uuid AND r.state='deleting' AND r.request_started_at IS NOT NULL
     AND $2::timestamptz<=clock_timestamp()
     AND (r.target_provider_resource_id IS NULL OR (r.target_provider_resource_id=$1::text AND r.target_created_at=$2::timestamptz))
-    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
-        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint'
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIdentityParams struct {
@@ -66854,6 +72953,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresSnapshotRestoreCleanupIde
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -66863,8 +72963,8 @@ UPDATE project_environment_clone_postgres_snapshot_restores r SET delete_operati
 WHERE r.operation_id=$2::uuid AND r.source_database_id=$3::uuid AND r.state='deleting'
     AND r.target_provider_resource_id=$4::text
     AND (r.delete_operation_ids='[]'::jsonb OR r.delete_operation_ids=$1::jsonb)
-    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating'
-        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at
+    AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=r.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint'
+        AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp()) RETURNING r.operation_id, r.source_database_id, r.account_id, r.target_owner_id, r.backend_id, r.backend_fingerprint, r.state, r.target_provider_resource_id, r.target_created_at, r.request_started_at, r.observed_at, r.restored_at, r.created_at, r.updated_at, r.deletion_started_at, r.deleted_at, r.delete_operation_ids, r.adopted_database_id, r.adopted_at, r.checkpoint_compensation_observation_sha256
 `
 
 type RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOperationsParams struct {
@@ -66906,6 +73006,7 @@ func (q *Queries) RecordProjectEnvironmentClonePostgresSnapshotRestoreDeletionOp
 		&i.DeleteOperationIds,
 		&i.AdoptedDatabaseID,
 		&i.AdoptedAt,
+		&i.CheckpointCompensationObservationSha256,
 	)
 	return i, err
 }
@@ -67942,6 +74043,105 @@ func (q *Queries) ReleaseApplicationStandardOperationWorker(ctx context.Context,
 		arg.OrgID,
 		arg.Owner,
 		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseCloneCheckpointConfiguration = `-- name: ReleaseCloneCheckpointConfiguration :execrows
+UPDATE project_environment_clone_configuration_guards g SET state='open',operation_id=NULL,source_environment='',source_revision_hash='',
+ held_at=NULL,generation=g.generation+1
+WHERE g.project_id=$1::uuid AND g.account_id=$2::uuid AND g.state='held'
+ AND g.operation_id=$3::uuid AND g.generation=$4::bigint AND g.held_at=$5::timestamptz
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+ WHERE o.id=g.operation_id AND r.state='released' AND o.status='capturing'
+ AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp())
+`
+
+type ReleaseCloneCheckpointConfigurationParams struct {
+	ProjectID        pgtype.UUID
+	AccountID        pgtype.UUID
+	OperationID      pgtype.UUID
+	Generation       int64
+	HeldAt           pgtype.Timestamptz
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ReleaseCloneCheckpointConfiguration(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointConfigurationParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCloneCheckpointConfiguration,
+		arg.ProjectID,
+		arg.AccountID,
+		arg.OperationID,
+		arg.Generation,
+		arg.HeldAt,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseCloneCheckpointObjectFence = `-- name: ReleaseCloneCheckpointObjectFence :execrows
+DELETE FROM object_bucket_write_fences f USING project_environment_clone_operations o,project_environment_clone_checkpoint_releases r
+WHERE f.clone_operation_id=o.id AND f.token=o.id AND r.operation_id=o.id AND r.state='released'
+ AND o.id=$1::uuid AND f.bucket_id=$2::uuid
+ AND o.status='capturing' AND o.revision=$3::bigint
+ AND o.lease_token=$4::uuid AND o.lease_until>clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM project_environment_clone_object_grant_revocations g
+ WHERE g.operation_id=o.id AND g.source_bucket_id=f.bucket_id AND g.request_started_at IS NOT NULL AND g.state<>'drained')
+`
+
+type ReleaseCloneCheckpointObjectFenceParams struct {
+	OperationID      pgtype.UUID
+	BucketID         pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ReleaseCloneCheckpointObjectFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointObjectFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCloneCheckpointObjectFence,
+		arg.OperationID,
+		arg.BucketID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseCloneCheckpointPostgresFence = `-- name: ReleaseCloneCheckpointPostgresFence :execrows
+UPDATE project_environment_clone_postgres_write_fences f SET state='released',remote_terminal_state='released',
+ remote_released_at=$1::timestamptz,released_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE f.operation_id=$2::uuid AND f.source_database_id=$3::uuid AND f.state='held'
+ AND $1::timestamptz<=clock_timestamp()
+ AND NOT EXISTS (SELECT 1 FROM managed_postgres_checkpoint_maintenance m WHERE m.source_database_id=f.source_database_id AND m.state<>'ready')
+ AND EXISTS (SELECT 1 FROM project_environment_clone_operations o JOIN project_environment_clone_checkpoint_releases r ON r.operation_id=o.id
+ WHERE o.id=f.operation_id AND o.status='capturing' AND r.state='released'
+ AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp())
+`
+
+type ReleaseCloneCheckpointPostgresFenceParams struct {
+	RemoteReleasedAt pgtype.Timestamptz
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DBTX, arg ReleaseCloneCheckpointPostgresFenceParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseCloneCheckpointPostgresFence,
+		arg.RemoteReleasedAt,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
 	)
 	if err != nil {
 		return 0, err
@@ -70782,7 +76982,7 @@ WITH retained_deployments AS (
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
-           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'draining'))
+           OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM workflow_retained_deployment_refs w WHERE w.deployment_id = d.id)
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
@@ -70900,6 +77100,177 @@ func (q *Queries) RetireCheckedRollbackSiblings(ctx context.Context, db DBTX, ar
 	return err
 }
 
+const retireCloneCheckpointCaptureSnapshot = `-- name: RetireCloneCheckpointCaptureSnapshot :execrows
+UPDATE project_environment_clone_postgres_snapshots s SET state='deleted',cleanup_observed_at=r.retired_at,updated_at=clock_timestamp()
+FROM project_environment_clone_checkpoint_capture_catalogues r,project_environment_clone_operations o
+WHERE s.operation_id=$1::uuid AND s.source_database_id=$2::uuid AND s.state='retained'
+ AND r.operation_id=s.operation_id AND r.source_id=s.source_database_id AND r.source_kind='managed_postgres'
+ AND r.capture_identity=s.provider_snapshot_id AND r.source_resource_id=s.source_data_resource_id AND r.observation_sha256=$3::text
+ AND o.id=s.operation_id AND o.status='compensating' AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp()
+`
+
+type RetireCloneCheckpointCaptureSnapshotParams struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ObservationSha256 string
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RetireCloneCheckpointCaptureSnapshot(ctx context.Context, db DBTX, arg RetireCloneCheckpointCaptureSnapshotParams) (int64, error) {
+	result, err := db.Exec(ctx, retireCloneCheckpointCaptureSnapshot,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ObservationSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireCloneCheckpointPgCopyDatabase = `-- name: RetireCloneCheckpointPgCopyDatabase :execrows
+UPDATE managed_postgres_databases d SET state='deleted',deleted_at=c.retired_at,updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_copy_targets r,project_environment_clone_checkpoint_pg_copy_retirements c,project_environment_clone_operations o
+WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid
+ AND d.id=r.target_database_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id AND d.restore_source_database_id=r.source_database_id
+ AND d.clone_resource_role='target' AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL
+ AND d.provider_resource_id IS NOT DISTINCT FROM r.provider_resource_id AND d.lease_token IS NULL AND d.lease_until IS NULL
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
+ AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
+ AND c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='retired' AND c.observation_sha256=$3::text
+ AND o.id=r.operation_id AND o.status='compensating' AND o.revision=$4::bigint AND o.lease_token=$5::uuid AND o.lease_until>clock_timestamp()
+`
+
+type RetireCloneCheckpointPgCopyDatabaseParams struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	ObservationSha256 string
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RetireCloneCheckpointPgCopyDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgCopyDatabaseParams) (int64, error) {
+	result, err := db.Exec(ctx, retireCloneCheckpointPgCopyDatabase,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ObservationSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireCloneCheckpointPgCopyReader = `-- name: RetireCloneCheckpointPgCopyReader :execrows
+UPDATE project_environment_clone_postgres_copy_readers r SET state='retired',available=false,
+ cleanup_requested_at=coalesce(r.cleanup_requested_at,c.requested_at),retired_at=c.retired_at,updated_at=clock_timestamp(),checkpoint_retirement_observation_sha256=c.observation_sha256
+FROM project_environment_clone_checkpoint_pg_copy_retirements c,project_environment_clone_operations o
+WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.owner_id=$3::uuid
+ AND c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='retired' AND c.observation_sha256=$4::text
+ AND o.id=r.operation_id AND o.status='compensating' AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+`
+
+type RetireCloneCheckpointPgCopyReaderParams struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	OwnerID           pgtype.UUID
+	ObservationSha256 string
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RetireCloneCheckpointPgCopyReader(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgCopyReaderParams) (int64, error) {
+	result, err := db.Exec(ctx, retireCloneCheckpointPgCopyReader,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.OwnerID,
+		arg.ObservationSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireCloneCheckpointPgCopyTarget = `-- name: RetireCloneCheckpointPgCopyTarget :execrows
+UPDATE project_environment_clone_postgres_copy_targets r SET state='retired',retired_at=c.retired_at,updated_at=clock_timestamp(),checkpoint_retirement_observation_sha256=c.observation_sha256
+FROM project_environment_clone_checkpoint_pg_copy_retirements c,project_environment_clone_operations o
+WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.target_database_id=$3::uuid
+ AND c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='retired' AND c.observation_sha256=$4::text
+ AND o.id=r.operation_id AND o.status='compensating' AND o.revision=$5::bigint AND o.lease_token=$6::uuid AND o.lease_until>clock_timestamp()
+`
+
+type RetireCloneCheckpointPgCopyTargetParams struct {
+	OperationID       pgtype.UUID
+	SourceDatabaseID  pgtype.UUID
+	OwnerID           pgtype.UUID
+	ObservationSha256 string
+	ExpectedRevision  int64
+	WorkerToken       pgtype.UUID
+}
+
+func (q *Queries) RetireCloneCheckpointPgCopyTarget(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgCopyTargetParams) (int64, error) {
+	result, err := db.Exec(ctx, retireCloneCheckpointPgCopyTarget,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.OwnerID,
+		arg.ObservationSha256,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireCloneCheckpointPgTargetDatabase = `-- name: RetireCloneCheckpointPgTargetDatabase :execrows
+UPDATE managed_postgres_databases d SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM project_environment_clone_postgres_snapshot_restores r,project_environment_clone_operations o
+WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state IN ('adopted','deleting')
+    AND d.id=r.adopted_database_id AND d.id=r.target_owner_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
+    AND d.restore_source_database_id=r.source_database_id AND d.clone_resource_role='checkpoint' AND d.provider_resource_id=r.target_provider_resource_id
+    AND d.desired_generation=1 AND d.lease_token IS NULL AND d.lease_until IS NULL
+    AND ((d.state='provisioning' AND d.observed_generation=0 AND d.data_resource_id IS NULL)
+    OR (d.state='ready' AND d.observed_generation=1 AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_runtime runtime
+        WHERE runtime.operation_id=r.operation_id AND runtime.source_database_id=r.source_database_id AND runtime.state='ready' AND runtime.data_resource_id=d.data_resource_id)))
+    AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
+    AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
+    AND o.id=r.operation_id AND o.status='compensating' AND o.resources->0->>'kind'='data_checkpoint' AND o.revision=$3::bigint
+    AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_credential_retirements retirement WHERE retirement.operation_id=credential.operation_id AND retirement.source_binding_id=credential.source_binding_id AND retirement.state='retired'))
+ AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_target_compensations c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state='compensated')
+`
+
+type RetireCloneCheckpointPgTargetDatabaseParams struct {
+	OperationID      pgtype.UUID
+	SourceDatabaseID pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      string
+}
+
+func (q *Queries) RetireCloneCheckpointPgTargetDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgTargetDatabaseParams) (int64, error) {
+	result, err := db.Exec(ctx, retireCloneCheckpointPgTargetDatabase,
+		arg.OperationID,
+		arg.SourceDatabaseID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retireEnvironmentQualificationExecution = `-- name: RetireEnvironmentQualificationExecution :execrows
 UPDATE environment_qualification_executions SET retirement=$1::jsonb,retired_at=clock_timestamp()
 WHERE instance_id=$2::uuid AND retired_at IS NULL
@@ -70949,14 +77320,17 @@ FROM project_environment_clone_postgres_snapshot_restores r,project_environment_
 WHERE r.operation_id=$1::uuid AND r.source_database_id=$2::uuid AND r.state='deleting'
     AND d.id=r.adopted_database_id AND d.id=r.target_owner_id AND d.account_id=r.account_id AND d.environment_clone_operation_id=r.operation_id
     AND d.restore_source_database_id=r.source_database_id AND d.clone_resource_role='checkpoint' AND d.provider_resource_id=r.target_provider_resource_id
-    AND d.state='provisioning' AND d.desired_generation=1 AND d.observed_generation=0 AND d.data_resource_id IS NULL AND d.lease_token IS NULL
+    AND d.desired_generation=1 AND d.lease_token IS NULL
+    AND ((d.state='provisioning' AND d.observed_generation=0 AND d.data_resource_id IS NULL)
+    OR (d.state='ready' AND d.observed_generation=1 AND EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_runtime runtime
+        WHERE runtime.operation_id=r.operation_id AND runtime.source_database_id=r.source_database_id AND runtime.state='ready' AND runtime.data_resource_id=d.data_resource_id)))
     AND d.backend_id=r.backend_id AND d.backend_fingerprint=r.backend_fingerprint
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=d.id AND b.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM managed_postgres_databases child WHERE child.restore_source_database_id=d.id AND child.state<>'deleted')
-    AND o.id=r.operation_id AND o.status='compensating' AND o.revision=$3::bigint
+    AND o.id=r.operation_id AND o.status='compensating' AND coalesce(o.resources->0->>'kind','')<>'data_checkpoint' AND o.revision=$3::bigint
     AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired')
-    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_readers c WHERE c.operation_id=r.operation_id AND c.source_database_id=r.source_database_id AND c.state<>'retired') AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_postgres_credentials credential WHERE credential.operation_id=r.operation_id AND credential.source_database_id=r.source_database_id AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_pg_credential_retirements retirement WHERE retirement.operation_id=credential.operation_id AND retirement.source_binding_id=credential.source_binding_id AND retirement.state='retired')) RETURNING d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required
 `
 
 type RetireProjectEnvironmentCloneNativeForkDatabaseParams struct {
@@ -71082,7 +77456,7 @@ UPDATE project_environment_clone_postgres_copy_targets c SET state='retired',ret
 WHERE c.operation_id=$1::uuid AND c.source_database_id=$2::uuid AND c.state='reserved' AND c.request_started_at IS NULL
     AND EXISTS(SELECT 1 FROM managed_postgres_databases d WHERE d.id=c.target_database_id AND d.state='deleted' AND d.deleted_at IS NOT NULL AND d.provider_resource_id IS NULL)
     AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=c.operation_id AND o.status='compensating'
-        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at
+        AND o.revision=$3::bigint AND o.lease_token::text=$4::text AND o.lease_until>clock_timestamp()) RETURNING c.operation_id, c.source_database_id, c.account_id, c.capture_database_id, c.target_database_id, c.state, c.request_started_at, c.provider_resource_id, c.provider_created_at, c.observed_at, c.prepared_at, c.retired_at, c.created_at, c.updated_at, c.deletion_started_at, c.deletion_observed_at, c.checkpoint_retirement_observation_sha256
 `
 
 type RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams struct {
@@ -71117,6 +77491,7 @@ func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget(ct
 		&i.UpdatedAt,
 		&i.DeletionStartedAt,
 		&i.DeletionObservedAt,
+		&i.CheckpointRetirementObservationSha256,
 	)
 	return i, err
 }
@@ -71546,6 +77921,26 @@ func (q *Queries) RevokeApplicationStandardException(ctx context.Context, db DBT
 	return result.RowsAffected(), nil
 }
 
+const revokeCloneCheckpointObjectPublicationCredential = `-- name: RevokeCloneCheckpointObjectPublicationCredential :execrows
+UPDATE object_storage_s3_credentials SET status='revoked',revoked_at=now()
+WHERE id=$1::uuid AND account_id=$2::uuid AND bucket_id=$3::uuid
+AND status='active' AND rotation_parent_id IS NULL AND url_request IS NULL
+`
+
+type RevokeCloneCheckpointObjectPublicationCredentialParams struct {
+	CredentialID pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+}
+
+func (q *Queries) RevokeCloneCheckpointObjectPublicationCredential(ctx context.Context, db DBTX, arg RevokeCloneCheckpointObjectPublicationCredentialParams) (int64, error) {
+	result, err := db.Exec(ctx, revokeCloneCheckpointObjectPublicationCredential, arg.CredentialID, arg.AccountID, arg.BucketID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeCustomerOperationWorkflowCustody = `-- name: RevokeCustomerOperationWorkflowCustody :exec
 UPDATE customer_operation_workflow_claims SET lease_until=now() WHERE workflow_run_id=$1::uuid
 `
@@ -71722,6 +78117,41 @@ func (q *Queries) RollupMirrorResults(ctx context.Context, db DBTX, arg RollupMi
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const rotateGitLabOAuthConnection = `-- name: RotateGitLabOAuthConnection :one
+UPDATE gitlab_oauth_connections SET credentials_sealed=$1::bytea,
+    expires_at=$2::timestamptz, version=version+1, updated_at=now()
+WHERE account_id=$3::uuid AND version=$4::bigint
+RETURNING account_id, gitlab_user_id, username, credentials_sealed, expires_at, version, connected_at, updated_at
+`
+
+type RotateGitLabOAuthConnectionParams struct {
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	AccountID         pgtype.UUID
+	ExpectedVersion   int64
+}
+
+func (q *Queries) RotateGitLabOAuthConnection(ctx context.Context, db DBTX, arg RotateGitLabOAuthConnectionParams) (GitlabOauthConnection, error) {
+	row := db.QueryRow(ctx, rotateGitLabOAuthConnection,
+		arg.CredentialsSealed,
+		arg.ExpiresAt,
+		arg.AccountID,
+		arg.ExpectedVersion,
+	)
+	var i GitlabOauthConnection
+	err := row.Scan(
+		&i.AccountID,
+		&i.GitlabUserID,
+		&i.Username,
+		&i.CredentialsSealed,
+		&i.ExpiresAt,
+		&i.Version,
+		&i.ConnectedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const routeCustomerHealthObservation = `-- name: RouteCustomerHealthObservation :one
@@ -73171,6 +79601,24 @@ func (q *Queries) SaveManagedPostgresCutoverVerification(ctx context.Context, db
 	return result.RowsAffected(), nil
 }
 
+const saveReadinessSubscriptionWatches = `-- name: SaveReadinessSubscriptionWatches :execrows
+UPDATE customer_workflow_readiness_subscriptions SET payload=$2, lease_token=NULL, lease_until=NULL, next_evaluation_at=$3 WHERE id=$1
+`
+
+type SaveReadinessSubscriptionWatchesParams struct {
+	ID               pgtype.UUID
+	Payload          []byte
+	NextEvaluationAt pgtype.Timestamptz
+}
+
+func (q *Queries) SaveReadinessSubscriptionWatches(ctx context.Context, db DBTX, arg SaveReadinessSubscriptionWatchesParams) (int64, error) {
+	result, err := db.Exec(ctx, saveReadinessSubscriptionWatches, arg.ID, arg.Payload, arg.NextEvaluationAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const saveRuntimeInstanceConfigProof = `-- name: SaveRuntimeInstanceConfigProof :exec
 INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
 SELECT id,wake_id,node_id,deployment_id,$1::uuid,$2::text,
@@ -73275,6 +79723,94 @@ func (q *Queries) ScheduleWorkflowRunFenced(ctx context.Context, db DBTX, arg Sc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const sealCloneCheckpointPgConnectionValue = `-- name: SealCloneCheckpointPgConnectionValue :one
+UPDATE project_environment_clone_checkpoint_pg_connection_values i SET state='sealed',ciphertext=$1::bytea,key_id=$2::text,ciphertext_sha256=$3::text,sealed_at=clock_timestamp()
+WHERE i.operation_id=$4::uuid AND i.source_binding_id=$5::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.plan, i.state, i.ciphertext, i.key_id, i.ciphertext_sha256, i.sealed_at, i.activation_operation_id
+`
+
+type SealCloneCheckpointPgConnectionValueParams struct {
+	Ciphertext       []byte
+	KeyID            string
+	CiphertextSha256 string
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) SealCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg SealCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error) {
+	row := db.QueryRow(ctx, sealCloneCheckpointPgConnectionValue,
+		arg.Ciphertext,
+		arg.KeyID,
+		arg.CiphertextSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPgConnectionValue
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.SealedAt,
+		&i.ActivationOperationID,
+	)
+	return i, err
+}
+
+const sealCloneCheckpointPostgresCredential = `-- name: SealCloneCheckpointPostgresCredential :one
+UPDATE project_environment_clone_checkpoint_postgres_credentials i SET state='sealed',ciphertext=$1::bytea,key_id=$2::text,ciphertext_sha256=$3::text
+WHERE i.operation_id=$4::uuid AND i.source_binding_id=$5::uuid AND i.state='planned'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=i.operation_id AND o.status='capturing'
+AND o.revision=$6::bigint AND o.lease_token=$7::uuid AND o.lease_until>clock_timestamp()) RETURNING i.operation_id, i.source_binding_id, i.source_database_id, i.account_id, i.target_binding_id, i.plan, i.state, i.ciphertext, i.key_id, i.ciphertext_sha256, i.requested_at, i.observation_sha256, i.prepared_at
+`
+
+type SealCloneCheckpointPostgresCredentialParams struct {
+	Ciphertext       []byte
+	KeyID            string
+	CiphertextSha256 string
+	OperationID      pgtype.UUID
+	SourceBindingID  pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) SealCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg SealCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error) {
+	row := db.QueryRow(ctx, sealCloneCheckpointPostgresCredential,
+		arg.Ciphertext,
+		arg.KeyID,
+		arg.CiphertextSha256,
+		arg.OperationID,
+		arg.SourceBindingID,
+		arg.ExpectedRevision,
+		arg.WorkerToken,
+	)
+	var i ProjectEnvironmentCloneCheckpointPostgresCredential
+	err := row.Scan(
+		&i.OperationID,
+		&i.SourceBindingID,
+		&i.SourceDatabaseID,
+		&i.AccountID,
+		&i.TargetBindingID,
+		&i.Plan,
+		&i.State,
+		&i.Ciphertext,
+		&i.KeyID,
+		&i.CiphertextSha256,
+		&i.RequestedAt,
+		&i.ObservationSha256,
+		&i.PreparedAt,
+	)
+	return i, err
 }
 
 const selectBaseImageProducer = `-- name: SelectBaseImageProducer :exec
@@ -73802,7 +80338,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -73840,6 +80376,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -76096,21 +82633,22 @@ func (q *Queries) UpdateApplicationStandardApprovedAssignment(ctx context.Contex
 
 const updateBindingReleasePolicy = `-- name: UpdateBindingReleasePolicy :one
 UPDATE app_binding_release_policies p SET mode=$1,revision=p.revision+1,max_age_seconds=$2,
- require_application_ack=$3,reason=$4,updated_at=clock_timestamp()
-FROM apps a WHERE p.app_id=a.id AND a.id=$5 AND a.account_id=$6 AND a.status<>'deleted'
- AND p.scope=$7 AND p.revision=$8
+ require_application_ack=$3,reason=$4,object_storage_requirements=$5::jsonb,updated_at=clock_timestamp()
+FROM apps a WHERE p.app_id=a.id AND a.id=$6 AND a.account_id=$7 AND a.status<>'deleted'
+ AND p.scope=$8 AND p.revision=$9
 RETURNING to_jsonb(p)::jsonb AS policy
 `
 
 type UpdateBindingReleasePolicyParams struct {
-	Mode                  string
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
-	Scope                 string
-	ExpectedRevision      int64
+	Mode                      string
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
+	Scope                     string
+	ExpectedRevision          int64
 }
 
 func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg UpdateBindingReleasePolicyParams) ([]byte, error) {
@@ -76119,6 +82657,7 @@ func (q *Queries) UpdateBindingReleasePolicy(ctx context.Context, db DBTX, arg U
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 		arg.Scope,
@@ -76403,7 +82942,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -76449,6 +82988,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceDefinitionDigest,
 		&i.SourceVerifiedAt,
 		&i.Detached,
+		&i.Provider,
 	)
 	return i, err
 }
@@ -77988,10 +84528,71 @@ func (q *Queries) WebhookAutomationLegacyReceiptExists(ctx context.Context, db D
 	return exists, err
 }
 
+const withdrawCloneCheckpointObjectPublication = `-- name: WithdrawCloneCheckpointObjectPublication :execrows
+UPDATE project_environment_clone_checkpoint_object_publications p SET state='withdrawn',withdrawn_at=now()
+WHERE p.operation_id=$1::uuid AND p.state='published'
+AND EXISTS(SELECT 1 FROM project_environment_clone_operations o WHERE o.id=p.operation_id AND o.status='compensating'
+AND o.revision=$2::bigint AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp())
+`
+
+type WithdrawCloneCheckpointObjectPublicationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) WithdrawCloneCheckpointObjectPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointObjectPublicationParams) (int64, error) {
+	result, err := db.Exec(ctx, withdrawCloneCheckpointObjectPublication, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const withdrawCloneCheckpointPgBinding = `-- name: WithdrawCloneCheckpointPgBinding :execrows
+UPDATE managed_postgres_bindings SET state='deleted',deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE id=$1 AND account_id=$2 AND state='ready' AND credential_generation=1 AND lease_token IS NULL
+AND rotation_previous_generation IS NULL AND cutover_id IS NULL
+`
+
+type WithdrawCloneCheckpointPgBindingParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) WithdrawCloneCheckpointPgBinding(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgBindingParams) (int64, error) {
+	result, err := db.Exec(ctx, withdrawCloneCheckpointPgBinding, arg.ID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const withdrawCloneCheckpointPgPublication = `-- name: WithdrawCloneCheckpointPgPublication :execrows
+UPDATE project_environment_clone_checkpoint_pg_publications p SET state='withdrawn',withdrawn_at=clock_timestamp()
+FROM project_environment_clone_operations o WHERE p.operation_id=$1::uuid AND p.state='published'
+AND o.id=p.operation_id AND o.status='compensating' AND o.revision=$2::bigint
+AND o.lease_token=$3::uuid AND o.lease_until>clock_timestamp()
+`
+
+type WithdrawCloneCheckpointPgPublicationParams struct {
+	OperationID      pgtype.UUID
+	ExpectedRevision int64
+	WorkerToken      pgtype.UUID
+}
+
+func (q *Queries) WithdrawCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgPublicationParams) (int64, error) {
+	result, err := db.Exec(ctx, withdrawCloneCheckpointPgPublication, arg.OperationID, arg.ExpectedRevision, arg.WorkerToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const workerAdmissionCount = `-- name: WorkerAdmissionCount :one
 select count(*)::bigint from instances i join apps a on a.id=i.app_id
 where a.account_id=$1 and i.mode='worker'
-and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+and i.state in ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
 `
 
 func (q *Queries) WorkerAdmissionCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
@@ -78560,25 +85161,26 @@ func (q *Queries) WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype
 }
 
 const writeBindingReleasePolicy = `-- name: WriteBindingReleasePolicy :one
-INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
-SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6
-FROM apps a WHERE a.id=$7 AND a.account_id=$8 AND a.status<>'deleted'
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements)
+SELECT a.id,$1,$2,$3::bigint+1,$4,$5,$6,$7::jsonb
+FROM apps a WHERE a.id=$8 AND a.account_id=$9 AND a.status<>'deleted'
  AND $3::bigint=0
 ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
- max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,updated_at=clock_timestamp()
 WHERE app_binding_release_policies.revision=$3::bigint
 RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy
 `
 
 type WriteBindingReleasePolicyParams struct {
-	Scope                 string
-	Mode                  string
-	ExpectedRevision      int64
-	MaxAgeSeconds         int64
-	RequireApplicationAck bool
-	Reason                string
-	AppID                 pgtype.UUID
-	AccountID             pgtype.UUID
+	Scope                     string
+	Mode                      string
+	ExpectedRevision          int64
+	MaxAgeSeconds             int64
+	RequireApplicationAck     bool
+	Reason                    string
+	ObjectStorageRequirements []byte
+	AppID                     pgtype.UUID
+	AccountID                 pgtype.UUID
 }
 
 func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error) {
@@ -78589,6 +85191,7 @@ func (q *Queries) WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg Wr
 		arg.MaxAgeSeconds,
 		arg.RequireApplicationAck,
 		arg.Reason,
+		arg.ObjectStorageRequirements,
 		arg.AppID,
 		arg.AccountID,
 	)

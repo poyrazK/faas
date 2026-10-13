@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func stagePoolSnapshot(t *testing.T, f stageSnapshotFixture, dep state.Deployment, ram int) {
@@ -226,7 +227,7 @@ func TestRecreatedStageWarmPoolFillsNewLifetime(t *testing.T) {
 }
 
 type stagePoolPublicationStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	onPublish func(state.RuntimeInstancePublication)
 }
 
@@ -267,7 +268,7 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 				}
 			}
 			vmm := &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 			if err := engine.ReconcileWarmPool(WithScope(ctx, "stage"), f.app.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -292,10 +293,10 @@ func TestStageWarmPoolPublicationRejectsChangesAfterRestoreRead(t *testing.T) {
 	}
 }
 
-type stagePoolUnavailableOwner struct{ *state.MemStore }
+type stagePoolUnavailableOwner struct{ MemStore *state.MemStore }
 
 func (s stagePoolUnavailableOwner) RuntimeScalingStateForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeScalingState, error) {
-	dep, err := s.DeploymentByID(ctx, deploymentID)
+	dep, err := s.MemStore.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return state.RuntimeScalingState{}, err
 	}
@@ -311,7 +312,7 @@ func TestEnvironmentWarmPoolsFailClosedForUnavailableStageOwner(t *testing.T) {
 	stage := stagePoolInstance(t, f, f.stage)
 	stagePoolSnapshot(t, f, f.prod, 256)
 	vmm := &stagePoolPausedVMM{fakeVMM: &fakeVMM{}}
-	engine := newEngine(t, stagePoolUnavailableOwner{f.store}, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewMem(stagePoolUnavailableOwner{f.store}), vmm, &fakeNotifier{}, "1.10.0")
 	if err := engine.ReconcileEnvironmentWarmPools(ctx, f.app.ID); err == nil {
 		t.Fatal("missing stage owner failure")
 	}

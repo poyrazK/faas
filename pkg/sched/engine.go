@@ -590,6 +590,9 @@ type Engine struct {
 	// fall back to their legacy in-method decisions when the
 	// arbiter isn't wired (unit-test fixtures; bootstrap window).
 	recoveryArbiter *Arbiter
+	// lostVMs holds the VMs RecreateInstance parked while their node looked
+	// dead; DestroyLostVMs reclaims them when the node answers (H9-171).
+	lostVMs lostVMSet
 	// pressureAggregator (Tier A9 / ADR-087) is the in-process
 	// sliding-window per-app counter of WakeResult{AtCapacity: true}
 	// returns. The engine increments it at every AtCapacity return
@@ -2312,7 +2315,10 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	if len(results) == 0 || results[0].AtCapacity {
 		rollbackWake()
 		out.Err = ErrAtCapacity
-		return out, ErrAtCapacity
+		if refusesRequestWake(selected.app, instanceModeForApp(selected.app)) {
+			out.Err = ErrNoRequestListener
+		}
+		return out, out.Err
 	}
 	if lifecycleChanged {
 		latestApp, readErr := e.store.AppByID(leaderCtx, appID)
@@ -2883,8 +2889,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// reused — no new wakeOutcome, no new metric row. The check
 	// fires BEFORE admitGate so the cooldown / reject / min-floor
 	// branches are unreachable for worker-class apps.
-	if !bypassGates && (app.WorkloadClass == state.WorkloadClassWorker ||
-		mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeJob)) {
+	if !bypassGates && refusesRequestWake(app, mode) {
 		release()
 		e.IncAtCapacity(appID, "wake")
 		return WakeResult{AtCapacity: true}, nil
@@ -2950,6 +2955,16 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	)
 	if bypassGates {
 		concurrency = e.ledger.Concurrency(app.ID)
+		// ADR-1162: explicit-deployment admissions (min-instance floors,
+		// service replicas, workers, per-deployment wakes) skip the request
+		// gates but not the account spend cap; otherwise always-on capacity
+		// keeps running past the cap. Deployment smoke verifies a release and
+		// mirror instances are never metered, so both stay exempt.
+		if !deploymentSmoke && mode != string(state.InstanceModeMirror) {
+			if reached, observed, capped := e.admitSpendCap(ctx, &app); reached {
+				outcome, obsCents, capCents = wakeOverageCapReached, observed, capped
+			}
+		}
 	} else {
 		// A peer scheduler or a recovery path can move an instance to a
 		// non-resident state without touching this process's in-memory ledger.
@@ -3562,6 +3577,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
+		QuietPauseAfterMS:        quietPauseAfterMS(app, mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -4659,7 +4675,10 @@ func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placemen
 		// uses this to enforce compute_nodes.vcpu_budget per node;
 		// absent or zero is treated as 0 by the chooser (the
 		// per-node budget is the gate, not the absolute number).
-		usedVCPU[n.ID] = int64(e.ledger.UsedVCPUForNode(n.ID))
+		usedVCPU[n.ID] = int64(e.ledger.EffectiveVCPUForNode(n.ID, n.VCPUBudget))
+		// ADR-1151: under quiet pause admission both CPU gates count only
+		// active instances, as Admit does; without it these are bookings.
+		usedCPUMillicores[n.ID] = e.ledger.EffectiveCPUMillicoresForNode(n.ID, usedCPUMillicores[n.ID], cpuBudgetMillicores(n))
 	}
 	return placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
@@ -5472,6 +5491,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
+		QuietPauseAfterMS:        quietPauseAfterMS(app, ins.Mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
@@ -6506,6 +6526,17 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 	return repaired, nil
 }
 
+// appMustPark reports whether no instance of app may stay live: the app is
+// evicted_cold, its account is suspended or abuse-held, or the account has
+// reached its monthly spend cap. The cap check is cached and fails open
+// (OverageChecker), so a transient read error never parks an app.
+func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
+	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
+		return true
+	}
+	return e.spendCapReached(ctx, account.ID)
+}
+
 // ParkApp tears down every live instance of an app whose lifecycle has already
 // been changed to evicted_cold by apid. The app-level park endpoint is
 // asynchronous: apid owns the app status write, while schedd owns instance
@@ -6521,6 +6552,9 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 // live state. An app that was unparked before the notification was handled is
 // ignored; the status check prevents an old `parked` notification from
 // tearing down a newly-woken app.
+//
+// Besides an evicted_cold app, a suspended or abuse-held account and an
+// account at its monthly spend cap (ADR-1162) also park every live instance.
 func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if appID == "" {
 		return 0, fmt.Errorf("sched: park app: empty app id")
@@ -6540,7 +6574,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: load account %s: %w", app.AccountID, accountErr)
 	}
-	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended && !account.AbuseHeld() {
+	if !e.appMustPark(ctx, app, account) {
 		return 0, nil
 	}
 
@@ -6560,7 +6594,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: reload account %s: %w", app.AccountID, accountErr)
 	}
-	if app.Status != state.AppEvictedCold && account.Status != state.AccountSuspended && !account.AbuseHeld() {
+	if !e.appMustPark(ctx, app, account) {
 		return 0, nil
 	}
 
@@ -8629,6 +8663,25 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 		// A completed wake may still be running; leave its capacity intact.
 		return nil
 	}
+	// Qualification reservations have an attempt-bound native owner. Their
+	// capture/restore may legitimately outlive the ordinary cold-boot sweep,
+	// and only the attempt's retirement (or its recovery after lease expiry)
+	// can release physical resources and capacity. A generic Destroy here
+	// cancels the restore before its backing images have finished staging.
+	if executions, ok := e.store.(state.EnvironmentQualificationExecutionStore); ok {
+		status, err := executions.EnvironmentQualificationExecution(ctx, instanceID)
+		switch {
+		case err == nil:
+			if status.Execution.InstanceID != instanceID {
+				return state.ErrConflict
+			}
+			return nil
+		case errors.Is(err, state.ErrNotFound):
+			// An ordinary instance still belongs to the regular watchdog.
+		case err != nil:
+			return fmt.Errorf("sched: KillStuck: inspect qualification execution %s: %w", instanceID, err)
+		}
+	}
 
 	terminal := terminalStateForReason(reason)
 
@@ -9493,6 +9546,13 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	}
+	// A worker pool has no periodic floor unless it scales on a queue
+	// signal, so a worker parked here never came back: h8-worker sat at
+	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
+	// H9-171).
+	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
+		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
+	}
 	return true, nil
 }
 
@@ -9750,10 +9810,9 @@ const (
 //     because (a) the trigger is account-scoped not per-app, (b) the
 //     wire surface is CodeAdmissionRefused (HTTP 402 + Retry-After
 //     intentionally omitted — the cap is a deliberate budget, not
-//     back-pressure), and (c) the existing live instances are NOT
-//     auto-parked by the cap alone (that path lives in
-//     pkg/meter/quota.go::EnforceQuota case "stop" and is out of
-//     scope for #561). Caller short-circuits with no INSERT and
+//     back-pressure), and (c) live instances are parked by the
+//     reaper's lifecycle reconcile, not by this gate (ADR-1162:
+//     Engine.appMustPark). Caller short-circuits with no INSERT and
 //     emits the audit row overage.cap_reached via the checker's
 //     RecordReached (UTC-day deduped).
 //
@@ -9845,23 +9904,44 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 		}
 		return wakeMinFloorAlready, 0, 0, concurrency, false, capacity.limit
 	}
-	// Issue #561: spend cap pause-workload. Nil check tolerates
-	// legacy fixtures (the branch becomes a no-op).
-	if e.overage != nil {
-		status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
-		if status == OverageReached {
-			if e.ops != nil {
-				e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
-			}
-			// Audit row emitted here is intentional — the gate
-			// itself is the only decision site that observes the
-			// refusal, and pkg/sched/loop.go:1249 `reaper_scale_down`
-			// is the precedent for engine-initiated audit writes.
-			e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
-			return wakeOverageCapReached, observedCents, capCents, concurrency, false, capacity.limit
-		}
+	// Issue #561: spend cap pause-workload.
+	if reached, observedCents, capCents := e.admitSpendCap(ctx, app); reached {
+		return wakeOverageCapReached, observedCents, capCents, concurrency, false, capacity.limit
 	}
 	return wakeAdmit, 0, 0, concurrency, capacity.fullAfterAdmission(), capacity.limit
+}
+
+// admitSpendCap is the admission-side spend-cap decision shared by the
+// request gate and the explicit-deployment path (ADR-1162). Nil checker
+// tolerates legacy fixtures. The audit row is emitted here because the
+// admission decision is the only site that observes the refusal;
+// pkg/sched/loop.go `reaper_scale_down` is the precedent for
+// engine-initiated audit writes.
+func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64, int64) {
+	if e.overage == nil {
+		return false, 0, 0
+	}
+	status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
+	if status != OverageReached {
+		return false, 0, 0
+	}
+	if e.ops != nil {
+		e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
+	}
+	e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
+	return true, observedCents, capCents
+}
+
+// spendCapReached reports whether the account's monthly spend cap is
+// reached, without the admission metric or audit side effects. Lifecycle
+// reconcilers use it to park live capacity and stop refilling warm pools
+// (ADR-1162). Fails open like OverageChecker.Check.
+func (e *Engine) spendCapReached(ctx context.Context, accountID string) bool {
+	if e.overage == nil || accountID == "" {
+		return false
+	}
+	status, _, _, _ := e.overage.Check(ctx, accountID)
+	return status == OverageReached
 }
 
 // isOnScaleOutCooldown (PR-C, issue #462) returns true when

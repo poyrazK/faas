@@ -238,9 +238,14 @@ func (c *DiskBlobCache) materialize(ctx context.Context, digest, path string, sr
 	}()
 
 	h := sha256.New()
-	n, err := copyWithContext(ctx, io.MultiWriter(tmp, h), src)
+	// Stop one byte past the budget: an oversized blob is not cached, so
+	// writing all of it first would only fill the cache disk.
+	n, err := copyWithContext(ctx, io.MultiWriter(tmp, h), io.LimitReader(src, c.maxBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("oci: blob cache: copy %s: %w", digest, err)
+	}
+	if n > c.maxBytes {
+		return "", errBlobCacheOversized
 	}
 	if got := digestAlgo + hex.EncodeToString(h.Sum(nil)); got != digest {
 		return "", fmt.Errorf("oci: blob cache: digest mismatch: requested %s, got %s", digest, got)
@@ -250,9 +255,6 @@ func (c *DiskBlobCache) materialize(ctx context.Context, digest, path string, sr
 	}
 	if err := tmp.Close(); err != nil {
 		return "", fmt.Errorf("oci: blob cache: close %s: %w", digest, err)
-	}
-	if n > c.maxBytes {
-		return "", errBlobCacheOversized
 	}
 
 	c.mu.Lock()

@@ -33,6 +33,20 @@ Gregale only wakes services it has measured your app calling:
 Calls from PR preview apps are not used. Measurement happens in each gateway
 and starts again after the gateway restarts.
 
+## What was measured
+
+`gregale wake-ahead my-api` (and the `learned` block of `GET`) shows what the
+gateways measured for your app, whether wake-ahead is on or off:
+
+- each service your app calls after a cold wake, how often it calls it
+  (`CALLED`), how often that service was parked or already woken ahead
+  (`PARKED`), and whether the edge qualifies;
+- over the last 24 hours, how many wake-aheads were started, used (your app
+  called the service while it was still fresh), unused or failed.
+
+Measurements live in each gateway's memory and rebuild after a restart. When
+gateway metrics cannot be read, the block says so.
+
 ## Limits and cost
 
 - A service woken ahead runs, and is billed like any running instance, from the

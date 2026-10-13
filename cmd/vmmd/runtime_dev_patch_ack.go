@@ -33,8 +33,12 @@ func (r *runtimeConfigReceiver) handleRuntimeDevPatchAck(instance string, req ru
 	}
 	requestCtx, cancel := context.WithTimeout(r.ctx, 4*time.Second)
 	defer cancel()
-	if err := store.RecordDevSourcePatchApplied(requestCtx, appID, deploymentID, req.PatchGeneration, req.PatchApplyMS, req.ErrorCode); err != nil {
+	ack, err := store.RecordDevSourcePatchApplied(requestCtx, appID, deploymentID, req.PatchGeneration, req.PatchApplyMS, req.ErrorCode)
+	if err != nil {
 		return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Error: runtimeDevPatchUnavailable})
+	}
+	if ack.First {
+		r.devPatchMetrics.observeAck(req.ErrorCode, time.Duration(req.PatchApplyMS)*time.Millisecond, ack.Delivery)
 	}
 	return responseRuntimeConfig(r.log, conn, runtimeConfigResponse{Accepted: true})
 }

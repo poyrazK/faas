@@ -30,6 +30,13 @@ func instanceModeForApp(app state.App) string {
 	}
 }
 
+// refusesRequestWake reports whether request-driven admission refuses app,
+// booting in mode, because it has no request listener (PR-D, issue #462).
+func refusesRequestWake(app state.App, mode string) bool {
+	return app.WorkloadClass == state.WorkloadClassWorker ||
+		mode == string(state.InstanceModeWorker) || mode == string(state.InstanceModeJob)
+}
+
 func desiredServiceReplicas(manifest state.AppManifest) int {
 	if manifest.ServiceReplicas == nil {
 		return 1

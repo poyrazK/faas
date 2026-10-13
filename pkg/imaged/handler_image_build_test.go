@@ -391,6 +391,46 @@ func TestHandleDeployment_FullRootfsWithSidecars(t *testing.T) {
 	}
 }
 
+func TestHandleDeployment_ExplicitFullRootfsConversionDoesNotPullRuntimeBase(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "fullroot@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "fullroot-offline-base", Runtime: RuntimeNode22, RAMMB: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	force := true
+	ref := "registry.example/app@sha256:" + strings.Repeat("a", 64)
+	dep, err := store.CreateDeployment(t.Context(), state.Deployment{AppID: app.ID, ImageDigest: ref, Kind: state.DeploymentKindImage, FullRootfsOverride: &force})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const configDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const layerDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	puller := &fakeManifestPuller{
+		digest: ref, appRef: ref,
+		appManifest: oci.Manifest{Config: oci.Descriptor{Digest: configDigest}, Layers: []oci.Descriptor{{Digest: layerDigest, Size: 100}}},
+		appConfig:   oci.Config{Entrypoint: []string{"/app/server"}, DiffIDs: []string{layerDigest}},
+		layerBlobs:  map[string][]byte{layerDigest: gzTar(t, map[string]string{"app/server": "#!/bin/sh\n"})},
+		failOn:      map[string]error{"PullManifest:" + BaseRefNode22: errors.New("runtime base unavailable")},
+	}
+	puller.putConfig(configDigest, puller.appConfig)
+	builder := &fakeBuilder{}
+	h := New(store, &fakeNotifier{}, puller, builder, "/tmp/guest-init", t.TempDir(), silentLogger())
+	// The conversion itself must not pull a runtime OCI base. Production
+	// separately stages the shared drive0 needed to boot guest-init.
+	if err := h.HandleNotification(t.Context(), db.Notification{Channel: db.NotifyDeploymentChanged,
+		Payload: `{"app_id":"` + app.ID + `","to":"` + dep.ID + `","kind":"image"}`}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.DeploymentByID(t.Context(), dep.ID)
+	if err != nil || got.Status != state.DeploySnapshotting || len(builder.fullRootfsCalls) != 1 {
+		t.Fatalf("full-rootfs deployment = %+v, %v; builds=%d", got, err, len(builder.fullRootfsCalls))
+	}
+}
+
 // TestHandleDeployment_RealBuild_BaseMismatchErrors asserts the M6 build path
 // refuses an app whose layers don't sit on the chosen base.
 func TestHandleDeployment_RealBuild_BaseMismatchErrors(t *testing.T) {

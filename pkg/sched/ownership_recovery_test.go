@@ -13,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestOwnershipRecoverySweepSurvivesErrorsWithoutNotifications(t *testing.T) {
@@ -50,7 +51,7 @@ func TestOwnershipRecoverySweepSurvivesErrorsWithoutNotifications(t *testing.T) 
 }
 
 type stalledOwnershipStore struct {
-	state.Store
+	Store   state.Store
 	entered chan struct{}
 	calls   atomic.Int32
 }
@@ -66,7 +67,7 @@ func (s *stalledOwnershipStore) ListOrphanedAppsPage(ctx context.Context, _, _ i
 func TestOwnershipRecoveryCoalescesHintsAndCancelsStalledStore(t *testing.T) {
 	store, _, destination, _ := rebalanceTestOwners(t)
 	stalled := &stalledOwnershipStore{Store: store, entered: make(chan struct{})}
-	e := newEngine(t, stalled, &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(destination.ID)
+	e := newEngine(t, statetest.NewStore(stalled), &fakeVMM{}, &fakeNotifier{}, "1.10.0").WithOwnerNodeID(destination.ID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
