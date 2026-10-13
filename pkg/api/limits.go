@@ -6249,7 +6249,7 @@ var (
 	// ExecutionTimeoutMaxMS is the admission-to-result wall-clock deadline,
 	// including snapshot restore. Remaining time is passed to the guest when
 	// execution starts, so queue/restore delay can never extend caller code
-	// beyond the advertised deadline. ADR-987: Hobby 1 min, Pro 5 min,
+	// beyond the advertised deadline. ADR-996: Hobby 1 min, Pro 5 min,
 	// Scale 15 min; Runs are billed per running second (ADR-986).
 	ExecutionTimeoutMaxMS = [4]int{0, 60_000, 300_000, ExecutionTimeoutHardMaxMS}
 
