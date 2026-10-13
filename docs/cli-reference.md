@@ -8243,6 +8243,30 @@ List recorded versions of an app&#39;s edge-rule set (--version N shows its rule
 | `--app <slug>` | app slug | required |
 | `--version <N>` | show the rules recorded in this version |  |
 
+### edge-rules recipes
+
+List protection recipes: ready-made rules that start in log mode
+
+### edge-rules recipe
+
+Add a protection recipe&#39;s rule to an app, in log mode unless --enforce
+
+`gregale edge-rules recipe [--app <slug>] [--host <HOST>] [--set <NAME=VALUE>] [--enforce] <recipe>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--host <HOST>` | hostname the rule matches (defaults to the app canonical URL) |  |
+| `--set <NAME=VALUE>` | recipe parameter name=value (repeat) |  |
+| `--enforce` | enforce immediately instead of starting in log mode |  |
+
+Examples:
+
+```sh
+gregale edge-rules recipe block-unverified-bots --app my-api
+gregale edge-rules recipe allow-ips-only --app my-api --set cidrs=203.0.113.7,198.51.100.0/24
+```
+
 ### edge-rules stats
 
 Per-rule match counts (matched for enforced rules, logged for log-mode rules)

@@ -59,6 +59,8 @@
     {{if eq .Data.Action "security_headers_enabled"}}<div class="flash ok" role="status">Security headers preset is enabled.</div>{{end}}
     {{if eq .Data.Action "mode_enforce"}}<div class="flash ok" role="status">Rule is now enforced.</div>{{end}}
     {{if eq .Data.Action "mode_log"}}<div class="flash ok" role="status">Rule is now in log mode: it is matched and counted but never acts.</div>{{end}}
+    {{if eq .Data.Action "recipe_log"}}<div class="flash ok" role="status">Recipe added in log mode. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
+    {{if eq .Data.Action "recipe_enforce"}}<div class="flash ok" role="status">Recipe added and enforced.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The edge-rule action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
 
@@ -72,6 +74,33 @@
           <input type="hidden" name="csrf_token" value="{{.Data.ActionCSRF}}">
           <button type="submit">Enable security headers</button>
         </form>
+      {{end}}
+    </section>
+
+    <section class="card" id="protection-recipes" aria-labelledby="protection-recipes-heading">
+      <h2 id="protection-recipes-heading">Protection recipes</h2>
+      <p class="muted">Each recipe adds one ordinary edge rule. It starts in log mode: it is matched and counted but never acts. Watch its matches and sample requests below, then choose <strong>Start enforcing</strong>.</p>
+      {{range .Data.Recipes}}
+        <details class="recipe">
+          <summary><strong>{{.Title}}</strong>{{if .Added}} <span class="muted">· added</span>{{end}}</summary>
+          <p>{{.Summary}}</p>
+          <p class="muted">{{.LogNote}}</p>
+          {{if .Blocked}}
+            <p class="muted">{{.Blocked}}</p>
+          {{else}}
+            <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes/{{.ID}}">
+              <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+              {{range .Params}}
+                <label>{{.Label}}{{if .Required}} (required){{end}}
+                  <input type="text" name="{{.Name}}" value="{{.Default}}" placeholder="{{.Placeholder}}"{{if .Required}} required{{end}}>
+                </label>
+                <p class="muted">{{.Help}}</p>
+              {{end}}
+              <label><input type="checkbox" name="enforce" value="1"> Enforce immediately (skip log mode)</label>
+              <button type="submit">Add rule</button>
+            </form>
+          {{end}}
+        </details>
       {{end}}
     </section>
 
