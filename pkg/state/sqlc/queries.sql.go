@@ -46073,30 +46073,6 @@ func (q *Queries) MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX
 	return result.RowsAffected(), nil
 }
 
-const markClaimedTriggerRecordSuperseded = `-- name: MarkClaimedTriggerRecordSuperseded :execrows
-UPDATE trigger_records
-   SET state = 'superseded', attempts = attempts + 1, last_error = $3,
-       last_dispatched_at = now(), claim_expires_at = NULL
- WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
-   AND claim_expires_at > now()
-`
-
-type MarkClaimedTriggerRecordSupersededParams struct {
-	ID              pgtype.UUID
-	ClaimGeneration int64
-	LastError       pgtype.Text
-}
-
-// A source that owns its own retries (ADR-1237 realtime groups) redelivers
-// under a new item identifier, so this delivery's record ends here.
-func (q *Queries) MarkClaimedTriggerRecordSuperseded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSupersededParams) (int64, error) {
-	result, err := db.Exec(ctx, markClaimedTriggerRecordSuperseded, arg.ID, arg.ClaimGeneration, arg.LastError)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const markDeploymentLive = `-- name: MarkDeploymentLive :exec
 update deployments set status = 'live' where id = $1
 `
@@ -76407,6 +76383,31 @@ type SupersedeEnvironmentGitOpsRunsParams struct {
 func (q *Queries) SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error {
 	_, err := db.Exec(ctx, supersedeEnvironmentGitOpsRuns, arg.NowAt, arg.SourceID)
 	return err
+}
+
+const supersedeTriggerRecordItems = `-- name: SupersedeTriggerRecordItems :execrows
+UPDATE trigger_records
+   SET state = 'superseded', last_error = $1,
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE trigger_id = $2
+   AND item_identifier = ANY($3::text[])
+   AND state IN ('pending', 'claimed', 'retry')
+`
+
+type SupersedeTriggerRecordItemsParams struct {
+	LastError       pgtype.Text
+	TriggerID       pgtype.UUID
+	ItemIdentifiers []string
+}
+
+// Ends one realtime delivery's records whatever stage they reached; the
+// consumer group redelivers under a new item identifier (ADR-1237).
+func (q *Queries) SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error) {
+	result, err := db.Exec(ctx, supersedeTriggerRecordItems, arg.LastError, arg.TriggerID, arg.ItemIdentifiers)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const sweepCountedMirrorResults = `-- name: SweepCountedMirrorResults :execrows

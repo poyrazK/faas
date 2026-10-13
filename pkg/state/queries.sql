@@ -2435,14 +2435,15 @@ UPDATE trigger_records
  WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
    AND claim_expires_at > now();
 
--- name: MarkClaimedTriggerRecordSuperseded :execrows
--- A source that owns its own retries (ADR-1237 realtime groups) redelivers
--- under a new item identifier, so this delivery's record ends here.
+-- name: SupersedeTriggerRecordItems :execrows
+-- Ends one realtime delivery's records whatever stage they reached; the
+-- consumer group redelivers under a new item identifier (ADR-1237).
 UPDATE trigger_records
-   SET state = 'superseded', attempts = attempts + 1, last_error = $3,
+   SET state = 'superseded', last_error = sqlc.arg(last_error),
        last_dispatched_at = now(), claim_expires_at = NULL
- WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
-   AND claim_expires_at > now();
+ WHERE trigger_id = sqlc.arg(trigger_id)
+   AND item_identifier = ANY(sqlc.arg(item_identifiers)::text[])
+   AND state IN ('pending', 'claimed', 'retry');
 
 -- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records

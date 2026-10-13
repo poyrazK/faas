@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -208,17 +209,41 @@ func (s *PgStore) RetryClaimedTriggerRecord(ctx context.Context, id string, gene
 	return triggerClaimTransitionError("retry", n, err)
 }
 
-// TriggerClaimSuperseder ends a claimed record whose source redelivers the
-// message under a new identifier and owns the retry decision (ADR-1237).
-type TriggerClaimSuperseder interface {
-	SupersedeClaimedTriggerRecord(context.Context, string, int64, string) error
+// TriggerRecordSuperseder ends the records of a delivery whose source
+// redelivers under a new identifier and owns the retry decision (ADR-1237).
+type TriggerRecordSuperseder interface {
+	SupersedeTriggerRecordItems(ctx context.Context, triggerID string, items []string, lastError string) error
 }
 
-func (s *PgStore) SupersedeClaimedTriggerRecord(ctx context.Context, id string, generation int64, lastError string) error {
-	n, err := s.triggerQueries().MarkClaimedTriggerRecordSuperseded(ctx, s.pool,
-		sqlc.MarkClaimedTriggerRecordSupersededParams{ID: mustPgUUID(id), ClaimGeneration: generation,
-			LastError: pgtype.Text{String: lastError, Valid: lastError != ""}})
-	return triggerClaimTransitionError("supersede", n, err)
+func (s *PgStore) SupersedeTriggerRecordItems(ctx context.Context, triggerID string, items []string, lastError string) error {
+	if len(items) == 0 {
+		return nil
+	}
+	_, err := s.triggerQueries().SupersedeTriggerRecordItems(ctx, s.pool, sqlc.SupersedeTriggerRecordItemsParams{
+		TriggerID: mustPgUUID(triggerID), ItemIdentifiers: items, LastError: pgtype.Text{String: lastError, Valid: lastError != ""}})
+	if err != nil {
+		return fmt.Errorf("state: supersede trigger records: %w", err)
+	}
+	return nil
+}
+
+func (m *MemStore) SupersedeTriggerRecordItems(_ context.Context, triggerID string, items []string, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, r := range m.records {
+		if r.TriggerID.String() != triggerID || !slices.Contains(items, r.ItemIdentifier) {
+			continue
+		}
+		switch r.State {
+		case "pending", "claimed", "retry":
+			r.State = "superseded"
+			r.LastError = pgtype.Text{String: lastError, Valid: lastError != ""}
+			r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
+			r.ClaimExpiresAt = pgtype.Timestamptz{}
+			m.records[id] = r
+		}
+	}
+	return nil
 }
 
 func (s *PgStore) DeadLetterClaimedTriggerRecord(ctx context.Context, id string, generation int64, lastError string) error {
@@ -290,22 +315,6 @@ func (m *MemStore) CompleteClaimedTriggerRecord(_ context.Context, id string, ge
 	r.State = "succeeded"
 	r.ClaimExpiresAt = pgtype.Timestamptz{}
 	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
-	m.records[id] = r
-	return nil
-}
-
-func (m *MemStore) SupersedeClaimedTriggerRecord(_ context.Context, id string, generation int64, lastError string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	r, ok := m.records[id]
-	if !ok || !memTriggerClaimCurrent(r, generation) {
-		return ErrNotFound
-	}
-	r.State = "superseded"
-	r.Attempts++
-	r.LastError = pgtype.Text{String: lastError, Valid: lastError != ""}
-	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
-	r.ClaimExpiresAt = pgtype.Timestamptz{}
 	m.records[id] = r
 	return nil
 }
