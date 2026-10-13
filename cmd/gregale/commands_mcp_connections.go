@@ -60,7 +60,7 @@ func requestMCPAdmin(socket, method, path string) error {
 	if err != nil {
 		return fmt.Errorf("contact local management bridge: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, mcpmanagement.MaxFrameBytes+1))
 	if err != nil {
 		return err
