@@ -16,6 +16,14 @@ export async function verifyCheckout(baseURL, phase) {
     method: "POST", headers: { "idempotency-key": key }, ...(signal ? { signal } : {}),
   });
   const stats = async () => (await request("/stats")).body;
+  const providerStats = async expectedCharges => {
+    const url = process.env.GREGALE_TEST_SERVICE_PAYMENT_URL;
+    if (!url) return; // The portable echo-only test has no provider HTTP URL.
+    const response = await fetch(`${url}/stats`, { signal: AbortSignal.timeout(2000) });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.charges, expectedCharges, "payment ledger contains duplicate or missing charges");
+  };
   const confirmed = result => {
     assert.equal(result.status, 200);
     assert.equal(result.body.status, "confirmed");
@@ -26,6 +34,7 @@ export async function verifyCheckout(baseURL, phase) {
     results.forEach(confirmed);
     assert.deepEqual(results[0].body, results[1].body);
     assert.deepEqual(await stats(), { orders: 1, payment_attempts: 1, pending: 0 });
+    await providerStats(1);
   } else if (phase === "outage") {
     const before = await stats();
     const failedCheckout = checkout("outage");
@@ -44,12 +53,13 @@ export async function verifyCheckout(baseURL, phase) {
     assert.ok(catalog.elapsed_ms < 500, `catalog stalled: ${catalog.elapsed_ms}ms`);
     const [result] = await observation;
     assert.equal(result.status, 503);
-    assert.deepEqual(result.body, { error: "payment_unavailable", retryable: true });
+    assert.deepEqual(result.body, { error: "payment_unavailable", payment_outcome: "unknown", retryable: true });
     assert.ok(result.elapsed_ms < 2000, `checkout exceeded two seconds: ${result.elapsed_ms}ms`);
     const after = await stats();
     assert.equal(after.orders, before.orders, "failed checkout created an order");
     assert.equal(after.payment_attempts - before.payment_attempts, 2, "retry budget exceeded or not exercised");
     assert.equal(after.pending, 0);
+    await providerStats(2); // Payment committed, but its acknowledgement was lost.
     console.log(JSON.stringify({ phase, checkout_ms: result.elapsed_ms, catalog_ms: catalog.elapsed_ms, attempts: 2 }));
   } else if (phase === "recovery") {
     const started = performance.now();
@@ -71,6 +81,7 @@ export async function verifyCheckout(baseURL, phase) {
     assert.equal(after.orders, 2, "expected exactly one baseline and one recovered order");
     assert.equal(after.payment_attempts, before.payment_attempts, "duplicate checkout contacted payment again");
     assert.equal(after.pending, 0);
+    await providerStats(2);
     console.log(JSON.stringify({ phase, recovery_ms: performance.now() - started, orders: after.orders }));
   } else {
     throw new Error(`unknown checkout phase: ${phase}`);

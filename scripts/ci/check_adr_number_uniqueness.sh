@@ -35,23 +35,24 @@ baseline_file="${ADR_BASELINE_FILE:-$adr_dir/DUPLICATE_NUMBERS_BASELINE.txt}"
   exit 1
 }
 
-# Collect NNN prefixes with a glob rather than `ls | grep` (SC2010): a glob
+# Collect numeric prefixes (at least three digits) with a glob rather than `ls | grep` (SC2010): a glob
 # cannot be confused by an unusual filename, and needs no pipeline whose
 # failure `set -e` would miss.
 #
-# Files that do not match NNN- (README.md, adr-127-pr-d.md) carry no number to
+# Files without a numbered prefix (README.md, adr-127-pr-d.md) carry no number to
 # collide and are skipped on purpose.
 shopt -s nullglob
 adr_numbers=""
-for path in "$adr_dir"/[0-9][0-9][0-9]-*; do
+for path in "$adr_dir"/[0-9]*-*; do
   name="${path##*/}"
-  adr_numbers+="${name:0:3}"$'\n'
+  [[ "$name" =~ ^[0-9]{3,}- ]] || continue
+  adr_numbers+="${name%%-*}"$'\n'
 done
 shopt -u nullglob
 
 adr_numbers="$(printf '%s' "$adr_numbers" | sort)"
 [[ -n "$adr_numbers" ]] || {
-  echo "::error::adr-number-uniqueness: no ADR files matched NNN- in $adr_dir" >&2
+  echo "::error::adr-number-uniqueness: no numbered ADR files matched in $adr_dir" >&2
   exit 1
 }
 

@@ -11,10 +11,14 @@ scenarios:
     secrets:
       PAYMENT_HOST: ${service.payment.host}
       PAYMENT_PORT: ${service.payment.port}
+      ORDER_LEDGER_URL: ${service.payment.url}
+      ORDER_LEDGER_TOKEN: ${run.secret}
     services:
       payment:
-        fixture: tcp-echo
+        source: ./payment
         tcp_ports: [6379]
+        secrets:
+          ORDER_LEDGER_TOKEN: ${run.secret}
     steps:
       - name: baseline
         command: [node, ../test/acceptance.mjs, baseline]
@@ -30,7 +34,7 @@ scenarios:
           thresholds: {p95: 2s, error_rate: 0, success_rate: 1, min_samples: 5}
       - name: payment-outage
         chaos:
-          duration: 1m
+          duration: 2m
           rules:
             - to: payment
               kind: tcp_timeout
@@ -44,6 +48,30 @@ scenarios:
             method: GET
             path: /stats
             expect: {status: 200, json: {'/orders': 1, '/pending': 0}}
+          - name: ledger-before-restart
+            method: GET
+            path: /durability
+            expect: {status: 200, json: {'/orders': 1, '/outage_state': pending}}
+            capture: {ledger_id: '/ledger_id'}
+      - name: restart-checkout
+        restart:
+          workload: app
+          timeout: 1m
+          readiness:
+            name: checkout-ready
+            method: GET
+            path: /catalog
+            expect: {status: 200, json: {'/available': true}}
+          storage_checks:
+            - name: preserved-order-intent
+              method: GET
+              path: /durability
+              expect:
+                status: 200
+                json:
+                  '/ledger_id': '${steps.ledger-before-restart.ledger_id}'
+                  '/orders': 1
+                  '/outage_state': pending
       - name: restore-payment
         clear_chaos: true
       - name: recovery

@@ -814,9 +814,9 @@ from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
 from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
-from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_promotion_hold import DeploymentPromotionHold
-from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
+from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_response import DeploymentResponse
 from .deployment_response_build_cache_status import DeploymentResponseBuildCacheStatus
 from .deployment_response_canary_preset import DeploymentResponseCanaryPreset
@@ -835,6 +835,7 @@ from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnap
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
 from .deployment_summary_response import DeploymentSummaryResponse
+from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
 from .detach_environment_git_source_request import DetachEnvironmentGitSourceRequest
 from .dev_bridge_activity import DevBridgeActivity
 from .dev_bridge_activity_connection_state import DevBridgeActivityConnectionState
@@ -1807,13 +1808,6 @@ from .managed_realtime_retained_history_response import ManagedRealtimeRetainedH
 from .managed_realtime_retained_message_request import ManagedRealtimeRetainedMessageRequest
 from .managed_realtime_retained_message_request_metadata import ManagedRealtimeRetainedMessageRequestMetadata
 from .managed_realtime_retained_message_response import ManagedRealtimeRetainedMessageResponse
-from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
-from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
-from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
-from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
-from .mcp_probe_rpc_request import MCPProbeRPCRequest
-from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
-from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
 from .managed_realtime_retained_message_response_metadata import ManagedRealtimeRetainedMessageResponseMetadata
 from .managed_realtime_schedule_group_request import ManagedRealtimeScheduleGroupRequest
 from .managed_realtime_schedule_group_request_expected_versions import (
@@ -1836,6 +1830,13 @@ from .managed_realtime_schedules_response import ManagedRealtimeSchedulesRespons
 from .managed_realtime_signal_request import ManagedRealtimeSignalRequest
 from .managed_realtime_signal_response import ManagedRealtimeSignalResponse
 from .managed_realtime_signal_response_member_id import ManagedRealtimeSignalResponseMemberId
+from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
+from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
+from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
+from .mcp_instance_protocol_probe_response import MCPInstanceProtocolProbeResponse
+from .mcp_probe_rpc_request import MCPProbeRPCRequest
+from .mcp_probe_rpc_request_method import MCPProbeRPCRequestMethod
+from .mcp_probe_rpc_request_params import MCPProbeRPCRequestParams
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -3161,6 +3162,7 @@ from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesRespon
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
 from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
+from .scenario_test_chaos_rule_status_code_type_0 import ScenarioTestChaosRuleStatusCodeType0
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
@@ -4408,9 +4410,9 @@ __all__ = (
     "DeploymentLiveWebhookPayload",
     "DeploymentLiveWebhookPayloadStatus",
     "DeploymentPreviewURL",
-    "DeploymentReadinessProbe",
     "DeploymentPromotionHold",
-    "DeploymentWorkerDrainStatus",
+    "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentReadinessProbe",
     "DeploymentResponse",
     "DeploymentResponseBuildCacheStatus",
     "DeploymentResponseCanaryPreset",
@@ -4429,6 +4431,7 @@ __all__ = (
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
     "DeploymentSummaryResponse",
+    "DeploymentWorkerDrainStatus",
     "DeployTokenResponse",
     "DeployTokenResponseScopesItem",
     "DeployTokenResponseStatus",
@@ -5366,13 +5369,6 @@ __all__ = (
     "ManagedRealtimeRetainedMessageRequest",
     "ManagedRealtimeRetainedMessageRequestMetadata",
     "ManagedRealtimeRetainedMessageResponse",
-    "MCPInstanceHealthProbeResponse",
-    "MCPInstanceProtocolProbeRequest",
-    "MCPInstanceProtocolProbeRequestProtocolVersion",
-    "MCPInstanceProtocolProbeResponse",
-    "MCPProbeRPCRequest",
-    "MCPProbeRPCRequestMethod",
-    "MCPProbeRPCRequestParams",
     "ManagedRealtimeRetainedMessageResponseMetadata",
     "ManagedRealtimeScheduleGroupRequest",
     "ManagedRealtimeScheduleGroupRequestExpectedVersions",
@@ -5393,6 +5389,13 @@ __all__ = (
     "ManagedRealtimeSignalRequest",
     "ManagedRealtimeSignalResponse",
     "ManagedRealtimeSignalResponseMemberId",
+    "MCPInstanceHealthProbeResponse",
+    "MCPInstanceProtocolProbeRequest",
+    "MCPInstanceProtocolProbeRequestProtocolVersion",
+    "MCPInstanceProtocolProbeResponse",
+    "MCPProbeRPCRequest",
+    "MCPProbeRPCRequestMethod",
+    "MCPProbeRPCRequestParams",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",
@@ -6658,6 +6661,7 @@ __all__ = (
     "ScenarioTestChaosRule",
     "ScenarioTestChaosRuleDirection",
     "ScenarioTestChaosRuleKind",
+    "ScenarioTestChaosRuleStatusCodeType0",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",

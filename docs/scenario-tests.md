@@ -55,7 +55,7 @@ gregale chaos inject --scenario customer-export --target payment \
 ```
 
 `--target` and optional `--from` name workloads in the scenario. `--error`
-returns a synthetic 5xx response; `--latency` delays selected calls and then
+returns a synthetic 429 or 5xx response; `--latency` delays selected calls and then
 forwards them. Selection is deterministic for a supplied trace ID and seed.
 Reports include the installed rules and lease expiry, while service-call
 metrics and traces identify injected requests. Fault plans last from one second
@@ -70,6 +70,109 @@ member of the same scenario run; public DNS and `.internal` aliases keep their
 normal behavior. Chaos plans require the `real-vm` engine; local and simulated
 runs reject them. Application assertions decide whether retries, circuit
 breakers, rollbacks, and customer notifications match the expected policy.
+
+### HTTP rate limiting and Retry-After
+
+The existing `http_status` fault accepts 429 or 500–599. For 429 and 503,
+optional `retry_after` emits the standard delta-seconds `Retry-After` header:
+
+```yaml
+chaos:
+  duration: 30s
+  rules:
+    - to: inventory
+      kind: http_status
+      status_code: 429
+      retry_after: 1s
+      percent: 100
+      min_matches: 3
+```
+
+`retry_after` must be whole seconds between 1s and 30s. It is invalid for other
+statuses and for latency, TCP, or DNS faults. Omitting it emits no synthetic
+retry header. The API uses `retry_after_seconds`, an integer from 1 to 30.
+One-off experiments accept `--error 429 --retry-after 1s`. HTTP-date values,
+arbitrary response headers, and custom/malformed response bodies are not part
+of this parameter. The fault retains run isolation, selection, match evidence,
+expiry and cleanup, and only affects managed internal HTTP dependency calls.
+
+Updated API and gateway versions must be deployed before using this contract;
+an updated CLI alone cannot inject it on an older fleet. JSON/JUnit receipts
+retain the status and delay in the rule, and HTML shows both values.
+
+The [HTTP retry example](../examples/scenario-http-retry/README.md) verifies
+three attempts at most, two measured waits of at least one second, a controlled
+failure while rate limited, and first-attempt success after fault clear. It
+also tests success during retries, invalid headers, and deadline cancellation.
+
+### Malformed and truncated HTTP bodies
+
+Use `http_malformed_json` to return synthetic HTTP 200 with invalid JSON, or
+`http_truncated_body` to return synthetic HTTP 200 with fewer bytes than its
+declared `Content-Length`:
+
+```yaml
+chaos:
+  duration: 30s
+  rules:
+    - to: inventory
+      kind: http_truncated_body
+      percent: 100
+      min_matches: 3
+```
+
+These terminal faults use fixed small JSON prefixes and do not call the
+upstream dependency. They accept the existing `from`, `to`, `percent`, `seed`,
+and `min_matches` fields; status, delay, retry header, and TCP parameters must
+be omitted. HEAD requests skip body faults and produce no match evidence.
+HTTP/1 clients observe a short-body connection close; HTTP/2 clients detect a
+content-length mismatch when the stream finishes. Both faults retain normal
+scenario authorization, run isolation, expiry, metrics, and cleanup.
+
+The [HTTP body suite](../examples/scenario-http-retry/README.md#malformed-and-truncated-response-bodies)
+checks bounded read-only retries, controlled errors, body-read deadlines,
+positive matches, and recovery after clear. These faults do not certify
+idempotency of writes or simulate an upstream commit before losing its reply.
+Native execution requires updated API and gateway deployments. One-off
+experiments support `--malformed-json` and `--truncated-body`, mutually exclusive
+with the other fault selectors.
+
+### Lose an HTTP response after dependency execution
+
+`http_response_lost` forwards the authorized request through the normal route,
+wake and transport policy, drains a nonempty successful response, then makes
+its entity incomplete while retaining the upstream 2xx status:
+
+```yaml
+chaos:
+  duration: 30s
+  rules:
+    - to: payment
+      kind: http_response_lost
+      percent: 100
+      min_matches: 3
+```
+
+Unlike the synthetic body faults, the dependency actually executes. The fault
+adds no forwarding attempt and does not buffer the response body. Non-2xx,
+204, 205, empty responses, HEAD and upgrades pass through and produce no loss
+matches. Canceled requests are not counted as injections. An eligible response
+gets `Content-Length: 1` and zero bytes, so HTTP/1 and HTTP/2 clients detect an
+incomplete entity. Status, delay, retry-header and TCP parameters must be omitted.
+
+Selection is latched for each authorized request; already-selected requests
+can finish after clear. Clear and expiry stop new selections. Existing request
+budgets and cancellation govern upstream draining. Match evidence and metrics
+are recorded after draining an eligible response, not merely selecting a rule.
+Updated API and gateway deployments are required. One-off experiments accept
+`--response-lost`, mutually exclusive with other fault selectors.
+
+The [committed-write example](../examples/scenario-http-write/README.md) checks
+an independent durable provider ledger: one charge across retries with the same
+idempotency key and payload, conflicts that remain visible during the fault,
+and reconciliation without additional charges after clear. A successful HTTP
+response alone is not proof of a durable commit; the application must supply
+its own business evidence and idempotency contract before retrying writes.
 
 ### Private service DNS faults
 
@@ -263,11 +366,19 @@ verifies a controlled checkout error within two seconds during a payment
 dependency timeout, bounded retries, catalog availability, recovery within ten
 seconds, and duplicate-order prevention. It combines existing staged faults,
 native JSON assertions, load budgets, and repository-owned assertion commands.
-The sample uses an echo acknowledgement and an in-memory ledger; its README
-explains the limits of those substitutes for a production payment integration.
+The sample uses a stateful simulated payment fixture and persistent single-writer
+ledgers. Portable tests exercise lost acknowledgements and SIGKILL/restart
+recovery without duplicate charges or orders. Its README distinguishes process
+crash evidence from VM replacement and production payment guarantees.
+
+Its [concurrent customer batch](../examples/scenario-checkout/README.md#concurrent-customer-batch)
+adds six distinct payloads, simultaneous retries, per-key order/charge evidence,
+and conflict checks for idempotency-key reuse with a different payload. Portable
+tests cover an in-flight crash; the batch manifest covers managed native replacement.
 
 Use `steps` when one scenario needs to compare baseline behavior, behavior under
-a fault, and recovery in the same application process. The first step establishes
+a fault, and recovery in one isolated run. Workloads retain their processes
+unless a restart step is declared. The first step establishes
 the baseline. A later step can install a chaos plan, and a subsequent step uses
 `clear_chaos: true` to remove it before asserting recovery:
 
@@ -351,6 +462,131 @@ cannot combine with top-level `chaos`, `trigger`, `command`, `requests`,
 `checks`, `wait_for`, `load`, `local`, or `simulation` fields. Fault leases
 still expire on their own as a safety bound if the run stops before the clear
 step.
+
+#### Restart a staged workload
+
+A standalone `restart` step can cold-replace the primary workload (`app`) or a
+declared service after baseline. It uses the existing authenticated fresh app
+restart API, submits once, waits for a valid durable completion receipt, then
+polls readiness. It never restarts undeclared apps. A processing receipt alone
+does not prove application health or persistence.
+
+Declare read-only `GET` probes with successful 2xx expectations. At least one
+`storage_checks` probe must assert persisted JSON values; checks run both before
+submission and after readiness. Capture a meaningful storage identity and record
+from an earlier request rather than relying only on an unchanged zero count:
+
+```yaml
+- name: restart-checkout
+  restart:
+    workload: app
+    timeout: 1m
+    readiness:
+      name: checkout-ready
+      method: GET
+      path: /catalog
+      expect: {status: 200, json: {'/available': true}}
+    storage_checks:
+      - name: preserved-order-intent
+        method: GET
+        path: /durability
+        expect:
+          status: 200
+          json:
+            '/ledger_id': '${steps.ledger-before-restart.ledger_id}'
+            '/orders': 1
+            '/outage_state': pending
+```
+
+The checkout starter includes the preceding capture and the complete sequence.
+Fresh restart destroys live VM state and invalidates snapshots. `/tmp`, the
+writable layer, and process memory are not preserved. Use surviving external
+storage such as a database; the runner verifies the declared storage contract,
+not filesystem durability. The sample keeps its order ledger in the surviving
+payment fixture and restarts checkout only.
+
+`timeout` is required, between 1s and 5m, and covers preconditions, submission,
+processing, readiness, and storage verification together. Restart budgets and
+load scheduling windows must fit the scenario timeout. A restart cannot share a
+step with commands, HTTP journeys, load, fault installation, or fault clear.
+Restart probes cannot capture new values or mutate application state. Consumer
+`as` credentials are supported for primary-app probes; service probes cannot
+reuse that app's credentials. Active faults remain until explicit clear or
+expiry, including during restart. Failure or cancellation still runs fault and
+workload cleanup. Restart may finish after cancellation; an uncertain receipt
+never causes automatic resubmission.
+
+JSON, HTML, terminal, and JUnit output include target, wake ID, processing
+status, verified cold-boot method, readiness attempt count, duration, and before/after storage results.
+Persisted response values are omitted. This is a managed fresh replacement,
+not a timed SIGKILL primitive; portable starter tests separately cover SIGKILL
+at the ambiguous-charge boundary.
+
+An optional `restart.in_flight` starts one primary-app JSON write (POST, PUT,
+or PATCH) before replacement. Declare one to five read-only checkpoints on
+`app` or a declared service; each must be a successful GET with JSON assertions
+and no captures. Gregale polls until all checkpoints pass and the write remains
+pending, runs pre-restart storage checks, and checks again immediately before
+submitting the restart. A write that ends before submission fails the step.
+The background write always targets the primary app, including when replacing
+a service. Service checkpoints use the service URL without primary consumer
+credentials. References can use captures from preceding steps only.
+
+```yaml
+    in_flight:
+      request:
+        name: interrupted-write
+        method: POST
+        path: /checkout
+        headers: {idempotency-key: in-flight}
+        json: {customer: customer-one, sku: item-one, quantity: 1}
+        expect: {status: 200}
+      checkpoints:
+        - workload: payment
+          request:
+            name: provider-pending
+            method: GET
+            path: /checkpoints/in-flight
+            expect: {status: 200, json: {'/pending': true, '/committed': false}}
+```
+
+The restart timeout bounds the write, checkpoints, and all replacement probes.
+The original write's final response is diagnostic; it is expected to be
+interrupted and its declared expectation does not determine step success.
+Recovery assertions must replay and reconcile the business result. Gregale
+cancels and joins the background request on every return path. Reports record
+checkpoint attempts/results, pending-at-submission, verified replacement,
+joined cleanup, response status, and `request_ended`, `canceled_after_restart`,
+or `canceled_on_failure`. The last two mean Gregale canceled the request; they
+do not prove the replacement closed its socket. Raw bodies and payloads are
+omitted. Deterministic fixtures must hold the checkpoint until recovery;
+independent GET probes alone cannot atomically freeze an application.
+
+A restart-only scenario may use baseline, restart, and recovery without network
+chaos. It remains real-VM only. Every installed fault still needs explicit clear,
+and recovery must follow the last restart and fault clear. The HTTP write
+starter's `gregale-in-flight-test.yaml` provides a complete held-write example.
+The same starter's `gregale-restart-matrix-test.yaml` declares the
+`http-restart-matrix` suite: before durable acceptance, persisted pending intent,
+and committed charge before acknowledgement. Each scenario starts in an isolated
+workspace and uses the existing restart, suite, resource guard, and report
+contracts. The provider holds the selected checkpoint until matching business
+replay; conflicts cannot release it. Reports label the interruption point by
+scenario name. Run the complete suite without `--fail-fast` to collect every
+case; any failed or skipped case fails the suite. See the starter README for
+expected ledger counts, bounds, and portable/native evidence limits.
+
+
+
+The lifecycle profile describes the run's initial state. For a restarted service,
+only its verified planned restart wake IDs are exempted from the original-profile
+wake check. Other wakes still fail. Reports list planned restarts separately and
+do not claim `no_new_wake` for a service that was deliberately replaced.
+
+Use the [native checkout restart acceptance gate](scenario-restart-native-acceptance.md)
+to qualify this workflow on an actual fleet, including intentional failure,
+cancellation, and independent API cleanup verification. Portable harness checks
+do not replace that native execution.
 
 Use `load.relative` to compare a step's aggregate measurements with an earlier
 staged step that also has `load` configured. The optional `steps` map adds
@@ -3583,3 +3819,434 @@ gate policy, baseline fingerprint, and validated baseline measurements. Changing
 or removing the gate, its limits, sample minima, or baseline report bytes requires
 fresh validation and cannot silently change a saved replay. Isolated leaf replay
 continues to replay one seed; aggregate gates are evaluated by the aggregate run.
+
+### Pending requests during recovery
+
+Aggregate `recovery` and endpoint `step_recovery` assertions accept an optional
+`max_pending_age`. For example:
+
+```yaml
+recovery:
+  within: 5s
+  sustain: 2s
+  window: 1s
+  max_pending_age: 500ms
+  thresholds: {p95: 200ms, error_rate: 0.01, min_samples: 5}
+```
+
+A rolling window is unhealthy if any HTTP request started in this load
+step is still pending longer than this budget, even when other completed
+requests meet every latency and error-rate threshold. A completed request
+ceases to count as pending; its full latency and result enter the usual
+completion window. Endpoint assertions count only that endpoint's requests.
+The age budget must be a whole number of milliseconds between 1ms and 5m.
+Requests still in flight from earlier phases count against the pending age
+budget; their completions do not enter recovery latency or error-rate windows.
+This is an HTTP client observation, not a count of background jobs inside the app.
+
+JSON receipts and JUnit system-out include `max_pending_age_ms`,
+`overdue_requests`, and the evaluated window's `thresholds`. HTML displays
+these measurements. These are the last evaluated window, rather than an
+aggregate across the phase; sustained recovery and optional stability still
+require every checked window in their intervals to be healthy. Omitting
+`max_pending_age` preserves the existing completion-based behavior.
+
+
+The HTTP write starter also provides `gregale-dependency-restart-test.yaml` and
+its `http-dependency-restart` suite. It replaces the payment service with a
+Postgres-backed pending or committed write while the primary caller stays alive.
+An externally migrated, disposable Postgres runtime connection is required;
+VM-local storage is not used for the durable ledger. Its cleanup removes only
+the run namespace. See the starter README for role separation, reachability,
+reconciliation assertions, and the real Postgres portable acceptance target.
+
+Workload `secrets` may use `${env.NAME}` with an uppercase environment variable
+name. `--validate` checks reference syntax without reading the value. Preflight
+checks that each required environment reference exists and is nonempty; results
+contain only workload/variable names. Execution resolves it from the runner's
+environment and uses the existing sealed-secret API. A missing/empty reference
+fails rather than falling back to a literal or another credential. Keep runtime
+credentials separate from migration credentials and supply them securely.
+
+### Reusable route assertion profiles
+
+Declare `assertion_profiles` at the manifest root and reference their names with
+`assertions` on a load chaos phase. Profiles can be reused across phases and
+scenarios in the same manifest:
+
+```yaml
+version: 1
+assertion_profiles:
+  inventory-stays-healthy:
+    healthy_routes:
+      inventory-read: {p95: 750ms, error_rate: 0, min_samples: 3}
+  payment-recovers:
+    recovery_deadlines:
+      payment-read:
+        within: 4s
+        sustain: 1s
+        window: 1s
+        thresholds: {p95: 750ms, error_rate: 0, min_samples: 1}
+# Within a staged step's load:
+# chaos_schedule:
+#   - name: payment-outage
+#     duration: 4s
+#     assertions: [inventory-stays-healthy]
+#     rules: [{to: payment, kind: http_status, status_code: 503, percent: 100}]
+#   - name: recovery
+#     duration: 6s
+#     assertions: [inventory-stays-healthy, payment-recovers]
+```
+
+Route keys are the names of HTTP requests declared in that load step, rather
+than URL paths. A healthy-route profile requires a latency limit (`p95` or
+`p99`), an explicit success/error rate budget, and positive `min_samples`.
+These budgets apply independently to each route in each referenced phase;
+healthy traffic cannot hide behind aggregate measurements of other routes.
+
+Recovery profiles use the existing endpoint recovery evaluator. They require a
+fault-free phase immediately following a fault, and `within + sustain + stability`
+(if supplied) must fit its duration. `min_samples` is evaluated per recovery
+window. Recovery must meet the request expectations and configured window
+budgets; an empty window cannot pass. Existing `relative`, `max_pending_age`,
+and `stability` settings remain available in each recovery budget.
+
+Unknown or repeated profile references, undeclared request names, and overlapping
+budgets from inline `step_thresholds`/`step_recovery` or another profile fail
+validation. Profiles do not silently override one another. Up to 100 profiles
+may be declared, with up to 100 route budgets of each kind per profile.
+
+JSON and JUnit's embedded receipt retain each phase's `assertions` names alongside
+per-route measured samples, percentiles, threshold verdicts and recovery timing.
+HTML and terminal reports show the profile names and existing measured results.
+Replay fingerprints bind the expanded limits of profiles used by the scenario.
+The [complete reference manifest](../examples/scenario-http-write/gregale-assertions-test.yaml)
+uses the two-dependency fixture; the same profile syntax works with your own
+application and HTTP request names. Its sealed native fixture requirements are
+listed in the [native acceptance guide](scenario-restart-native-acceptance.md).
+
+### Reusable dependency-attempt limits
+
+An assertion profile can also limit the average number of dependency attempts
+per named incoming request during one fault phase:
+
+```yaml
+assertion_profiles:
+  payment-retry-limit:
+    dependency_attempts:
+      request: payment-read
+      max_attempts_per_request: 2
+      min_requests: 3
+  connection-limit:
+    connection_attempts:
+      request: dependency-probe
+      max_attempts_per_request: 2
+      min_requests: 3
+```
+
+Reference `payment-retry-limit` in a phase's `assertions` alongside its healthy
+route profile. HTTP `dependency_attempts` expands into `retry_amplification` and
+requires exactly one 100% `latency` or `http_status` rule with an explicit `from`
+workload. Its rule-match counter measures all HTTP calls from that workload to
+the rule's dependency, including retries. Select a named incoming request that
+accounts for that dependency traffic; other incoming routes do not increase its
+denominator. Background calls or other routes using the same dependency still
+contribute to the dependency counter.
+
+TCP `connection_attempts` requires exactly one 100% TCP rule, an explicit `from`
+and a valid declared port. It uses the dedicated connection-attempt counter,
+including connections that fail before a data-plane fault matches. Ordinary TCP
+fault-match counts cannot substitute for connection attempts. Gateways without
+this counter fail the assertion with an evidence-unavailable error.
+
+These are phase-wide ratios, not individually traced per-request retry limits.
+`min_requests` must be positive, and `max_attempts_per_request` must be finite,
+greater than zero and at most 1000. Empty incoming samples and missing or
+incomplete captures fail rather than reporting zero amplification as a pass.
+A profile cannot combine HTTP and TCP attempt limits, because they need different
+rules. Profiles also cannot overwrite inline `retry_amplification` or
+`connection_attempts`, or another profile's attempt budget.
+
+Reports retain the profile name, named request, dependency source/target, TCP
+port when applicable, incoming request count, observed attempts, ratio, limit,
+and verdict. Replay fingerprints include the effective attempt budget. The
+[HTTP reference](../examples/scenario-http-write/gregale-assertions-test.yaml)
+combines retry limits with isolation and recovery checks; the
+[TCP reference](../examples/scenario-checkout/gregale-connection-assertions-test.yaml)
+uses the existing echo/probe fixture and also checks responsiveness and recovery.
+
+### Per-request retry limits
+
+Opt into strict HTTP attribution when an average can hide retry outliers:
+
+```yaml
+assertion_profiles:
+  strict-retry-limit:
+    dependency_attempts:
+      request: dependency-read
+      per_request: true
+      max_attempts_per_request: 2
+      min_requests: 3
+```
+
+Nine requests making one attempt and one making eleven have an average of two.
+The average budget passes; this strict profile fails with one violating request.
+Reports include the attempt distribution, maximum, correlated/request counts,
+uncorrelated attempts, overflow and up to 100 violating request IDs.
+
+Each selected request receives `X-Gregale-Test-Request-ID`. Your application must
+forward that header on every selected dependency call, including retries, and
+return `X-Gregale-Test-Dependency-Attempts` with its final attempt count. Count
+attempted calls even if they fail, and settle all selected outgoing work before
+sending the completion receipt. For example, in a Node HTTP handler:
+
+```js
+const id = request.headers["x-gregale-test-request-id"];
+let attempts = 0;
+const callDependency = async () => {
+  attempts++;
+  return fetch(dependencyURL, {
+    headers: id ? { "x-gregale-test-request-id": id } : {},
+  });
+};
+// Await calls and retries through callDependency, then finish the response:
+if (id) response.setHeader("x-gregale-test-dependency-attempts", String(attempts));
+```
+
+The receipt alone cannot pass the assertion: Gregale verifies each count against
+independent gateway records and verifies their total against the rule's HTTP
+matches. Missing propagation, stale IDs, absent or invalid receipts, missing or
+late counters and unexplained calls fail. Requests acknowledging zero attempts
+are covered when the phase also has independent gateway correlation evidence;
+a wholly inactive dependency phase cannot establish support.
+
+Strict limits are positive integers and apply to one fully counted HTTP
+latency/status rule with an explicit source. TCP `connection_attempts` remains
+an average assertion. There is a fixed capacity of 1,024 selected incoming
+requests per strict phase; overflow fails instead of silently sampling.
+Fault-plan changes pause dispatch and drain in-flight requests to preserve
+phase attribution. Actual phase timings remain recorded. IDs are run/phase
+scoped; production tracing headers and Prometheus labels remain unchanged.
+
+The [complete strict example](../examples/scenario-http-write/gregale-per-request-attempts-test.yaml)
+uses the instrumented retry fixture. SDK chaos-rule models also expose the
+optional `correlation_scope` wire field. Ordinary manifests do not enable it.
+Native execution requires a gateway with correlation-counter support; portable
+HTTP tests prove that outliers fail even while the average passes, and that
+missing completion or propagation evidence cannot pass.
+
+### TCP faults in declaration order
+
+Use `load.fault_campaign.order: declared` to execute every choice exactly once
+in the order listed. Set `count` to the number of choices (2–9); retain an explicit
+`seed` and `max_duration`. Omitting `order` keeps seeded choice selection. All
+choices target the same source, dependency and declared TCP port.
+
+The [TCP campaign example](../examples/scenario-checkout/gregale-tcp-campaign-test.yaml)
+runs latency, bandwidth, timeout and reset in sequence. Its three-phase template
+expands into a 26-second campaign: two seconds of baseline, then four cycles of
+two-second faults and four-second recovery windows. Each fault applies a reusable
+connection-attempt limit and healthy-route budget; each recovery requires the
+named dependency probe to recover within one second and remain healthy for one
+second. The 16 KiB echo fixture makes a 1 KiB/s bandwidth restriction exceed the
+probe's 250 ms deadline.
+
+```sh
+gregale test --manifest examples/scenario-checkout/gregale-tcp-campaign-test.yaml \
+  --suite tcp-campaign --validate
+gregale test --manifest examples/scenario-checkout/gregale-tcp-campaign-test.yaml \
+  --suite tcp-campaign --report results.json --junit results.xml --html results.html
+```
+
+Reports include `declared-splitmix64-v1`, the expanded schedule, per-cycle
+`fault_kind`, connection ratios, health budgets, recovery verdicts, and the first
+failed cycle. A connection-budget failure identifies its phase and cause. Missing
+gateway attempt counters fail the test. JSON and JUnit preserve measured evidence;
+HTML and terminal output show each fault alongside its cycle verdict. Replay binds
+the declared order and effective assertions and retains minimized schedules.
+
+These connection limits are phase-wide ratios. Use the same template with your
+application and database, Redis or another declared TCP service; the echo fixture
+does not certify any database protocol or client library. The platform performs
+normal isolated workload cleanup and records its result. Local tests do not replace
+native acceptance on the designated KVM host.
+
+### Detect retained TCP connections
+
+A staged TCP schedule can add `load.connection_leaks`:
+
+```yaml
+connection_leaks:
+  path: /connections
+  within: 1s
+  sustain: 1s
+  max_extra: 2
+```
+
+The side-effect-free application endpoint must return HTTP 200 and one JSON
+object, for example:
+
+```json
+{"instance_id":"01234567-89ab-4cde-8fab-0123456789ab","active_connections":0}
+```
+
+Report an integer count of client connections in the tested dependency scope,
+including retained idle sockets. The UUID identifies the observed application
+instance and must change when it is replaced. You may specify `as` to use an
+existing declared consumer credential. Gregale does not export credentials or
+observation response bodies.
+
+Warm legitimate connection pools before the load step. Gregale uses the minimum
+observed count in the initial baseline, then compares every recovery with that
+same value. `max_extra` allows expected in-flight connections during recovery;
+for example, two dependency VUs can use an allowance of two. Every recovery must
+return within budget by `within`, sustain that state for `sustain`, and remain
+within budget through the end of the sampled window. A later cycle cannot replace
+the original baseline with a higher count.
+
+After load workers and fault-plan cleanup finish, a separate check requires the
+original baseline with **no extra allowance**. It also runs after cancellation,
+using an independent timeout bounded by `within + sustain + 500ms`. The interrupted
+campaign remains failed; reports distinguish its post-drain cleanup result.
+Retained sockets fail this check even when they fit the recovery allowance.
+
+The observation interval is 100 ms. Requests time out after 250 ms, responses are
+limited to 4 KiB, and at most 4096 observations are retained. `within` and `sustain`
+are whole-millisecond durations from 300 ms to five seconds. Baseline must last
+at least 500 ms; every recovery must fit both budgets plus two polling intervals.
+Missing fields, negative/fractional counts, missing observations, sparse windows,
+changed instance identities and renewed leaks fail the assertion.
+
+Reports include the application source, stable identity, original baseline,
+sampled peak, recovery limits and deadlines, remaining connections, first failed
+resource cycle, and post-drain result. These are application-reported samples;
+a peak between polls can be missed. Use one stable instance or an observation
+endpoint that aggregates all relevant instances under an appropriate stable
+identity. The [TCP campaign example](../examples/scenario-checkout/gregale-tcp-campaign-test.yaml)
+tracks actual outgoing sockets until their close events and cancels probes when
+incoming clients disconnect. Native VM qualification remains a separate gate.
+
+### Exercise connection-pool exhaustion
+
+Use `load.pool_exhaustion` alongside healthy-route and dependency recovery
+assertions in a staged TCP fault/recovery schedule:
+
+```yaml
+pool_exhaustion:
+  path: /pool-status
+  capacity: 2
+  max_queue: 2
+  max_wait: 300ms
+  min_queued_requests: 3
+  within: 1s
+  sustain: 1s
+  window: 1s
+  min_completions: 5
+```
+
+The [pool exhaustion example](../examples/scenario-checkout/gregale-pool-exhaustion-test.yaml)
+stalls the dependency while eight caller VUs compete for two permits and two
+queued slots. It checks responsive health, bounded connection attempts, socket
+release, and successful throughput after recovery. The fixture uses real TCP
+connections and returns each permit after an attempt; it does not model idle
+connection reuse or a particular database driver.
+
+The side-effect-free observation endpoint must return HTTP 200 and one JSON
+object containing these fields:
+
+```json
+{
+  "instance_id": "01234567-89ab-4cde-8fab-0123456789ab",
+  "capacity": 2,
+  "active": 0,
+  "queued": 0,
+  "peak_active": 2,
+  "peak_queued": 2,
+  "waiters_created": 20,
+  "waiters_finished": 20,
+  "waiters_cancelled": 2,
+  "waiters_timed_out": 10,
+  "max_wait_ms": 205,
+  "completed": 100
+}
+```
+
+`active` counts held pool permits; `queued` counts callers waiting for a permit.
+All numeric fields are required nonnegative integers. `waiters_finished` includes
+acquired, cancelled and timed-out waiters, so `waiters_created - waiters_finished`
+must equal `queued`. Peaks, waiter counters, maximum wait and completion counts
+are cumulative for the same pool instance and must not reset. `completed` counts
+successful dependency operations only. The UUID must change when that observed
+instance is replaced. You may specify `as` for a declared consumer credential.
+
+Every fault must show at least `min_queued_requests` new waiters between its first
+and last observations, and a full-capacity peak. A quiet pool cannot pass as an
+exhausted pool. Queue depth and completed wait times must remain within budget;
+cumulative high-water marks preserve violations that occur between polls.
+
+Every recovery must restore `min_completions` successful operations per `window`
+within the deadline and sustain that throughput, without a later failed window.
+Windows slightly wider than requested require proportionally more completions.
+Existing named-route recovery assertions independently check HTTP success and
+latency. Missing fields, inconsistent accounting, sparse samples, identity changes,
+and decreasing counters fail the test.
+
+After load or cancellation, an independent bounded check requires all active
+permits and queued waiters to drain. Optional `min_cancelled_waiters` requires
+that many additional cancelled waiters compared with the initial baseline. This
+is useful when a scenario deliberately cancels queued callers; omit it for runs
+that do not arrange that cancellation. The interrupted campaign remains failed,
+with its post-drain result reported separately.
+
+Reports retain the budget, baseline, peaks, maximum wait, actual completion
+windows, first failed pool cycle and post-drain waiter accounting. These counts
+are application-reported and must describe the same dependency scope. Local
+fixture and real-stream tests do not qualify routing on the native VM platform.
+
+### Bound the complete application response
+
+Declare `request_deadlines` in a timed phase or reusable assertion profile:
+
+```yaml
+assertion_profiles:
+  application-timeout:
+    request_deadlines:
+      dependency-probe:
+        within: 750ms
+        min_samples: 3
+        expect:
+          status: 504
+          content_type: application/json
+          json: {'/error': deadline_exceeded, '/retryable': true}
+```
+
+Each name must select exactly one HTTP request in that staged load. `within` is a
+whole-millisecond duration from 1 ms to 30 seconds. It covers request preparation,
+HTTP dispatch and complete response-body consumption, including network overhead.
+Every selected response must meet the deadline and its response contract; a good
+p95 cannot hide an outlier. Requests aborted by Gregale's client fail the contract,
+even if they received the expected status before their body stalled.
+
+An optional phase-local `expect` replaces that request's status/content-type/JSON
+contract only in that phase. Omit it to retain the original success expectation.
+Deadline profiles cannot overwrite another profile or inline budget for the same
+route. Referenced profiles and effective budgets are retained in replay evidence.
+
+With request-deadline assertions enabled, the runner drains admitted load HTTP
+requests before transitioning phases. This prevents clearing a dependency fault
+while its expected timeout response is still in flight. The bounded drain can
+shorten the following scheduled recovery window; actual boundaries are reported.
+Allow enough time for the deadline, recovery and sustained healthy observations.
+
+The [application deadline example](../examples/scenario-checkout/gregale-request-deadlines-test.yaml)
+uses a single 500 ms application timer across connection acquisition and dependency
+I/O, with a 750 ms client-observed budget. It verifies a complete HTTP 504 timeout
+response during a TCP stall, responsive health, successful responses after recovery,
+and a return to the original socket baseline after workers finish. Client
+cancellation closes that request's dependency socket and retires its timers.
+
+Reports include the measured maximum, deadline, named request sample count,
+response failures, expected status and verdict. Use the existing connection-leak
+or pool-drain checks to independently observe downstream resources after load or
+cancellation. These checks use application-reported counters and do not replace
+native VM qualification or certify arbitrary multi-service workflow deadlines.

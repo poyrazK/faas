@@ -386,10 +386,11 @@ func TestServiceProxyMetricsPreInstantiatesOutcomes(t *testing.T) {
 			t.Errorf("%s = %v, want 0", outcome, got)
 		}
 	}
-	if got := testutil.CollectAndCount(m.serviceChaosInjected); got != 2 {
-		t.Errorf("pre-instantiated chaos kind series = %d, want 2", got)
+	kinds := []string{"latency", "http_status", "http_malformed_json", "http_truncated_body", "http_response_lost"}
+	if got := testutil.CollectAndCount(m.serviceChaosInjected); got != len(kinds) {
+		t.Errorf("pre-instantiated chaos kind series = %d, want %d", got, len(kinds))
 	}
-	for _, kind := range []string{"latency", "http_status"} {
+	for _, kind := range kinds {
 		if got := testutil.ToFloat64(m.serviceChaosInjected.WithLabelValues(kind)); got != 0 {
 			t.Errorf("chaos kind %s = %v, want 0", kind, got)
 		}
