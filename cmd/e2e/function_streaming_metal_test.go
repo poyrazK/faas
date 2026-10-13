@@ -15,6 +15,7 @@ package e2e_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -103,9 +104,11 @@ func TestFunctionStreamingMetal(t *testing.T) {
 	}
 }
 
-// TestFunctionLongRequestMetal is the ADR-1150 acceptance: a Pro function
-// with request_timeout_s=120 streams for about 36 s, past the runner's old
-// fixed 30 s, and its handler sees the gateway's deadline header.
+// TestFunctionLongRequestMetal is the ADR-1150 and ADR-1151 acceptance: a Pro
+// function with request_timeout_s=120 streams for about 36 s, past the
+// runner's old fixed 30 s, and its handler sees the gateway's deadline header.
+// An async invocation of the same function then runs for 40 s and completes
+// on its first attempt.
 func TestFunctionLongRequestMetal(t *testing.T) {
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping metal long-request test")
@@ -170,6 +173,32 @@ func TestFunctionLongRequestMetal(t *testing.T) {
 	if deadline <= 60_000 || deadline > 120_000 {
 		t.Fatalf("handler saw X-Faas-Deadline-Ms=%d; want the gateway's budget (60–120 s), not the client's", deadline)
 	}
+
+	// ADR-1151: an async invocation of the same function may run for its
+	// request timeout too. /work runs for 40 s; before ADR-1151 the runner
+	// cut every async invocation at 30 s.
+	body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+result.slug+"/invoke/async", api.InvokeRequest{Path: "/work"})
+	if status != http.StatusAccepted {
+		t.Fatalf("POST /invoke/async: status=%d body=%s", status, body)
+	}
+	var queued api.AsyncInvokeResponse
+	if err := json.Unmarshal(body, &queued); err != nil || queued.ID == "" {
+		t.Fatalf("decode async response: %v body=%s", err, body)
+	}
+	asyncStarted := time.Now()
+	inv := pollUntilCompleted(t, h, key, queued.ID, 4*time.Minute)
+	t.Logf("long async invocation: %s after %v, attempts=%d, result=%s, last_error=%q",
+		inv.State, time.Since(asyncStarted), inv.Attempts, inv.Result, inv.LastError)
+	if inv.State != "completed" || inv.Attempts != 1 {
+		t.Fatalf("async invocation state=%s attempts=%d last_error=%q; want completed on its first attempt", inv.State, inv.Attempts, inv.LastError)
+	}
+	match = regexp.MustCompile(`worked 40s deadline=(-?\d+)`).FindStringSubmatch(string(inv.Result))
+	if match == nil {
+		t.Fatalf("async result %s does not show the 40 s run", inv.Result)
+	}
+	if asyncDeadline, _ := strconv.Atoi(match[1]); asyncDeadline <= 60_000 || asyncDeadline > 120_000 {
+		t.Fatalf("async handler saw X-Faas-Deadline-Ms=%d; want the app's 120 s timeout", asyncDeadline)
+	}
 }
 
 // deployBinaryFunctionWith is deployBinaryFunction with a hook on the app
@@ -196,7 +225,8 @@ func deployBinaryFunctionWith(t *testing.T, h *e2etest.Harness, pool *pgxpool.Po
 }
 
 // longStreamCHandlerSource streams four ticks 12 s apart on /long, each
-// carrying the X-Faas-Deadline-Ms value the handler received; other paths
+// carrying the X-Faas-Deadline-Ms value the handler received. /work runs for
+// 40 s and answers once with the deadline it received (ADR-1151). Other paths
 // answer at once so the deploy smoke check stays quick.
 func longStreamCHandlerSource(t *testing.T) []byte {
 	t.Helper()
@@ -242,6 +272,17 @@ int main(void) {
 	size_t cap = 0;
 	while (getline(&line, &cap, stdin) > 0) {
 		if (line[0] == '\n') continue;
+		if (strstr(line, "\"path\":\"/work\"")) {
+			const char *key = "\"X-Faas-Deadline-Ms\":\"";
+			const char *at = strstr(line, key);
+			long deadline = at ? atol(at + strlen(key)) : -1;
+			sleep(40);
+			char text[96], encoded[160];
+			snprintf(text, sizeof text, "worked 40s deadline=%ld", deadline);
+			encode(text, encoded);
+			printf("{\"status\":200,\"headers\":{\"content-type\":\"text/plain\"},\"body_b64\":\"%s\"}\n", encoded);
+			continue;
+		}
 		if (!strstr(line, "\"path\":\"/long\"")) {
 			printf("{\"status\":200,\"headers\":{\"content-type\":\"text/plain\"},\"body_b64\":\"b2sK\"}\n");
 			continue;
