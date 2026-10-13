@@ -1,0 +1,231 @@
+# ADR-1190: Application Auth on a pinned GoTrue server
+
+- **Status:** proposed; phase 1 (the `auth` credential mode) in progress
+- **Date:** 2026-10-13
+- **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
+- **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
+
+## Context
+
+Account security (MFA, dashboard OAuth with PKCE, organizations under ADR-061,
+session revocation under ADR-039) protects people who operate Gregale. It does
+not give an application a user directory. The pieces that consume application
+identity all start from an external issuer:
+
+- Edge JWT rules (ADR-091) verify a configured JWKS at the gateway.
+- The Data API (ADR-650) verifies an external JWT and passes `sub` and the
+  claims to PostgreSQL row-level security.
+- Realtime v2 (ADR-369) asks an application callback whether a verified OIDC
+  principal may read a channel.
+- Durable browser sessions (ADR-871) expect the application backend to have
+  authenticated its user already.
+- Platform tenants (ADR-244) map a JWT claim to a tenant.
+
+ADR-650 established how Gregale ships an upstream server as a product: pin it
+in a template, deploy it as an ordinary app through the builder and deploy path,
+and give it a schema-restricted managed PostgreSQL credential. That adds no
+resource owner, deploy path, metering model or plan quota.
+
+## Decision
+
+### Engine
+
+The engine is `supabase/auth` (GoTrue), MIT licensed, pinned to v2.197.0 by
+image digest. It provides email and password, magic links, one-time codes,
+OAuth providers, TOTP and passkey MFA, refresh-token rotation, sessions,
+sign-out, an admin user API, asymmetric signing keys and a JWKS endpoint.
+GoTrue stores everything in a PostgreSQL schema, so users live in the
+customer's own database next to the rows RLS protects. A version bump is a
+template change that must re-run the migration overlay check below.
+
+### Packaging
+
+`gregale auth create NAME --database DB` reserves an ordinary app, attaches an
+`auth` binding, seals the settings as app secrets and deploys the `auth`
+template, following `data-api create`. The app has two processes:
+
+- `release: auth-migrate` runs `auth migrate` and then the `gregale_auth`
+  migrations, as a release task.
+- `web` runs the Gregale front process, which supervises `auth serve` on
+  loopback. GoTrue's default command migrates before serving and is never
+  used, so a cold boot or snapshot restore performs no DDL.
+
+The front serves `/auth/v1/*` by proxying to GoTrue and
+`/auth/v1/.well-known/jwks.json` unchanged. It also serves the hosted pages,
+the `/authz/v1/*` organization and policy API, and a loopback-only email hook.
+
+The CLI generates the ES256 signing key locally and stores it only as the
+sealed `GOTRUE_JWT_KEYS` secret. It never prints or logs the key.
+`gregale auth keys rotate` adds a new signing key and keeps the previous one
+for verification until access tokens signed with it have expired.
+
+### Database credential mode `auth`
+
+GoTrue's migrations enable RLS on every `auth` table, and its runtime needs
+DML on those tables. A DML-only login like the `data_api` mode would be denied
+by RLS, because RLS applies to every role except the table owner. Therefore:
+
+- Each database gets one NOLOGIN role, `gregale_authowner_<hash>`, which owns
+  the `auth` and `gregale_auth` schemas and nothing else. It has CONNECT but no
+  CREATE on the database, no privileges on any other schema, and no membership
+  in the main schema owner. Provisioning creates both schemas.
+- The `auth` login, `gregale_auth_<hash>`, is NOINHERIT and NOBYPASSRLS. Its
+  only membership is the auth owner, and it has `role` set to that owner, as
+  migration logins do for the main schema owner. It also has a bounded
+  `statement_timeout`. It owns the tables GoTrue creates, so GoTrue's RLS does
+  not apply to it. FORCE ROW LEVEL SECURITY is never set on those tables.
+- The binding is delivered to both serving processes and release tasks. Its
+  DDL authority is limited to the two auth schemas, so delivering it to the
+  serving process does not widen the migration boundary for customer schemas.
+- Rotation, retirement and RestrictInherited reuse the existing generation
+  workflow. RestrictInherited includes the new login prefix.
+- The Neon backend advertises `auth` only with `auth_enabled: true` and a
+  fresh qualification report that includes an `auth_credentials_probe`. The
+  probe proves schema isolation, ownership of the auth schemas, denial of
+  `public` and `api`, idempotent issuance and revocation. Existing reports
+  without the probe remain valid for their smaller contract.
+
+The template sets `search_path=auth` on the GoTrue connection. That way
+GoTrue's `schema_migrations` table is created in `auth` and cannot collide
+with a customer migration tool's table in `public`. Upstream migration
+`20240612123726` grants SELECT to a role named `postgres`, which a managed
+database may not have. The template ships an overlay of that one file that
+wraps the grants in a role-existence check. The build fails unless every other
+migration file matches the pinned upstream byte for byte.
+
+### Tokens
+
+Access tokens are ES256 JWTs with `sub`, `session_id`, `aal`, `aud` and `exp`.
+They live 600 seconds by default; the bound is in `pkg/api/limits.go`, not
+GoTrue's 3,600-second default. Refresh tokens rotate on every use. The issuer
+is `https://<app host>/auth/v1`.
+
+`data-api create --auth NAME` and the edge JWT rule's `--auth NAME` resolve
+the issuer, JWKS URL and audience from the auth app, in place of the manual
+flags. The Data API keeps overwriting the SQL role, so GoTrue's `role` claim
+selects nothing.
+
+### Organizations, invitations and roles
+
+The `gregale_auth` schema holds organizations, memberships keyed to
+`auth.users` with cascade delete, role definitions mapping a role to
+permission strings, and invitations. Invitations are stored as a SHA-256 token
+hash, are single use and expire after a bound in `pkg/api/limits.go`. Default
+roles are `owner`, `admin` and `member`. The last owner of an organization
+cannot be removed or demoted.
+
+The front's `/authz/v1` API creates organizations, invites, accepts, changes
+roles and removes members. It requires a valid user token, and mutations also
+require the `members:manage` permission.
+
+### One authorization function
+
+Permissions are resolved in PostgreSQL when access is checked, never copied
+into token claims. A role change or revocation therefore takes effect on the
+next check, and tokens stay small. The helper functions are:
+
+- `gregale_auth.uid()`
+- `gregale_auth.session_active()`, which requires the token's `session_id` to
+  still exist in `auth.sessions`
+- `gregale_auth.has_permission(org uuid, permission text)`
+- `gregale_auth.authorize(action text, resource text)`
+
+`authorize` denies by default. It allows an action only for an active session
+whose caller holds the permission that a `gregale_auth.policies` row maps to
+the action and to the resource prefix. Resources are named
+`org/<uuid>/<kind>/<name>`.
+
+The helpers are STABLE and SECURITY DEFINER, owned by the auth owner, with a
+fixed `search_path`. They are marked `gregale:auth-helper:v1` and are
+executable by PUBLIC. They read only the caller's `request.jwt.claims`, so
+they reveal only the caller's own sessions and memberships.
+
+The `data_api` and `read_only` credential verifiers currently reject every
+executable SECURITY DEFINER function. They will allow exactly these marked
+functions, owned by the database's auth owner in `gregale_auth`, and continue
+to reject all others.
+
+Any SQL session can set `request.jwt.claims`. The helpers are therefore an
+authorization aid for sessions whose claims a verifying gateway set, such as
+the Data API's. They do not authenticate direct SQL logins, which the database
+owner already trusts.
+
+Each surface reaches the same function:
+
+| Surface | Check |
+|---|---|
+| Database rows | RLS policies call the helpers through the Data API |
+| Object download or upload | The front checks `authorize('storage:read'/'storage:write', ...)` and returns a presigned URL valid for at most 60 seconds, signed with the app's object-storage binding |
+| Realtime channel | The front implements `/realtime/authorize-channel` with `authorize('realtime:read', ...)` and closes connections on sign-out or ban |
+| Workflow start | The front checks `authorize('workflow:start', ...)` and calls the runs API with a sealed key scoped to that app |
+| Gateway route | An optional edge JWT rule gates routes coarsely, never as the only check on data |
+
+### Email
+
+Tenant egress denies ports 25, 465 and 587, so GoTrue's SMTP sender stays off.
+GoTrue's send-email hook calls the front on loopback, and the front sends
+through the customer's email provider's HTTPS API (Resend or Postmark first)
+using a sealed key. Gregale operates no sender for application email. Without
+a configured provider, email flows fail with `email_provider_unconfigured`.
+Links and one-time codes are never logged.
+
+### Scale to zero
+
+The gateway, Data API and realtime service verify tokens against cached JWKS.
+A parked auth app therefore wakes only for sign-in, refresh, administration,
+organization changes and the front's storage, realtime and workflow checks.
+
+Sign-out and bans take effect on the next check that calls
+`session_active()`. Edge-only JWT rules honour them when the access token
+expires, at most 600 seconds later by default.
+
+### Ownership, quotas and data
+
+apid remains the only writer of intent: the auth app, its binding and secrets
+are ordinary resources. End-user records live only in the customer's database.
+Gregale's catalog stores no application user data, and an export is the
+customer's own `pg_dump`.
+
+The auth app is an ordinary deployed app for quota and RAM billing, as the
+Data API is. This ADR adds no plan quota or meter. Auth-specific bounds live
+in `pkg/api/limits.go`.
+
+## Phases
+
+1. The `auth` credential mode: provisioning, verification, qualification
+   probe, binding constraints, delivery policy, API enums and CLI modes.
+2. The `auth` template, `gregale auth create|status|keys rotate`, and the
+   migration overlay check.
+3. The `gregale_auth` schema and helpers, the verifier allowance, and `--auth`
+   for the Data API and edge JWT rules.
+4. Hosted pages, the `@gregale/auth` SDK and the email hook.
+5. The storage, realtime and workflow checks.
+6. Dashboard user and organization screens through the auth app's admin API
+   with an owner-held key, user import, and native acceptance.
+
+## Rejected alternatives
+
+- **Building identity in-house:** months of security-critical work that a
+  maintained MIT server already does.
+- **A platform `authd` daemon serving every customer:** it would put
+  application user data and every customer's sign-in path in the control
+  plane, and users could not be joined in RLS policies.
+- **Ory Kratos with Keto:** several services per app and a permission store
+  outside PostgreSQL.
+- **Keycloak:** its Java runtime's memory footprint conflicts with
+  scale-to-zero economics.
+- **A hosted partner such as Clerk or WorkOS:** users leave the customer's
+  database, and costs scale per user.
+- **A `read_write` credential for GoTrue:** RLS blocks non-owners on GoTrue's
+  tables, and the credential would reach every customer table.
+- **Permissions in token claims:** stale after role changes and unbounded in
+  size.
+
+## Acceptance
+
+PostgreSQL tests cover isolation, ownership, idempotency, rotation and
+revocation of the `auth` mode. Pinned GoTrue must migrate and serve against
+that credential on PostgreSQL 16. Native acceptance must show sign-up, Data
+API RLS and session revocation through a builder-built deployment, with wake
+latency, resident memory and snapshot size within plan limits. This ADR alone
+changes no production gate.
