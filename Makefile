@@ -252,7 +252,7 @@ test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^Tes
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
 
 .PHONY: test-changed
-test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=0, DRY_RUN=1
+test-changed: ## Vet + test only what your change affects (ci-light's selection vs origin/main); RACE=1, BASE=<ref>, VET=importers|0, DRY_RUN=1
 	@GCFLAGS=$(APID_TEST_GCFLAGS) LDFLAGS=$(GO_TEST_LDFLAGS) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GO=$(GO) bash scripts/test-changed.sh
 
 .PHONY: clean-tmp
