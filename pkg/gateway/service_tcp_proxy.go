@@ -214,6 +214,10 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 	if reason, err := p.authorize(ctx, callerAppID, target, int(dst.Port())); reason != "" {
 		return "", reason, err
 	}
+	// From here the session is an authorized caller -> target attempt, and it
+	// is recorded on that service-map edge (ADR-1131) however it ends.
+	woke := false
+	defer func() { p.observeEdge(callerAppID, target.AppID, outcome, reason, woke) }()
 	release, ok := p.accounts.acquire(target.AccountID, p.cfg.SessionsPerAccount(target.Plan))
 	if !ok {
 		return "", "account_limit", nil
@@ -244,7 +248,19 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 			}
 		}
 	}
-	return p.forward(ctx, conn, target, deploymentID, int(dst.Port()))
+	outcome, reason, woke, err = p.forward(ctx, conn, target, deploymentID, int(dst.Port()))
+	return outcome, reason, err
+}
+
+// observeEdge records one authorized private TCP session on its caller ->
+// target edge. A plan session limit is the caller's own quota, like an HTTP
+// 4xx, and is not counted; every other refusal after authorization is an
+// error, as a 5xx is on HTTP edges.
+func (p *ServiceTCPProxy) observeEdge(callerAppID, targetAppID, outcome, reason string, woke bool) {
+	if reason == "account_limit" {
+		return
+	}
+	p.cfg.Services.metrics.ObserveServiceTCPEdge(callerAppID, targetAppID, reason != "" || outcome == "error", woke)
 }
 
 // authorize applies the HTTP mesh's tenant, binding, caller and preview
@@ -285,16 +301,19 @@ func (p *ServiceTCPProxy) releaseDeployment(ctx context.Context, callerAppID, ca
 // forward picks a replica, waking the target when none is routable, and
 // tries one alternate replica only when the first could not be dialed before
 // any client byte was read.
-func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target ServiceTCPTarget, deploymentID string, port int) (string, string, error) {
+// It also reports whether it had to wake the target.
+func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target ServiceTCPTarget, deploymentID string, port int) (string, string, bool, error) {
 	services := p.cfg.Services
+	woke := false
 	for attempt := 0; attempt < 2; attempt++ {
-		endpoints, reason, err := p.routable(ctx, target.AppID, deploymentID)
+		endpoints, attemptWoke, reason, err := p.routable(ctx, target.AppID, deploymentID)
+		woke = woke || attemptWoke
 		if reason != "" {
-			return "", reason, err
+			return "", reason, woke, err
 		}
 		endpoint, ok := services.pick(target.AppID, endpoints)
 		if !ok {
-			return "", "no_replica", nil
+			return "", "no_replica", woke, nil
 		}
 		hop := serviceEndpointTarget(target.AppID, endpoint)
 		hop.Port = port
@@ -306,22 +325,23 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target Ser
 		}
 		services.healthy(target.AppID, endpoint.InstanceID)
 		if err != nil {
-			return "error", "", err
+			return "error", "", woke, err
 		}
-		return "success", "", nil
+		return "success", "", woke, nil
 	}
-	return "", "guest_unreachable", nil
+	return "", "guest_unreachable", woke, nil
 }
 
-// routable mirrors ServiceProxy.routableEndpoints without an HTTP writer.
-func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, string, error) {
+// routable mirrors ServiceProxy.routableEndpoints without an HTTP writer; woke
+// reports that the target had to be restored.
+func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID string) (_ []ServiceEndpoint, woke bool, reason string, _ error) {
 	services := p.cfg.Services
 	endpoints, err := services.endpoints(ctx, appID)
 	if err != nil {
-		return nil, "registry_unavailable", err
+		return nil, false, "registry_unavailable", err
 	}
 	if endpoints = serviceEndpointsForDeployment(endpoints, deploymentID); len(endpoints) > 0 {
-		return endpoints, "", nil
+		return endpoints, false, "", nil
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, p.cfg.WakeTimeout)
 	defer cancel()
@@ -329,13 +349,13 @@ func (p *ServiceTCPProxy) routable(ctx context.Context, appID, deploymentID stri
 	var full *WakeQueueFullError
 	switch {
 	case errors.As(err, &full):
-		return nil, "wake_queue_full", err
+		return nil, false, "wake_queue_full", err
 	case err != nil:
-		return nil, "wake_failed", err
+		return nil, false, "wake_failed", err
 	case len(endpoints) == 0:
-		return nil, "no_replica", nil
+		return nil, false, "no_replica", nil
 	}
-	return endpoints, "", nil
+	return endpoints, true, "", nil
 }
 
 // serviceTCPAccountSessions is a per-account counter whose cap comes from

@@ -72,4 +72,11 @@ type ServiceMapEdge struct {
 	// target was called on while fresh. Both are zero when wake-ahead is off.
 	WakeAheadStarted int64 `json:"wake_ahead_started"`
 	WakeAheadUsed    int64 `json:"wake_ahead_used"`
+	// TCPSessions counts the caller's private TCP sessions to the target
+	// (ADR-576) in the window, TCPErrors those that failed after
+	// authorization, and TCPColdSessions those that had to wake the target.
+	// An edge with only TCP traffic has zero Calls and zero latency.
+	TCPSessions     int64 `json:"tcp_sessions"`
+	TCPErrors       int64 `json:"tcp_errors"`
+	TCPColdSessions int64 `json:"tcp_cold_sessions"`
 }

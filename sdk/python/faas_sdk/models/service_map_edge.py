@@ -14,7 +14,9 @@ class ServiceMapEdge:
     """Unsampled calls for one caller → target pair. `errors` are final 5xx
     responses after proxy retries; identity and authorization failures
     are excluded. Latency covers successful calls, including routing,
-    wake, and forwarding time.
+    wake, and forwarding time. Private TCP sessions on the same pair are
+    reported in the `tcp_*` fields; a pair with only TCP traffic has zero
+    `calls` and zero latency.
 
     """
 
@@ -40,6 +42,14 @@ class ServiceMapEdge:
     """Wake-aheads (ADR-977) the caller's wakes started for this target in the window."""
     wake_ahead_used: int
     """Of those, the wake-aheads whose target was called while they were fresh."""
+    tcp_sessions: int
+    """Private TCP sessions (ADR-576) from the caller to the target in the window, excluding identity,
+    authorization and plan session-limit refusals."""
+    tcp_errors: int
+    """Of those, the sessions that failed after authorization (no replica, wake failure, unreachable guest, or an
+    error while connected)."""
+    tcp_cold_sessions: int
+    """Of those, the sessions that found the target parked and waited for it to restore."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +81,12 @@ class ServiceMapEdge:
 
         wake_ahead_used = self.wake_ahead_used
 
+        tcp_sessions = self.tcp_sessions
+
+        tcp_errors = self.tcp_errors
+
+        tcp_cold_sessions = self.tcp_cold_sessions
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -89,6 +105,9 @@ class ServiceMapEdge:
                 "suggest_wake_ahead": suggest_wake_ahead,
                 "wake_ahead_started": wake_ahead_started,
                 "wake_ahead_used": wake_ahead_used,
+                "tcp_sessions": tcp_sessions,
+                "tcp_errors": tcp_errors,
+                "tcp_cold_sessions": tcp_cold_sessions,
             }
         )
 
@@ -125,6 +144,12 @@ class ServiceMapEdge:
 
         wake_ahead_used = d.pop("wake_ahead_used")
 
+        tcp_sessions = d.pop("tcp_sessions")
+
+        tcp_errors = d.pop("tcp_errors")
+
+        tcp_cold_sessions = d.pop("tcp_cold_sessions")
+
         service_map_edge = cls(
             caller_app_id=caller_app_id,
             caller_app_slug=caller_app_slug,
@@ -140,6 +165,9 @@ class ServiceMapEdge:
             suggest_wake_ahead=suggest_wake_ahead,
             wake_ahead_started=wake_ahead_started,
             wake_ahead_used=wake_ahead_used,
+            tcp_sessions=tcp_sessions,
+            tcp_errors=tcp_errors,
+            tcp_cold_sessions=tcp_cold_sessions,
         )
 
         service_map_edge.additional_properties = d

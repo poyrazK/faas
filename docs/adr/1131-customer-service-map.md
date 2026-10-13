@@ -20,8 +20,9 @@
   - New response type `api.ServiceMapResponse` with `nodes` (apps that appear
     on at least one edge) and `edges` (caller → target with calls, errors,
     error rate, and success-latency p50/p95).
-  - Two PromQL round-trips per request regardless of app count: one grouped
-    counter query and one grouped bucket query. Both selectors constrain
+  - A fixed number of PromQL round-trips per request regardless of app count
+    (two at first, one grouped counter query and one grouped bucket query;
+    the sections below add four). Every selector constrains
     **both** `caller_app` and `target_app` to the account's closed app-ID set
     before Prometheus evaluates them, and the handler drops any returned edge
     whose endpoints are not both owned by the account. Cross-account edges
@@ -90,6 +91,28 @@ existing outcome-only counter is unchanged). Series are bounded by ADR-977's
 own learner bounds (4,096 callers × 16 edges). A fourth bounded PromQL query
 fills `wake_ahead_started` and `wake_ahead_used` per edge; the CLI prints
 "Wake-ahead: N of M restores used" and the dashboard adds a column.
+
+## Private TCP sessions on the map
+
+Apps also reach each other over private TCP (ADR-576) — databases, queues and
+other non-HTTP services — and those sessions never crossed the HTTP edge
+counters, so a service talking to a sibling Postgres looked disconnected.
+The TCP proxy now counts each session that passed identity and authorization
+on its caller → target pair:
+`gateway_service_tcp_edge_sessions_total{caller_app,target_app,outcome}`
+(`success` or `error`) and `gateway_service_tcp_edge_wakes_total{caller_app,target_app}`
+for sessions that had to restore a parked target, trusted UUIDs only. Every
+refusal after authorization (no replica, wake failure, unreachable guest,
+release or chaos faults) counts as an error, like a final 5xx on HTTP; the
+account's plan session limit is the caller's own quota, like a 4xx, and is
+not counted. The existing account-level `tcpmetrics` series are unchanged.
+
+Two more bounded PromQL queries (same closed-set selectors; six per request
+now) fill `tcp_sessions`, `tcp_errors` and `tcp_cold_sessions`. Edges are the
+union of HTTP and TCP pairs, ranked by calls plus sessions, so a TCP-only
+pair is an edge with zero `calls` and zero latency. The wake-ahead suggestion
+stays HTTP-only: ADR-977 learns edges from HTTP service calls, so a TCP-only
+edge would be a suggestion wake-ahead cannot act on.
 
 ## Follow-ups
 

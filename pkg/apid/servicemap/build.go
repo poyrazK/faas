@@ -47,11 +47,15 @@ type samples struct {
 	wakes   map[edgeKey]float64
 	ahead   map[edgeKey]map[string]float64 // wake-ahead outcome -> count
 	buckets map[edgeKey]map[string]float64
+	// Private TCP sessions (ADR-576) on the same caller -> target pairs.
+	tcpSessions map[edgeKey]float64
+	tcpErrors   map[edgeKey]float64
+	tcpWakes    map[edgeKey]float64
 }
 
-// fetchSamples runs four bounded PromQL queries. Both constrain the caller and
-// the target to the account's closed app set before Prometheus evaluates
-// them; returned labels are checked against the same set again.
+// fetchSamples runs six bounded PromQL queries. Each constrains the caller and
+// the target to the account's closed app set before Prometheus evaluates it;
+// returned labels are checked against the same set again.
 func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]state.App, window string) (samples, error) {
 	out := samples{
 		calls:   map[edgeKey]float64{},
@@ -59,6 +63,10 @@ func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]s
 		wakes:   map[edgeKey]float64{},
 		ahead:   map[edgeKey]map[string]float64{},
 		buckets: map[edgeKey]map[string]float64{},
+
+		tcpSessions: map[edgeKey]float64{},
+		tcpErrors:   map[edgeKey]float64{},
+		tcpWakes:    map[edgeKey]float64{},
 	}
 	if len(owned) == 0 {
 		return out, nil
@@ -134,7 +142,40 @@ func fetchSamples(ctx context.Context, client *promql.Client, owned map[string]s
 		}
 		out.ahead[key][row.Labels["outcome"]] += row.Value
 	}
-	return out, nil
+	return out, fetchTCPSamples(ctx, client, selector, window, owned, &out)
+}
+
+// fetchTCPSamples adds private TCP sessions; like the wake counter, gateways
+// that predate it emit no series and the edges report zero sessions.
+func fetchTCPSamples(ctx context.Context, client *promql.Client, selector, window string, owned map[string]state.App, out *samples) error {
+	rows, err := client.QueryVector(ctx, fmt.Sprintf(
+		`sum by (caller_app, target_app, outcome)(increase(gateway_service_tcp_edge_sessions_total{%s}[%s]))`,
+		selector, window))
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		key, ok := ownedKey(row.Labels, owned)
+		if !ok {
+			continue
+		}
+		out.tcpSessions[key] += row.Value
+		if row.Labels["outcome"] == "error" {
+			out.tcpErrors[key] += row.Value
+		}
+	}
+	rows, err = client.QueryVector(ctx, fmt.Sprintf(
+		`sum by (caller_app, target_app)(increase(gateway_service_tcp_edge_wakes_total{%s}[%s]))`,
+		selector, window))
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if key, ok := ownedKey(row.Labels, owned); ok {
+			out.tcpWakes[key] += row.Value
+		}
+	}
+	return nil
 }
 
 func ownedKey(labels map[string]string, owned map[string]state.App) (edgeKey, bool) {
@@ -147,40 +188,52 @@ func ownedKey(labels map[string]string, owned map[string]state.App) (edgeKey, bo
 	return key, callerOK && targetOK
 }
 
-// build ranks edges by call volume, applies the cap, and derives nodes from
-// the edges that survive it.
+// build ranks edges by HTTP calls plus TCP sessions, applies the cap, and
+// derives nodes from the edges that survive it. A pair with only TCP traffic
+// is an edge too.
 func build(in samples, owned map[string]state.App, maxEdges int) ([]api.ServiceMapNode, []api.ServiceMapEdge, bool) {
-	edges := make([]api.ServiceMapEdge, 0, len(in.calls))
-	for key, calls := range in.calls {
-		rounded := int64(appmetrics.SafeRoundNonNeg(calls) + 0.5)
-		if rounded == 0 {
+	keys := make(map[edgeKey]struct{}, len(in.calls)+len(in.tcpSessions))
+	for key := range in.calls {
+		keys[key] = struct{}{}
+	}
+	for key := range in.tcpSessions {
+		keys[key] = struct{}{}
+	}
+	edges := make([]api.ServiceMapEdge, 0, len(keys))
+	for key := range keys {
+		calls := in.calls[key]
+		rounded := count(calls)
+		sessions := count(in.tcpSessions[key])
+		if rounded == 0 && sessions == 0 {
 			continue
 		}
 		caller, target := owned[key.caller], owned[key.target]
 		buckets := in.buckets[key]
-		cold := int64(appmetrics.SafeRoundNonNeg(in.wakes[key]) + 0.5)
-		if cold > rounded {
-			cold = rounded // the two counters are scraped independently
-		}
+		// Each pair of counters is scraped independently, so a part can
+		// briefly exceed its whole.
+		cold := min(count(in.wakes[key]), rounded)
 		edges = append(edges, api.ServiceMapEdge{
 			CallerAppID:      caller.ID,
 			CallerAppSlug:    caller.Slug,
 			TargetAppID:      target.ID,
 			TargetAppSlug:    target.Slug,
 			Calls:            rounded,
-			Errors:           int64(appmetrics.SafeRoundNonNeg(in.errors[key]) + 0.5),
+			Errors:           count(in.errors[key]),
 			ErrorRatePct:     appmetrics.SafePercent(percentOf(in.errors[key], calls)),
 			LatencyP50MS:     appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.50, buckets) * 1000),
 			LatencyP95MS:     appmetrics.SafeFloat(appmetrics.HistogramQuantile(0.95, buckets) * 1000),
 			ColdCalls:        cold,
 			ColdCallPct:      appmetrics.SafePercent(percentOf(float64(cold), float64(rounded))),
-			WakeAheadStarted: int64(appmetrics.SafeRoundNonNeg(in.ahead[key]["started"]) + 0.5),
-			WakeAheadUsed:    int64(appmetrics.SafeRoundNonNeg(in.ahead[key]["used"]) + 0.5),
+			WakeAheadStarted: count(in.ahead[key]["started"]),
+			WakeAheadUsed:    count(in.ahead[key]["used"]),
+			TCPSessions:      sessions,
+			TCPErrors:        min(count(in.tcpErrors[key]), sessions),
+			TCPColdSessions:  min(count(in.tcpWakes[key]), sessions),
 		})
 	}
 	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].Calls != edges[j].Calls {
-			return edges[i].Calls > edges[j].Calls
+		if vi, vj := edges[i].Calls+edges[i].TCPSessions, edges[j].Calls+edges[j].TCPSessions; vi != vj {
+			return vi > vj
 		}
 		if edges[i].CallerAppSlug != edges[j].CallerAppSlug {
 			return edges[i].CallerAppSlug < edges[j].CallerAppSlug
@@ -211,6 +264,11 @@ func suggestWakeAhead(edge api.ServiceMapEdge, callerOptedIn bool) bool {
 	return !callerOptedIn &&
 		edge.ColdCalls >= api.ServiceWakeAheadMinWakes &&
 		float64(edge.ColdCalls) >= api.ServiceWakeAheadMinColdShare*float64(edge.Calls)
+}
+
+// count rounds an increase() sample to a whole, non-negative count.
+func count(v float64) int64 {
+	return int64(appmetrics.SafeRoundNonNeg(v) + 0.5)
 }
 
 func percentOf(numerator, denominator float64) float64 {

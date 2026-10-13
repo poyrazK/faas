@@ -726,7 +726,11 @@ type Metrics struct {
 	serviceDependencyEdgeWakes *prometheus.CounterVec
 	// serviceWakeAheadEdges attributes ADR-977 wake-ahead outcomes to the
 	// predicting caller and the woken target (ADR-1131).
-	serviceWakeAheadEdges     *prometheus.CounterVec
+	serviceWakeAheadEdges *prometheus.CounterVec
+	// serviceTCPEdgeSessions and serviceTCPEdgeWakes put private TCP
+	// sessions (ADR-576) on the service map's caller -> target edges.
+	serviceTCPEdgeSessions    *prometheus.CounterVec
+	serviceTCPEdgeWakes       *prometheus.CounterVec
 	serviceDependencyDuration *prometheus.HistogramVec
 	// serviceWakeLatency (ADR-196) observes how long an internal caller was
 	// held while a parked target service was restored. ADR-196 defers
@@ -1607,6 +1611,18 @@ func NewMetrics() *Metrics {
 				Help: "ADR-977 wake-ahead outcomes by trusted predicting caller and woken target app UUID (ADR-1131): started, used (the target was called while the wake-ahead was fresh), unused, failed.",
 			}, []string{"caller_app", "target_app", "outcome"},
 		),
+		serviceTCPEdgeSessions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_tcp_edge_sessions_total",
+				Help: "Authorized private TCP service sessions (ADR-576) by trusted caller and target app UUID and outcome (success or error); excludes identity, authorization and plan-limit refusals (ADR-1131).",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
+		serviceTCPEdgeWakes: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_tcp_edge_wakes_total",
+				Help: "Authorized private TCP service sessions that found the target parked and waited for it to restore, by trusted caller and target app UUID (ADR-1131).",
+			}, []string{"caller_app", "target_app"},
+		),
 		serviceDependencyDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "gateway_service_dependency_duration_seconds",
@@ -2000,6 +2016,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes, m.serviceWakeAheadEdges)
+	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
@@ -3675,6 +3692,30 @@ func (m *Metrics) ObserveServiceDependencyEdge(callerAppID, targetAppID string, 
 	labels := []string{caller.String(), target.String(), outcome}
 	m.serviceDependencyEdges.WithLabelValues(labels...).Inc()
 	observeWithTraceExemplar(m.serviceDependencyDuration.WithLabelValues(labels...), duration.Seconds(), traceID)
+}
+
+// ObserveServiceTCPEdge records one authorized private TCP session on its
+// caller -> target edge. Labels are trusted UUIDs only.
+func (m *Metrics) ObserveServiceTCPEdge(callerAppID, targetAppID string, failed, woke bool) {
+	if m == nil || m.serviceTCPEdgeSessions == nil || m.serviceTCPEdgeWakes == nil {
+		return
+	}
+	caller, err := uuid.Parse(callerAppID)
+	if err != nil {
+		return
+	}
+	target, err := uuid.Parse(targetAppID)
+	if err != nil {
+		return
+	}
+	outcome := "success"
+	if failed {
+		outcome = "error"
+	}
+	m.serviceTCPEdgeSessions.WithLabelValues(caller.String(), target.String(), outcome).Inc()
+	if woke {
+		m.serviceTCPEdgeWakes.WithLabelValues(caller.String(), target.String()).Inc()
+	}
 }
 
 // IncServiceWakeAheadEdge counts one wake-ahead outcome on its caller →

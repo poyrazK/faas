@@ -6,7 +6,9 @@
  * Unsampled calls for one caller → target pair. `errors` are final 5xx
  * responses after proxy retries; identity and authorization failures
  * are excluded. Latency covers successful calls, including routing,
- * wake, and forwarding time.
+ * wake, and forwarding time. Private TCP sessions on the same pair are
+ * reported in the `tcp_*` fields; a pair with only TCP traffic has zero
+ * `calls` and zero latency.
  *
  */
 export type ServiceMapEdge = {
@@ -42,5 +44,17 @@ export type ServiceMapEdge = {
    * Of those, the wake-aheads whose target was called while they were fresh.
    */
   wake_ahead_used: number;
+  /**
+   * Private TCP sessions (ADR-576) from the caller to the target in the window, excluding identity, authorization and plan session-limit refusals.
+   */
+  tcp_sessions: number;
+  /**
+   * Of those, the sessions that failed after authorization (no replica, wake failure, unreachable guest, or an error while connected).
+   */
+  tcp_errors: number;
+  /**
+   * Of those, the sessions that found the target parked and waited for it to restore.
+   */
+  tcp_cold_sessions: number;
 };
 

@@ -36458,6 +36458,9 @@ paths:
                     suggest_wake_ahead: true
                     wake_ahead_started: 0
                     wake_ahead_used: 0
+                    tcp_sessions: 0
+                    tcp_errors: 0
+                    tcp_cold_sessions: 0
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
@@ -55213,9 +55216,11 @@ components:
         Unsampled calls for one caller → target pair. `errors` are final 5xx
         responses after proxy retries; identity and authorization failures
         are excluded. Latency covers successful calls, including routing,
-        wake, and forwarding time.
+        wake, and forwarding time. Private TCP sessions on the same pair are
+        reported in the `tcp_*` fields; a pair with only TCP traffic has zero
+        `calls` and zero latency.
       type: object
-      required: [caller_app_id, caller_app_slug, target_app_id, target_app_slug, calls, errors, error_rate_pct, latency_p50_ms, latency_p95_ms, cold_calls, cold_call_pct, suggest_wake_ahead, wake_ahead_started, wake_ahead_used]
+      required: [caller_app_id, caller_app_slug, target_app_id, target_app_slug, calls, errors, error_rate_pct, latency_p50_ms, latency_p95_ms, cold_calls, cold_call_pct, suggest_wake_ahead, wake_ahead_started, wake_ahead_used, tcp_sessions, tcp_errors, tcp_cold_sessions]
       properties:
         caller_app_id: { type: string }
         caller_app_slug: { type: string }
@@ -55247,6 +55252,18 @@ components:
           type: integer
           format: int64
           description: Of those, the wake-aheads whose target was called while they were fresh.
+        tcp_sessions:
+          type: integer
+          format: int64
+          description: Private TCP sessions (ADR-576) from the caller to the target in the window, excluding identity, authorization and plan session-limit refusals.
+        tcp_errors:
+          type: integer
+          format: int64
+          description: Of those, the sessions that failed after authorization (no replica, wake failure, unreachable guest, or an error while connected).
+        tcp_cold_sessions:
+          type: integer
+          format: int64
+          description: Of those, the sessions that found the target parked and waited for it to restore.
 
     ServiceReliabilityPolicy:
       description: "Caller-owned timeout and retry settings for one declared internal dependency. Omitted numeric fields inherit gateway defaults; max_attempts=1 disables retry. POST/PATCH replay also requires an Idempotency-Key honored by the target."

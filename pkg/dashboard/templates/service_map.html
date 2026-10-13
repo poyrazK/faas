@@ -26,22 +26,24 @@
 {{else if not .PlanAllowed}}
   <p>The service map uses per-app metrics, which start on the Hobby plan. <a href="/dashboard/upgrade">View upgrade options →</a></p>
 {{else}}
-  <p>Calls between your apps through Gregale's internal service routing. Counts are unsampled; latency covers successful calls, including any wake. "Woke target" counts calls that found the target parked and waited for it to restore. "Wake-ahead used" shows, for callers with wake-ahead on, how many of the restores it started were then called.</p>
+  <p>Calls between your apps through Gregale's internal service routing. Counts are unsampled; latency covers successful calls, including any wake. "Woke target" counts calls that found the target parked and waited for it to restore. "Wake-ahead used" shows, for callers with wake-ahead on, how many of the restores it started were then called. "TCP sessions" counts private TCP connections (databases, queues and other non-HTTP services), with how many failed and how many woke the target.</p>
   <p class="ranges" aria-label="Time window">{{$current := .Range}}{{range .Ranges}}{{if eq . $current}}<strong>{{.}}</strong>{{else}}<a href="/dashboard/service-map?range={{.}}">{{.}}</a>{{end}}{{end}}</p>
   {{if .Degraded}}
   <p class="card" role="status">Metrics are unavailable right now ({{.Degraded}}). Try again shortly.</p>
   {{else}}{{with .Map}}
   {{if .Edges}}
-  <div class="scroll"><table><thead><tr><th>Caller</th><th>Target</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">p50</th><th class="num">p95</th><th class="num">Woke target</th><th class="num">Wake-ahead used</th></tr></thead><tbody>
+  <div class="scroll"><table><thead><tr><th>Caller</th><th>Target</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">p50</th><th class="num">p95</th><th class="num">Woke target</th><th class="num">Wake-ahead used</th><th class="num">TCP sessions</th></tr></thead><tbody>
   {{range .Edges}}<tr>
     <td><a href="/dashboard/apps/{{.CallerAppSlug}}">{{.CallerAppSlug}}</a></td>
     <td><a href="/dashboard/apps/{{.TargetAppSlug}}">{{.TargetAppSlug}}</a></td>
     <td class="num">{{.Calls}}</td>
     <td class="num{{if ge .ErrorRatePct $.Data.HighErrorRatePct}} bad{{end}}">{{.Errors}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
-    <td class="num">{{printf "%.1f" .LatencyP50MS}} ms</td>
-    <td class="num">{{printf "%.1f" .LatencyP95MS}} ms</td>
+    {{if .Calls}}<td class="num">{{printf "%.1f" .LatencyP50MS}} ms</td>
+    <td class="num">{{printf "%.1f" .LatencyP95MS}} ms</td>{{else}}<td class="num"><span class="muted">—</span></td>
+    <td class="num"><span class="muted">—</span></td>{{end}}
     <td class="num">{{.ColdCalls}} ({{printf "%.0f" .ColdCallPct}}%)</td>
     <td class="num">{{if .WakeAheadStarted}}{{.WakeAheadUsed}} of {{.WakeAheadStarted}}{{else}}<span class="muted">—</span>{{end}}</td>
+    <td class="num">{{if .TCPSessions}}{{.TCPSessions}} <span class="{{if .TCPErrors}}bad{{else}}muted{{end}}">({{.TCPErrors}} failed, {{.TCPColdSessions}} woke)</span>{{else}}<span class="muted">—</span>{{end}}</td>
   </tr>{{end}}</tbody></table></div>
   {{range .Edges}}{{if .SuggestWakeAhead}}
   <p class="card" role="note">Most calls from <strong>{{.CallerAppSlug}}</strong> to <strong>{{.TargetAppSlug}}</strong> found it parked and waited for it to restore. Turn on wake-ahead to restore the services {{.CallerAppSlug}} calls while it wakes: <code>gregale wake-ahead {{.CallerAppSlug}} on</code></p>

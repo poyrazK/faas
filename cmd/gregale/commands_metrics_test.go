@@ -293,6 +293,39 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 	}
 }
 
+// Private TCP sessions get their own line; an edge with only TCP traffic
+// does not print empty HTTP call and latency lines.
+func TestCmdMetrics_Services_TCPSessions(t *testing.T) {
+	serviceMapServer(t, api.ServiceMapResponse{
+		Range: "1h", Source: "prometheus",
+		Edges: []api.ServiceMapEdge{{
+			CallerAppSlug: "public-api", TargetAppSlug: "billing",
+			Calls: 100, TCPSessions: 4,
+		}, {
+			CallerAppSlug: "billing", TargetAppSlug: "postgres",
+			TCPSessions: 30, TCPErrors: 2, TCPColdSessions: 5,
+		}},
+	})
+	stdout := captureMetricsStdout(t)
+
+	if code := cmdMetrics([]string{"--services"}); code != 0 {
+		t.Fatalf("metrics --services = %d, want 0", code)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Calls:      100 (errors 0, 0.00%)",
+		"TCP:        4 sessions (errors 0, 0 woke the target)",
+		"billing → postgres\n  TCP:        30 sessions (errors 2, 5 woke the target)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\nfull: %s", want, out)
+		}
+	}
+	if n := strings.Count(out, "Calls:"); n != 1 {
+		t.Errorf("Calls lines = %d, want 1 (the TCP-only edge has none)\nfull: %s", n, out)
+	}
+}
+
 func TestCmdMetrics_Services_ExplicitRange(t *testing.T) {
 	_, gotQuery := serviceMapServer(t, api.ServiceMapResponse{Range: "24h", Source: "prometheus"})
 	stdout := captureMetricsStdout(t)

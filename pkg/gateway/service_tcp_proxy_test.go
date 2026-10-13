@@ -49,6 +49,7 @@ type tcpTestHarness struct {
 	onWake   func()
 	release  string
 	dead     map[string]bool // instance IDs whose guest dial fails
+	caller   string          // app ID the "caller" source resolves to
 
 	mu   sync.Mutex
 	hops []Target
@@ -62,7 +63,8 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 		targets: map[netip.Addr]ServiceTCPTarget{
 			netip.MustParseAddr("198.19.0.7"): {AppID: "db", AccountID: "acct", Plan: api.PlanPro, TCPPorts: []int{5432, 443}, IdleTimeout: 5 * time.Minute},
 		},
-		dead: map[string]bool{},
+		dead:   map[string]bool{},
+		caller: "api",
 	}
 	services := NewServiceProxy(ServiceProxyConfig{
 		Provider: h.provider,
@@ -75,7 +77,7 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 		ResolveCallerIdentity: func(_ context.Context, remoteAddr string) (string, string, error) {
 			switch remoteAddr {
 			case "caller":
-				return "api", "api-dep", nil
+				return h.caller, "api-dep", nil
 			case "broken":
 				return "", "", ErrServiceProxyUnavailable
 			}

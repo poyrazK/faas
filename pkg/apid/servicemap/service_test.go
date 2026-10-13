@@ -215,6 +215,18 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 				`{"metric":{"caller_app":"%[2]s","target_app":"%[3]s"},"value":[1,"2"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[4]s"},"value":[1,"50"]}]}}`,
 				gw(publicAPIID), gw(paymentsID), gw(ledgerID), gw(foreignID))
+		case strings.Contains(query, "gateway_service_tcp_edge_sessions_total"):
+			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"success"},"value":[1,"28"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"error"},"value":[1,"2"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[3]s","outcome":"success"},"value":[1,"7"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[4]s","outcome":"success"},"value":[1,"500"]}]}}`,
+				gw(publicAPIID), gw(paymentsID), gw(ledgerID), gw(foreignID))
+		case strings.Contains(query, "gateway_service_tcp_edge_wakes_total"):
+			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s"},"value":[1,"5"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[3]s"},"value":[1,"9"]}]}}`,
+				gw(publicAPIID), gw(ledgerID), gw(foreignID))
 		default:
 			t.Errorf("unexpected query: %s", query)
 			return `{"status":"success","data":{"resultType":"vector","result":[]}}`
@@ -226,11 +238,11 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	if out.Source != appmetrics.SourcePrometheus || out.Range != "1h" || out.Truncated {
 		t.Fatalf("envelope = source %q range %q truncated %v", out.Source, out.Range, out.Truncated)
 	}
-	if got := queries.Load(); got != 4 {
-		t.Fatalf("Prometheus queries = %d, want 4", got)
+	if got := queries.Load(); got != 6 {
+		t.Fatalf("Prometheus queries = %d, want 6", got)
 	}
-	if len(out.Edges) != 2 {
-		t.Fatalf("edges = %+v, want public-api→payments and payments→ledger only", out.Edges)
+	if len(out.Edges) != 3 {
+		t.Fatalf("edges = %+v, want public-api→payments, payments→ledger and the TCP-only public-api→ledger", out.Edges)
 	}
 	top := out.Edges[0]
 	if top.CallerAppSlug != "public-api" || top.TargetAppSlug != "payments" || top.Calls != 100 || top.Errors != 4 {
@@ -251,6 +263,15 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	}
 	if top.WakeAheadStarted != 10 || top.WakeAheadUsed != 8 {
 		t.Fatalf("top edge wake-ahead = %d started / %d used, want 10 / 8", top.WakeAheadStarted, top.WakeAheadUsed)
+	}
+	if top.TCPSessions != 30 || top.TCPErrors != 2 || top.TCPColdSessions != 0 {
+		t.Fatalf("top edge tcp = %d sessions / %d errors / %d cold, want 30 / 2 / 0", top.TCPSessions, top.TCPErrors, top.TCPColdSessions)
+	}
+	// A pair with only private TCP traffic is still an edge, ranked by its
+	// sessions; its sub-unit HTTP sample rounds away.
+	if tcpOnly := out.Edges[2]; tcpOnly.CallerAppSlug != "public-api" || tcpOnly.TargetAppSlug != "ledger" ||
+		tcpOnly.Calls != 0 || tcpOnly.TCPSessions != 7 || tcpOnly.TCPColdSessions != 5 || tcpOnly.LatencyP50MS != 0 || tcpOnly.SuggestWakeAhead {
+		t.Fatalf("tcp-only edge = %+v", tcpOnly)
 	}
 	// 2 cold calls are below the evidence bar even at 20%.
 	if second := out.Edges[1]; second.ColdCalls != 2 || second.SuggestWakeAhead {
@@ -285,6 +306,36 @@ func TestBuildTruncatesLowestVolumeEdges(t *testing.T) {
 	}
 	if len(nodes) != 3 {
 		t.Fatalf("nodes = %+v, want the three apps on surviving edges", nodes)
+	}
+}
+
+// HTTP calls and TCP sessions rank together, and each part is clamped to the
+// counter it belongs to (the counters are scraped independently).
+func TestBuildRanksHTTPAndTCPTogether(t *testing.T) {
+	owned := map[string]state.App{
+		"a": {ID: "a", Slug: "a"},
+		"b": {ID: "b", Slug: "b"},
+		"c": {ID: "c", Slug: "c"},
+	}
+	in := samples{
+		calls:       map[edgeKey]float64{{caller: "a", target: "b"}: 20},
+		wakes:       map[edgeKey]float64{{caller: "a", target: "b"}: 25},
+		tcpSessions: map[edgeKey]float64{{caller: "b", target: "c"}: 30, {caller: "a", target: "b"}: 5},
+		tcpErrors:   map[edgeKey]float64{{caller: "b", target: "c"}: 31},
+		tcpWakes:    map[edgeKey]float64{{caller: "b", target: "c"}: 40},
+	}
+	_, edges, truncated := build(in, owned, 10)
+	if truncated || len(edges) != 2 {
+		t.Fatalf("truncated=%v edges=%+v, want 2 edges", truncated, edges)
+	}
+	if edges[0].CallerAppSlug != "b" || edges[0].Calls != 0 || edges[0].TCPSessions != 30 {
+		t.Fatalf("top edge = %+v, want the 30-session TCP edge b→c", edges[0])
+	}
+	if edges[0].TCPErrors != 30 || edges[0].TCPColdSessions != 30 {
+		t.Fatalf("tcp parts not clamped to sessions: %+v", edges[0])
+	}
+	if edges[1].Calls != 20 || edges[1].ColdCalls != 20 || edges[1].TCPSessions != 5 {
+		t.Fatalf("second edge = %+v, want 20 calls (20 cold) and 5 sessions", edges[1])
 	}
 }
 
@@ -331,6 +382,12 @@ func TestDashboardRendersEdgesAndKeepsValidRange(t *testing.T) {
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s"},"value":[1,"60"]}]}}`,
 				CanonicalAppID(publicAPIID), CanonicalAppID(paymentsID))
 		}
+		if strings.Contains(query, "gateway_service_tcp_edge_sessions_total") {
+			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"success"},"value":[1,"7"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s","outcome":"error"},"value":[1,"1"]}]}}`,
+				CanonicalAppID(paymentsID), CanonicalAppID(ledgerID))
+		}
 		if !strings.Contains(query, "gateway_service_dependency_edge_calls_total") {
 			return `{"status":"success","data":{"resultType":"vector","result":[]}}`
 		}
@@ -345,7 +402,11 @@ func TestDashboardRendersEdgesAndKeepsValidRange(t *testing.T) {
 	if gotRange != "24h" {
 		t.Fatalf("query range = %q, want 24h", gotRange)
 	}
-	for _, want := range []string{"public-api", "payments", `class="num bad"`, "10.00%", "60 (60%)", "<code>gregale wake-ahead public-api on</code>"} {
+	for _, want := range []string{
+		"public-api", "payments", `class="num bad"`, "10.00%", "60 (60%)", "<code>gregale wake-ahead public-api on</code>",
+		// The TCP-only payments → ledger edge: sessions, no HTTP latency.
+		`8 <span class="bad">(1 failed, 0 woke)</span>`, `<td class="num"><span class="muted">—</span></td>`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page missing %q:\n%s", want, body)
 		}
