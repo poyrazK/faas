@@ -494,14 +494,19 @@ from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
+from .commit_event_publication import CommitEventPublication
 from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
+from .commit_publication_history_item import CommitPublicationHistoryItem
+from .commit_publication_history_response import CommitPublicationHistoryResponse
 from .commit_receipt_response import CommitReceiptResponse
 from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
+from .commit_source_response_destination import CommitSourceResponseDestination
+
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -557,6 +562,7 @@ from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetr
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
+from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -1080,6 +1086,7 @@ from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
+from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
 from .event_backlog_recipient import EventBacklogRecipient
 from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
 from .event_backlog_recipient_consumer_kind import EventBacklogRecipientConsumerKind
@@ -1091,10 +1098,22 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_capacity_waits import EventConsumerCapacityWaits
+from .event_consumer_capacity_waits_coverage import EventConsumerCapacityWaitsCoverage
+from .event_consumer_delivery_health import EventConsumerDeliveryHealth
 from .event_consumer_execution_health import EventConsumerExecutionHealth
 from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
+from .event_consumer_execution_health_history_status import EventConsumerExecutionHealthHistoryStatus
+from .event_consumer_execution_health_window_coverage import EventConsumerExecutionHealthWindowCoverage
+from .event_consumer_execution_health_window_history_status import EventConsumerExecutionHealthWindowHistoryStatus
 from .event_consumer_health import EventConsumerHealth
 from .event_consumer_health_coverage import EventConsumerHealthCoverage
+from .event_consumer_pending_sample import EventConsumerPendingSample
+from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
+from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
+from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
+from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
@@ -1141,6 +1160,14 @@ from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingRe
 from .event_receipt_routing_response_filter_reason import EventReceiptRoutingResponseFilterReason
 from .event_receipt_routing_response_retry_stop_reason import EventReceiptRoutingResponseRetryStopReason
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_recipient_blocker_batch_item import EventRecipientBlockerBatchItem
+from .event_recipient_blocker_batch_item_error import EventRecipientBlockerBatchItemError
+from .event_recipient_blocker_batch_request import EventRecipientBlockerBatchRequest
+from .event_recipient_blocker_batch_response import EventRecipientBlockerBatchResponse
+from .event_recipient_blocker_query import EventRecipientBlockerQuery
+from .event_recipient_blocker_response import EventRecipientBlockerResponse
+from .event_recipient_blocker_response_reason import EventRecipientBlockerResponseReason
+from .event_recipient_blocker_response_status import EventRecipientBlockerResponseStatus
 from .event_recovery_capacity_wait import EventRecoveryCapacityWait
 from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
 from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
@@ -1452,6 +1479,7 @@ from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
 from .get_event_backlog_state import GetEventBacklogState
 from .get_event_backlog_waiting_reason import GetEventBacklogWaitingReason
+from .get_event_consumer_delivery_health_window import GetEventConsumerDeliveryHealthWindow
 from .get_event_consumer_execution_health_window import GetEventConsumerExecutionHealthWindow
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
@@ -4512,14 +4540,19 @@ __all__ = (
     "ClearObsoleteReport",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
+    "CommitEventPublication",
     "CommitEventRequest",
     "CommitOperationResponse",
     "CommitOperationResponseState",
+    "CommitPublicationHistoryItem",
+    "CommitPublicationHistoryResponse",
     "CommitReceiptResponse",
     "CommitRouting",
     "CommitRoutingVersion",
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
+    "CommitSourceResponseDestination",
+
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -4573,6 +4606,7 @@ __all__ = (
     "CreateCommitSourceBody",
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
+    "CreateCommitSourceRequestDestination",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -5078,6 +5112,7 @@ __all__ = (
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
+    "EventBacklogConsumerPendingWaitingReasons",
     "EventBacklogRecipient",
     "EventBacklogRecipientCapacityScope",
     "EventBacklogRecipientConsumerKind",
@@ -5089,10 +5124,22 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerCapacityWaits",
+    "EventConsumerCapacityWaitsCoverage",
+    "EventConsumerDeliveryHealth",
     "EventConsumerExecutionHealth",
     "EventConsumerExecutionHealthCoverage",
+    "EventConsumerExecutionHealthHistoryStatus",
+    "EventConsumerExecutionHealthWindowCoverage",
+    "EventConsumerExecutionHealthWindowHistoryStatus",
     "EventConsumerHealth",
     "EventConsumerHealthCoverage",
+    "EventConsumerPendingSample",
+    "EventConsumerPendingSampleCoverage",
+    "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerWaitingReasons",
+    "EventConsumerWaitingReasonsCounts",
+    "EventConsumerWaitingReasonsCoverage",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
@@ -5137,6 +5184,14 @@ __all__ = (
     "EventReceiptRoutingResponseFilterReason",
     "EventReceiptRoutingResponseRetryStopReason",
     "EventReceiptRoutingResponseState",
+    "EventRecipientBlockerBatchItem",
+    "EventRecipientBlockerBatchItemError",
+    "EventRecipientBlockerBatchRequest",
+    "EventRecipientBlockerBatchResponse",
+    "EventRecipientBlockerQuery",
+    "EventRecipientBlockerResponse",
+    "EventRecipientBlockerResponseReason",
+    "EventRecipientBlockerResponseStatus",
     "EventRecoveryCapacityWait",
     "EventRecoveryCapacityWaitGate",
     "EventRecoveryCapacityWaitScope",
@@ -5438,6 +5493,7 @@ __all__ = (
     "GetEventBacklogOrigin",
     "GetEventBacklogState",
     "GetEventBacklogWaitingReason",
+    "GetEventConsumerDeliveryHealthWindow",
     "GetEventConsumerExecutionHealthWindow",
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",

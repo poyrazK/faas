@@ -4508,6 +4508,84 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServerError' }
 
+  /v1/events/recipient-blockers:
+    post:
+      tags: [events]
+      operationId: getEventRecipientBlockers
+      summary: Read an ordered batch of exact recipient routing diagnostics.
+      description: Read-only. One independent snapshot per item, up to 50 items and 65536 body bytes. Duplicate queries are processed independently. All guards validate before reads. Results preserve request order and echo each query. Per-item read failures contain no evidence. A shared five second deadline bounds work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventRecipientBlockerBatchRequest' }
+      responses:
+        '200':
+          description: Independent ordered results and errors, with Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecipientBlockerBatchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/events/recipient-blocker:
+    get:
+      tags: [events]
+      operationId: getEventRecipientBlocker
+      summary: Inspect routing blockers for one exact retained recipient.
+      description: |
+        Requires apps:read or admin. Reads only the authenticated account, in
+        one repeatable read snapshot. Matches source, ID, precise acceptance and
+        recipient before inspecting current routing controls. No backlog pagination
+        or consumer aggregation. Returns available for current routing evidence,
+        not_waiting only when the retained recipient has left pending/processing,
+        unavailable for missing or inconsistent retained evidence, or
+        acceptance_replaced when the retained identity has a different timestamp.
+        Not_waiting never implies handler completion or replay attribution.
+        Foreign and missing receipts both return unavailable with receipt_unavailable.
+        Read-only; never follows links, claims work or submits recovery.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: source
+          description: Original event source for the exact recipient lookup.
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: id
+          description: Original event identifier within the source.
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: subscription_id
+          description: Consumer subscription captured by the original event acceptance.
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: expected_accepted_at
+          in: query
+          required: true
+          description: Exact original acceptance instant, preserving fractional precision.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Exact recipient routing observation, including unavailable evidence.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: [no-store] }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventRecipientBlockerResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Read timeout or storage unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/events/backlog:
     get:
       tags: [events]
@@ -4643,6 +4721,11 @@ paths:
         outcomes may change between requests.
       security: [{ bearerAuth: [] }]
       parameters:
+        - name: expected_accepted_at
+          in: query
+          required: false
+          description: Optional original acceptance time. Returns 409 if the retained event belongs to a replacement acceptance.
+          schema: { type: string, format: date-time }
         - { name: source, in: query, required: true, description: Published event source paired with the required ID for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
         - { name: id, in: query, required: true, description: Published event ID paired with the required source for this receipt lookup., schema: { type: string, minLength: 1, maxLength: 256 } }
         - { name: after, in: query, description: 'Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.', schema: { type: string, maxLength: 8192 } }
@@ -4657,6 +4740,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '500': { $ref: '#/components/responses/ServerError' }
 
@@ -32609,7 +32693,7 @@ paths:
     post:
       tags: [queues]
       operationId: createCommitSource
-      summary: Bind an internal PostgreSQL outbox source to managed Operations.
+      summary: Bind an internal PostgreSQL outbox source to Operations or event publication.
       parameters:
         - $ref: '#/components/parameters/Slug'
       requestBody:
@@ -32619,7 +32703,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateCommitSourceRequest' }
       responses:
         '201':
-          description: Commit source created with its immutable application and policy binding.
+          description: Commit source created with its immutable application, destination and contract binding.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommitSourceResponse' }
@@ -32739,6 +32823,38 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/commit-sources/{source}/publications:
+    get:
+      tags: [queues]
+      operationId: listCommitPublications
+      summary: List retained publication acceptance receipts for an event source.
+      description: Newest-first metadata only. Acceptance does not imply subscriber completion. Pages are live reads; concurrent admissions may require restarting from the first page. Delivery evidence may expire independently.
+      parameters:
+        - name: source
+          description: Event-destination Commit source owned by the authenticated account.
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: before
+          description: Opaque source-scoped next_before cursor from the previous page.
+          in: query
+          schema: { type: string }
+        - name: limit
+          description: Maximum number of retained receipts per page.
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Accepted publications and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitPublicationHistoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
@@ -33486,12 +33602,54 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health:
+    get:
+      tags: [events]
+      operationId: getEventConsumerDeliveryHealth
+      summary: Inspect subscription delivery health across routing and retained execution evidence.
+      description: Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Current execution counts include bounded retained handler replays. Attempt rates and completion latency use durable per-subscription window evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason counts cover all retained pending application recipients independently of that sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          description: "Application slug for this operation: inspect combined routing, execution and pending delivery health."
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          description: "Application event subscription identifier for this operation: inspect combined routing, execution and pending delivery health."
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: window
+          description: "Retained observation window for this operation: inspect combined routing, execution and pending delivery health."
+          in: query
+          schema: { type: string, enum: [5m, 15m, 1h, 6h, 24h], default: 5m }
+      responses:
+        '200':
+          description: Independent routing, execution, and oldest pending sample reads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventConsumerDeliveryHealth' }
+        '400':
+          description: Invalid subscription identifier or combined delivery observation window.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: The combined delivery health request exceeded its bounded deadline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health:
     get:
       tags: [events]
       operationId: getEventConsumerExecutionHealth
       summary: Inspect consumer execution health over a retained history window.
-      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound coverage; history_complete is always false. Counts are not unique event totals. Completion latency starts at original event acceptance.
+      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -51222,14 +51380,15 @@ components:
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
     CreateCommitSourceRequest:
-      description: Register an immutable database source bound to a managed app operation policy and routing contract.
+      description: Register an immutable database source bound to managed Operations or application-event publication. Event destinations require version 3, no operation policy and no customer selection.
       type: object
-      required: [name, operation_policy]
+      required: [name]
       properties:
         name: { type: string, minLength: 1, maxLength: 128 }
-        operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Active queue policy containing this application. Scope must be account or platform_tenant according to allow_tenant_selection. Environment-scoped policies are unsupported. }
-        contract_version: { type: integer, enum: [1, 2], default: 1, description: Immutable contract. Version 1 uses one source lane; version 2 requires explicit event routing and a business key. }
+        operation_policy: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: Required for operation destinations and forbidden for event destinations. Active queue policy containing this application. Scope must be account or platform_tenant according to allow_tenant_selection. Environment-scoped policies are unsupported. }
+        contract_version: { type: integer, enum: [1, 2, 3], default: 1, description: Immutable contract. Version 1 uses one source lane; version 2 requires explicit operation routing; version 3 requires an event destination. }
         allow_tenant_selection: { type: boolean, default: false, description: Immutable owner grant authorizing this trusted database to select active customers linked to the fixed target application. Requires contract version 2 and a platform_tenant queue policy. }
+        destination: { type: string, enum: [operation, event], default: operation, description: Immutable destination. Event publishes under the bound application source instead of invoking that application. }
     CommitSourceResponse:
       type: object
       description: Commit source destination, enabled state and latest bounded relay health observation.
@@ -51239,14 +51398,37 @@ components:
         app_id: { type: string, format: uuid }
         name: { type: string }
         enabled: { type: boolean }
-        operation_policy: { type: string, description: Immutable managed Operations policy. Absent only for legacy internal sources. }
-        contract_version: { type: integer, enum: [1, 2] }
+        operation_policy: { type: string, description: Immutable managed Operations policy. Absent for legacy internal sources and event destinations. }
+        contract_version: { type: integer, enum: [1, 2, 3] }
         allow_tenant_selection: { type: boolean }
         relay_status: { type: string }
         last_checked_at: { type: string, format: date-time }
         pending_events: { type: integer, format: int64 }
         blocked_events: { type: integer, format: int64 }
         oldest_pending_at: { type: string, format: date-time }
+        destination: { type: string, enum: [operation, event], default: operation }
+    CommitPublicationHistoryItem:
+      description: Retained publication acceptance receipt with event metadata; excludes event data.
+      allOf:
+        - $ref: '#/components/schemas/CommitReceiptResponse'
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, description: Original committed event type. }
+            schema_version: { type: string, description: Selected schema version when supplied. }
+    CommitPublicationHistoryResponse:
+      type: object
+      description: Newest-first retained acceptance history, independent of subscriber evidence retention.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/CommitPublicationHistoryItem' }
+        next_before:
+          type: string
+          description: Opaque source-scoped continuation cursor; absent on the last observed page.
+
     CommitBlockedEventsResponse:
       type: object
       description: Bounded snapshot of blocked source events, with the observation time and snapshot limit.
@@ -51272,12 +51454,13 @@ components:
       type: object
       additionalProperties: false
       required: [id, type, data]
-      description: At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt; changed type, data or routing conflicts.
+      description: At-least-once handoff. Repeating the identity with identical JSON data and routing returns the original receipt; changed type, schema version, data or routing conflicts.
       properties:
         id: { type: string, format: uuid }
         type: { type: string, minLength: 1, maxLength: 256 }
         data: {}
         routing: { $ref: '#/components/schemas/CommitRouting' }
+        schema_version: { type: string, minLength: 1, maxLength: 64, description: Optional registered application event schema version. Only event destinations support this field. }
     CommitRouting:
       type: object
       additionalProperties: false
@@ -51293,16 +51476,27 @@ components:
             - { type: boolean }
     CommitReceiptResponse:
       type: object
-      required: [receipt_id, source_id, event_id, accepted_at, operation_url]
-      description: Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return invocation_id instead. Exactly one work identity is present.
+      required: [receipt_id, source_id, event_id, accepted_at]
+      description: Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return invocation_id instead. Event destinations instead return publication. Exactly one invocation, operation or publication identity is present. The publication receipt survives event retention and does not imply subscriber success.
       properties:
         receipt_id: { type: string, format: uuid }
         source_id: { type: string, format: uuid }
         event_id: { type: string, format: uuid }
+        operation_url: { type: string, description: Present for operation or legacy invocation destinations. }
         invocation_id: { type: string, format: uuid }
         operation_id: { type: string, format: uuid }
         accepted_at: { type: string, format: date-time }
-        operation_url: { type: string }
+        publication: { $ref: '#/components/schemas/CommitEventPublication' }
+    CommitEventPublication:
+      description: Retained event-publication acceptance and a guarded URL for subscriber delivery evidence.
+      type: object
+      required: [acceptance_id, source, id, accepted_at, receipt_url]
+      properties:
+        acceptance_id: { type: integer, format: int64, minimum: 1 }
+        source: { type: string }
+        id: { type: string }
+        accepted_at: { type: string, format: date-time }
+        receipt_url: { type: string, description: Read-only event receipt with an acceptance-time guard; exposes paginated subscriber delivery evidence while retained. }
     CommitOperationResponse:
       type: object
       description: Retained Commit acceptance and execution facts after managed Operation cleanup.
@@ -62074,6 +62268,63 @@ components:
         accepted_at: { type: string, format: date-time }
         receipt_url: { type: string, format: uri-reference, description: Tenant-authenticated relative URL for this event receipt. }
 
+    EventRecipientBlockerBatchRequest:
+      type: object
+      description: Bounded exact-recipient queries, each guarded by the original acceptance instant.
+      additionalProperties: false
+      required: [queries]
+      properties:
+        queries:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventRecipientBlockerQuery' }
+    EventRecipientBlockerBatchItem:
+      type: object
+      additionalProperties: false
+      required: [query]
+      description: Exactly one of result or error is returned.
+      properties:
+        query: { $ref: '#/components/schemas/EventRecipientBlockerQuery' }
+        result: { $ref: '#/components/schemas/EventRecipientBlockerResponse' }
+        error: { type: string, enum: [read_error, read_timeout] }
+    EventRecipientBlockerBatchResponse:
+      type: object
+      description: Ordered independent observations for the requested recipient queries.
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventRecipientBlockerBatchItem' }
+    EventRecipientBlockerQuery:
+      type: object
+      description: Event and consumer identity with the original acceptance instant for a read-only lookup.
+      additionalProperties: false
+      required: [source, id, subscription_id, expected_accepted_at]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 256 }
+        id: { type: string, minLength: 1, maxLength: 256 }
+        subscription_id: { type: string, minLength: 1, maxLength: 256 }
+        expected_accepted_at: { type: string, description: "Nonzero RFC3339 timestamp with its original fractional precision (up to nanoseconds)." }
+    EventRecipientBlockerResponse:
+      type: object
+      description: Current retained routing evidence for one acceptance-guarded consumer query.
+      additionalProperties: false
+      required: [query, observed_at, status]
+      properties:
+        query: { $ref: '#/components/schemas/EventRecipientBlockerQuery' }
+        observed_at: { type: string, format: date-time }
+        status: { type: string, enum: [available, not_waiting, unavailable, acceptance_replaced] }
+        reason:
+          type: string
+          enum: [receipt_unavailable, snapshot_unavailable, recipient_unavailable, routing_evidence_unavailable, acceptance_replaced]
+        routing_state:
+          type: string
+          description: Retained routing state; never an invocation state.
+        recipient: { $ref: '#/components/schemas/EventBacklogRecipient' }
     EventBacklogResponse:
       example: { observed_at: "2026-10-05T12:00:00Z", window_at: "2026-10-05T12:00:00Z", coverage: captured_and_backfill_recipients, recipients: [], consumers: [], unattributed_receipts: 0 }
       type: object
@@ -62133,18 +62384,96 @@ components:
       properties:
         rate_per_second: { type: integer, minimum: 0, maximum: 100, default: 10, description: Maximum new routing admissions in a one-second window; zero removes pacing. This limit continues to apply to new publications after the backlog drains. }
 
+    EventConsumerDeliveryHealth:
+      type: object
+      additionalProperties: false
+      description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
+      required: [started_at, observed_at, routing, execution, pending_sample]
+      properties:
+        waiting_reasons: { $ref: '#/components/schemas/EventConsumerWaitingReasons' }
+        capacity_waits: { $ref: '#/components/schemas/EventConsumerCapacityWaits' }
+        started_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        routing: { $ref: '#/components/schemas/EventConsumerHealth' }
+        execution: { $ref: '#/components/schemas/EventConsumerExecutionHealth' }
+        pending_sample: { $ref: '#/components/schemas/EventConsumerPendingSample' }
+
+    EventConsumerWaitingReasons:
+      type: object
+      additionalProperties: false
+      description: Complete mutually exclusive effective waiting reasons across retained pending application recipients in the backlog snapshot. Counts sum to pending_recipients when complete, independently of recipient pagination. Missing evidence from older servers is unavailable, not zero.
+      required: [app_id, subscription_id, observed_at, window_at, coverage, complete, pending_recipients, counts]
+      properties:
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        window_at: { type: string, format: date-time, description: Acceptance cutoff used by the backlog query. }
+        coverage: { type: string, enum: [all_pending_application_recipients] }
+        complete: { type: boolean }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        counts:
+          type: object
+          description: Counts for circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, and ready. Known reasons include zero counts; processing recipients are excluded.
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+
+    EventConsumerCapacityWaits:
+      type: object
+      additionalProperties: false
+      description: Complete counts of effective capacity waiting reasons among retained pending application recipients in one backlog snapshot. Independent of recipient pagination. Missing or incomplete evidence cannot clear capacity alerts.
+      required: [app_id, subscription_id, observed_at, coverage, complete, pending_recipients, consumer, app, account]
+      properties:
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [all_pending_application_recipients] }
+        complete: { type: boolean }
+        pending_recipients: { type: integer, format: int64, minimum: 0 }
+        consumer: { type: integer, format: int64, minimum: 0 }
+        app: { type: integer, format: int64, minimum: 0 }
+        account: { type: integer, format: int64, minimum: 0 }
+
+    EventConsumerPendingSample:
+      type: object
+      additionalProperties: false
+      description: Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and subscription ties. Waiting reason counts cover only these recipients.
+      required: [observed_at, coverage, truncated, waiting_reasons, recipients]
+      properties:
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [oldest_pending_recipients] }
+        truncated: { type: boolean, description: More pending recipients existed in this read. }
+        waiting_reasons:
+          type: object
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        recipients:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+
     EventConsumerExecutionHealth:
       type: object
       additionalProperties: false
-      description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use the requested window. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. Historical coverage is always incomplete.'
+      description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use an immutable, per-subscription outcome ledger with 30-day retention. Window evidence survives source deletion and is independent of retained execution-state truncation. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. History completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial.'
       required: [subscription_id, app_id, observed_at, window_start, coverage, history_complete, truncated, retained_roots, missing_roots, executions, queued, running, retrying, succeeded, failed, expired, dead_lettered, cancelled, superseded, unknown, successful_attempts, failed_attempts, unknown_attempts, window_completions, window_dead_letters, handler_failure_pct, dead_letter_rate_per_second, completion_latency_p95_seconds]
       properties:
+        window_coverage: { type: string, enum: [durable_execution_outcomes], description: 'Evidence scope for attempt rates and completion latency; current invocation states retain their separate bounded scope.' }
+        window_history_complete: { type: boolean, description: 'True when the requested ledger window has a known baseline and no lost, expired or unknown outcomes.' }
+        window_history_status: { type: string, enum: [complete, partial, unknown] }
+        window_history_reason: { type: string, description: 'Explanation of ledger window eligibility.' }
+        window_coverage_started_at: { type: string, format: date-time, description: 'Ledger collection start; windows beginning earlier cannot qualify.' }
+        window_coverage_lost_through_at: { type: string, format: date-time, description: 'Evidence-loss high-water mark for this subscription. Eligible windows must begin strictly after it.' }
+        window_evidence_retain_until: { type: string, format: date-time, description: 'Earliest expiry of retained evidence in this window; absent for an empty window.' }
+        window_evidence_retention_seconds: { type: integer, format: int64, minimum: 1, description: 'Configured ledger retention independently of source receipt and result retention.' }
+        latest_successful_completion_at: { type: string, format: date-time, description: Latest valid successful completion among the bounded retained executions; absent when no such completion is retained. Not an all-time watermark and not restricted to the attempt window. }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         observed_at: { type: string, format: date-time }
         window_start: { type: string, format: date-time }
         coverage: { type: string, enum: [bounded_retained_execution_roots] }
-        history_complete: { type: boolean, enum: [false], description: 'Receipt, invocation, and attempt retention make this an incomplete historical observation.' }
+        history_complete: { type: boolean, description: 'True only for an instrumented, fully covered window with intact evidence and no truncation or unknown outcomes.' }
+        history_status: { type: string, enum: [complete, partial, unknown] }
+        history_reason: { type: string, description: 'Stable explanation of coverage eligibility or evidence loss.' }
+        coverage_started_at: { type: string, format: date-time, description: 'Durable collection start; absent when no coverage record exists.' }
+        coverage_lost_at: { type: string, format: date-time, description: 'First persisted evidence loss; loss is not automatically cleared.' }
         truncated: { type: boolean, description: 'More than 1000 retained delivery roots or 5000 linked invocations existed.' }
         retained_roots: { type: integer, format: int64, minimum: 0 }
         missing_roots: { type: integer, format: int64, minimum: 0 }
@@ -64095,6 +64424,13 @@ components:
       description: Exact counts over all matching waiting recipients for one app/subscription/consumer kind, independent of recipient pagination.
       required: [app_id, app_slug, target_available, subscription_id, consumer_kind, waiting_recipients, pending_recipients, processing_recipients, capacity_waiting_recipients, ordering_waiting_recipients, oldest_accepted_at, oldest_age_seconds]
       properties:
+        pending_waiting_reasons:
+          type: object
+          description: Exact mutually exclusive effective waiting-reason counts over matching pending recipients, including zero values for known reasons. Independent of recipient pagination.
+          additionalProperties: { type: integer, format: int64, minimum: 0 }
+        capacity_consumer_waiting_recipients: { type: integer, format: int64, minimum: 0, description: Complete count with effective capacity_consumer waiting reason. }
+        capacity_app_waiting_recipients: { type: integer, format: int64, minimum: 0, description: Complete count with effective capacity_app waiting reason. }
+        capacity_account_waiting_recipients: { type: integer, format: int64, minimum: 0, description: Complete count with effective capacity_account waiting reason. }
         app_id: { type: string, format: uuid }
         app_slug: { type: string }
         target_available: { type: boolean }
@@ -64876,11 +65212,13 @@ components:
         generation: { type: integer, format: int64, minimum: 0 }
 
     ReplayEventFanoutFailureRequest:
-      description: Identity of one terminal fanout failure to replay.
+      description: Identity of one terminal fanout failure to replay. Use either acceptance and generation guards or recovery_expectation; combining the guard formats is invalid.
       type: object
       additionalProperties: false
       required: [event_id, event_source, subscription_id]
       properties:
+        expected_generation: { type: integer, format: int64, minimum: 0, description: "Optional routing generation. Requires expected_accepted_at; checked with failed state under the recipient row lock. A changed generation returns 409 event_replay_generation_changed without mutation." }
+        expected_accepted_at: { type: string, format: date-time, description: "Optional exact original acceptance instant. Checked under the receipt row lock in the replay transaction; replacement returns 409 without mutation. Guarded replay targets the original acceptance snapshot, not backfills." }
         recovery_expectation: { $ref: "#/components/schemas/EventRoutingRecoveryExpectation" }
         allow_expired: { type: boolean, default: false, description: "Allow expired in the replay event fanout failure request: explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls." }
         event_id: { type: string }

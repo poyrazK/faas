@@ -180,6 +180,15 @@ upload timeout, performs wake/capacity admission, and only then stamps the
 guest execution budget. This subsumes the previous sync-invoke `DefaultFor`
 carve-out, which returned exactly this value for the same reason.
 
+**Amendment (2026-10-12, hunt #9).** apid's project apply (`POST /v1/projects`)
+is one request carrying the source upload, the re-scan, reconcile and every
+workload's build enqueue. Under the 5 s apid default, production-us committed
+the apps and then failed the enqueue on the deadline, leaving them without a
+deployment. `applyProject` therefore drops the request budget and runs under
+`api.ProjectApplyTimeout` (`RequestUploadTimeoutMax + RequestBudgetMax`),
+detached from client cancellation so a disconnect cannot strand committed apps.
+The edge envelope (`CustomerRequestEnvelopeTimeout`) still exceeds it.
+
 ### Trade-off
 
 A wedged `gatewayd-internal` can now pin a public connection for up to
@@ -209,3 +218,21 @@ Functions keep 3 s, and an explicit plan `RequestBudgetMs` or matching
 `kind=budget` rule remains authoritative. This changes the default only at
 the type-aware resolution point; the 30 s platform ceiling and the public
 edge backstop are unchanged.
+
+## Amendment (2026-10-12): deploy source uploads and submissions use the platform ceiling
+
+apid runs every request under `RequestBudgetApidDefault` (5 s) unless a
+route selects another default; only sync invoke did. A deploy commit unpacks
+the source archive for the secret scan and reads it several more times before
+it records the deployment. On production-us (hunt #9, H9-157) that outran 5 s:
+a customer's 12 MB Dockerfile project failed at the account deploy-limit check
+on every attempt, and every server-side deploy failure apid logged over three
+days was this deadline. `reqbudget.IsDeploySubmissionRequest` selects the
+upload chunk and commit, deployment create (image, source-tarball,
+source-ref), rollback and deployment retry routes, and apid gives them
+`RequestBudgetMax` (30 s). Project apply has its own detached timeout (the
+amendment above for `POST /v1/projects`, when merged). The chunk route reads
+the whole chunk before its bookkeeping, and at the supported 512 KiB/s a
+16 MiB chunk takes 32 s, so once the chunk is received its session reload
+and offset advance run detached from the budget under the 15 s upload
+bookkeeping bound. The 5 s default for every other apid route is unchanged.

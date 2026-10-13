@@ -291,7 +291,8 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 	if status != http.StatusNoContent {
 		t.Fatalf("publish observer heartbeat: status=%d body=%s", status, body)
 	}
-	deadline = time.Now().Add(45 * time.Second)
+	// Retain the four-worker demand until the production stabilization window ages out.
+	deadline = time.Now().Add(time.Duration(api.WorkerScaleInStabilizationSeconds)*time.Second + 45*time.Second)
 	for time.Now().Before(deadline) {
 		if mcpWorkerInstanceCount(t, f) == 0 {
 			return

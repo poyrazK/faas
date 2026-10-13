@@ -216,6 +216,11 @@ malformed entries and never blocks database deletion or credential revocation.
   the operator usage policy. A plan storage ceiling is an entitlement; the
   monthly compute, history, egress, and spend ceilings are COGS safeguards.
   Upgrade or reduce the workload rather than disabling metering.
+- `managed_postgres_provisioning_not_enabled`: the rollout gate is closed for
+  the account (provisioning flag, qualification or canary window, or the
+  canary account allowlist). Nothing is down; existing databases and
+  bindings keep working. Reopen the gate deliberately; an expired operator
+  test window closes it without any other signal.
 - `managed_postgres_unavailable`: keep provisioning disabled and use the
   lifecycle reconciler to finish deletion of known resources.
 

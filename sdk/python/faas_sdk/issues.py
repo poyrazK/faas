@@ -49,6 +49,12 @@ class IssueReporter:
             raise ValueError("A Gregale issue ingest token is required")
         self._url = f"{parsed.scheme}://{parsed.netloc}/v1/apps/{quote(app, safe='')}/issue-events"
         self._token = token
+        from . import __version__  # resolved once the package has finished importing
+
+        # Cloudflare's browser integrity check answers urllib's default
+        # "Python-urllib/3.x" User-Agent on api.gregale.dev with 403 (error
+        # 1010), which _send treats as permanent, so every event was dropped.
+        self._user_agent = f"gregale-python-sdk/{__version__} (issues)"
         self._max_queue = max(1, min(1000, max_queue))
         self._timeout = max(0.1, min(10.0, timeout))
         self._opener = build_opener(_NoRedirect())
@@ -105,7 +111,7 @@ class IssueReporter:
             self._url,
             data=json.dumps(event, ensure_ascii=False).encode(),
             method="POST",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self._token}"},
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self._token}", "User-Agent": self._user_agent},
         )
         try:
             with self._opener.open(request, timeout=self._timeout) as response:

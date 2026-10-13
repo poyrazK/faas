@@ -128,6 +128,8 @@ jobs:
       # vet type-checks every changed package and direct importer, test files
       # included, so an API change that breaks a caller fails here. The mega
       # tier builds every binary and runs the importers' tests.
+      # Match the proven API test compiler bounds: standard runners cannot
+      # sustain a 10GiB heap target across concurrent package compilations.
       - name: vet (changed packages and direct importers)
         if: steps.select.outputs.vet != ''
         # Bound each compiler/analyzer and serialize package compilation so
@@ -369,13 +371,14 @@ jobs:
     # Cover cold API compilation, sequential ordinary/API/state race runs,
     # and container setup. State batches keep their own 12m timeouts and
     # default runtime settings, on the separate PostgreSQL service.
-    timeout-minutes: 70
+    # API jobs retain the full fixture inventory with a 45m runtime budget.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        # Shards 4-6 split cmd/apid's long suite across dedicated PostgreSQL
+        # Shards 4-9 split apidserver's long suite across dedicated PostgreSQL
         # services; its database DDL cannot race pkg/state's catalogue checks.
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -507,7 +510,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 6 < "$RUNNER_TEMP/changed-paths.txt")"
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 9 < "$RUNNER_TEMP/changed-paths.txt")"
           if (( SHARD > 3 )); then
             SPLIT="$PKGS"
             PKGS=""
@@ -536,18 +539,19 @@ jobs:
             # shellcheck disable=SC2086 # space-separated package list
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS || status=1
           fi
-          # Main's dedicated API jobs retain their three batches. State jobs
-          # retain each original third as two sequential sixths.
+          # Dedicated API jobs cover six independent name batches. State jobs
+          # split each state job into four smaller batches.
           # Verify every selected package's complete compiled inventory.
           for pkg in $SPLIT; do
             (
               if [[ "$pkg" == ./pkg/state ]]; then
                 export DATABASE_URL="$SPLIT_DATABASE_URL"
-                shards=6
-                batches=("$SHARD" "$((SHARD + 3))")
+                shards=12
+                batches=("$SHARD" "$((SHARD + 3))" "$((SHARD + 6))" "$((SHARD + 9))")
               else
-                export GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2
-                shards=3
+                # Aggressive compiler GC must not carry into fixture execution.
+                export GOMEMLIMIT=2GiB GOGC=100 GOMAXPROCS=2
+                shards=6
                 batches=("$SPLIT_SHARD")
               fi
               echo "checking complete test inventory: $pkg"
@@ -558,7 +562,11 @@ jobs:
               for test_shard in "${batches[@]}"; do
                 run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -shard="$test_shard")" || exit 1
                 echo "testing: $pkg (test batch $test_shard/$shards)"
-                go test -race -count=1 -timeout=12m -run "$run" "$pkg" || split_status=1
+                # Full API batches include stage checkpoint PostgreSQL fixtures.
+                # Keep state batches at their original budget.
+                budget=12m
+                [[ "$pkg" == ./pkg/apid/apidserver ]] && budget=45m
+                go test -race -count=1 -timeout="$budget" -run "$run" "$pkg" || split_status=1
               done
               exit "$split_status"
             ) || status=1

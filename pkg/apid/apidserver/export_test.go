@@ -743,6 +743,7 @@ func (r *fakeObjectProvider) MultipartErr() *error { return &r.multipartErr }
 func (r *fakeObjectProvider) MultipartParts() *objectstorage.MultipartPartsPage {
 	return &r.multipartParts
 }
+func (r *fakeObjectProvider) Objects() *map[string][]byte { return &r.objects }
 
 // Members of googleJWKSVerifier
 func (r *googleJWKSVerifier) JwksURL() *string { return &r.jwksURL }
@@ -1275,10 +1276,9 @@ func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string
 var SetupSecrets = setupSecrets
 var SelectedObjectStorageVerification = selectedObjectStorageVerification
 
-func (r *fakeObjectProvider) Objects() *map[string][]byte { return &r.objects }
-func (r *fakeObjectProvider) Created() *[]string          { return &r.created }
-func (r *fakeObjectProvider) CreateErr() *error           { return &r.createErr }
-func (r *fakeObjectProvider) DeleteErr() *error           { return &r.deleteErr }
+func (r *fakeObjectProvider) Created() *[]string { return &r.created }
+func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
+func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
 }

@@ -104,9 +104,11 @@ def sync_detailed(
     """Inspect consumer execution health over a retained history window.
 
      Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt
-    outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound
-    coverage; history_complete is always false. Counts are not unique event totals. Completion latency
-    starts at original event acceptance.
+    outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
+    roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
+    independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
+    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
+    original event acceptance.
 
     Args:
         slug (str):
@@ -144,9 +146,11 @@ def sync(
     """Inspect consumer execution health over a retained history window.
 
      Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt
-    outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound
-    coverage; history_complete is always false. Counts are not unique event totals. Completion latency
-    starts at original event acceptance.
+    outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
+    roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
+    independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
+    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
+    original event acceptance.
 
     Args:
         slug (str):
@@ -179,9 +183,11 @@ async def asyncio_detailed(
     """Inspect consumer execution health over a retained history window.
 
      Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt
-    outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound
-    coverage; history_complete is always false. Counts are not unique event totals. Completion latency
-    starts at original event acceptance.
+    outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
+    roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
+    independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
+    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
+    original event acceptance.
 
     Args:
         slug (str):
@@ -217,9 +223,11 @@ async def asyncio(
     """Inspect consumer execution health over a retained history window.
 
      Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt
-    outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound
-    coverage; history_complete is always false. Counts are not unique event totals. Completion latency
-    starts at original event acceptance.
+    outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained
+    roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and
+    independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy
+    ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at
+    original event acceptance.
 
     Args:
         slug (str):

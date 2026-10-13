@@ -14,10 +14,10 @@ import (
 // adr: 463 — customer health survives safe CLI decoding in both formats.
 func TestCmdPostgresGetHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/db-1" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/postgres/databases/3f1c2a9e-8b7d-4c6e-9a1b-0d2e4f6a8c10" {
 			t.Errorf("request = %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"id":"db-1","name":"orders","state":"ready","provider_resource_id":"private-upstream","connection_url":"private-password","health":{"enabled":true,"status":"degraded","fresh":true,"provider_status":"missing","compute_state":"unknown","checked_at":"2026-10-01T12:00:00Z","last_success_at":"2026-10-01T11:00:00Z","last_error_code":"resource_missing","stale_after_seconds":300}}`))
+		_, _ = w.Write([]byte(`{"id":"3f1c2a9e-8b7d-4c6e-9a1b-0d2e4f6a8c10","name":"orders","state":"ready","provider_resource_id":"private-upstream","connection_url":"private-password","health":{"enabled":true,"status":"degraded","fresh":true,"provider_status":"missing","compute_state":"unknown","checked_at":"2026-10-01T12:00:00Z","last_success_at":"2026-10-01T11:00:00Z","last_error_code":"resource_missing","stale_after_seconds":300}}`))
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
@@ -27,7 +27,7 @@ func TestCmdPostgresGetHealth(t *testing.T) {
 	for _, asJSON := range []bool{true, false} {
 		var out bytes.Buffer
 		osStdout, jsonOutput = &out, asJSON
-		if code := cmdPostgresGet([]string{"db-1"}); code != 0 {
+		if code := cmdPostgresGet([]string{"3f1c2a9e-8b7d-4c6e-9a1b-0d2e4f6a8c10"}); code != 0 {
 			t.Fatalf("exit = %d", code)
 		}
 		if strings.Contains(out.String(), "private-") {
@@ -136,6 +136,37 @@ func TestCmdPostgresUsageJSONUsesSafeEnvelope(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "cost_millicents") || strings.Contains(out.String(), "provider_resource_id") {
 		t.Fatalf("CLI output exposed operator/provider fields: %s", out.String())
+	}
+}
+
+// TestCmdPostgresUsageHumanOutputHasReadableUnits pins the canary output
+// "storage_byte_seconds: 114070377600 / 2875910101401600000": raw meters stay
+// for scripts, with GiB-months, CU-hours and IEC bytes alongside.
+func TestCmdPostgresUsageHumanOutputHasReadableUnits(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"period_start":"2026-10-01T00:00:00Z","policy_enabled":true,"fresh":true,"guardrail_state":"healthy","ready_databases":1,"database_limit":3,"compute_unit_seconds":5400,"storage_byte_seconds":114070377600,"storage_byte_seconds_limit":2875910101401600000,"storage_byte_seconds_remaining":2875909987331222400,"history_byte_seconds":0,"egress_bytes":1572864}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	var out bytes.Buffer
+	previousOut, previousJSON := osStdout, jsonOutput
+	osStdout, jsonOutput = &out, false
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+
+	if code := cmdPostgresUsage(nil); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	for _, want := range []string{
+		"compute_unit_seconds:         5400 (1.50 CU-hours)",
+		"storage_byte_seconds:         114070377600 / 2875910101401600000",
+		"(0.03 GiB-hours of 1000.00 GiB-months used)",
+		"history_byte_seconds:         0 (0.00 GiB-months)",
+		"egress_bytes:                 1572864 (1.5 MiB)",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
 	}
 }
 
