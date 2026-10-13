@@ -1,4 +1,4 @@
-"""Node occupancy under ADR-957's policy (quiet pause 2 s + freeze at the
+"""Node occupancy under ADR-1151's policy (quiet pause 2 s + freeze at the
 idle timeout): p50/p99/p99.9/max of active vCPU, booked vCPU (running +
 quiet-paused), resident VMs and frozen VMs over the sampled instants, for a
 few apps-per-node counts. Sizes QuietPauseMaxVCPUOvercommitPercent.
@@ -13,7 +13,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import freeze_sim as S  # noqa: E402
 
-POLICY = 'quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-957)'
+POLICY = 'quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-1151)'
 
 
 def main():

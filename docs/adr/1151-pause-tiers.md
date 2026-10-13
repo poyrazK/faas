@@ -1,4 +1,4 @@
-# ADR-957: Pause tiers — quiet pause between requests, frozen after idle
+# ADR-1151: Pause tiers — quiet pause between requests, frozen after idle
 
 - Status: Proposed. Rollout starts with function apps only (owner
   decision, 2026-10-13); services follow once functions have run well in
