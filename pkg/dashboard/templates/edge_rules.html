@@ -88,8 +88,9 @@
           {{if .Blocked}}
             <p class="muted">{{.Blocked}}</p>
           {{else}}
-            <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes/{{.ID}}">
+            <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/recipes">
               <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+              <input type="hidden" name="recipe" value="{{.ID}}">
               {{range .Params}}
                 <label>{{.Label}}{{if .Required}} (required){{end}}
                   <input type="text" name="{{.Name}}" value="{{.Default}}" placeholder="{{.Placeholder}}"{{if .Required}} required{{end}}>

@@ -226,7 +226,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/mode":           true, // HTML form, edge-rule enforce/log switch (ADR-960)
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":         true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":    true, // HTML form, security-headers preset (issue #1397 G4)
-	"POST /dashboard/apps/{slug}/edge-rules/recipes/{recipe}":    true, // HTML form, protection recipe (ADR-986)
+	"POST /dashboard/apps/{slug}/edge-rules/recipes":             true, // HTML form, protection recipe (ADR-986)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay": true, // HTML form, queue DLQ replay (issue #1397 G7)
 	"POST /dashboard/jobs/{name}/policy":                         true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":        true, // HTML form, failed job partition replay (ADR-385)

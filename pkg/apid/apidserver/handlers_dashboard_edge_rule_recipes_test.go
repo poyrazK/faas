@@ -33,7 +33,8 @@ func TestDashboardEdgeRuleRecipes(t *testing.T) {
 	post := func(recipe string, form map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
 		form[middleware.FormFieldName] = token
-		return apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/recipe-app/edge-rules/recipes/"+recipe, form, csrf)
+		form["recipe"] = recipe
+		return apidserver.DashboardPOST(t, h, cookie, "/dashboard/apps/recipe-app/edge-rules/recipes", form, csrf)
 	}
 	page := func() string {
 		t.Helper()
@@ -49,12 +50,12 @@ func TestDashboardEdgeRuleRecipes(t *testing.T) {
 
 	// Free plan: IP-based recipes explain the plan gate; the throttle one is offered.
 	body := page()
-	for _, want := range []string{"Protection recipes", "Block unverified bots", "Available on the Hobby plan and above", "/edge-rules/recipes/rate-limit-path"} {
+	for _, want := range []string{"Protection recipes", "Block unverified bots", "Available on the Hobby plan and above", `name="recipe" value="rate-limit-path"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("free page missing %q", want)
 		}
 	}
-	if strings.Contains(body, "/edge-rules/recipes/block-unverified-bots") {
+	if strings.Contains(body, `name="recipe" value="block-unverified-bots"`) {
 		t.Error("free page offers an IP recipe form")
 	}
 
