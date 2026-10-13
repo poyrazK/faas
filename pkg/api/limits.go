@@ -10491,3 +10491,10 @@ const OperationWorkflowPlaybookEvidenceWatchesPerPassMax = 5
 
 // Application playbook outcome waits use the existing ten-year business observation bound.
 const OperationWorkflowPlaybookOutcomeDeadlineMaxSeconds = OperationWorkflowFreshnessMaxSeconds
+
+// Bounded S3 checksum snapshots and object-attribute wire metadata.
+const MaxObjectMultipartChecksumSnapshotBytes = 2 << 20
+const MaxObjectChecksumValueBytes = 128
+const MaxObjectAttributesHeaderBytes = 128
+const MaxObjectStorageClassBytes = 64
+const MaxObjectAttributesSelections = 5

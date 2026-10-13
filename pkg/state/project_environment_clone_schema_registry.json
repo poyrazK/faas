@@ -6276,6 +6276,8 @@
       "app_id",
       "attempt_count",
       "bucket_id",
+      "checksum_snapshot",
+      "checksum_verified",
       "completion_dispatched",
       "completion_error_code",
       "completion_etag",

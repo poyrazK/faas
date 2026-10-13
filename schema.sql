@@ -11400,6 +11400,76 @@ $$;
 
 
 --
+-- Name: object_multipart_checksum_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_multipart_checksum_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  a text; t text; v text; p jsonb; n integer; item jsonb; i integer;
+BEGIN
+  IF jsonb_typeof(NEW.checksum_snapshot) <> 'object'
+     OR octet_length(NEW.checksum_snapshot::text) > 2097152
+     OR NEW.checksum_snapshot - ARRAY['algorithm','type','value','parts'] <> '{}' THEN
+    RAISE EXCEPTION 'invalid multipart checksum snapshot' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='UPDATE' THEN
+    IF (OLD.checksum_snapshot->>'algorithm',OLD.checksum_snapshot->>'type') IS DISTINCT FROM
+       (NEW.checksum_snapshot->>'algorithm',NEW.checksum_snapshot->>'type')
+       OR OLD.checksum_verified AND NOT NEW.checksum_verified
+       OR OLD.state IN ('completing','completing_conditional','completed','aborting','aborted')
+          AND OLD.checksum_snapshot <> NEW.checksum_snapshot THEN
+      RAISE EXCEPTION 'immutable multipart checksum intent' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  IF NEW.checksum_snapshot='{}' THEN
+    IF NEW.checksum_verified THEN
+      RAISE EXCEPTION 'checksum verification requires an intent' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+  END IF;
+  a := NEW.checksum_snapshot->>'algorithm';
+  t := NEW.checksum_snapshot->>'type';
+  v := coalesce(NEW.checksum_snapshot->>'value','');
+  p := coalesce(NEW.checksum_snapshot->'parts','[]');
+  IF a IS NULL OR t IS NULL OR NOT (
+     a IN ('CRC32','CRC32C') AND t IN ('COMPOSITE','FULL_OBJECT') OR
+     a='CRC64NVME' AND t='FULL_OBJECT' OR
+     a IN ('SHA1','SHA256') AND t='COMPOSITE') OR jsonb_typeof(p)<>'array' THEN
+    RAISE EXCEPTION 'invalid multipart checksum policy' USING ERRCODE='23514';
+  END IF;
+  n := jsonb_array_length(p);
+  IF NEW.state IN ('initiating','active') OR TG_OP='INSERT' THEN
+    IF n<>0 OR v<>'' OR NEW.checksum_verified THEN
+      RAISE EXCEPTION 'initial multipart checksum has no completion proof' USING ERRCODE='23514';
+    END IF;
+  ELSIF NEW.state IN ('completing','completing_conditional','completed') THEN
+    IF n<1 OR n>10000 OR n<>jsonb_array_length(NEW.completion_parts)
+       OR v='' OR length(v)>128 THEN
+      RAISE EXCEPTION 'multipart checksum completion requires selected parts' USING ERRCODE='23514';
+    END IF;
+    FOR item, i IN SELECT value, ordinality::integer FROM jsonb_array_elements(p) WITH ORDINALITY LOOP
+      IF jsonb_typeof(item)<>'object' OR item - ARRAY['number','size','value']<>'{}'
+         OR (item->>'number')::integer IS DISTINCT FROM i
+         OR (NEW.completion_parts->(i-1)->>'part_number')::integer IS DISTINCT FROM i
+         OR (item->>'size')::bigint IS NULL OR (item->>'size')::bigint NOT BETWEEN 1 AND 5368709120
+         OR item->>'value' IS NULL OR length(item->>'value')>88
+         OR item->>'value' !~ '^[A-Za-z0-9+/]+={0,2}$' THEN
+        RAISE EXCEPTION 'invalid selected multipart checksum part' USING ERRCODE='23514';
+      END IF;
+    END LOOP;
+  END IF;
+  IF NEW.state='completed' AND NOT NEW.checksum_verified OR
+     NEW.checksum_verified AND NEW.state<>'completed' THEN
+    RAISE EXCEPTION 'multipart checksum result must be verified before settlement' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: object_url_issuer_live(uuid, uuid, uuid, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11566,6 +11636,8 @@ CREATE TABLE public.object_storage_multipart_uploads (
     protection_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
     protection_lease_token text DEFAULT ''::text NOT NULL,
     protection_verified boolean DEFAULT false NOT NULL,
+    checksum_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    checksum_verified boolean DEFAULT false NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
@@ -11930,8 +12002,8 @@ CREATE FUNCTION public.protect_bound_multipart_journal() RETURNS trigger
     AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.id) AND (
-  (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) IS DISTINCT FROM
-  (to_jsonb(OLD)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) OR
+  (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified','checksum_snapshot','checksum_verified']) IS DISTINCT FROM
+  (to_jsonb(OLD)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified','checksum_snapshot','checksum_verified']) OR
   (NEW.expires_at>OLD.expires_at) OR
   (NEW.provider_upload_id IS DISTINCT FROM OLD.provider_upload_id AND NOT (OLD.state='initiating' AND OLD.provider_upload_id='' AND NEW.state='active' AND NEW.provider_upload_id<>'')) OR
   (OLD.completion_dispatched AND (NEW.size_bytes IS DISTINCT FROM OLD.size_bytes OR NEW.completion_parts IS DISTINCT FROM OLD.completion_parts OR NEW.completion_if_match IS DISTINCT FROM OLD.completion_if_match OR NEW.completion_if_none_match IS DISTINCT FROM OLD.completion_if_none_match))
@@ -48547,6 +48619,13 @@ CREATE TRIGGER object_multipart_capacity_fence BEFORE INSERT ON public.object_st
 --
 
 CREATE TRIGGER object_multipart_capture_admission BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_checksum_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_checksum_guard BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.object_multipart_checksum_guard();
 
 
 --

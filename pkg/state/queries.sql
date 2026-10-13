@@ -4751,8 +4751,8 @@ WHERE bucket_id=$1 AND state IN ('initiating','active','completing','completing_
 
 -- name: ObjectMultipartInsert :one
 INSERT INTO object_storage_multipart_uploads
-(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(protection_snapshot)::jsonb,sqlc.arg(fixed_admission)::boolean,sqlc.arg(encryption_default_revision)::bigint) RETURNING *;
+(id,account_id,app_id,bucket_id,object_key,size_bytes,part_size_bytes,part_count,content_type,object_metadata,expires_at,encryption_snapshot,protection_snapshot,fixed_admission,encryption_default_revision,checksum_snapshot)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,sqlc.arg(encryption_snapshot)::jsonb,sqlc.arg(protection_snapshot)::jsonb,sqlc.arg(fixed_admission)::boolean,sqlc.arg(encryption_default_revision)::bigint,sqlc.arg(checksum_snapshot)::jsonb) RETURNING *;
 
 -- name: ObjectMultipartGet :one
 SELECT * FROM object_storage_multipart_uploads
@@ -4766,6 +4766,7 @@ ORDER BY id LIMIT sqlc.arg(page_limit)::int;
 -- name: ObjectMultipartClaim :one
 UPDATE object_storage_multipart_uploads SET
 state=sqlc.arg(operation), lease_token=sqlc.arg(token),
+checksum_snapshot=CASE WHEN state='active' AND sqlc.arg(operation)::text IN ('completing','completing_conditional') THEN sqlc.arg(checksum_snapshot)::jsonb ELSE checksum_snapshot END,
 encryption_lease_token=CASE WHEN encryption_snapshot='{}' THEN '' ELSE sqlc.arg(token)::text END,
 protection_lease_token=CASE WHEN protection_snapshot='{}' THEN '' ELSE sqlc.arg(token)::text END,
 lease_until=now()+(sqlc.arg(lease_seconds)::int * interval '1 second'),
@@ -4842,7 +4843,7 @@ UPDATE object_storage_multipart_uploads SET completion_dispatched=true,updated_a
 WHERE id=$1 AND lease_token=$2 AND state IN ('completing','completing_conditional');
 
 -- name: ObjectMultipartFinishResult :one
-UPDATE object_storage_multipart_uploads SET state='completed',encryption_verified=sqlc.arg(encryption_verified)::boolean,protection_verified=sqlc.arg(protection_verified)::boolean,completion_etag=sqlc.arg(etag),completion_version_id=sqlc.arg(version_id),
+UPDATE object_storage_multipart_uploads SET state='completed',checksum_verified=sqlc.arg(checksum_verified)::boolean,encryption_verified=sqlc.arg(encryption_verified)::boolean,protection_verified=sqlc.arg(protection_verified)::boolean,completion_etag=sqlc.arg(etag),completion_version_id=sqlc.arg(version_id),
  completion_recovery_cursor='',completion_versions_observed=completion_versions_observed OR sqlc.arg(versions_observed)::boolean,
  lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
 WHERE id=sqlc.arg(id) AND lease_token=sqlc.arg(token) AND completion_dispatched AND state IN ('completing','completing_conditional') RETURNING *;

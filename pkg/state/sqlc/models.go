@@ -5456,6 +5456,8 @@ type ObjectStorageMultipartUpload struct {
 	ProtectionSnapshot         []byte
 	ProtectionLeaseToken       string
 	ProtectionVerified         bool
+	ChecksumSnapshot           []byte
+	ChecksumVerified           bool
 }
 
 type ObjectStorageRequestMetric struct {

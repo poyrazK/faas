@@ -896,6 +896,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1035: Managed object storage for developer sessions](1035-developer-managed-object-storage.md)
 
 - [ADR-1036: Declarative bucket triggers for the owning compute app](1036-managed-object-storage-compute-triggers.md)
+- [ADR-1038: Durable S3 multipart checksums](1038-durable-s3-multipart-checksums.md)
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
 
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
