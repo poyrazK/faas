@@ -493,14 +493,7 @@ func (s *server) appListItem(ctx context.Context, app state.App, latest map[stri
 // retired apps.gregale.dev setting as a safety net so stale configuration
 // cannot put a legacy hostname back into customer-facing URLs.
 func appHostForDomain(slug, domain string) string {
-	domain = strings.Trim(strings.TrimSpace(domain), ".")
-	if domain == domainUnset || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	if domain == "" {
-		return slug
-	}
-	return slug + "." + domain
+	return api.AppHostname(slug, domain)
 }
 
 // appURLForDomain returns the HTTPS customer URL for an app or preview slug.
@@ -945,8 +938,9 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// / "7d" closed set; invalid → default). The stamp echoes the
 		// active window so the template's window-selector tab strip
 		// can mark the current tab.
-		SLOApp:     s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
-		CustomSLOs: s.fetchDashboardCustomSLOs(ctx, app, acct),
+		SLOApp:          s.fetchDashboardSLO(ctx, log, app, acct, resolveSLOWindow(r)),
+		CustomSLOs:      s.fetchDashboardCustomSLOs(ctx, app, acct),
+		SyntheticChecks: s.fetchDashboardSyntheticChecks(ctx, app, acct),
 		SLODuration: views.SLOStamp{
 			Window: resolveSLOWindow(r),
 			AsOf:   time.Now().UTC().Format(time.RFC3339Nano),

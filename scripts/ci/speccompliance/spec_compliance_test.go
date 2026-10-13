@@ -1156,6 +1156,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", alertsPresetsFile),
 		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs
 		filepath.Join(root, "pkg", "api", "slos.go"),                  // ADR-747 customer SLO DTOs
+		filepath.Join(root, "pkg", "api", "synthetic_checks.go"),      // ADR-748 synthetic check DTOs
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),

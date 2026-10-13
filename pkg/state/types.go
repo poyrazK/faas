@@ -3442,6 +3442,9 @@ const (
 	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
 	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
 	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
+	// ADR-748: rules on one synthetic check, named by AlertRule.SyntheticCheckID.
+	AlertMetricSyntheticConsecutiveFailures AlertMetric = "synthetic_check_consecutive_failures"
+	AlertMetricSyntheticLatencyP95          AlertMetric = "synthetic_check_latency_p95_ms"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens
@@ -3644,6 +3647,7 @@ type AlertRule struct {
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
 	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
 	SLOID                           string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL                      string
 	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged

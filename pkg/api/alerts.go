@@ -172,6 +172,9 @@ var AllowedAlertRuleMetrics = []string{
 	// ADR-747: one customer SLO, named by slo_id.
 	AlertRuleMetricSLOBudgetBurn,
 	AlertRuleMetricSLOBudgetRemaining,
+	// ADR-748: one synthetic check, named by synthetic_check_id.
+	AlertRuleMetricSyntheticConsecutiveFailures,
+	AlertRuleMetricSyntheticLatencyP95,
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against
@@ -210,6 +213,19 @@ const (
 // IsSLOAlertMetric reports whether a metric names a customer SLO via slo_id.
 func IsSLOAlertMetric(metric string) bool {
 	return metric == AlertRuleMetricSLOBudgetBurn || metric == AlertRuleMetricSLOBudgetRemaining
+}
+
+// ADR-748 synthetic check alert metrics. Both are app-scoped and name one
+// check by synthetic_check_id: the count of failed runs since the last
+// success, and the p95 latency of successful runs in the rule window.
+const (
+	AlertRuleMetricSyntheticConsecutiveFailures = "synthetic_check_consecutive_failures"
+	AlertRuleMetricSyntheticLatencyP95          = "synthetic_check_latency_p95_ms"
+)
+
+// IsSyntheticCheckAlertMetric reports whether a metric names a check via synthetic_check_id.
+func IsSyntheticCheckAlertMetric(metric string) bool {
+	return metric == AlertRuleMetricSyntheticConsecutiveFailures || metric == AlertRuleMetricSyntheticLatencyP95
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
@@ -326,6 +342,7 @@ type CreateAlertRuleRequest struct {
 	FailureSource                   string  `json:"failure_source,omitempty"`
 	CustomMetricName                string  `json:"custom_metric_name,omitempty"`
 	SLOID                           string  `json:"slo_id,omitempty"`
+	SyntheticCheckID                string  `json:"synthetic_check_id,omitempty"`
 	// ChannelIDs are ADR-749 notification channels the rule delivers to.
 	// With at least one channel, webhook_url and webhook_secret may be omitted.
 	ChannelIDs      []string `json:"channel_ids,omitempty"`
@@ -394,6 +411,7 @@ type AlertRuleResponse struct {
 	FailureSource                   string   `json:"failure_source,omitempty"`
 	CustomMetricName                string   `json:"custom_metric_name,omitempty"`
 	SLOID                           string   `json:"slo_id,omitempty"`
+	SyntheticCheckID                string   `json:"synthetic_check_id,omitempty"`
 	ChannelIDs                      []string `json:"channel_ids,omitempty"`
 	Action                          string   `json:"action"`
 	WebhookURL                      string   `json:"webhook_url"`
@@ -426,6 +444,7 @@ type AlertRuleRow struct {
 	FailureSource                   string
 	CustomMetricName                string
 	SLOID                           string
+	SyntheticCheckID                string
 	Action                          string
 	WebhookURL                      string
 	CooldownMinutes                 int
@@ -460,6 +479,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		FailureSource:                   r.FailureSource,
 		CustomMetricName:                r.CustomMetricName,
 		SLOID:                           r.SLOID,
+		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,

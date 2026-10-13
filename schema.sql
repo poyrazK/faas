@@ -15506,6 +15506,7 @@ CREATE TABLE public.alert_rules (
     event_subscription_id uuid,
     custom_metric_name text,
     slo_id uuid,
+    synthetic_check_id uuid,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -15517,13 +15518,14 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'custom_metric'::text, 'log_error_lines'::text, 'log_warn_lines'::text, 'slo_budget_burn'::text, 'slo_budget_remaining_pct'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'custom_metric'::text, 'log_error_lines'::text, 'log_warn_lines'::text, 'slo_budget_burn'::text, 'slo_budget_remaining_pct'::text, 'synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_recovery_health_chk CHECK (((metric <> ALL (ARRAY['event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_slo_chk CHECK ((((metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) = (slo_id IS NOT NULL)) AND ((slo_id IS NULL) OR (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_state_chk CHECK ((state = ANY (ARRAY['ok'::text, 'firing'::text, 'degraded'::text, 'unknown'::text]))),
+    CONSTRAINT alert_rules_synthetic_check_chk CHECK ((((metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) = (synthetic_check_id IS NOT NULL)) AND ((synthetic_check_id IS NULL) OR (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text]))),
     CONSTRAINT alert_rules_workflow_notification_chk CHECK (((metric <> ALL (ARRAY['workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text])) OR (action = 'webhook'::text)))
 );
@@ -30485,6 +30487,50 @@ CREATE TABLE public.stripe_push_dedupe (
 
 
 --
+-- Name: synthetic_check_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.synthetic_check_runs (
+    check_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ok boolean NOT NULL,
+    status_code integer NOT NULL,
+    latency_ms integer NOT NULL,
+    error_class text NOT NULL,
+    CONSTRAINT synthetic_check_runs_error_chk CHECK ((error_class = ANY (ARRAY[''::text, 'status'::text, 'timeout'::text, 'dns'::text, 'connect'::text, 'tls'::text, 'other'::text]))),
+    CONSTRAINT synthetic_check_runs_latency_chk CHECK ((latency_ms >= 0)),
+    CONSTRAINT synthetic_check_runs_ok_chk CHECK ((ok = (error_class = ''::text))),
+    CONSTRAINT synthetic_check_runs_status_chk CHECK (((status_code = 0) OR ((status_code >= 100) AND (status_code <= 599))))
+);
+
+
+--
+-- Name: synthetic_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.synthetic_checks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    method text NOT NULL,
+    path text NOT NULL,
+    expected_status integer,
+    timeout_ms integer NOT NULL,
+    interval_seconds integer NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT synthetic_checks_interval_chk CHECK ((interval_seconds = ANY (ARRAY[300, 900, 3600]))),
+    CONSTRAINT synthetic_checks_method_chk CHECK ((method = ANY (ARRAY['GET'::text, 'HEAD'::text]))),
+    CONSTRAINT synthetic_checks_name_shape CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT synthetic_checks_path_chk CHECK (((char_length(path) <= 512) AND (path ~ '^/([^/[:space:]\\][^[:space:]\\]*)?$'::text))),
+    CONSTRAINT synthetic_checks_status_chk CHECK (((expected_status IS NULL) OR ((expected_status >= 100) AND (expected_status <= 599)))),
+    CONSTRAINT synthetic_checks_timeout_chk CHECK (((timeout_ms >= 1000) AND (timeout_ms <= 30000)))
+);
+
+
+--
 -- Name: tenant_hostnames; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -38288,6 +38334,30 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 
 --
+-- Name: synthetic_check_runs synthetic_check_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_check_runs
+    ADD CONSTRAINT synthetic_check_runs_pkey PRIMARY KEY (check_id, started_at);
+
+
+--
+-- Name: synthetic_checks synthetic_checks_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_checks
+    ADD CONSTRAINT synthetic_checks_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: synthetic_checks synthetic_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_checks
+    ADD CONSTRAINT synthetic_checks_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: tenant_hostnames tenant_hostnames_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -38920,6 +38990,13 @@ CREATE INDEX alert_rules_enabled_idx ON public.alert_rules USING btree (account_
 --
 
 CREATE INDEX alert_rules_org_id_idx ON public.alert_rules USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: alert_rules_synthetic_check_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btree (synthetic_check_id) WHERE (synthetic_check_id IS NOT NULL);
 
 
 --
@@ -44978,6 +45055,13 @@ CREATE INDEX stripe_push_dedupe_org_id_idx ON public.stripe_push_dedupe USING bt
 
 
 --
+-- Name: synthetic_check_runs_started_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX synthetic_check_runs_started_idx ON public.synthetic_check_runs USING btree (started_at);
+
+
+--
 -- Name: tenant_hostnames_hostname_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -49800,6 +49884,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_rules
     ADD CONSTRAINT alert_rules_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: alert_rules alert_rules_synthetic_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_rules
+    ADD CONSTRAINT alert_rules_synthetic_check_id_fkey FOREIGN KEY (synthetic_check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
 
 
 --
@@ -58168,6 +58260,22 @@ ALTER TABLE ONLY public.stripe_push_dedupe
 
 ALTER TABLE ONLY public.stripe_push_dedupe
     ADD CONSTRAINT stripe_push_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: synthetic_check_runs synthetic_check_runs_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_check_runs
+    ADD CONSTRAINT synthetic_check_runs_check_id_fkey FOREIGN KEY (check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: synthetic_checks synthetic_checks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.synthetic_checks
+    ADD CONSTRAINT synthetic_checks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

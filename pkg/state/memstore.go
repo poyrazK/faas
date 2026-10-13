@@ -251,6 +251,8 @@ type MemStore struct {
 	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
 	appSLOs                     map[string][]SLO                 // app id → definitions (ADR-747), lazily made
 	sloHours                    map[string]map[time.Time]memSLOHour
+	syntheticChecks             map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
+	syntheticRuns               map[string][]SyntheticCheckRun
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectWriteFences           map[string]ObjectBucketWriteFence

@@ -195,6 +195,11 @@ rollback, and every window.
 
 `slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own
 SLOs, named with `slo_id`. See [SLOs and error budgets](slos.md#alert-on-an-slo).
+## Synthetic check alerts
+
+`synthetic_check_consecutive_failures` and `synthetic_check_latency_p95_ms`
+watch one of the app's synthetic checks, named with `synthetic_check_id`. See
+[synthetic checks](synthetic-checks.md#alert-on-a-check).
 
 ## Event consumer routing alerts
 

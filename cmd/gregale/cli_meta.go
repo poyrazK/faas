@@ -136,7 +136,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -892,6 +892,37 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "synthetics",
+		DocSlug: "synthetics",
+		Short:   "Scheduled HTTP checks against an app (synthetics list|create|status|pause|resume|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's synthetic checks", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Schedule a GET or HEAD check on a path", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "check name, unique per app", Req: true, Value: "NAME"},
+				{Name: "path", Short: "path on the app (default /)", Value: "PATH"},
+				{Name: "method", Short: "HTTP method", Value: "METHOD", ClosedSet: []string{"GET", "HEAD"}},
+				{Name: "expect-status", Short: "exact expected status (default any 2xx)", Value: "N"},
+				{Name: "timeout-ms", Short: "timeout including any wake, 1000-30000", Value: "MS"},
+				{Name: "every-minutes", Short: "interval", Value: "MIN", ClosedSet: []string{"5", "15", "60"}},
+			}},
+			{Name: "status", Short: "Show a check's uptime, latency and recent runs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "pause", Short: "Stop running a check", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "resume", Short: "Resume a paused check", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "rm", Short: "Delete a check and its history", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+		},
+	},
+	{
 		Name:    "alerts",
 		DocSlug: "alerts",
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
@@ -919,6 +950,7 @@ var cliCommands = []cliCommand{
 				{Name: "channel", Short: "notification channel id (repeatable); with one, the webhook is optional", Value: "CHANNEL_ID", Repeatable: true},
 				{Name: "custom-metric", Short: "Pushed custom metric to watch; required with --metric custom_metric", Value: "NAME"},
 				{Name: "slo", Short: "SLO id for slo_budget_burn or slo_budget_remaining_pct", Value: "SLO_ID"},
+				{Name: "synthetic-check", Short: "synthetic check id for synthetic_check_* metrics", Value: "CHECK_ID"},
 				{Name: "webhook-url", Short: "https webhook URL (required unless --channel)", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},

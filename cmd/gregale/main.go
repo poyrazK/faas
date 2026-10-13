@@ -514,6 +514,9 @@ func run(args []string) (status int) {
 	case "slos":
 		// ADR-747: customer-defined SLO definitions (distinct from `slo`).
 		return cmdSLOs(args[1:])
+	case "synthetics":
+		// ADR-748: scheduled HTTP checks against the app.
+		return cmdSynthetics(args[1:])
 	case "alerts":
 		// Tier C: per-app alert rules (list|add|info|update|rm|
 		// rotate-secret). Mirrors `webhooks` for dispatcher shape;

@@ -10527,3 +10527,19 @@ var (
 	SLOLatencyThresholdsMS = []int{5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000}
 	SLOWindowDays          = []int{7, 30}
 )
+
+// Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
+// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
+// timeout ceiling matches the gateway wake hold.
+const (
+	MaxSyntheticChecksPerApp       = 5
+	SyntheticCheckTimeoutMinMS     = 1000
+	SyntheticCheckTimeoutMaxMS     = 30000
+	SyntheticCheckDefaultTimeoutMS = 10000
+	SyntheticCheckPathMaxBytes     = 512
+	SyntheticCheckRunRetentionDays = 7
+	SyntheticCheckRecentRuns       = 20
+)
+
+// SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.
+var SyntheticCheckIntervalsSeconds = []int{300, 900, 3600}

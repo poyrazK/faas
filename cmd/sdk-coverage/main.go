@@ -944,10 +944,16 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/notification-channels/{id}":    "DeleteNotificationChannel",
 	"POST /v1/notification-channels/{id}/test": "TestNotificationChannel",
 	// ADR-747 customer SLOs are named after the resource noun.
-	"GET /v1/apps/{slug}/slos":                       "ListSLOs",
-	"POST /v1/apps/{slug}/slos":                      "CreateSLO",
-	"GET /v1/apps/{slug}/slos/{id}":                  "GetSLO",
-	"DELETE /v1/apps/{slug}/slos/{id}":               "DeleteSLO",
+	"GET /v1/apps/{slug}/slos":         "ListSLOs",
+	"POST /v1/apps/{slug}/slos":        "CreateSLO",
+	"GET /v1/apps/{slug}/slos/{id}":    "GetSLO",
+	"DELETE /v1/apps/{slug}/slos/{id}": "DeleteSLO",
+	// ADR-748 synthetic checks are named after the resource noun.
+	"GET /v1/apps/{slug}/synthetics":                 "ListSyntheticChecks",
+	"POST /v1/apps/{slug}/synthetics":                "CreateSyntheticCheck",
+	"GET /v1/apps/{slug}/synthetics/{id}":            "GetSyntheticCheck",
+	"PATCH /v1/apps/{slug}/synthetics/{id}":          "UpdateSyntheticCheck",
+	"DELETE /v1/apps/{slug}/synthetics/{id}":         "DeleteSyntheticCheck",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
 	// ADR-123 PR-D — operator pane for one rule's recent
 	// alert_deliveries rows. ?include_test=true toggles the IsTest

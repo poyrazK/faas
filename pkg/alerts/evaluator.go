@@ -1018,6 +1018,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 		return e.observeCustomMetric(ctx, rule)
 	case state.AlertMetricSLOBudgetBurn, state.AlertMetricSLOBudgetRemaining:
 		return e.observeCustomSLO(ctx, rule)
+	case state.AlertMetricSyntheticConsecutiveFailures, state.AlertMetricSyntheticLatencyP95:
+		return e.observeSyntheticCheck(ctx, rule)
 	case state.AlertMetricSLOBurnRate:
 		// PromQL-backed customer SLO signal. FetchSLOBurnRate folds
 		// the 1h/14.4x and 6h/6x windows into one effective value so
@@ -1225,6 +1227,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.SLOID != "" {
 		m["slo_id"] = rule.SLOID
+	}
+	if rule.SyntheticCheckID != "" {
+		m["synthetic_check_id"] = rule.SyntheticCheckID
 	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations

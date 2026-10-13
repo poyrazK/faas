@@ -182,6 +182,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateSyntheticCheckAlert(r.Context(), app.ID, req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.validateSLOAlert(r.Context(), app.ID, req); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -212,6 +216,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		CustomMetricName:                req.CustomMetricName,
 		SLOID:                           req.SLOID,
+		SyntheticCheckID:                req.SyntheticCheckID,
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
@@ -262,6 +267,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"failure_source":                      row.FailureSource,
 		"custom_metric_name":                  row.CustomMetricName,
 		"slo_id":                              row.SLOID,
+		"synthetic_check_id":                  row.SyntheticCheckID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
@@ -724,6 +730,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		FailureSource:                   string(r.FailureSource),
 		CustomMetricName:                r.CustomMetricName,
 		SLOID:                           r.SLOID,
+		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
 		CooldownMinutes:                 r.CooldownMinutes,
@@ -1044,6 +1051,10 @@ func alertRuleFamily(m state.AlertMetric) string {
 	if api.IsSLOAlertMetric(string(m)) {
 		// slo_id only means something for these metrics (alert_rules_slo_chk).
 		return "slo"
+	}
+	if api.IsSyntheticCheckAlertMetric(string(m)) {
+		// synthetic_check_id only means something for these metrics.
+		return "synthetic_check"
 	}
 	return "other"
 }

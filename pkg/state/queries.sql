@@ -15322,10 +15322,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id)
+ action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id))
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
@@ -20051,3 +20051,55 @@ FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(s
 
 -- name: PurgeSLOHoursBefore :execrows
 DELETE FROM app_slo_hourly WHERE hour < sqlc.arg(before)::timestamptz;
+
+-- ADR-748: synthetic check definitions (apid is the only writer).
+
+-- name: InsertSyntheticCheck :one
+-- The per-app cap is enforced inside the insert, like app_slos.
+INSERT INTO synthetic_checks (account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(name)::text, sqlc.arg(method)::text, sqlc.arg(path)::text,
+ sqlc.narg(expected_status)::integer, sqlc.arg(timeout_ms)::integer, sqlc.arg(interval_seconds)::integer
+WHERE (SELECT count(*) FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid) < sqlc.arg(max_per_app)::integer
+RETURNING *;
+
+-- name: ListSyntheticChecks :many
+SELECT * FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY name;
+
+-- name: GetSyntheticCheck :one
+SELECT * FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: SetSyntheticCheckEnabled :one
+UPDATE synthetic_checks SET enabled = sqlc.arg(enabled)::boolean, updated_at = now()
+WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid RETURNING *;
+
+-- name: DeleteSyntheticCheck :execrows
+DELETE FROM synthetic_checks WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- ADR-748 slice 2: synthetic check runs (meterd is the only writer).
+
+-- name: ListRunnableSyntheticChecks :many
+-- Every enabled check on a live app, with its app slug and last run time;
+-- the runner decides which are due.
+SELECT c.*, a.slug AS app_slug,
+ (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
+FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
+WHERE c.enabled AND a.status <> 'deleted'
+ORDER BY c.id;
+
+-- name: InsertSyntheticCheckRun :exec
+INSERT INTO synthetic_check_runs (check_id, started_at, ok, status_code, latency_ms, error_class)
+VALUES (sqlc.arg(check_id)::uuid, sqlc.arg(started_at)::timestamptz, sqlc.arg(ok)::boolean,
+ sqlc.arg(status_code)::integer, sqlc.arg(latency_ms)::integer, sqlc.arg(error_class)::text)
+ON CONFLICT (check_id, started_at) DO NOTHING;
+
+-- name: ListSyntheticCheckRuns :many
+SELECT * FROM synthetic_check_runs WHERE check_id = sqlc.arg(check_id)::uuid
+ORDER BY started_at DESC LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: SyntheticCheckRunStats :one
+SELECT count(*)::bigint AS runs, count(*) FILTER (WHERE ok)::bigint AS ok_runs,
+ coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE ok), 0)::double precision AS p95_latency_ms
+FROM synthetic_check_runs WHERE check_id = sqlc.arg(check_id)::uuid AND started_at >= sqlc.arg(since)::timestamptz;
+
+-- name: PurgeSyntheticCheckRunsBefore :execrows
+DELETE FROM synthetic_check_runs WHERE started_at < sqlc.arg(before)::timestamptz;

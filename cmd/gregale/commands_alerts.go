@@ -129,6 +129,7 @@ func cmdAlertAdd(args []string) int {
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
 	customMetric := fs.String("custom-metric", "", "pushed custom metric name — required iff --metric=custom_metric")
 	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
+	syntheticCheck := fs.String("synthetic-check", "", "synthetic check id — required iff --metric is synthetic_check_*")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (https://...); optional with --channel")
 	var channels stringListFlag
@@ -159,6 +160,9 @@ func cmdAlertAdd(args []string) int {
 	if api.IsSLOAlertMetric(*metric) != (*sloID != "") {
 		return printErr("Invalid slo", fmt.Errorf("--slo is required with --metric slo_budget_burn or slo_budget_remaining_pct and not allowed otherwise"))
 	}
+	if api.IsSyntheticCheckAlertMetric(*metric) != (*syntheticCheck != "") {
+		return printErr("Invalid synthetic-check", fmt.Errorf("--synthetic-check is required with --metric synthetic_check_* and not allowed otherwise"))
+	}
 	windowSeconds, err := alertRollbackWindowSeconds(*postWindow)
 	if err != nil || windowSeconds > 0 && *action != "rollback" {
 		return printErr("Invalid post-deploy rollback window", fmt.Errorf("requires action=rollback and a whole-second duration from 0 to 1h"))
@@ -182,6 +186,7 @@ func cmdAlertAdd(args []string) int {
 		ChannelIDs:                      channels,
 		CustomMetricName:                *customMetric,
 		SLOID:                           *sloID,
+		SyntheticCheckID:                *syntheticCheck,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
 		WebhookSecret:                   *webhookSecret,
@@ -298,6 +303,9 @@ func cmdAlertInfo(args []string) int {
 	}
 	if resp.SLOID != "" {
 		_, _ = fmt.Fprintf(osStdout, "slo:          %s\n", resp.SLOID)
+	}
+	if resp.SyntheticCheckID != "" {
+		_, _ = fmt.Fprintf(osStdout, "synthetic_check: %s\n", resp.SyntheticCheckID)
 	}
 	_, _ = fmt.Fprintf(osStdout, "action:       %s\n", resp.Action)
 	_, _ = fmt.Fprintf(osStdout, "webhook_url:  %s\n", resp.WebhookURL)

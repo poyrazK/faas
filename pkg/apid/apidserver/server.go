@@ -2139,6 +2139,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/slos", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSLO))))
 	mux.HandleFunc("GET /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSLO)))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/slos/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSLO)))
+	// ADR-748: synthetic HTTP checks.
+	mux.HandleFunc("GET /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listSyntheticChecks)))
+	mux.HandleFunc("POST /v1/apps/{slug}/synthetics", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createSyntheticCheck))))
+	mux.HandleFunc("GET /v1/apps/{slug}/synthetics/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getSyntheticCheck)))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/synthetics/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateSyntheticCheck)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/synthetics/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteSyntheticCheck)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))

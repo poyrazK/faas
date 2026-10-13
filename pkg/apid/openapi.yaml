@@ -12571,6 +12571,100 @@ paths:
       responses:
         '204':
           description: The SLO was deleted.
+  /v1/apps/{slug}/synthetics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listSyntheticChecks
+      summary: List the app's synthetic checks (ADR-748)
+      description: "Returns every scheduled HTTP check defined on the app, name-ordered."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's synthetic checks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSyntheticCheck
+      summary: Define a synthetic check on the app (ADR-748)
+      description: "Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSyntheticCheckRequest' }
+      responses:
+        '201':
+          description: The check was created and will run within one interval.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has a synthetic check with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The app is at its synthetic check cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/synthetics/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: "Synthetic check identifier returned when the check was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSyntheticCheck
+      summary: Get one synthetic check and its recent results (ADR-748)
+      description: "Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404."
+      tags: [apps]
+      responses:
+        '200':
+          description: The check definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateSyntheticCheck
+      summary: Pause or resume a synthetic check (ADR-748)
+      description: "Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSyntheticCheckRequest' }
+      responses:
+        '200':
+          description: The updated check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSyntheticCheck
+      summary: Delete a synthetic check (ADR-748)
+      description: "Removes the check and its run history."
+      tags: [apps]
+      responses:
+        '204':
+          description: The check was deleted.
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
@@ -59029,6 +59123,107 @@ components:
         source:
           type: string
           description: 'prometheus, or degraded: <reason> when budget history or burn rates are unavailable.'
+    CreateSyntheticCheckRequest:
+      description: 'Defines a scheduled HTTP check against the app (ADR-748).'
+      type: object
+      required: [name, path, interval_seconds]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per app.'
+          example: health
+        method:
+          type: string
+          enum: [GET, HEAD]
+          default: GET
+          description: 'HTTP method of the probe.'
+        path:
+          type: string
+          maxLength: 512
+          pattern: '^/([^/\s\\][^\s\\]*)?$'
+          description: "Origin-relative path, query string allowed. The host is always the app's own default hostname."
+          example: /healthz
+        expected_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: 'Exact status that counts as success; omit to accept any 2xx. Redirects are not followed.'
+        timeout_ms:
+          type: integer
+          minimum: 1000
+          maximum: 30000
+          default: 10000
+          description: 'Whole-request timeout, including any wake of a parked app.'
+        interval_seconds:
+          type: integer
+          enum: [300, 900, 3600]
+          description: 'How often the check runs. Five minutes is the floor so a check never keeps an app permanently awake.'
+    UpdateSyntheticCheckRequest:
+      description: 'Pauses or resumes a synthetic check.'
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SyntheticCheckResponse:
+      description: 'One synthetic check definition (ADR-748).'
+      type: object
+      required: [id, name, method, path, url, timeout_ms, interval_seconds, enabled, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: health }
+        method: { type: string, enum: [GET, HEAD] }
+        path: { type: string, example: /healthz }
+        url:
+          type: string
+          format: uri
+          description: 'The full URL each probe requests.'
+        expected_status:
+          type: integer
+          description: 'Exact expected status; absent means any 2xx.'
+        timeout_ms: { type: integer }
+        interval_seconds: { type: integer, enum: [300, 900, 3600] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        results:
+          $ref: '#/components/schemas/SyntheticCheckResults'
+    SyntheticCheckResults:
+      description: 'Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748).'
+      type: object
+      required: [uptime_24h_pct, uptime_7d_pct, runs_24h, p95_latency_ms_24h, recent]
+      properties:
+        uptime_24h_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of runs in the last 24 hours that succeeded; null when none ran.'
+        uptime_7d_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of runs in the last 7 days that succeeded; null when none ran.'
+        runs_24h: { type: integer, format: int64, description: 'Runs in the last 24 hours.' }
+        p95_latency_ms_24h:
+          type: number
+          format: double
+          description: '95th-percentile latency of successful runs in the last 24 hours, including any wake; 0 when none succeeded.'
+        recent:
+          type: array
+          description: 'The most recent runs, newest first (at most 20).'
+          items: { $ref: '#/components/schemas/SyntheticCheckRun' }
+    SyntheticCheckRun:
+      description: 'One synthetic check probe.'
+      type: object
+      required: [started_at, ok, latency_ms]
+      properties:
+        started_at: { type: string, format: date-time }
+        ok: { type: boolean }
+        status_code:
+          type: integer
+          description: 'HTTP status received; absent when no response arrived.'
+        latency_ms: { type: integer }
+        error_class:
+          type: string
+          enum: [status, timeout, dns, connect, tls, other]
+          description: 'Why the run failed; absent on success. status means a response arrived with an unexpected code.'
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object
@@ -70353,6 +70548,8 @@ components:
             - log_warn_lines
             - slo_budget_burn
             - slo_budget_remaining_pct
+            - synthetic_check_consecutive_failures
+            - synthetic_check_latency_p95_ms
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -70373,6 +70570,10 @@ components:
           type: string
           format: uuid
           description: 'The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other metrics.'
+        synthetic_check_id:
+          type: string
+          format: uuid
+          description: 'The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics.'
         webhook_url:
           type: string
           example: "https://example.com/hook"
@@ -70424,7 +70625,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -70444,6 +70645,10 @@ components:
           type: string
           format: uuid
           description: 'Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and slo_budget_remaining_pct (percent of the error budget left); names one of this app''s SLOs. The rule window_spec is ignored for these metrics.'
+        synthetic_check_id:
+          type: string
+          format: uuid
+          description: 'Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored) and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app''s checks.'
         webhook_url:
           type: string
           format: uri
@@ -70485,7 +70690,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

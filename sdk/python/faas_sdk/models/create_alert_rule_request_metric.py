@@ -58,6 +58,8 @@ CreateAlertRuleRequestMetric = Literal[
     "slo_budget_burn",
     "slo_budget_remaining_pct",
     "slo_burn_rate",
+    "synthetic_check_consecutive_failures",
+    "synthetic_check_latency_p95_ms",
 ]
 
 CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
@@ -118,6 +120,8 @@ CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
     "slo_budget_burn",
     "slo_budget_remaining_pct",
     "slo_burn_rate",
+    "synthetic_check_consecutive_failures",
+    "synthetic_check_latency_p95_ms",
 }
 
 

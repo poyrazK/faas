@@ -5,6 +5,8 @@
 // adr: 695
 // adr: 708
 // adr: 749 — notification channels and rule bindings are customer configuration.
+// adr: 747 — SLO definitions are configuration; hourly rollups are operational.
+// adr: 748 — synthetic check definitions are configuration; runs are operational.
 package state
 
 import (
@@ -31,6 +33,10 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"alert_historical_rollback_claims":        CloneSchemaOperational,
 		"notification_channels":                   CloneSchemaConfiguration,
 		"alert_rule_channels":                     CloneSchemaConfiguration,
+		"app_slos":                                CloneSchemaConfiguration,
+		"app_slo_hourly":                          CloneSchemaOperational,
+		"synthetic_checks":                        CloneSchemaConfiguration,
+		"synthetic_check_runs":                    CloneSchemaOperational,
 		"deployment_recovery_lineage":             CloneSchemaOperational,
 		"deployment_rollback_operations":          CloneSchemaOperational,
 		"deployment_dependency_gates":             CloneSchemaOperational,
