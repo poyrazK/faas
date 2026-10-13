@@ -335,6 +335,7 @@ export type { CreateProjectEnvironmentQualificationRequest } from './CreateProje
 export type { CreateProjectEnvironmentRequest } from './CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './CreateQueueBindingRequest.js';
 export type { CreateSLORequest } from './CreateSLORequest.js';
+export type { CreateSyntheticCheckRequest } from './CreateSyntheticCheckRequest.js';
 export type { CreateTCPListenerRequest } from './CreateTCPListenerRequest.js';
 export type { CreateTenantSurfaceRequest } from './CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './CreateTriggerBatchRequest.js';
@@ -1933,6 +1934,9 @@ export type { StorageUsageListResponse } from './StorageUsageListResponse.js';
 export type { StorageUsageResponse } from './StorageUsageResponse.js';
 export type { SuppressWorkflowRecoveryAutomaticActionRequest } from './SuppressWorkflowRecoveryAutomaticActionRequest.js';
 export type { SweepStuckBuildsResponse } from './SweepStuckBuildsResponse.js';
+export type { SyntheticCheckResponse } from './SyntheticCheckResponse.js';
+export type { SyntheticCheckResults } from './SyntheticCheckResults.js';
+export type { SyntheticCheckRun } from './SyntheticCheckRun.js';
 export type { TCPListenerResponse } from './TCPListenerResponse.js';
 export type { TCPListenerTLSCertificateStatus } from './TCPListenerTLSCertificateStatus.js';
 export type { TCPListenerTLSConfig } from './TCPListenerTLSConfig.js';
@@ -1990,6 +1994,7 @@ export type { UpdateProjectEnvironmentRequest } from './UpdateProjectEnvironment
 export type { UpdateProjectEnvironmentRoutePolicyRequest } from './UpdateProjectEnvironmentRoutePolicyRequest.js';
 export type { UpdateProjectRequest } from './UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './UpdateQueueBindingRequest.js';
+export type { UpdateSyntheticCheckRequest } from './UpdateSyntheticCheckRequest.js';
 export type { UpdateTCPListenerRequest } from './UpdateTCPListenerRequest.js';
 export type { UpdateTenantWorkflowScheduleRequest } from './UpdateTenantWorkflowScheduleRequest.js';
 export type { UpdateTriggerRequest } from './UpdateTriggerRequest.js';

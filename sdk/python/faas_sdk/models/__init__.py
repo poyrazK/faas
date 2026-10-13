@@ -510,7 +510,6 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
-
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -683,6 +682,9 @@ from .create_slo_request import CreateSLORequest
 from .create_slo_request_latency_threshold_ms import CreateSLORequestLatencyThresholdMs
 from .create_slo_request_sli import CreateSLORequestSli
 from .create_slo_request_window_days import CreateSLORequestWindowDays
+from .create_synthetic_check_request import CreateSyntheticCheckRequest
+from .create_synthetic_check_request_interval_seconds import CreateSyntheticCheckRequestIntervalSeconds
+from .create_synthetic_check_request_method import CreateSyntheticCheckRequestMethod
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
@@ -1509,6 +1511,7 @@ from .get_route_health_investigation_method import GetRouteHealthInvestigationMe
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
 from .get_route_health_investigation_status_code import GetRouteHealthInvestigationStatusCode
 from .get_route_health_report_customer_group_by import GetRouteHealthReportCustomerGroupBy
+from .get_service_map_range import GetServiceMapRange
 from .get_workflow_operation_execution_control_x_gregale_operation_execution_kind import (
     GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind,
 )
@@ -3583,6 +3586,9 @@ from .service_caller_jwk_kty import ServiceCallerJWKKty
 from .service_caller_jwk_set import ServiceCallerJWKSet
 from .service_caller_jwk_use import ServiceCallerJWKUse
 from .service_caller_scopes import ServiceCallerScopes
+from .service_map_edge import ServiceMapEdge
+from .service_map_node import ServiceMapNode
+from .service_map_response import ServiceMapResponse
 from .service_reliability_policies import ServiceReliabilityPolicies
 from .service_reliability_policy import ServiceReliabilityPolicy
 from .service_replicas import ServiceReplicas
@@ -3715,6 +3721,12 @@ from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
 )
 from .suppress_workflow_recovery_automatic_action_request import SuppressWorkflowRecoveryAutomaticActionRequest
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
+from .synthetic_check_response import SyntheticCheckResponse
+from .synthetic_check_response_interval_seconds import SyntheticCheckResponseIntervalSeconds
+from .synthetic_check_response_method import SyntheticCheckResponseMethod
+from .synthetic_check_results import SyntheticCheckResults
+from .synthetic_check_run import SyntheticCheckRun
+from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -3859,6 +3871,7 @@ from .update_project_request import UpdateProjectRequest
 from .update_queue_binding_request import UpdateQueueBindingRequest
 from .update_queue_binding_request_mode import UpdateQueueBindingRequestMode
 from .update_queue_binding_request_workload_class import UpdateQueueBindingRequestWorkloadClass
+from .update_synthetic_check_request import UpdateSyntheticCheckRequest
 from .update_tcp_listener_request import UpdateTCPListenerRequest
 from .update_tenant_workflow_schedule_request import UpdateTenantWorkflowScheduleRequest
 from .update_tenant_workflow_schedule_request_overlap import UpdateTenantWorkflowScheduleRequestOverlap
@@ -4599,7 +4612,6 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
-
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -4758,6 +4770,9 @@ __all__ = (
     "CreateSLORequestLatencyThresholdMs",
     "CreateSLORequestSli",
     "CreateSLORequestWindowDays",
+    "CreateSyntheticCheckRequest",
+    "CreateSyntheticCheckRequestIntervalSeconds",
+    "CreateSyntheticCheckRequestMethod",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
@@ -5566,6 +5581,7 @@ __all__ = (
     "GetRouteHealthInvestigationSignal",
     "GetRouteHealthInvestigationStatusCode",
     "GetRouteHealthReportCustomerGroupBy",
+    "GetServiceMapRange",
     "GetWorkflowOperationExecutionControlXGregaleOperationExecutionKind",
     "GitHubActivityRetryResponse",
     "GitHubCheckActivity",
@@ -7490,6 +7506,9 @@ __all__ = (
     "ServiceCallerJWKUse",
     "ServiceCallerScopes",
     "ServiceCallScope",
+    "ServiceMapEdge",
+    "ServiceMapNode",
+    "ServiceMapResponse",
     "ServiceReliabilityPolicies",
     "ServiceReliabilityPolicy",
     "ServiceReplicas",
@@ -7610,6 +7629,12 @@ __all__ = (
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
     "SuppressWorkflowRecoveryAutomaticActionRequest",
     "SweepStuckBuildsResponse",
+    "SyntheticCheckResponse",
+    "SyntheticCheckResponseIntervalSeconds",
+    "SyntheticCheckResponseMethod",
+    "SyntheticCheckResults",
+    "SyntheticCheckRun",
+    "SyntheticCheckRunErrorClass",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",
@@ -7746,6 +7771,7 @@ __all__ = (
     "UpdateQueueBindingRequest",
     "UpdateQueueBindingRequestMode",
     "UpdateQueueBindingRequestWorkloadClass",
+    "UpdateSyntheticCheckRequest",
     "UpdateTCPListenerRequest",
     "UpdateTenantWorkflowScheduleRequest",
     "UpdateTenantWorkflowScheduleRequestOverlap",

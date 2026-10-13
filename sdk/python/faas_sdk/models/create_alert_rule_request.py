@@ -59,6 +59,16 @@ class CreateAlertRuleRequest:
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
     """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    custom_metric_name: str | Unset = UNSET
+    """Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
+    and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h."""
+    slo_id: UUID | Unset = UNSET
+    """Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
+    slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec
+    is ignored for these metrics."""
+    synthetic_check_id: UUID | Unset = UNSET
+    """Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored)
+    and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app's checks."""
     webhook_url: str | Unset = UNSET
     """Signed webhook destination. Required with webhook_secret unless channel_ids is set."""
     channel_ids: list[UUID] | Unset = UNSET
@@ -94,6 +104,16 @@ class CreateAlertRuleRequest:
         failure_source: str | Unset = UNSET
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
+
+        custom_metric_name = self.custom_metric_name
+
+        slo_id: str | Unset = UNSET
+        if not isinstance(self.slo_id, Unset):
+            slo_id = str(self.slo_id)
+
+        synthetic_check_id: str | Unset = UNSET
+        if not isinstance(self.synthetic_check_id, Unset):
+            synthetic_check_id = str(self.synthetic_check_id)
 
         webhook_url = self.webhook_url
 
@@ -131,6 +151,12 @@ class CreateAlertRuleRequest:
             field_dict["enabled"] = enabled
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if custom_metric_name is not UNSET:
+            field_dict["custom_metric_name"] = custom_metric_name
+        if slo_id is not UNSET:
+            field_dict["slo_id"] = slo_id
+        if synthetic_check_id is not UNSET:
+            field_dict["synthetic_check_id"] = synthetic_check_id
         if webhook_url is not UNSET:
             field_dict["webhook_url"] = webhook_url
         if channel_ids is not UNSET:
@@ -175,6 +201,22 @@ class CreateAlertRuleRequest:
         else:
             failure_source = check_create_alert_rule_request_failure_source(_failure_source)
 
+        custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        _slo_id = d.pop("slo_id", UNSET)
+        slo_id: UUID | Unset
+        if isinstance(_slo_id, Unset):
+            slo_id = UNSET
+        else:
+            slo_id = UUID(_slo_id)
+
+        _synthetic_check_id = d.pop("synthetic_check_id", UNSET)
+        synthetic_check_id: UUID | Unset
+        if isinstance(_synthetic_check_id, Unset):
+            synthetic_check_id = UNSET
+        else:
+            synthetic_check_id = UUID(_synthetic_check_id)
+
         webhook_url = d.pop("webhook_url", UNSET)
 
         _channel_ids = d.pop("channel_ids", UNSET)
@@ -207,6 +249,9 @@ class CreateAlertRuleRequest:
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             enabled=enabled,
             failure_source=failure_source,
+            custom_metric_name=custom_metric_name,
+            slo_id=slo_id,
+            synthetic_check_id=synthetic_check_id,
             webhook_url=webhook_url,
             channel_ids=channel_ids,
             webhook_secret=webhook_secret,

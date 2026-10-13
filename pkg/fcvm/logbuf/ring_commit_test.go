@@ -1,3 +1,4 @@
+// adr: 746 — every accepted ring line reaches the commit observer once, with its level.
 package logbuf
 
 import "testing"

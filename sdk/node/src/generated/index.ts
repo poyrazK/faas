@@ -340,6 +340,7 @@ export type { CreateProjectEnvironmentQualificationRequest } from './models/Crea
 export type { CreateProjectEnvironmentRequest } from './models/CreateProjectEnvironmentRequest.js';
 export type { CreateQueueBindingRequest } from './models/CreateQueueBindingRequest.js';
 export type { CreateSLORequest } from './models/CreateSLORequest.js';
+export type { CreateSyntheticCheckRequest } from './models/CreateSyntheticCheckRequest.js';
 export type { CreateTCPListenerRequest } from './models/CreateTCPListenerRequest.js';
 export type { CreateTenantSurfaceRequest } from './models/CreateTenantSurfaceRequest.js';
 export type { CreateTriggerBatchRequest } from './models/CreateTriggerBatchRequest.js';
@@ -1939,6 +1940,9 @@ export type { StorageUsageListResponse } from './models/StorageUsageListResponse
 export type { StorageUsageResponse } from './models/StorageUsageResponse.js';
 export type { SuppressWorkflowRecoveryAutomaticActionRequest } from './models/SuppressWorkflowRecoveryAutomaticActionRequest.js';
 export type { SweepStuckBuildsResponse } from './models/SweepStuckBuildsResponse.js';
+export type { SyntheticCheckResponse } from './models/SyntheticCheckResponse.js';
+export type { SyntheticCheckResults } from './models/SyntheticCheckResults.js';
+export type { SyntheticCheckRun } from './models/SyntheticCheckRun.js';
 export type { TCPListenerResponse } from './models/TCPListenerResponse.js';
 export type { TCPListenerTLSCertificateStatus } from './models/TCPListenerTLSCertificateStatus.js';
 export type { TCPListenerTLSConfig } from './models/TCPListenerTLSConfig.js';
@@ -1996,6 +2000,7 @@ export type { UpdateProjectEnvironmentRequest } from './models/UpdateProjectEnvi
 export type { UpdateProjectEnvironmentRoutePolicyRequest } from './models/UpdateProjectEnvironmentRoutePolicyRequest.js';
 export type { UpdateProjectRequest } from './models/UpdateProjectRequest.js';
 export type { UpdateQueueBindingRequest } from './models/UpdateQueueBindingRequest.js';
+export type { UpdateSyntheticCheckRequest } from './models/UpdateSyntheticCheckRequest.js';
 export type { UpdateTCPListenerRequest } from './models/UpdateTCPListenerRequest.js';
 export type { UpdateTenantWorkflowScheduleRequest } from './models/UpdateTenantWorkflowScheduleRequest.js';
 export type { UpdateTriggerRequest } from './models/UpdateTriggerRequest.js';

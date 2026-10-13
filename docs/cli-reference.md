@@ -16,6 +16,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs |
 | [`channels`](#channels) | Alert notification channels: Slack, PagerDuty, email (channels list\|add\|test\|rm) |
+| [`slos`](#slos) | Customer-defined SLOs and error budgets (slos list\|create\|status\|rm --app &lt;slug&gt;) |
+| [`synthetics`](#synthetics) | Scheduled HTTP checks against an app (synthetics list\|create\|status\|pause\|resume\|rm --app &lt;slug&gt;) |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -80,7 +82,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`context`](#context) | Show the linked project and default app context |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events (linked app or interactive picker) |
-| [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
+| [`metrics`](#metrics) | Per-app or account-wide metrics, or the service map (slug defaults to linked context) |
 | [`analytics`](#analytics) | Historical request analytics (analytics &lt;slug&gt; [--since 24h] [--by route\|country\|referrer_host\|ua_family\|status]; slug defaults to linked context) |
 | [`mfa`](#mfa) | Manage account MFA (mfa enroll\|confirm\|verify\|recover\|disable) |
 | [`open`](#open) | Open the app&#39;s URL (linked app or interactive picker) |
@@ -1654,6 +1656,131 @@ Delete a channel
 `gregale channels rm <channel-id>`
 
 
+## slos
+
+Customer-defined SLOs and error budgets (slos list|create|status|rm --app &lt;slug&gt;)
+
+`gregale slos [<subcommand>]`
+
+### slos list
+
+List the app&#39;s SLOs
+
+`gregale slos list --app <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### slos create
+
+Define an availability or latency SLO
+
+`gregale slos create --app <slug> --name <NAME> --objective <PCT> [--sli <SLI>] [--latency-threshold-ms <MS>] [--window-days <DAYS>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--name <NAME>` | SLO name, unique per app | required |
+| `--objective <PCT>` | objective percentage, 90 to 99.99 | required |
+| `--sli <SLI>` | service level indicator | one of `availability` · `latency` |
+| `--latency-threshold-ms <MS>` | latency threshold (5\|10\|25\|50\|100\|250\|500\|1000\|2000\|5000\|10000) |  |
+| `--window-days <DAYS>` | rolling window | one of `7` · `30` |
+
+### slos status
+
+Show an SLO&#39;s attainment, budget remaining and burn rate
+
+`gregale slos status --app <slug> <slo-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### slos rm
+
+Delete one SLO
+
+`gregale slos rm --app <slug> <slo-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+
+## synthetics
+
+Scheduled HTTP checks against an app (synthetics list|create|status|pause|resume|rm --app &lt;slug&gt;)
+
+`gregale synthetics [<subcommand>]`
+
+### synthetics list
+
+List the app&#39;s synthetic checks
+
+`gregale synthetics list --app <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics create
+
+Schedule a GET or HEAD check on a path
+
+`gregale synthetics create --app <slug> --name <NAME> [--path <PATH>] [--method <METHOD>] [--expect-status <N>] [--timeout-ms <MS>] [--every-minutes <MIN>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+| `--name <NAME>` | check name, unique per app | required |
+| `--path <PATH>` | path on the app (default /) |  |
+| `--method <METHOD>` | HTTP method | one of `GET` · `HEAD` |
+| `--expect-status <N>` | exact expected status (default any 2xx) |  |
+| `--timeout-ms <MS>` | timeout including any wake, 1000-30000 |  |
+| `--every-minutes <MIN>` | interval | one of `5` · `15` · `60` |
+
+### synthetics status
+
+Show a check&#39;s uptime, latency and recent runs
+
+`gregale synthetics status --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics pause
+
+Stop running a check
+
+`gregale synthetics pause --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics resume
+
+Resume a paused check
+
+`gregale synthetics resume --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+### synthetics rm
+
+Delete a check and its history
+
+`gregale synthetics rm --app <slug> <check-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug | required |
+
+
 ## alerts
 
 Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app &lt;slug&gt;)
@@ -1699,19 +1826,22 @@ List alert rules
 
 Add an alert rule
 
-`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
 | `--metric <METRIC>` | metric; MCP task gauges: mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale (includes min=0 observer heartbeat) |  |
-| `--comparison <OP>` | gt\|gte\|lt\|lte |  |
+| `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
 | `--event-subscription-id <UUID>` | Subscription UUID for event consumer metrics |  |
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--channel <CHANNEL_ID>` | notification channel id (repeatable); with one, the webhook is optional |  |
+| `--custom-metric <NAME>` | Pushed custom metric to watch; required with --metric custom_metric |  |
+| `--slo <SLO_ID>` | SLO id for slo_budget_burn or slo_budget_remaining_pct |  |
+| `--synthetic-check <CHECK_ID>` | synthetic check id for synthetic_check_* metrics |  |
 | `--webhook-url <URL>` | https webhook URL (required unless --channel) |  |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
@@ -10651,14 +10781,16 @@ Save filters as a named view
 
 ## metrics
 
-Per-app or account-wide metrics (slug defaults to linked context)
+Per-app or account-wide metrics, or the service map (slug defaults to linked context)
 
-`gregale metrics [<slug>] [--range <WINDOW>] [--account]`
+`gregale metrics [<slug>] [--range <WINDOW>] [--account] [--services] [--custom <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` |
+| `--range <WINDOW>` | window (5m\|15m\|1h\|6h\|24h\|7d\|15d) | one of `5m` · `15m` · `1h` · `6h` · `24h` · `7d` · `15d` |
 | `--account` | account-wide roll-up |  |
+| `--services` | service map of app-to-app calls (default range 1h) |  |
+| `--custom <NAME>` | history of one pushed custom metric (ranges 1h\|6h\|24h\|7d\|15d) |  |
 
 
 ## analytics

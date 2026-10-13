@@ -1,3 +1,4 @@
+// adr: 746 — app VM rings feed per-app log line counts; builder rings never do.
 package fcvm
 
 import (
