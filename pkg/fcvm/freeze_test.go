@@ -496,7 +496,7 @@ func TestFreezeMetrics(t *testing.T) {
 		var count, bytes float64
 		for _, f := range families {
 			switch f.GetName() {
-			case "vmmd_frozen_instances":
+			case "node_frozen_instances":
 				count = f.GetMetric()[0].GetGauge().GetValue()
 			case "node_frozen_resident_bytes":
 				bytes = f.GetMetric()[0].GetGauge().GetValue()

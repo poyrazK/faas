@@ -409,7 +409,7 @@ type FreezeMetrics struct {
 }
 
 // NewFreezeMetrics registers vmmd_freeze_seconds, vmmd_thaw_seconds,
-// vmmd_frozen_instances and node_frozen_resident_bytes on reg. The two
+// node_frozen_instances and node_frozen_resident_bytes on reg. The two
 // gauges read src when scraped.
 func NewFreezeMetrics(reg prometheus.Registerer, src FrozenFootprint) *FreezeMetrics {
 	m := &FreezeMetrics{
@@ -425,7 +425,7 @@ func NewFreezeMetrics(reg prometheus.Registerer, src FrozenFootprint) *FreezeMet
 		}),
 	}
 	frozen := prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "vmmd_frozen_instances",
+		Name: "node_frozen_instances",
 		Help: "Instances held frozen in place on this node (ADR-1151).",
 	}, func() float64 { return float64(src.FrozenCount()) })
 	resident := prometheus.NewGaugeFunc(prometheus.GaugeOpts{

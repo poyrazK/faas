@@ -191,7 +191,7 @@ write the services' lifecycle setting when services are added.
 
 `vmmd_quiet_pause_total{outcome}`, `vmmd_quiet_resume_seconds`,
 `vmmd_quiet_paused_instances`, `vmmd_freeze_seconds`, `vmmd_thaw_seconds`,
-`vmmd_frozen_instances`, `node_frozen_resident_bytes`,
+`node_frozen_instances`, `node_frozen_resident_bytes`,
 `schedd_frozen_instances`, `schedd_frozen_total{outcome}`,
 `schedd_frozen_parks_total{reason}` and `schedd_frozen_thaw_total{outcome}`.
 (Amended 2026-10-13: schedd metrics are prefixed `schedd_`, as every schedd
