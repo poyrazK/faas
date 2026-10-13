@@ -249,22 +249,6 @@ func (s *server) listDeploymentAudit(w http.ResponseWriter, r *http.Request, acc
 	mcpadmission.ListDeploymentAudit(s.store, w, r, acct, listDeploymentAuditLimitDefault, listDeploymentAuditLimitMax)
 }
 
-// deploymentAuditResponse projects one pkg/state.DeploymentAudit
-// row into the wire DTO. Internal id stays server-side; the wire
-// surface keys rows by (deployment_id, at) — there is no
-// per-row id on the API.
-//
-// Data is rendered verbatim — kind-specific shapes
-// (deploy.traffic_changed → {from_percent, to_percent, actor_kind},
-// deploy.rolled_back → {target_deployment_id, reason}) are
-// surfaced through a single json.RawMessage column. The dashboard
-// pretty-prints the JSON in its timeline block
-// (deployment_detail.html) and the SDK leaves it as bytes for the
-// caller to decode.
-func deploymentAuditResponse(r state.DeploymentAudit) api.DeploymentAuditResponse {
-	return mcpadmission.DeploymentAuditResponse(r)
-}
-
 // eventDataHasAppID returns true iff data is a JSON object whose
 // "app_id" field equals the requested uuid. Wave 0 PR-C / ADR-047
 // uses this to filter the audit overscan window by app_id post-SQL.

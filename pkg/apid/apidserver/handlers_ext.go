@@ -2231,7 +2231,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		case errors.Is(err, state.ErrDeploymentNotLive):
 			status := string(d.Status)
-			if current, readErr := s.store.DeploymentByID(r.Context(), id); readErr == nil {
+			if current, readErr := s.store.DeploymentByID(guardCtx, id); readErr == nil {
 				status = string(current.Status)
 			}
 			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
@@ -2258,7 +2258,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(r.Context(), "deployment.traffic_percent_changed", &acct.ID, map[string]any{
+		s.audit.Emit(guardCtx, "deployment.traffic_percent_changed", &acct.ID, map[string]any{
 			"app":             app.ID,
 			"deployment":      updated.ID,
 			"traffic_percent": req.TrafficPercent,
@@ -2276,13 +2276,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	// additive. Failure is logged-and-continued — same contract as
 	// the audit emit above.
 	if s.notif != nil {
-		if err := s.notif.Notify(r.Context(), db.NotifyDeploymentChanged,
+		if err := s.notif.Notify(guardCtx, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"traffic","app_id":"%s","deployment_id":"%s","traffic_percent":%d}`,
 				app.ID, updated.ID, req.TrafficPercent)); err != nil {
 			s.log.Warn("apid: notify deployment_changed (traffic) failed", "err", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(guardCtx, updated, app))
 }
 
 // planMaxFor resolves the per-plan MaxMinInstances cap for the
