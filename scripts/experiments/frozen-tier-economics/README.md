@@ -25,6 +25,9 @@ FROZEN_OWN_FRAC=0.15 python3 -P -E scripts/experiments/frozen-tier-economics/fre
 python3 -P -E scripts/experiments/frozen-tier-economics/show.py /tmp/results.json
 ```
 
+`FUNCTIONS=1` treats every app as a function app, which idles out after
+30 s on every plan (ADR-974) instead of the plan's idle timeout.
+
 `occupancy.py apps.npz` prints the active vCPU, booked vCPU, resident and
 frozen VM counts per instant under ADR-957's policy (quiet pause plus
 freeze at the idle timeout).

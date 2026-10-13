@@ -26,7 +26,12 @@ PLANS = {  # RAM MB, guest vCPU, idle timeout s, €/month, included GB-h
     'pro':   dict(ram=512,  vcpu=2, idle=300, price=29.0, incl=250),
     'scale': dict(ram=1024, vcpu=4, idle=600, price=99.0, incl=1500),
 }
-MIX = {'free': 0.80, 'hobby': 0.11, 'pro': 0.08, 'scale': 0.01}   # 4 free riders per payer, 55/40/5
+# FUNCTIONS=1: every app is a function app, which idles out after
+# FunctionIdleTimeoutDefaultSeconds (30 s, ADR-974) on every plan.
+if os.environ.get('FUNCTIONS') == '1':
+    for _plan in PLANS.values():
+        _plan['idle'] = min(_plan['idle'], 30)
+MIX ={'free': 0.80, 'hobby': 0.11, 'pro': 0.08, 'scale': 0.01}   # 4 free riders per payer, 55/40/5
 OVERAGE_EUR_PER_GBH = 0.01
 NODES = {
     'EX44 (€44/mo, 47.6 GB, 160 vCPU slots)': dict(cost=44.0, ceiling=47600, vcpu=160, vms=10000),

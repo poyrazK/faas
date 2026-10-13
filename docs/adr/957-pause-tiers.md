@@ -1,6 +1,8 @@
 # ADR-957: Pause tiers — quiet pause between requests, frozen after idle
 
-- Status: Proposed
+- Status: Proposed. Rollout starts with function apps only (owner
+  decision, 2026-10-13); services follow once functions have run well in
+  production.
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -44,6 +46,19 @@ E's p99.9 instant has 166 active vCPU (budget 160), 424 booked vCPU for
 running and quiet-paused VMs (2.65× the budget), 210 resident VMs and about
 305 frozen ones (`occupancy.py` in the same directory).
 
+The trace is all functions, but the table above uses the plan idle
+timeouts. Function apps idle out after 30 s on every plan (ADR-974), which
+leaves less idle time to reclaim. With `FUNCTIONS=1`:
+
+| function apps (30 s idle timeout) | apps per EX44 | billing | wakes that restore | mean wake latency |
+|---|---|---|---|---|
+| today | 285 | 23.6 GB-h, €3.92 per app-month | all | 340 ms |
+| quiet pause after 2 s | 716 | unchanged | 18% | 62.3 ms |
+| quiet pause, then frozen at the idle timeout | 716 | unchanged | 0.1% | 3.5 ms |
+
+Quiet pause alone carries the whole capacity gain; frozen adds the latency
+win for requests that arrive after the 30 s idle timeout.
+
 ## Decision (proposed)
 
 Two tiers built on the same Firecracker pause, with different owners.
@@ -53,9 +68,9 @@ Two tiers built on the same Firecracker pause, with different owners.
 - vmmd pauses a running instance after `QuietPauseAfter` (2 s) without
   activity: no forward RPC in flight (HTTP, raw, TCP and UDP streams, so an
   open WebSocket or TCP connection counts), no `waitUntil` tail task and no
-  exec session. vmmd's activity tracker (`pkg/fcvm/activity`) already
-  counts these, and all four forward RPCs pass through
-  `Server.beginActivity`.
+  exec session. vmmd already tracks forwarded requests (`pkg/fcvm/activity`)
+  and tail tasks (the Manager's tail counters), and all four forward RPCs
+  pass through `Server.beginActivity`.
 - `beginActivity` resumes a paused instance before the bridge dials the
   guest, once per instance however many requests arrive together. ADR-906
   measured +1–3 ms p50 for a request that finds the VM paused.
@@ -68,19 +83,23 @@ Two tiers built on the same Firecracker pause, with different owners.
 - vmmd reports `quiet_paused` and `quiet_paused_since` in `InstanceStats`;
   schedd uses them for admission (section 3).
 - schedd decides eligibility at wake and sends it in the app spec
-  (`quiet_pause_after_ms`, 0 = off), updated through the runtime-config
-  path. A new app setting `quiet_pause` (`auto` default, `on`, `off`,
-  written by apid) controls it. `auto` is on for function apps, the
-  execution model AWS Lambda uses, where the environment is frozen between
-  invocations, and off for services. It is never on for workers, apps
-  attached to a private network (guest-to-guest packets bypass vmmd, so a
-  paused peer would drop them), mirror instances, jobs, app tasks or
-  builders.
+  (`quiet_pause_after_ms`, 0 = off). The first release covers function
+  apps only (`app_type = function`), the execution model AWS Lambda uses,
+  where the environment is frozen between invocations. It needs no new
+  customer setting. Quiet pause is never on for workers, apps attached to a
+  private network (guest-to-guest packets bypass vmmd, so a paused peer
+  would drop them), mirror instances, jobs, app tasks or builders.
 - What a customer sees, from ADR-906's pause experiments: in-process timers
   and background threads stop 2 s after the last request; an outbound
   connection survives, but a peer that expects heartbeats more often than
   the pause lasts may close it; after resume the guest clock is a constant
-  ~75 ms behind. `quiet_pause: off` restores today's behaviour.
+  ~75 ms behind.
+- Services come later, once functions have run well in production. They
+  get a declared lifecycle written by apid: `request` (paused between
+  requests, the function behaviour), `idle` (runs through the idle timeout,
+  then frozen; the default for services) or `always` (never paused or
+  frozen). The platform cannot see in-process timers or heartbeat
+  protocols from outside, so the app declares them.
 
 ### 2. Frozen: a new instance state, owned by schedd, not billed
 
@@ -146,8 +165,8 @@ decided inside vmmd from its own counters. schedd is still the only writer
 of `instances`: it owns `frozen`, the TTL, eviction, thaw admission and
 eligibility. gatewayd-internal keeps its hot path; a frozen instance is
 unroutable like a parked one and wakes through schedd. meterd is unchanged,
-because billing follows instance states through the trigger. apid writes
-the `quiet_pause` setting.
+because billing follows instance states through the trigger. apid will
+write the services' lifecycle setting when services are added.
 
 ## Limits (`pkg/api/limits.go`)
 
@@ -172,35 +191,42 @@ the `quiet_pause` setting.
 One PR each. PRs that touch the VM lifecycle run `test-metal` and
 `leakcheck` on the n2 node.
 
+Step 1, quiet pause for function apps:
+
 1. This ADR.
 2. vmmd quiet pause behind `quiet_pause.enabled` in `vmmd.toml` (off by
    default): pause controller, resume in `beginActivity`, probe skipping,
    stats fields. Metal test: 1,000 pause/resume cycles under forwarded load,
    an open stream is never paused, a paused VM snapshots and destroys
    cleanly, no leaks.
-3. `quiet_pause` app setting (apid, CLI, docs) and schedd eligibility in the
-   app spec.
+3. schedd eligibility for function apps in the app spec.
 4. schedd active-vCPU admission and the 300% cap, with a property test for
    the vCPU side of invariant 2.
-5. `frozen` state: migration (CHECK, billing trigger, indexes),
+5. Canary on one production node with the flag on, comparing resume
+   latency, errors and CPU pressure against the other nodes; then on for
+   every node.
+
+Step 2, frozen for function apps, once step 1 has run well in production:
+
+6. `frozen` state: migration (CHECK, billing trigger, indexes),
    `machine.go` edges, store conformance tests.
-6. vmmd `Freeze`/`Thaw` RPCs from the ADR-906 prototype, and
+7. vmmd `Freeze`/`Thaw` RPCs from the ADR-906 prototype, and
    `PauseAndSnapshot` with `keep_paused`.
-7. schedd: freeze instead of park at the idle timeout, TTL, eviction order,
+8. schedd: freeze instead of park at the idle timeout, TTL, eviction order,
    thaw promotion, recovery after a host restart.
-8. Metrics, dashboards and debugger states; billing tests (frozen unbilled,
-   quiet-paused billed).
-9. Canary on one node with both flags on, comparing first byte, apps per
-   node and CPU PSI against the other nodes; then on by default for
-   function apps.
+9. Metrics, dashboards and debugger states; billing tests (frozen unbilled,
+   quiet-paused billed); canary as in step 1.
+
+Step 3, services: the declared lifecycle (`request`, `idle`, `always`)
+through apid, the CLI and docs, then the same canary.
 
 ## Consequences
 
 - In the simulation, a request that finds no running VM waits 3.4 ms on
   average instead of 340 ms, vCPU-bound nodes hold 2.85× the apps, and
   billing and revenue do not change.
-- Function apps lose in-process timers between requests after 2 s. This is
-  documented and can be turned off per app.
+- Function apps lose in-process timers between requests after 2 s, as on
+  AWS Lambda. The function docs state it.
 - A burst of resumes can oversubscribe CPU for a while. The guarantee is
   soft, bounded by the 300% cap and watched through PSI.
 - More resident Firecracker processes: about 515 per EX44 at 716 apps
@@ -210,8 +236,8 @@ One PR each. PRs that touch the VM lifecycle run `test-metal` and
 
 ## Open questions
 
-1. Is quiet pause on by default for function apps and opt-in for services?
-2. Frozen TTL: 1 h or 10 min? The simulation gives the same capacity, and
-   10.9 against 11.0 ms mean thaw-or-restore latency.
-3. Is a soft CPU guarantee for quiet resumes acceptable, or should resumes
-   wait for a vCPU token?
+1. Frozen TTL: 1 h or 10 min? The simulation gives the same capacity, and
+   10.9 against 11.0 ms mean thaw-or-restore latency. Decided before step 2.
+2. Is a soft CPU guarantee for quiet resumes acceptable, or should resumes
+   wait for a vCPU token? The step 1 canary measures how far active vCPU
+   exceeds the budget in practice.
