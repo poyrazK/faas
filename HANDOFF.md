@@ -62,22 +62,27 @@
   "defaulted release falls back to immediate when the canary worker is down"
   hit a `403` creating its app. The new probe-abort case was the sixth app on
   a Hobby account with a 5-app limit. That case now uses its own Hobby account.
-- **Open:** the `apidserver` test build failed on the node (`[build failed]`).
-  The script's grep filter hid the compiler error. See "Next steps" item 1
-  for the error, if it was captured.
+- **Open:** the `apidserver` test build has not completed anywhere. The
+  internal test unit was OOM-killed on the laptop (9.1 GB peak, under
+  `go vet`) and twice on the n2 node (`compile: signal: killed` under
+  `-c=1 -dwarf=false`, `GOMEMLIMIT=6GiB`, with about 7 GB free). Nothing so
+  far shows a code error, but the new and changed `apidserver` test files
+  are still unverified.
 
 ## Next steps, in order
 
-1. **Fix the `apidserver` test build.** New and changed test files:
+1. **Get the `apidserver` tests compiled and passing.** New and changed test files:
    - `pkg/apid/apidserver/route_probe_default_test.go` (external package);
    - `pkg/apid/apidserver/export_test.go` (added `SeedCanaryFixture`,
      `RouteProbeChallengeDelay`, `(*server).DrainRouteProbes`);
    - `pkg/apid/apidserver/route_probe_worker_test.go` (kill-switch line).
 
-   Captured error: _see `/mnt/e2e-scratch/sr-verify-a224feb75c/apid-compile.log`
-   on the node (written by `/mnt/e2e-scratch/sr-apid-compile.sh`)._ Then run
-   `make test-apid RUN='^TestRouteProbeWorker'`. On a laptop the internal unit
-   peaks around 9 GB and was OOM-killed here. Use the n2 node or CI.
+   Neither machine here has the memory for it, so let CI compile it: push and
+   read the ci-light and apid test jobs. Alternatively, run
+   `make test-apid RUN='^TestRouteProbeWorker'` on a host with at least 12 GB
+   free. If it compiles, both `TestRouteProbeWorker*` tests must pass. The
+   default-probe test covers the safe policy (20 probes of `/`), immediate
+   policy (none), and kill switch (none).
 2. **Re-run the full drill on n2** and confirm all six cases pass.
 3. Record **run 12** in the drill record and update the ADR-1160 entry in
    `docs/STATUS.md`. Use the numbers above plus the re-run.
@@ -100,8 +105,8 @@
   - Then it runs the drill through `run.sh`, which waits for the host lock.
   - Logs: `/mnt/e2e-scratch/sr-verify-<rev>/verify.log` and
     `/mnt/e2e-scratch/sr-drill-<rev>/run.log`.
-  - Its `apidserver` step pipes through `grep` and hides compile errors.
-    Drop that filter.
+  - Its `apidserver` step is OOM-killed on this node and its `grep` filter
+    hides the reason. Remove that step, or ignore `APIDSERVER_EXIT`.
 - The scratch disk is shared and nearly full (7 GB free on 2026-10-13).
   Clean only your own `sr-*` directories. Keep
   `/mnt/e2e-scratch/sr-verify-f7266e3698/gomod`, the module cache the script
