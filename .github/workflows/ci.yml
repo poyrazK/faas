@@ -1085,6 +1085,16 @@ jobs:
           restore-keys: |
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
+      # Compiling this shard's race-instrumented dependencies (pkg/state and the
+      # scheduler) peaks near 10 GB of compiler RSS, and pkg/fcvm's tests peak
+      # near 6 GB. With both in flight under -p 4 the 16 GB hosted runner ran
+      # out of memory and GitHub reported "The runner has received a shutdown
+      # signal" (diagnosed 2026-10-13). Compiling two packages at a time first
+      # fills the build cache, so the test step below only links and runs.
+      - name: compile shard 1 test binaries
+        run: |
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/pkg/apid/apidserver$' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
+          go test -race -cover -covermode=atomic -count=1 -p 2 -run='^$' $PKGS > /dev/null
       - name: unit tests (pure Go shard 1)
         env:
           # Pull requests let Go's test cache skip packages whose transitive

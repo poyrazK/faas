@@ -36,7 +36,12 @@ import (
 func newNodeRecoveryFixture(t *testing.T, slug string) *normalPathFixture {
 	t.Helper()
 	return newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanHobby,
-		"FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS=2",
+		// Longer than schedd's 30 s heartbeat interval: a shorter window
+		// makes a healthy node look dead between pings, so the reconciler
+		// fails the instance a recovered node has just booted. The faulted
+		// node is still stale at once, because the test backdates its
+		// heartbeat by ten minutes.
+		"FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS=45",
 		"FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS=1",
 		// One failed ping fails the node over, as before the production
 		// default of three (H9-171), so detection fits the 30 s window.
