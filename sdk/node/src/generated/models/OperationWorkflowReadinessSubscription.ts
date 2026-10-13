@@ -2,12 +2,29 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowNextActionDigestPolicy } from './OperationWorkflowNextActionDigestPolicy.js';
 import type { OperationWorkflowPlaybookEvidenceWatch } from './OperationWorkflowPlaybookEvidenceWatch.js';
 import type { OperationWorkflowReadinessImpactWatch } from './OperationWorkflowReadinessImpactWatch.js';
 /**
  * Durable subscription configuration and most recent successful bounded evaluation; deletion cancels future evaluations and removes its inbox.
  */
 export type OperationWorkflowReadinessSubscription = {
+  /**
+   * Next digest evaluation time. Evaluation occurs on a worker pass at or after this time; failures retry without consuming the cadence.
+   */
+  digest_next_at?: string;
+  /**
+   * Most recent successful digest evaluation, including silent evaluations with no changed items.
+   */
+  digest_evaluated_at?: string;
+  /**
+   * Most recent changed-item digest delivery. This does not acknowledge or fulfill source work.
+   */
+  digest_delivered_at?: string;
+  /**
+   * Configured team digest filters and cadence for this subscription scope; delete and recreate the subscription to change this policy.
+   */
+  next_action_digest?: OperationWorkflowNextActionDigestPolicy;
   /**
    * OperationWorkflowReadinessSubscription.business_impact_watches. Retained impact observations and coverage status for configured protected results.
    */

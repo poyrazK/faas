@@ -153,6 +153,16 @@
 <p>A positive acknowledgment window requires a notification owner. The fallback must be a different team.</p>
 <p>The initial observation is silent. Later first-critical, first-overdue and source-confirmed tracked-review clearance changes enter this inbox. This watch uses the subscription customer and environment scope.</p>
 </fieldset>
+<fieldset><legend>Optional team next-action digest</legend>
+<label><input name="digest_enabled" type="checkbox" id="readiness-digest-enabled">Deliver a team digest to this subscription inbox</label>
+<label>Team / exact action owner <input name="digest_owner" maxlength="256"></label>
+<label>Digest workflow <input name="digest_workflow" maxlength="63" placeholder="All workflows"></label>
+<label>Digest action type <select name="digest_action_kind"><option value="">All actions</option><option value="response_check_in">response check in</option><option value="decision_revalidation">decision revalidation</option><option value="handoff_acceptance">handoff acceptance</option><option value="handoff_reassignment">handoff reassignment</option><option value="escalation_acknowledgment">escalation acknowledgment</option><option value="coordinator_completion">coordinator completion</option><option value="scheduled_evidence_check">scheduled evidence check</option><option value="dependency_review">dependency review</option><option value="follow_up">follow up</option></select></label>
+<label>Digest trigger <select name="digest_action_trigger"><option value="">All triggers</option><option value="human">Human obligations</option><option value="automatic">Scheduled checks</option></select></label>
+<label>Cadence (minutes) <input name="digest_cadence" type="number" min="1" max="10080" step="1" value="60"></label>
+<label>Approaching deadline window (minutes) <input name="digest_soon" type="number" min="1" max="10080" step="1" value="1440"></label>
+<p>Uses this subscription’s customer and environment, with independent digest filters. Includes overdue work, approaching deadlines and unaccepted handoffs. Up to 20 new or changed items per delivery; unchanged items stay silent. A digest never fulfills source work.</p>
+</fieldset>
 <button type="submit">Create subscription</button>
 </form>
 <p>Requirement and row-limit filters apply to the queue only. Subscriptions watch all requirements on matching transitions.</p>
@@ -372,6 +382,7 @@
   text(parent,'Evidence updates stop when the source watch expires. The assigned follow-up uses the existing acknowledgment and completion controls.');
  };
  window.renderReadinessOutcomeWatch = (parent, notification, scope) => {
+  if(notification.next_action_digest){const digest=notification.next_action_digest;text(parent,'Team digest · '+digest.owner+' · Checked '+new Date(digest.evaluated_at).toLocaleString()+' · '+digest.changed_count+' new or changed / '+digest.matching_count+' qualifying actions');if(digest.remaining_changed_count)text(parent,digest.remaining_changed_count+' additional changed items remain eligible for later digests.');text(parent,'Snapshots may have changed; inspect source controls before acting.');for(const row of digest.items){const action=row.action;text(parent,action.kind.replace(/_/g,' ')+' · '+action.owner+' · '+action.summary+(action.due_at?' · '+(action.overdue?'Overdue ':'Due ')+new Date(action.due_at).toLocaleString():''));for(const c of row.cases)text(parent,c.workflow+' / '+c.instance_id+' · '+c.subject.type+': '+c.subject.id);if(action.shared_plan)text(parent,'Shared source record covers additional cases.');const q=new URLSearchParams({scope:row.scope});if(row.subscription_tenant_id)q.set('tenant_id',row.subscription_tenant_id);const link=document.createElement('a');link.href=window.location.pathname+'?'+q+'#readiness-subscriptions/'+encodeURIComponent(action.subscription_id)+'/'+action.sequence;link.textContent='Inspect current action controls';parent.append(link);}}
   window.renderReadinessEscalation(parent,notification.outcome_escalation,scope);
   window.renderPlaybookEscalation(parent,notification.playbook_escalation,scope);
   window.renderPlaybookStepAssignment(parent,notification.playbook_step);
@@ -660,7 +671,7 @@
   const result=document.createElement('p');result.setAttribute('role','status');form.append(result);
   const subscriptionID=select.value;
   const detailURL=panel.dataset.url+'/'+encodeURIComponent(subscriptionID)+'/notifications/'+notification.sequence+'?'+query();
-  form.addEventListener('submit',async event => {event.preventDefault();save.disabled=true;const submittedDueInput=due.value;try {
+ form.addEventListener('submit',async event => {event.preventDefault();save.disabled=true;const submittedDueInput=due.value;try {
    const updated=await request(detailURL,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:c.revision,status:status.value,owner:owner.value,note:note.value,follow_up_at:due.value ? (due.value===savedDueInput && c.follow_up_at ? c.follow_up_at : new Date(due.value).toISOString()) : undefined})});
    if(select.value!==subscriptionID || !li.isConnected)return;
    savedDueInput=submittedDueInput;describeReminder(updated.reminder);Object.assign(c,updated.coordination);due.disabled=!!c.completion;if(!updated.coordination.acknowledged_by){delete c.acknowledged_by;delete c.acknowledged_at;}if(!updated.coordination.follow_up_at)delete c.follow_up_at;updateCoordinationStatus();renderCompletion();li.dataset.owner=updated.coordination.owner;li.dataset.pending=String(!!updated.coordination.follow_up_at);applyFollowupFilters();result.textContent='Saved '+updated.coordination.status+' by '+updated.coordination.updated_by+'.';
@@ -686,6 +697,7 @@
    after = result.next_sequence; more.hidden = !result.has_more;
    const sub = result.subscription;
    message.textContent = sub.name + ': ' + sub.status + '; last successful evaluation ' + sub.evaluated_at + '; ' + sub.watched_transition_count + ' saved transitions.' + (sub.coverage_incomplete ? ' Coverage is incomplete; narrow the workflow or customer filters.' : '') + (result.resync_required ? ' Notification history has a gap; showing retained entries.' : '') + (result.has_more ? ' More notifications are available.' : '') + (!result.items.length && !inbox.children.length ? ' No retained notifications.' : '');
+   if(sub.next_action_digest)message.textContent+=' Digest for '+sub.next_action_digest.owner+'; next evaluation '+(sub.digest_next_at?new Date(sub.digest_next_at).toLocaleString():'pending')+'; last delivery '+(sub.digest_delivered_at?new Date(sub.digest_delivered_at).toLocaleString():'none')+'.';
   } catch (error) { if (epoch === generation) message.textContent = error.message; }
   finally { reading = false; }
  };
@@ -704,12 +716,14 @@
    await read();
   } catch (error) { if (epoch === generation) message.textContent = error.message; }
  };
+  const digestEnabled=document.getElementById('readiness-digest-enabled');const syncDigest=()=>{for(const name of ['digest_owner','digest_workflow','digest_action_kind','digest_action_trigger','digest_cadence','digest_soon']){const field=form.elements.namedItem(name);field.disabled=!digestEnabled.checked;field.required=digestEnabled.checked&&['digest_owner','digest_cadence','digest_soon'].includes(name);}};digestEnabled.addEventListener('change',syncDigest);syncDigest();
  form.addEventListener('submit',async event => {
   event.preventDefault(); create.disabled = true;
   const fields = new FormData(form);
   const body = {name:fields.get('name'),scope:panel.dataset.scope,events:fields.getAll('event'),unassigned:panel.dataset.unassigned === 'true'};
   for (const [field,value] of Object.entries({tenant_id:panel.dataset.tenant,workflow:panel.dataset.workflow,target_operation:panel.dataset.operation,owner:panel.dataset.owner})) if (value) body[field] = value;
   if(fields.get('impact_kind') || fields.get('impact_code'))body.business_impact_watches=[{workflow:fields.get('impact_workflow'),kind:fields.get('impact_kind'),code:fields.get('impact_code'),owner:fields.get('impact_owner')||undefined,acknowledge_after_seconds:fields.get('impact_acknowledge_after_seconds')?Number(fields.get('impact_acknowledge_after_seconds')):undefined,fallback_owner:fields.get('impact_fallback_owner')||undefined}];
+  if(digestEnabled.checked)body.next_action_digest={owner:fields.get('digest_owner'),workflow:fields.get('digest_workflow')||undefined,action_kind:fields.get('digest_action_kind')||undefined,action_trigger:fields.get('digest_action_trigger')||undefined,cadence_seconds:Number(fields.get('digest_cadence'))*60,soon_after_seconds:Number(fields.get('digest_soon'))*60};
   try { const sub = await request(panel.dataset.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); await load(sub.id); }
   catch (error) { message.textContent = error.message; }
   finally { create.disabled = false; }

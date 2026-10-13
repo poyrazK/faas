@@ -79146,6 +79146,9 @@ components:
         inventing readiness changes.
       additionalProperties: false
       properties:
+        next_action_digest:
+          $ref: '#/components/schemas/OperationWorkflowNextActionDigestPolicy'
+          description: Optional team digest policy using this subscription customer/environment; filters are independent of transition discovery. Policy is fixed until subscription deletion.
         business_impact_watches:
           type: array
           maxItems: 16
@@ -79216,6 +79219,21 @@ components:
         future evaluations and removes its inbox.
       additionalProperties: false
       properties:
+        digest_next_at:
+          type: string
+          format: date-time
+          description: Next digest evaluation time. Evaluation occurs on a worker pass at or after this time; failures retry without consuming the cadence.
+        digest_evaluated_at:
+          type: string
+          format: date-time
+          description: Most recent successful digest evaluation, including silent evaluations with no changed items.
+        digest_delivered_at:
+          type: string
+          format: date-time
+          description: Most recent changed-item digest delivery. This does not acknowledge or fulfill source work.
+        next_action_digest:
+          $ref: '#/components/schemas/OperationWorkflowNextActionDigestPolicy'
+          description: Configured team digest filters and cadence for this subscription scope; delete and recreate the subscription to change this policy.
         business_impact_watches:
           type: array
           maxItems: 16
@@ -79347,6 +79365,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        next_action_digest:
+          $ref: '#/components/schemas/OperationWorkflowNextActionDigest'
+          description: Immutable retained snapshots of newly qualifying or changed team actions, with links to current controls. Source records are read independently of publication.
         handoff_reassignment:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignmentEvent'
           description: OperationWorkflowReadinessNotification.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
@@ -79413,6 +79434,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - next_action_digest
           - review_response_escalation_action_checked
           - review_response_escalation_commitment_overdue
           - review_response_handoff_acceptance_escalated
@@ -82390,6 +82412,73 @@ components:
           format: int64
           minimum: 1
           description: OperationWorkflowCaseAction.sequence. Retained source notification sequence.
+    OperationWorkflowNextActionDigestPolicy:
+      type: object
+      additionalProperties: false
+      description: Fixed team digest selection and cadence. Owner is both the exact action-owner filter and inbox recipient label, not proof of team membership. Overdue actions, deadlines within the configured approaching window and unaccepted handoffs qualify. Unchanged delivered items are suppressed.
+      required: [owner]
+      properties:
+        owner:
+          type: string
+          maxLength: 256
+          description: Nonblank trimmed control-free UTF-8 team label, at most 256 bytes.
+        workflow:
+          type: string
+          description: Optional exact workflow selector, independent of the subscription discovery workflow.
+        action_kind:
+          type: string
+          description: Optional exact next-action kind supported by the work queue.
+        action_trigger:
+          type: string
+          enum: [human, automatic, suggested]
+        cadence_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          default: 3600
+          description: Digest cadence, default one hour. The first evaluation is scheduled from subscription creation; retries retain the due time.
+        soon_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          default: 86400
+          description: Approaching deadline window from each successful evaluation, default one day. Undated suggestions do not qualify.
+    OperationWorkflowNextActionDigest:
+      type: object
+      additionalProperties: false
+      description: One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source state may change before reading or publication. Fingerprints exclude polling timestamps and are recorded atomically with delivery under the subscription lease. Acknowledgment changes no source obligation.
+      required: [items, owner, scope, evaluated_at, soon_until, matching_count, changed_count, remaining_changed_count, retention_limited]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNextActionQueueItem'
+        owner:
+          type: string
+        scope:
+          type: string
+        evaluated_at:
+          type: string
+          format: date-time
+        soon_until:
+          type: string
+          format: date-time
+        matching_count:
+          type: integer
+          description: All retained qualifying action rows, including unchanged items; not a workflow or global task count.
+        changed_count:
+          type: integer
+          description: Newly qualifying or changed action rows pending delivery at this evaluation.
+        remaining_changed_count:
+          type: integer
+          description: Changed rows beyond this delivery cap, which remain eligible at later cadence evaluations.
+        retention_limited:
+          type: boolean
+          description: Queue and source inbox retention bound coverage. Deleted/pruned source work is unavailable.
     OperationWorkflowNextActionCase:
       type: object
       description: Exact workflow case affected by a current source action.

@@ -5,6 +5,7 @@ import "time"
 // Readiness subscriptions discover bounded current edges and compare saved observations.
 // They produce advisory inbox notifications, never execution authority.
 type OperationWorkflowReadinessSubscriptionRequest struct {
+	NextActionDigest      *OperationWorkflowNextActionDigestPolicy       `json:"next_action_digest,omitempty"`
 	BusinessImpactWatches []OperationWorkflowReadinessImpactWatchRequest `json:"business_impact_watches,omitempty"`
 	AppID                 string                                         `json:"app_id,omitempty"`
 	TenantID              string                                         `json:"tenant_id,omitempty"`
@@ -17,6 +18,10 @@ type OperationWorkflowReadinessSubscriptionRequest struct {
 	Events                []string                                       `json:"events,omitempty"`
 }
 type OperationWorkflowReadinessSubscription struct {
+	DigestNextAt            *time.Time                               `json:"digest_next_at,omitempty"`
+	DigestEvaluatedAt       *time.Time                               `json:"digest_evaluated_at,omitempty"`
+	DigestDeliveredAt       *time.Time                               `json:"digest_delivered_at,omitempty"`
+	NextActionDigest        *OperationWorkflowNextActionDigestPolicy `json:"next_action_digest,omitempty"`
 	BusinessImpactWatches   []OperationWorkflowReadinessImpactWatch  `json:"business_impact_watches,omitempty"`
 	PlaybookEvidenceWatches []OperationWorkflowPlaybookEvidenceWatch `json:"playbook_evidence_watches,omitempty"`
 	ID                      string                                   `json:"id"`
@@ -40,6 +45,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	NextActionDigest     *OperationWorkflowNextActionDigest                       `json:"next_action_digest,omitempty"`
 	HandoffReassignment  *OperationWorkflowReviewResponseHandoffReassignmentEvent `json:"handoff_reassignment,omitempty"`
 	HandoffDecline       *OperationWorkflowReviewResponseHandoffDeclineEvent      `json:"handoff_decline,omitempty"`
 	DecisionReview       *OperationWorkflowReviewResponseDecisionReviewEvent      `json:"decision_review,omitempty"`
@@ -856,4 +862,24 @@ type OperationWorkflowNextActionQueueItem struct {
 	Cases                []OperationWorkflowNextActionCase `json:"cases"`
 	Scope                string                            `json:"scope"`
 	SubscriptionTenantID string                            `json:"subscription_tenant_id,omitempty"`
+}
+
+type OperationWorkflowNextActionDigestPolicy struct {
+	Owner            string `json:"owner"`
+	Workflow         string `json:"workflow,omitempty"`
+	ActionKind       string `json:"action_kind,omitempty"`
+	ActionTrigger    string `json:"action_trigger,omitempty"`
+	CadenceSeconds   int64  `json:"cadence_seconds,omitempty"`
+	SoonAfterSeconds int64  `json:"soon_after_seconds,omitempty"`
+}
+type OperationWorkflowNextActionDigest struct {
+	Items                 []OperationWorkflowNextActionQueueItem `json:"items"`
+	Owner                 string                                 `json:"owner"`
+	Scope                 string                                 `json:"scope"`
+	EvaluatedAt           time.Time                              `json:"evaluated_at"`
+	SoonUntil             time.Time                              `json:"soon_until"`
+	MatchingCount         int                                    `json:"matching_count"`
+	ChangedCount          int                                    `json:"changed_count"`
+	RemainingChangedCount int                                    `json:"remaining_changed_count"`
+	RetentionLimited      bool                                   `json:"retention_limited"`
 }

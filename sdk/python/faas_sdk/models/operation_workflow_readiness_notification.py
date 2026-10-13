@@ -14,6 +14,7 @@ from ..models.operation_workflow_readiness_notification_kind import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
     from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
     from ..models.operation_workflow_playbook_completion_review_event import (
         OperationWorkflowPlaybookCompletionReviewEvent,
@@ -71,6 +72,10 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    next_action_digest: OperationWorkflowNextActionDigest | Unset = UNSET
+    """One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source
+    state may change before reading or publication. Fingerprints exclude polling timestamps and are recorded
+    atomically with delivery under the subscription lease. Acknowledgment changes no source obligation."""
     handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentEvent | Unset = UNSET
     """Historical handoff notice to the assigned team. Check current ownership before accepting; the original
     review deadline remains unchanged."""
@@ -155,6 +160,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        next_action_digest: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.next_action_digest, Unset):
+            next_action_digest = self.next_action_digest.to_dict()
 
         handoff_reassignment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_reassignment, Unset):
@@ -259,6 +268,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if next_action_digest is not UNSET:
+            field_dict["next_action_digest"] = next_action_digest
         if handoff_reassignment is not UNSET:
             field_dict["handoff_reassignment"] = handoff_reassignment
         if handoff_decline is not UNSET:
@@ -310,6 +321,7 @@ class OperationWorkflowReadinessNotification:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
         from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
         from ..models.operation_workflow_playbook_completion_review_event import (
             OperationWorkflowPlaybookCompletionReviewEvent,
@@ -364,6 +376,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _next_action_digest = d.pop("next_action_digest", UNSET)
+        next_action_digest: OperationWorkflowNextActionDigest | Unset
+        if isinstance(_next_action_digest, Unset):
+            next_action_digest = UNSET
+        else:
+            next_action_digest = OperationWorkflowNextActionDigest.from_dict(_next_action_digest)
 
         _handoff_reassignment = d.pop("handoff_reassignment", UNSET)
         handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentEvent | Unset
@@ -534,6 +553,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            next_action_digest=next_action_digest,
             handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,
             decision_review=decision_review,

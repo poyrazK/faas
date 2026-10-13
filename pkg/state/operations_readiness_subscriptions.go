@@ -22,6 +22,7 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
+	DigestKnown                 map[string]string                          `json:"digest_known,omitempty"`
 	ScheduledActionReviewCursor int64                                      `json:"scheduled_action_review_cursor,omitempty"`
 	EscalationCommitmentCursor  int64                                      `json:"escalation_commitment_cursor,omitempty"`
 	HandoffReassignmentCursor   int64                                      `json:"handoff_reassignment_cursor,omitempty"`
@@ -74,13 +75,20 @@ func createReadinessSubscription(ctx context.Context, store readinessSubscriptio
 	if err := validateImpactWatchRequests(req.BusinessImpactWatches); err != nil {
 		return out, err
 	}
+	if req.NextActionDigest != nil {
+		policy, err := normalizeNextActionDigestPolicy(*req.NextActionDigest)
+		if err != nil {
+			return out, err
+		}
+		req.NextActionDigest = &policy
+	}
 	if req.Events == nil {
 		req.Events = []string{"newly_ready", "newly_blocked", "reassigned", "unavailable"}
 	}
 	if len(req.Events) == 0 || !readinessUniqueNames(req.Events, 4, []string{"newly_ready", "newly_blocked", "reassigned", "unavailable"}) {
 		return out, ErrInvalidArgument
 	}
-	out = api.OperationWorkflowReadinessSubscription{ID: uuid.NewString(), AppID: app, TenantID: req.TenantID, Scope: req.Scope, Name: req.Name, Workflow: req.Workflow, TargetOperation: req.TargetOperation, Owner: req.Owner, Unassigned: req.Unassigned, Events: req.Events, Status: "active"}
+	out = api.OperationWorkflowReadinessSubscription{NextActionDigest: req.NextActionDigest, ID: uuid.NewString(), AppID: app, TenantID: req.TenantID, Scope: req.Scope, Name: req.Name, Workflow: req.Workflow, TargetOperation: req.TargetOperation, Owner: req.Owner, Unassigned: req.Unassigned, Events: req.Events, Status: "active"}
 	opts := readinessSubscriptionOptions(out)
 	base, _, err := prepareReadinessQueue(account, tenant, opts, operator)
 	if err != nil {
@@ -110,6 +118,10 @@ func createReadinessSubscription(ctx context.Context, store readinessSubscriptio
 		return out, err
 	}
 	out.CreatedAt = page.EvaluatedAt
+	if out.NextActionDigest != nil {
+		next := out.CreatedAt.Add(time.Duration(out.NextActionDigest.CadenceSeconds) * time.Second)
+		out.DigestNextAt = &next
+	}
 	out.EvaluatedAt = page.EvaluatedAt
 	out.WatchedTransitionCount = len(page.Snapshot.Items)
 	out.CoverageIncomplete = readinessSubscriptionCoverage(page)
@@ -377,7 +389,11 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		impactNotices, impactErr := evaluateReadinessImpactWatches(check, store, &record, false)
 		cancel()
 		notifications = append(notifications, impactNotices...)
-		if scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		digestNotices, digestErr := evaluateNextActionDigest(check, store, &record)
+		notifications = append(notifications, digestNotices...)
+		cancel()
+		if digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)
