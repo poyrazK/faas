@@ -922,3 +922,52 @@ may omit the entire block.
 The new index-only migration supports this read; no table columns or compliance
 registry entries change. Index rollback preserves job data and progress metadata.
 Go, Node and Python SDK models expose the optional block and last-progress field.
+
+## Watch retry-job lifecycle warnings
+
+Use the existing delivery-health watcher with new opt-in thresholds:
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --lineage-stalled-threshold 1 --lineage-retention-risk-threshold 1 --lineage-paused-threshold 15m --timeout 1h --checkpoint retry-health.json --alerts-json
+# Resume with the same scope, window and thresholds:
+gregale events subscription-delivery-health APP SUB --watch --lineage-stalled-threshold 1 --lineage-retention-risk-threshold 1 --lineage-paused-threshold 15m --timeout 1h --checkpoint retry-health.json --resume --alerts-json
+```
+
+`--lineage-stalled-threshold N` selects the count of jobs classified stalled by
+server diagnostics (pending with no job activity for 15 minutes).
+`--lineage-retention-risk-threshold N` selects active jobs classified within
+24 hours of original retention expiry, including paused work. Their metric names
+are `lineage_retry_stalled_jobs` and `lineage_retry_retention_risk_jobs`.
+`--lineage-paused-threshold DURATION` selects `lineage_retry_paused_seconds`:
+consecutive locally sampled fresh observations of any nonzero paused retry backlog,
+with at least two reads. It does not establish how long any particular job was
+paused; the set of paused jobs may change. Count thresholds use existing positive
+bounded integer limits, duration thresholds use 100ms–24h, and zero disables a
+condition. These flags require `--watch`.
+
+Evidence comes from the scoped `execution.lineage_retry_jobs` block and execution
+observation timestamp. Missing blocks (including older servers), truncated counts,
+malformed partitions, stale/future or nonmonotonic observations, mismatched scope,
+and read gaps become unknown evidence. Even a positive truncated lower bound is
+not used to confirm or resolve a retry-job condition. Handler outcome history and
+execution-root truncation remain separate from this block's completeness. Only
+fresh complete valid observations can open or resolve these conditions.
+
+The existing lifecycle emits opened/resolved/confirmation_lost transitions, with
+stable incident IDs and increasing alert sequences. A checkpoint retains active
+incident identities and pending alerts. Resume checks identical selection and
+thresholds and requires fresh evidence; count conditions reconfirm an existing
+incident without reopening it, while paused duration must be re-established after
+restart. A fresh complete zero can resolve it. Unknown evidence loses confirmation
+rather than falsely resolving; later complete evidence can begin a new incident.
+Unacknowledged durable notifications may be delivered again after restart; consumers
+should acknowledge or deduplicate by the existing incident/sequence identity.
+Use the existing acknowledgement inbox or checkpoint acknowledgement commands.
+
+Go `EventDeliveryHealthWatchOptions` exposes `LineageStalled`,
+`LineageRetentionRisk`, and `LineagePaused`. Existing watches/checkpoints retain
+behavior when these options are omitted. Adding thresholds changes the watch
+selection and requires a matching checkpoint or a new one. Older CLI/Go SDK
+versions cannot resume checkpoints using the new metric names. Alerts are local
+output/callbacks; no external messages or automatic recovery actions are sent.
+No API/schema migration or registry update is needed.

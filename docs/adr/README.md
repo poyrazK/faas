@@ -496,6 +496,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1165 | [Guarded lineage control-history export](1165-guarded-lineage-control-history-export.md) | accepted | Bounded observed receipt snapshots in private artifacts with atomic no-overwrite publication |
 | 1166 | [Offline lineage control-history inspection](1166-offline-lineage-control-history-inspection.md) | accepted | Strict local artifact validation, actor summaries and guarded receipt comparisons |
 | 1167 | [Retained lineage retry-job health](1167-retained-lineage-retry-job-health.md) | accepted | Scoped active-job inactivity and retention diagnostics with explicit progress evidence |
+| 1168 | [Lineage retry-job watch alerts](1168-lineage-retry-job-watch-alerts.md) | accepted | Opt-in durable stalled, retention-risk and paused-backlog lifecycle conditions |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
