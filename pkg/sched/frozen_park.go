@@ -88,7 +88,13 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance) (string,
 		return "ineligible", err
 	}
 	dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
-	if err != nil || dep.Status != state.DeployLive {
+	if errors.Is(err, state.ErrNotFound) {
+		return "ineligible", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if dep.Status != state.DeployLive {
 		return "ineligible", nil
 	}
 	// A frozen VM is disposable only while the deployment has a snapshot

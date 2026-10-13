@@ -98,7 +98,7 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	}
 	if proofErr != nil || captured != values.ConfigFence {
 		e.parkFrozenLocked(ctx, frozen, "config_changed")
-		return WakeResult{}, false, nil
+		return WakeResult{}, false, nil //nolint:nilerr // a VM without its captured config proof must not thaw; it parks and the ordinary wake proceeds
 	}
 	// Re-admit the full reservation on the VM's node, as a wake would.
 	ceiling, vcpuBudget, ceilingErr := e.resolveNodeCeiling(ctx, frozen.NodeID)
@@ -114,9 +114,10 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 		NodeID: frozen.NodeID, NodeCeilingMB: ceiling, VCPUBudget: vcpuBudget,
 		CPUBudgetMillicores: e.resolveNodeCPUBudgetMillicores(ctx, frozen.NodeID),
 	}); err != nil {
+		e.log.Debug("sched: frozen thaw: re-admission refused; parking", "instance", frozen.ID, "err", err)
 		e.parkFrozenLocked(ctx, frozen, "no_capacity")
 		e.observeThaw("no_capacity")
-		return WakeResult{}, false, nil
+		return WakeResult{}, false, nil //nolint:nilerr // a refused re-admission parks the VM; the ordinary wake path owns the capacity answer
 	}
 	started := time.Now()
 	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)

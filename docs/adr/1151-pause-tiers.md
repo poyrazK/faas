@@ -239,6 +239,13 @@ through apid, the CLI and docs, then the same canary.
 
 ## Consequences
 
+- Rolling back. Turning `frozen_tier` off stops new freezes; frozen
+  instances still thaw for requests and park after `FrozenTTL`. Roll schedd
+  back to a release without the `frozen` state only after
+  `schedd_frozen_instances` reads 0: an older schedd neither thaws nor parks
+  a frozen row. The migration's down step parks any frozen rows left.
+- Turning the tier on needs vmmd with `FreezeInstance` first. An older vmmd
+  answers Unimplemented and the instance parks as before.
 - In the simulation, a request that finds no running VM waits 3.4 ms on
   average instead of 340 ms, vCPU-bound nodes hold 2.85× the apps, and
   billing and revenue do not change.
