@@ -98,6 +98,23 @@ func (l *NodeLedger) FrozenCountForNode(nodeID string) int {
 	return n
 }
 
+// FrozenCountForApp is the number of frozen reservations of an app. The
+// wake path skips the thaw check for an app without one.
+func (l *NodeLedger) FrozenCountForApp(appID string) int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, e := range l.entries {
+		if e.frozen && e.appID == appID {
+			n++
+		}
+	}
+	return n
+}
+
 // IsFrozen reports whether the ledger holds a frozen reservation for the
 // instance.
 func (l *NodeLedger) IsFrozen(instance string) bool {

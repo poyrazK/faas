@@ -20,7 +20,9 @@ import (
 // whether or not the frozen tier is enabled, so turning it off drains the
 // tier through requests as well as the TTL.
 func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App, acct state.Account, limits api.Limits, dep state.Deployment, mode string) (WakeResult, bool, error) {
-	if app.Status != state.AppActive || !instanceModeUsesSnapshots(mode) {
+	// The ledger knows which apps have frozen VMs, so an app without one
+	// costs no instance listing on the wake path.
+	if app.Status != state.AppActive || !instanceModeUsesSnapshots(mode) || e.ledger.FrozenCountForApp(app.ID) == 0 {
 		return WakeResult{}, false, nil
 	}
 	candidates, err := e.frozenCandidates(ctx, app, dep)
@@ -70,6 +72,10 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 		}
 		if ins.RAMMB != app.RAMMB || !instanceModeMatchesApp(app, ins) || ins.Netns == "" || ins.HostIP == "" {
 			e.parkFrozenLocked(ctx, ins, "stale")
+			continue
+		}
+		if e.frozenNodeUnreachable(ctx, ins.NodeID) {
+			e.parkFrozenLocked(ctx, ins, "node_restart")
 			continue
 		}
 		out = append(out, ins)

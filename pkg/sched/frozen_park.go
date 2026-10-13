@@ -26,7 +26,12 @@ func (e *Engine) ParkFrozen(ctx context.Context, instanceID, reason string) erro
 // restores from it.
 func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, reason string) {
 	cleanupCtx := context.WithoutCancel(ctx)
-	if err := e.timedDestroy(cleanupCtx, frozen.NodeID, frozen.ID, DestroyTimeout); err != nil {
+	if e.frozenNodeUnreachable(cleanupCtx, frozen.NodeID) {
+		// The VM went with its node or vmmd. Parking the row is enough:
+		// vmmd's live-VM reaper destroys a VM whose row is no longer live.
+		e.log.Info("sched: frozen park: node unreachable; leaving the VM to vmmd's reaper",
+			"instance", frozen.ID, "node", frozen.NodeID, "reason", reason)
+	} else if err := e.timedDestroy(cleanupCtx, frozen.NodeID, frozen.ID, DestroyTimeout); err != nil {
 		e.log.Warn("sched: frozen park: destroy", "instance", frozen.ID, "reason", reason, "err", err)
 	}
 	e.ledger.Release(frozen.ID)
@@ -38,6 +43,27 @@ func (e *Engine) parkFrozenLocked(ctx context.Context, frozen state.Instance, re
 	}
 	e.recordCommittedInstanceTransition(cleanupCtx, frozen, state.StateFrozen, state.StateParked, frozen.AppID, "frozen_park", reason)
 	e.observeFrozenPark(reason)
+}
+
+// frozenNodeUnreachable reports whether a frozen VM's node is unavailable
+// or stopped heartbeating (the dead-node reconciler's staleness), so a thaw
+// or destroy there would only wait out its RPC timeout.
+func (e *Engine) frozenNodeUnreachable(ctx context.Context, nodeID string) bool {
+	if nodeID == "" {
+		return false
+	}
+	node, err := e.store.ComputeNodeByID(ctx, nodeID)
+	if err != nil {
+		return errors.Is(err, state.ErrNotFound)
+	}
+	if node.Lifecycle == state.NodeLifecycleUnavailable {
+		return true
+	}
+	staleness := time.Duration(api.DeadNodeReconcilerStalenessSeconds) * time.Second
+	if e.deadNodeReconcilerStalenessSeconds > 0 {
+		staleness = time.Duration(e.deadNodeReconcilerStalenessSeconds) * time.Second
+	}
+	return !node.LastHeartbeatAt.IsZero() && time.Since(node.LastHeartbeatAt) > staleness
 }
 
 // freezeRefusal names why an idle RUNNING instance must park instead of

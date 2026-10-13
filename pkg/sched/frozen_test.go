@@ -295,3 +295,69 @@ func TestEvictionCandidatesTakeFrozenFirst(t *testing.T) {
 		t.Fatalf("eviction order = %v, want frozen (LRU) before running", got)
 	}
 }
+
+// Node recovery parks a frozen VM: it cannot be live-migrated (vmmd refuses
+// to snapshot it) and its deployment keeps the snapshot.
+func TestRecoveryParksFrozenInstances(t *testing.T) {
+	a := NewArbiter(nil, nil)
+	frozen := state.RecoveryInstance{State: string(state.StateFrozen), Kind: "wake"}
+	for _, lifecycle := range []state.NodeLifecycle{state.NodeLifecycleDraining, state.NodeLifecycleForceDraining,
+		state.NodeLifecycleRecovering, state.NodeLifecycleUnavailable} {
+		if got := a.Decide(state.ComputeNode{Lifecycle: lifecycle}, frozen); got != DecisionRecreate {
+			t.Fatalf("Decide(%s, frozen) = %v, want recreate (which parks)", lifecycle, got)
+		}
+	}
+	if got := a.Decide(state.ComputeNode{Lifecycle: state.NodeLifecycleActive}, frozen); got != DecisionNone {
+		t.Fatalf("Decide(active, frozen) = %v, want none", got)
+	}
+	f := newFrozenFixture(t, true)
+	f.e.EnableFrozenTier()
+	if handled, _ := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); !handled {
+		t.Fatal("not frozen")
+	}
+	if err := f.e.RecreateInstance(t.Context(), f.ins.ID); err != nil {
+		t.Fatalf("RecreateInstance: %v", err)
+	}
+	if f.state(t) != state.StateParked || f.e.Ledger().ResidentFor(f.ins.ID) {
+		t.Fatalf("recovered frozen instance: state %s; want parked with no reservation", f.state(t))
+	}
+}
+
+// A frozen VM on an unreachable node is parked without a thaw attempt or a
+// destroy that would wait out its RPC timeout; vmmd's reaper removes the VM.
+func TestFrozenOnUnreachableNodeIsParkedWithoutWaiting(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	f.e.EnableFrozenTier()
+	if handled, _ := f.e.FreezeIdle(t.Context(), f.ins.ID, 150); !handled {
+		t.Fatal("not frozen")
+	}
+	node, err := f.store.ComputeNodeByID(t.Context(), f.ins.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.NodeSetLifecycle(t.Context(), node.ID, node.Lifecycle, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatalf("NodeSetLifecycle: %v", err)
+	}
+	destroys := f.vmm.destroys
+	_, _ = f.e.Wake(t.Context(), f.app.ID, "", "", "")
+	if f.vmm.thaws != 0 || f.vmm.destroys != destroys {
+		t.Fatalf("thaws %d, destroys %d→%d; want no RPC to an unreachable node", f.vmm.thaws, destroys, f.vmm.destroys)
+	}
+	if f.state(t) != state.StateParked {
+		t.Fatalf("frozen row on an unreachable node: state %s, want parked", f.state(t))
+	}
+}
+
+func TestThawSkippedWithoutFrozenReservation(t *testing.T) {
+	l := NewNodeLedger()
+	if l.FrozenCountForApp("a1") != 0 {
+		t.Fatal("empty ledger reports frozen reservations")
+	}
+	if err := l.Admit(Request{Instance: "i1", AppID: "a1", Plan: api.PlanScale, RAMMB: 512, VCPU: 1,
+		MaxConcurrency: 4, NodeID: "n1", Kind: KindFrozen, FrozenChargeMB: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if l.FrozenCountForApp("a1") != 1 || l.FrozenCountForApp("a2") != 0 {
+		t.Fatal("FrozenCountForApp does not count per app")
+	}
+}
