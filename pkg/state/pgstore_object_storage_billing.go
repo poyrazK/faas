@@ -11,6 +11,7 @@ import (
 const objectStorageBillingSelect = `
 select id, account_id, period_start, period_end, currency,
        stored_byte_hours, request_count, egress_bytes,
+       included_stored_byte_hours, included_requests, included_egress_bytes,
        provider_cost_millicents,
        storage_millicents_per_gib_month, requests_millicents_per_million,
        egress_millicents_per_gib,
@@ -24,6 +25,7 @@ func (s *PgStore) GetObjectStorageBillingPeriod(ctx context.Context, account str
 	err := s.pool.QueryRow(ctx, objectStorageBillingSelect, account, ObjectStoragePeriod(periodStart)).Scan(
 		&record.ID, &record.AccountID, &record.PeriodStart, &record.PeriodEnd, &record.Currency,
 		&record.StoredByteHours, &record.RequestCount, &record.EgressBytes,
+		&record.IncludedStoredByteHours, &record.IncludedRequests, &record.IncludedEgressBytes,
 		&record.ProviderCostMillicents,
 		&record.StorageMillicentsPerGiBMonth, &record.RequestsMillicentsPerMillion,
 		&record.EgressMillicentsPerGiB,
@@ -50,11 +52,13 @@ insert into object_storage_billing_periods (
     stored_byte_hours, request_count, egress_bytes, provider_cost_millicents,
     storage_millicents_per_gib_month, requests_millicents_per_million,
     egress_millicents_per_gib, storage_millicents, requests_millicents,
-    egress_millicents, total_millicents, finalized_at
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+    egress_millicents, total_millicents, finalized_at,
+    included_stored_byte_hours, included_requests, included_egress_bytes
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 on conflict (account_id, period_start) do nothing
 returning id, account_id, period_start, period_end, currency,
           stored_byte_hours, request_count, egress_bytes,
+          included_stored_byte_hours, included_requests, included_egress_bytes,
           provider_cost_millicents,
           storage_millicents_per_gib_month, requests_millicents_per_million,
           egress_millicents_per_gib,
@@ -67,9 +71,11 @@ returning id, account_id, period_start, period_end, currency,
 		record.StorageMillicentsPerGiBMonth, record.RequestsMillicentsPerMillion, record.EgressMillicentsPerGiB,
 		record.StorageMillicents, record.RequestsMillicents, record.EgressMillicents,
 		record.TotalMillicents, record.FinalizedAt,
+		record.IncludedStoredByteHours, record.IncludedRequests, record.IncludedEgressBytes,
 	).Scan(
 		&stored.ID, &stored.AccountID, &stored.PeriodStart, &stored.PeriodEnd, &stored.Currency,
 		&stored.StoredByteHours, &stored.RequestCount, &stored.EgressBytes,
+		&stored.IncludedStoredByteHours, &stored.IncludedRequests, &stored.IncludedEgressBytes,
 		&stored.ProviderCostMillicents,
 		&stored.StorageMillicentsPerGiBMonth, &stored.RequestsMillicentsPerMillion,
 		&stored.EgressMillicentsPerGiB,

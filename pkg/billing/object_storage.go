@@ -94,7 +94,12 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 		if len(snapshot.Buckets) == 0 && len(snapshot.Reports) == 0 && snapshot.Authorizations == 0 {
 			continue
 		}
-		record, err := FinalizeObjectStoragePeriod(ctx, store, account.ID, pricing, periodStart, now)
+		allowance, err := objectStorageMonthAllowance(ctx, store, account, periodStart)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("account %s: object storage allowance: %w", account.ID, err))
+			continue
+		}
+		record, err := FinalizeObjectStoragePeriod(ctx, store, account.ID, pricing, allowance, periodStart, now)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("account %s: finalize object usage: %w", account.ID, err))
 			continue
@@ -142,6 +147,53 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 	return finalized, errors.Join(failures...)
 }
 
+// objectStorageMonthAllowance follows the period's plan history like compute
+// (ADR-1162): the largest allowance, per meter, among the plans whose
+// activations were recorded in the month. Without recorded activations the
+// account's current plan applies.
+func objectStorageMonthAllowance(ctx context.Context, store state.ObjectStorageBillingStore, account state.Account, periodStart time.Time) (api.ObjectStorageAllowance, error) {
+	plans := []api.Plan{}
+	if history, ok := store.(state.FinancialStore); ok {
+		snapshots, err := history.ListFinancialPriceSnapshots(ctx, account.ID, periodStart)
+		if err != nil {
+			return api.ObjectStorageAllowance{}, err
+		}
+		for _, snapshot := range snapshots {
+			if snapshot.Price.Meter == "compute" && snapshot.Plan.Valid() {
+				plans = append(plans, snapshot.Plan)
+			}
+		}
+	}
+	if len(plans) == 0 {
+		plans = append(plans, account.Plan)
+	}
+	return largestObjectStorageAllowance(plans, planObjectStorageAllowance)
+}
+
+func planObjectStorageAllowance(plan api.Plan) (api.ObjectStorageAllowance, bool) {
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return api.ObjectStorageAllowance{}, false
+	}
+	return limits.ObjectStorage.Allowance(), true
+}
+
+// largestObjectStorageAllowance takes the per-meter maximum across plans, so
+// a mid-month downgrade never shrinks the month's allowance.
+func largestObjectStorageAllowance(plans []api.Plan, lookup func(api.Plan) (api.ObjectStorageAllowance, bool)) (api.ObjectStorageAllowance, error) {
+	var out api.ObjectStorageAllowance
+	for _, plan := range plans {
+		a, ok := lookup(plan)
+		if !ok {
+			return api.ObjectStorageAllowance{}, fmt.Errorf("unknown plan %q", plan)
+		}
+		out.StoredByteHours = max(out.StoredByteHours, a.StoredByteHours)
+		out.Requests = max(out.Requests, a.Requests)
+		out.EgressBytes = max(out.EgressBytes, a.EgressBytes)
+	}
+	return out, nil
+}
+
 // FinalizeObjectStoragePeriod closes one completed UTC month and records the
 // exact usage and rate card used to calculate its customer charge. The state
 // store makes retries idempotent on (account, period); a changed rate card or
@@ -151,8 +203,8 @@ func FinalizeObjectStoragePeriods(ctx context.Context, accounts ObjectStorageAcc
 // billing provider can consume the returned record through its own adapter
 // without coupling object-storage accounting to Stripe, Paddle, Polar, or a
 // particular storage backend.
-func FinalizeObjectStoragePeriod(ctx context.Context, store state.ObjectStorageBillingStore, accountID string, pricing api.ObjectStoragePricing, periodStart, now time.Time) (state.ObjectStorageBillingRecord, error) {
-	if store == nil || accountID == "" || !pricing.Valid() {
+func FinalizeObjectStoragePeriod(ctx context.Context, store state.ObjectStorageBillingStore, accountID string, pricing api.ObjectStoragePricing, allowance api.ObjectStorageAllowance, periodStart, now time.Time) (state.ObjectStorageBillingRecord, error) {
+	if store == nil || accountID == "" || !pricing.Valid() || !allowance.Valid() {
 		return state.ObjectStorageBillingRecord{}, errors.New("billing: invalid object storage finalization request")
 	}
 	periodStart = state.ObjectStoragePeriod(periodStart)
@@ -175,7 +227,7 @@ func FinalizeObjectStoragePeriod(ctx context.Context, store state.ObjectStorageB
 	if err != nil {
 		return state.ObjectStorageBillingRecord{}, err
 	}
-	charge, err := objectstorage.CalculateCharge(pricing, usage)
+	charge, err := objectstorage.CalculateCharge(pricing, usage, allowance)
 	if err != nil {
 		return state.ObjectStorageBillingRecord{}, err
 	}
@@ -187,6 +239,9 @@ func FinalizeObjectStoragePeriod(ctx context.Context, store state.ObjectStorageB
 		StoredByteHours:              usage.StoredByteHours,
 		RequestCount:                 usage.RequestCount,
 		EgressBytes:                  usage.EgressBytes,
+		IncludedStoredByteHours:      allowance.StoredByteHours,
+		IncludedRequests:             allowance.Requests,
+		IncludedEgressBytes:          allowance.EgressBytes,
 		ProviderCostMillicents:       usage.CostMillicents,
 		StorageMillicentsPerGiBMonth: pricing.StorageMillicentsPerGiBMonth,
 		RequestsMillicentsPerMillion: pricing.RequestsMillicentsPerMillion,

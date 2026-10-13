@@ -5597,6 +5597,9 @@ type ObjectStorageBillingPeriod struct {
 	EgressMillicents             int64
 	TotalMillicents              int64
 	FinalizedAt                  pgtype.Timestamptz
+	IncludedStoredByteHours      int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
 }
 
 type ObjectStorageBucketUsage struct {

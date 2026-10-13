@@ -109,16 +109,53 @@ func TestFinalizeObjectStoragePeriodIsClosedAndIdempotent(t *testing.T) {
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
 	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
 	now := time.Date(2026, time.September, 6, 0, 0, 0, 0, time.UTC)
-	first, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, period, now)
+	first, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, api.ObjectStorageAllowance{}, period, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, period, now.Add(time.Hour))
+	second, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, api.ObjectStorageAllowance{}, period, now.Add(time.Hour))
 	if err != nil || second.ID != first.ID || second.TotalMillicents != first.TotalMillicents {
 		t.Fatalf("retry = %#v, err=%v", second, err)
 	}
-	if _, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, state.ObjectStoragePeriod(now), now); !errors.Is(err, state.ErrObjectBillingOpen) {
+	if _, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, api.ObjectStorageAllowance{}, state.ObjectStoragePeriod(now), now); !errors.Is(err, state.ErrObjectBillingOpen) {
 		t.Fatalf("open period error = %v", err)
+	}
+}
+
+// adr: 1200 — month close prices usage above the plan allowance and copies the
+// allowance into the immutable record.
+func TestFinalizeObjectStoragePeriodRecordsAllowance(t *testing.T) {
+	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	gibMonth := int64(1<<30) * api.ObjectStorageBillingHoursPerMonth
+	snapshot := objectStorageBillingSnapshot("acct", "backend", period)
+	snapshot.Reports[0].StoredByteHours = 3 * gibMonth
+	store := &objectStorageBillingStore{snapshots: map[string]state.ObjectUsageSnapshot{"acct": snapshot}}
+	pricing := api.ObjectStoragePricing{Currency: "EUR", StorageMillicentsPerGiBMonth: 1000}
+	allowance := api.ObjectStorageAllowance{StoredByteHours: gibMonth}
+	record, err := FinalizeObjectStoragePeriod(context.Background(), store, "acct", pricing, allowance, period, period.AddDate(0, 1, 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.IncludedStoredByteHours != gibMonth || record.StoredByteHours != 3*gibMonth || record.StorageMillicents != 2000 || record.TotalMillicents != 2000 {
+		t.Fatalf("record = %+v, want one included GiB-month and two billed", record)
+	}
+}
+
+func TestLargestObjectStorageAllowanceTakesPerMeterMaximum(t *testing.T) {
+	allowances := map[api.Plan]api.ObjectStorageAllowance{
+		api.PlanPro:   {StoredByteHours: 100, Requests: 10, EgressBytes: 1},
+		api.PlanHobby: {StoredByteHours: 50, Requests: 20, EgressBytes: 0},
+	}
+	lookup := func(plan api.Plan) (api.ObjectStorageAllowance, bool) {
+		a, ok := allowances[plan]
+		return a, ok
+	}
+	got, err := largestObjectStorageAllowance([]api.Plan{api.PlanPro, api.PlanHobby}, lookup)
+	if err != nil || got != (api.ObjectStorageAllowance{StoredByteHours: 100, Requests: 20, EgressBytes: 1}) {
+		t.Fatalf("allowance = %+v, %v; want the per-meter maximum so a downgrade never shrinks it", got, err)
+	}
+	if _, err := largestObjectStorageAllowance([]api.Plan{"unknown"}, lookup); err == nil {
+		t.Fatal("unknown plan did not fail closed")
 	}
 }
 
