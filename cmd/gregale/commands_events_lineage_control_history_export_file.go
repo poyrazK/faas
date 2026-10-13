@@ -78,13 +78,17 @@ func lineageControlExportMatches(receipt api.EventExecutionLineageRetryJobContro
 }
 
 func writeLineageControlHistoryExport(ctx context.Context, path string, bundle lineageControlHistoryExport) error {
-	raw, err := json.MarshalIndent(bundle, "", "  ")
+	return writeLineagePrivateArtifact(ctx, path, bundle, api.EventExecutionLineageRetryControlExportMaxBytes)
+}
+
+func writeLineagePrivateArtifact(ctx context.Context, path string, value any, maxBytes int) error {
+	raw, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
 	raw = append(raw, '\n')
-	if len(raw) > api.EventExecutionLineageRetryControlExportMaxBytes {
-		return fmt.Errorf("history export exceeds %d bytes", api.EventExecutionLineageRetryControlExportMaxBytes)
+	if len(raw) > maxBytes {
+		return fmt.Errorf("artifact exceeds %d bytes", maxBytes)
 	}
 	if err = ctx.Err(); err != nil {
 		return err

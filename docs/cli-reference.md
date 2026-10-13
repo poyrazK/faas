@@ -2355,6 +2355,33 @@ Save a guarded preview as a reviewable retry request
 | `--after <ID>` | exclusive outbox cursor |  |
 | `--reason <CODE>` | exact case reason filter |  |
 
+### events subscription-lineage-retry-control-plan-export
+
+Save fixed guarded controls from one attention page
+
+`gregale events subscription-lineage-retry-control-plan-export [--file <PATH>] [--action <ACTION>] [--attention <WARNING>] [--status <STATE>] [--limit <N>] [--after <CURSOR>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new private plan file (never overwrite) |  |
+| `--action <ACTION>` | pause, resume or cancel |  |
+| `--attention <WARNING>` | any, stalled or retention_risk (default any) |  |
+| `--status <STATE>` | pending or paused |  |
+| `--limit <N>` | fixed jobs (default 50, maximum 200) |  |
+| `--after <CURSOR>` | attention-list cursor |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
+### events subscription-lineage-retry-control-plan-apply
+
+Apply a reviewed fixed control plan with independent results
+
+`gregale events subscription-lineage-retry-control-plan-apply [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | reviewed plan; unchanged on apply |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
 ### events subscription-lineage-retry-jobs
 
 List retained bulk lineage retry job summaries

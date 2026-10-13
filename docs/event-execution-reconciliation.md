@@ -1025,3 +1025,65 @@ attention response missing compatible page metadata, so older servers cannot
 silently return an ordinary unfiltered list. Other clients should check metadata
 when talking to mixed API versions. No new route, migration or registry entry is
 needed.
+
+## Review and apply controls to a fixed set of jobs
+
+Export one attention page without executing its controls:
+
+```sh
+gregale events subscription-lineage-retry-control-plan-export APP SUB --action pause --attention stalled --status pending --limit 50 --file pause-plan.json
+# Review the saved job IDs, original timestamps, actions and command UUIDs.
+gregale --json events subscription-lineage-retry-control-plan-apply APP SUB --file pause-plan.json --timeout 10m
+```
+
+The private version-1 `gregale.event-lineage-control-plan` file stores stable app
+and subscription IDs, a plan UUID, source attention/status/observation and cursor
+hint, and fixed `actions`. Each action has `job_request_id`,
+`expected_created_at`, original `retain_until`, an action and a reusable
+`command_id`. Export defaults to attention `any` and one page of 50 (maximum 200);
+action is required. Use `--after` to export another deliberate page into a separate
+file. Empty selections fail without publishing a file. Plans are bounded to
+128 KiB, privately written and atomically published without replacing any existing
+file, using the same filesystem requirements as history exports.
+
+Plans are unsigned/editable. Review or trim entries before the first application;
+do not change a submitted entry's job/action/creation guard/command UUID afterward.
+Source warning filters describe the export observation, not current job state or
+permission to execute. The apply command uses this fixed selection without fetching
+a new attention list. A manually reviewed plan can contain different valid actions
+for distinct jobs. The plan UUID is metadata; per-job command UUIDs provide the
+server-side idempotency. Creating a new plan assigns new command IDs and is not a
+substitute for repeating the original file after a lost response.
+
+Apply requires the supplied subscription to match the plan and resolves the app
+slug to its saved stable app UUID before any POST. Read scope is needed for this
+binding check; existing deploy/write scope and MFA are needed for each control.
+The parser rejects oversized/nonregular files, unsupported formats, unknown/null
+or duplicate/case-aliased fields, invalid identities/timestamps/actions and repeated
+jobs or command IDs. IDs and time zones are normalized only in memory. The file is
+never rewritten or marked completed.
+
+Each entry invokes the existing guarded pause/resume/cancel endpoint with its
+saved command UUID, sequentially and independently. Other entries continue after
+an API error. A verified original receipt produces `acknowledged`; a request error
+or incompatible/malformed acknowledgment produces `unconfirmed`, without claiming
+whether a mutation committed. Shared binding errors or exhaustion of the total
+deadline leave entries `not_attempted`. The report includes every entry and counts;
+`complete` means all were attempted, not all succeeded. JSON stdout contains the
+report; human output lists per-job outcomes. No selections/results or event
+payloads are copied into it. All acknowledgments exit 0; any unconfirmed or
+not-attempted entry exits 1; Ctrl-C reports partial results and exits 130.
+
+Repeat the same unchanged plan to acknowledge earlier successful commands and
+attempt remaining ones. The server returns each command's original receipt with
+current job state and does not reapply it after intervening controls. Receipt
+retention, the 128-receipt per-job cap, stale creation guards and expiry still
+apply. New UUID no-ops consume slots; new pause/resume commands on terminal jobs
+fail, while cancellation keeps its terminal acknowledgment semantics. A batch is
+not atomic and has no rollback: earlier successful controls remain committed if a
+later entry fails. No client execution journal or retention reservation is made.
+
+Both commands accept a positive overall `--timeout` (default `2m`), and each API
+read/control also uses the existing control timeout. A large or slow plan may need
+a longer total timeout; otherwise repeat its unchanged file for unattempted jobs.
+No new API route, SDK operation, schema migration or registry update is needed.

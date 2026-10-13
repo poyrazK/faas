@@ -10424,3 +10424,7 @@ const EventExecutionLineageRetryHealthJobsMax = 500
 const EventExecutionLineageRetryHealthSampleMax = 10
 const EventExecutionLineageRetryInactivityWarning = 15 * time.Minute
 const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour
+
+// Reviewed CLI control plans are fixed selections, independent of health sampling.
+const EventExecutionLineageControlPlanMaxJobs = 200
+const EventExecutionLineageControlPlanMaxBytes = 128 * 1024

@@ -48,6 +48,10 @@ func cmdEvents(args []string) int {
 		return cmdEventsLineageRetryJobExport(args[1:])
 	case "subscription-lineage-retry-job-watch":
 		return cmdEventsLineageRetryJobWatch(args[1:])
+	case "subscription-lineage-retry-control-plan-export":
+		return cmdEventsLineageControlPlan(args[1:], false)
+	case "subscription-lineage-retry-control-plan-apply":
+		return cmdEventsLineageControlPlan(args[1:], true)
 	case "subscription-lineage-retry-jobs":
 		return cmdEventsLineageRetryJobs(args[1:])
 	case "subscription-lineage-retry-export":
