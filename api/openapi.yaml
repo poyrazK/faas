@@ -79365,6 +79365,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        target_assessment:
+          $ref: '#/components/schemas/OperationWorkflowObligationAssessment'
+          description: Bound target prerequisite change observed by the worker; fulfillment and execution remain explicit.
         obligation_receipts:
           type: array
           maxItems: 128
@@ -79443,6 +79446,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - obligation_target_changed
           - next_action_digest
           - review_response_escalation_action_checked
           - review_response_escalation_commitment_overdue

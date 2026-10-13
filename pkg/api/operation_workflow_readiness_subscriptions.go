@@ -45,6 +45,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	TargetAssessment            *OperationWorkflowObligationAssessment                   `json:"target_assessment,omitempty"`
 	ObligationReceipts          []OperationWorkflowObligationEvent                       `json:"obligation_receipts,omitempty"`
 	ObligationReceiptsTruncated bool                                                     `json:"obligation_receipts_truncated,omitempty"`
 	NextActionDigest            *OperationWorkflowNextActionDigest                       `json:"next_action_digest,omitempty"`

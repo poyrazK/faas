@@ -10,7 +10,7 @@ import (
 
 // Capture only transitions in the locked source, never reconstruct an audit from old snapshots.
 func captureObligationReceipts(id, scope string, before, after api.OperationWorkflowReadinessNotification, actor string) api.OperationWorkflowReadinessNotification {
-	if after.NextActionDigest != nil {
+	if after.NextActionDigest != nil || after.TargetAssessment != nil {
 		return after
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)

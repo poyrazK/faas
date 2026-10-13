@@ -22,6 +22,8 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
+	TargetObservations          map[string]string                                   `json:"target_observations,omitempty"`
+	TargetCursor                int64                                               `json:"target_cursor,omitempty"`
 	DigestDeliveredItems        map[string]api.OperationWorkflowNextActionQueueItem `json:"digest_delivered_items,omitempty"`
 	DigestKnown                 map[string]string                                   `json:"digest_known,omitempty"`
 	ScheduledActionReviewCursor int64                                               `json:"scheduled_action_review_cursor,omitempty"`
@@ -394,7 +396,11 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		digestNotices, digestErr := evaluateNextActionDigest(check, store, &record)
 		notifications = append(notifications, digestNotices...)
 		cancel()
-		if digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		targetUpdates, targetErr := evaluateObligationTargets(check, store, &record)
+		watchUpdates = append(watchUpdates, targetUpdates...)
+		cancel()
+		if targetErr != nil || digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)

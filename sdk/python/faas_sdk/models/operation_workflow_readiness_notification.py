@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
+    from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
     from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
     from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
     from ..models.operation_workflow_playbook_completion_review_event import (
@@ -73,6 +74,11 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    target_assessment: OperationWorkflowObligationAssessment | Unset = UNSET
+    """Coordination assessment for one displayed outstanding source action. Human reviews, ownership acceptance and
+    worker checks are distinct from executing application transitions. Free-form response/coordinator plans remain
+    fulfillment_unassessed without a declared binding. Deadlines and histories never create dependency guards or
+    authorize actions."""
     obligation_receipts: list[OperationWorkflowObligationEvent] | Unset = UNSET
     """Server-written obligation-linked lifecycle receipts saved atomically with this source mutation; bounded
     history is not a complete audit log."""
@@ -166,6 +172,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        target_assessment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.target_assessment, Unset):
+            target_assessment = self.target_assessment.to_dict()
 
         obligation_receipts: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.obligation_receipts, Unset):
@@ -283,6 +293,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if target_assessment is not UNSET:
+            field_dict["target_assessment"] = target_assessment
         if obligation_receipts is not UNSET:
             field_dict["obligation_receipts"] = obligation_receipts
         if obligation_receipts_truncated is not UNSET:
@@ -341,6 +353,7 @@ class OperationWorkflowReadinessNotification:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
+        from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
         from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
         from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
         from ..models.operation_workflow_playbook_completion_review_event import (
@@ -396,6 +409,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _target_assessment = d.pop("target_assessment", UNSET)
+        target_assessment: OperationWorkflowObligationAssessment | Unset
+        if isinstance(_target_assessment, Unset):
+            target_assessment = UNSET
+        else:
+            target_assessment = OperationWorkflowObligationAssessment.from_dict(_target_assessment)
 
         _obligation_receipts = d.pop("obligation_receipts", UNSET)
         obligation_receipts: list[OperationWorkflowObligationEvent] | Unset = UNSET
@@ -584,6 +604,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            target_assessment=target_assessment,
             obligation_receipts=obligation_receipts,
             obligation_receipts_truncated=obligation_receipts_truncated,
             next_action_digest=next_action_digest,
