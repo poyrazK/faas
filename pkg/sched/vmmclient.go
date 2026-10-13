@@ -391,8 +391,8 @@ type VMInstanceStat struct {
 	NetRxBytes       *int64
 	InflightRequests int64
 	// QuietPaused (ADR-957): vmmd holds the instance paused between requests.
-	QuietPaused bool
-	LastRequestAt    time.Time
+	QuietPaused   bool
+	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
 	// counter resets when vmmd or the instance is recreated.
