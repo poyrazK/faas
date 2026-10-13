@@ -67,3 +67,44 @@ func TestCmdPostgresResizeAndProgress(t *testing.T) {
 		t.Fatal("accepted missing durable UUID")
 	}
 }
+
+func TestCmdPostgresResizeStorage(t *testing.T) {
+	const id = "44444444-4444-4444-8444-444444444444"
+	var sent api.ResizeManagedPostgresDatabaseRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
+			_, _ = w.Write([]byte(`{"items":[{"id":"database","name":"orders","state":"ready"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases/database":
+			_, _ = w.Write([]byte(`{"id":"database","name":"orders","state":"ready"}`))
+		default:
+			if err := json.NewDecoder(r.Body).Decode(&sent); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(202)
+			_, _ = w.Write([]byte(`{"id":"` + id + `","database_id":"database","from_class":"development","target_class":"development","from_storage_limit_bytes":10737418240,"target_storage_limit_bytes":21474836480,"generation":2,"state":"pending","connection_interruption_expected":true}`))
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fixture")
+	priorOut, priorJSON := osStdout, jsonOutput
+	t.Cleanup(func() { osStdout, jsonOutput = priorOut, priorJSON })
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, false
+	if code := cmdPostgres([]string{"resize", "orders", "--storage-bytes", "21474836480", "--request-id", id}); code != 0 {
+		t.Fatal("resize", code)
+	}
+	if sent.ServiceClass != "" || sent.StorageLimitBytes != 20<<30 || !strings.Contains(out.String(), "storage_limit: 10 GiB → 20 GiB") {
+		t.Fatal("storage resize", sent, out.String())
+	}
+	for _, args := range [][]string{
+		{"resize", "orders", "--request-id", id},
+		{"resize", "orders", "--storage-bytes", "-1", "--request-id", id},
+		{"resize", "orders", "--class", "huge", "--request-id", id},
+	} {
+		if code := cmdPostgres(args); code == 0 {
+			t.Error("accepted", args)
+		}
+	}
+}

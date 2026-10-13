@@ -21,3 +21,27 @@ func (e ResizeEvidence) Validate() error {
 type ComputeResizeProber interface {
 	ProbeComputeResize(context.Context, string, Spec) (ResizeEvidence, error)
 }
+
+// StorageResizeEvidence proves a storage-limit growth keeps the database
+// whole and lands the new limit. Storage never shrinks, so unlike a class
+// change it cannot be undone on the qualification resource.
+type StorageResizeEvidence struct {
+	IdentityPreserved    bool `json:"identity_preserved"`
+	DataPreserved        bool `json:"data_preserved"`
+	CredentialsPreserved bool `json:"credentials_preserved"`
+	ReplayStable         bool `json:"replay_stable"`
+	LimitApplied         bool `json:"limit_applied"`
+}
+
+func (e StorageResizeEvidence) Validate() error {
+	if !e.IdentityPreserved || !e.DataPreserved || !e.CredentialsPreserved || !e.ReplayStable || !e.LimitApplied {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+// StorageResizeProber is called only on disposable qualification resources,
+// after every probe that expects the qualification spec.
+type StorageResizeProber interface {
+	ProbeStorageResize(context.Context, string, Spec) (StorageResizeEvidence, error)
+}

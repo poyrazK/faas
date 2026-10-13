@@ -191,7 +191,7 @@ var _ managedpostgres.Provider = (*Provider)(nil)
 // on where the deployment archives WAL (max_restore_window_seconds). Usage
 // comes from schedd's ledger, and a restore is its own database, metered
 // apart from its source. A database switches between scale-to-zero and
-// always-on in place.
+// always-on in place, and its storage limit grows in place.
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	classes := make([]managedpostgres.ServiceClass, 0, len(p.cfg.Classes))
 	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
@@ -207,6 +207,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		ScaleToZero:             true,
 		ScaleToZeroUpdate:       true,
 		ClassResize:             len(classes) > 1,
+		StorageResize:           true,
 		MaxStorageBytes:         p.cfg.MaxStorageBytes,
 		PointInTimeRestore:      p.cfg.MaxRestoreWindowSeconds > 0,
 		MaxRestoreWindowSeconds: p.cfg.MaxRestoreWindowSeconds,

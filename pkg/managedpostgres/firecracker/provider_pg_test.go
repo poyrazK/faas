@@ -318,7 +318,8 @@ func TestQualifyProviderPasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QualifyProvider = %v", err)
 	}
-	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.ComputePolicy == nil {
+	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.ComputePolicy == nil ||
+		report.StorageGrowth == nil || report.StorageGrowth.Validate() != nil {
 		t.Fatalf("report lacks prober evidence: %+v", report)
 	}
 }

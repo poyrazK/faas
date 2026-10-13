@@ -546,8 +546,93 @@ func (p *Provider) VerifyRestoreCredentialIsolation(ctx context.Context, source,
 // stably. That the VM restarts on each shape is schedd's to prove (its
 // metal test reads shared_buffers, a quarter of guest RAM).
 func (p *Provider) ProbeComputeResize(ctx context.Context, id string, spec managedpostgres.Spec) (evidence managedpostgres.ResizeEvidence, err error) {
-	key := probeKey("qualification-resize-")
-	fixture := fixtureName("gregale_resize_")
+	target := spec
+	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
+		if _, ok := p.cfg.Classes[class]; ok && class != spec.Class {
+			target.Class = class
+			break
+		}
+	}
+	observed, err := p.Inspect(ctx, id)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != spec || target.Class == spec.Class {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	err = p.withMarker(ctx, id, "qualification-resize-", "gregale_resize_", func(key string, markersIntact func() bool) error {
+		request := managedpostgres.UpdateRequest{ResourceID: id, DataResourceID: observed.DataResourceID, PreviousSpec: spec, Spec: target, Generation: 2, IdempotencyKey: key}
+		resized, err := p.awaitUpdate(ctx, request)
+		if err != nil {
+			return err
+		}
+		replayed, err := p.Update(ctx, request)
+		if err != nil || replayed.Status != managedpostgres.ProviderStatusReady || replayed.Spec != target || replayed.DataResourceID != resized.DataResourceID || replayed.ProviderResourceID != id {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.ReplayStable = true
+		if !markersIntact() {
+			return managedpostgres.ErrUnavailable
+		}
+		request.PreviousSpec, request.Spec, request.Generation, request.IdempotencyKey = target, spec, 3, key+"-restore"
+		restored, err := p.awaitUpdate(ctx, request)
+		if err != nil || restored.DataResourceID != observed.DataResourceID || restored.ProviderResourceID != id {
+			return managedpostgres.ErrUnavailable
+		}
+		if !markersIntact() {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.IdentityPreserved, evidence.DataPreserved, evidence.CredentialsPreserved, evidence.OriginalClassRestored = true, true, true, true
+		return nil
+	})
+	return evidence, err
+}
+
+// storageProbeGrowth is how far ProbeStorageResize grows the volume.
+const storageProbeGrowth = 1 << 30
+
+// ProbeStorageResize grows the storage limit, proving identity, data and
+// credentials survive, the update replays stably and the new limit holds.
+// It cannot shrink back, so it runs last. That the filesystem grows with
+// the limit is schedd's to prove (its metal test reads the block count).
+func (p *Provider) ProbeStorageResize(ctx context.Context, id string, spec managedpostgres.Spec) (evidence managedpostgres.StorageResizeEvidence, err error) {
+	target := spec
+	target.StorageLimitBytes += storageProbeGrowth
+	if limit := p.cfg.MaxStorageBytes; limit > 0 {
+		target.StorageLimitBytes = min(target.StorageLimitBytes, limit)
+	}
+	observed, err := p.Inspect(ctx, id)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != spec || target.StorageLimitBytes <= spec.StorageLimitBytes {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	err = p.withMarker(ctx, id, "qualification-storage-", "gregale_storage_", func(key string, markersIntact func() bool) error {
+		request := managedpostgres.UpdateRequest{ResourceID: id, DataResourceID: observed.DataResourceID, PreviousSpec: spec, Spec: target, Generation: 2, IdempotencyKey: key}
+		grown, err := p.awaitUpdate(ctx, request)
+		if err != nil {
+			return err
+		}
+		replayed, err := p.Update(ctx, request)
+		if err != nil || replayed.Status != managedpostgres.ProviderStatusReady || replayed.Spec != target || replayed.DataResourceID != grown.DataResourceID || replayed.ProviderResourceID != id {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.ReplayStable = true
+		if !markersIntact() || grown.DataResourceID != observed.DataResourceID || grown.ProviderResourceID != id {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.IdentityPreserved, evidence.DataPreserved, evidence.CredentialsPreserved = true, true, true
+		inspected, err := p.Inspect(ctx, id)
+		if err != nil || inspected.Spec.StorageLimitBytes != target.StorageLimitBytes {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.LimitApplied = true
+		return nil
+	})
+	return evidence, err
+}
+
+// withMarker writes a marker row through fresh migration credentials and
+// runs fn with a check that the writer and a read-only login still see it.
+// It then drops the fixture and revokes both credentials.
+func (p *Provider) withMarker(ctx context.Context, id, keyPrefix, fixturePrefix string, fn func(key string, markersIntact func() bool) error) (err error) {
+	key := probeKey(keyPrefix)
+	fixture := fixtureName(fixturePrefix)
 	writerRequest := managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key + "-writer", IdempotencyKey: key + "-writer", Access: managedpostgres.CredentialMigration}
 	readerRequest := managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key + "-reader", IdempotencyKey: key + "-reader", Access: managedpostgres.CredentialReadOnly}
 	defer func() {
@@ -563,25 +648,14 @@ func (p *Provider) ProbeComputeResize(ctx context.Context, id string, spec manag
 			err = managedpostgres.ErrUnavailable
 		}
 	}()
-	target := spec
-	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
-		if _, ok := p.cfg.Classes[class]; ok && class != spec.Class {
-			target.Class = class
-			break
-		}
-	}
-	observed, err := p.Inspect(ctx, id)
-	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != spec || target.Class == spec.Class {
-		return evidence, managedpostgres.ErrUnavailable
-	}
 	writer, err := p.IssueCredentials(ctx, writerRequest)
 	if err != nil {
-		return evidence, err
+		return err
 	}
 	table := "public." + fixture
 	conn, err := p.connect(ctx, writer)
 	if err != nil {
-		return evidence, err
+		return err
 	}
 	_, err = conn.Exec(ctx, "CREATE TABLE "+table+" (value text PRIMARY KEY)")
 	if err == nil {
@@ -589,38 +663,15 @@ func (p *Provider) ProbeComputeResize(ctx context.Context, id string, spec manag
 	}
 	_ = conn.Close(ctx)
 	if err != nil {
-		return evidence, managedpostgres.ErrUnavailable
+		return managedpostgres.ErrUnavailable
 	}
 	reader, err := p.IssueCredentials(ctx, readerRequest)
 	if err != nil {
-		return evidence, err
+		return err
 	}
-	markersIntact := func() bool {
+	return fn(key, func() bool {
 		return p.verifyMarker(ctx, writer, table, key, false) == nil && p.verifyMarker(ctx, reader, table, key, true) == nil
-	}
-	request := managedpostgres.UpdateRequest{ResourceID: id, DataResourceID: observed.DataResourceID, PreviousSpec: spec, Spec: target, Generation: 2, IdempotencyKey: key}
-	resized, err := p.awaitUpdate(ctx, request)
-	if err != nil {
-		return evidence, err
-	}
-	replayed, err := p.Update(ctx, request)
-	if err != nil || replayed.Status != managedpostgres.ProviderStatusReady || replayed.Spec != target || replayed.DataResourceID != resized.DataResourceID || replayed.ProviderResourceID != id {
-		return evidence, managedpostgres.ErrUnavailable
-	}
-	evidence.ReplayStable = true
-	if !markersIntact() {
-		return evidence, managedpostgres.ErrUnavailable
-	}
-	request.PreviousSpec, request.Spec, request.Generation, request.IdempotencyKey = target, spec, 3, key+"-restore"
-	restored, err := p.awaitUpdate(ctx, request)
-	if err != nil || restored.DataResourceID != observed.DataResourceID || restored.ProviderResourceID != id {
-		return evidence, managedpostgres.ErrUnavailable
-	}
-	if !markersIntact() {
-		return evidence, managedpostgres.ErrUnavailable
-	}
-	evidence.IdentityPreserved, evidence.DataPreserved, evidence.CredentialsPreserved, evidence.OriginalClassRestored = true, true, true, true
-	return evidence, nil
+	})
 }
 
 // awaitUpdate applies an update and waits until the database is ready on

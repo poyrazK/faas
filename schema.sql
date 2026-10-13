@@ -1294,6 +1294,9 @@ BEGIN
  IF r.target_scale_to_zero IS NOT NULL THEN
   target_spec := target_spec || jsonb_build_object('ScaleToZero',r.target_scale_to_zero);
  END IF;
+ IF r.target_storage_limit_bytes IS NOT NULL THEN
+  target_spec := target_spec || jsonb_build_object('StorageLimitBytes',r.target_storage_limit_bytes);
+ END IF;
  actual_spec := jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,'Class',d.service_class,
   'Availability',d.availability,'ScaleToZero',d.scale_to_zero,'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds);
  IF r.account_id<>d.account_id OR (r.state='succeeded' AND d.observed_generation<r.generation)
@@ -22131,6 +22134,7 @@ CREATE TABLE public.managed_postgres_resizes (
     created_at timestamp with time zone NOT NULL,
     completed_at timestamp with time zone,
     target_scale_to_zero boolean,
+    target_storage_limit_bytes bigint,
     CONSTRAINT managed_postgres_compute_policy_target_check CHECK (((target_scale_to_zero IS NULL) OR ((NOT (target_class IS DISTINCT FROM (source_spec ->> 'Class'::text))) AND (NOT (jsonb_typeof((source_spec -> 'ScaleToZero'::text)) IS DISTINCT FROM 'boolean'::text))))),
     CONSTRAINT managed_postgres_resizes_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_resizes_backend_id_check CHECK ((length(backend_id) > 0)),
@@ -22139,6 +22143,7 @@ CREATE TABLE public.managed_postgres_resizes (
     CONSTRAINT managed_postgres_resizes_generation_check CHECK ((generation > 1)),
     CONSTRAINT managed_postgres_resizes_provider_resource_id_check CHECK (((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_resizes_source_spec_check CHECK ((jsonb_typeof(source_spec) = 'object'::text)),
+    CONSTRAINT managed_postgres_storage_resize_target_check CHECK (((target_storage_limit_bytes IS NULL) OR ((target_scale_to_zero IS NULL) AND (jsonb_typeof((source_spec -> 'StorageLimitBytes'::text)) = 'number'::text) AND (((source_spec ->> 'StorageLimitBytes'::text))::numeric > (0)::numeric) AND ((target_storage_limit_bytes)::numeric > ((source_spec ->> 'StorageLimitBytes'::text))::numeric)))),
     CONSTRAINT managed_postgres_resizes_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'succeeded'::text]))),
     CONSTRAINT managed_postgres_resizes_target_class_check CHECK ((target_class = ANY (ARRAY['development'::text, 'burstable'::text, 'production'::text])))
 );

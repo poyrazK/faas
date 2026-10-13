@@ -349,7 +349,7 @@ func TestCapabilitiesAreValidAndHonest(t *testing.T) {
 	if err := caps.Validate(); err != nil {
 		t.Fatalf("capabilities invalid: %v", err)
 	}
-	if caps.PointInTimeRestore || caps.RestoreUsageIsolated || len(caps.UsageMeters) != 5 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || !caps.ClassResize {
+	if caps.PointInTimeRestore || caps.RestoreUsageIsolated || len(caps.UsageMeters) != 5 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || !caps.ClassResize || !caps.StorageResize {
 		t.Fatalf("capabilities claim more than the backend does: %+v", caps)
 	}
 	if err := caps.Supports(devSpec()); err != nil {

@@ -49,8 +49,13 @@ func (p *resizeTestProvider) Update(_ context.Context, r UpdateRequest) (Observe
 
 func resizeFixture(t *testing.T) (*Service, *MemoryStore, *resizeTestProvider, Database, *time.Time) {
 	t.Helper()
+	return resizeFixtureWith(t, func(c *Capabilities) { c.ClassResize = true })
+}
+
+func resizeFixtureWith(t *testing.T, mutate func(*Capabilities)) (*Service, *MemoryStore, *resizeTestProvider, Database, *time.Time) {
+	t.Helper()
 	capabilities := testCapabilities()
-	capabilities.ClassResize = true
+	mutate(&capabilities)
 	provider := &resizeTestProvider{fakeProvider: &fakeProvider{capabilities: capabilities, provisionStatus: ProviderStatusReady}}
 	store := NewMemoryStore()
 	registry := testRegistry(t, provider, nil)

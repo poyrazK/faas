@@ -16,19 +16,22 @@ const (
 	ResizeSucceeded ResizeState = "succeeded"
 )
 
-// ResizeOperation journals a class or idle-policy request and its receipt. The
-// source snapshot is private control-plane evidence, never a public DTO.
+// ResizeOperation journals a class, storage or idle-policy request and its
+// receipt. The source snapshot is private control-plane evidence, never a
+// public DTO.
 type ResizeOperation struct {
 	ID, AccountID, DatabaseID                                         string
 	BackendID, BackendFingerprint, ProviderResourceID, DataResourceID string
 	SourceSpec                                                        Spec
 	TargetClass                                                       ServiceClass
-	PolicyChange                                                      bool
-	TargetScaleToZero                                                 bool
-	Generation                                                        int64
-	State                                                             ResizeState
-	LastErrorCode                                                     string
-	CreatedAt, CompletedAt                                            time.Time
+	// TargetStorageLimitBytes grows the storage limit; zero keeps it.
+	TargetStorageLimitBytes int64
+	PolicyChange            bool
+	TargetScaleToZero       bool
+	Generation              int64
+	State                   ResizeState
+	LastErrorCode           string
+	CreatedAt, CompletedAt  time.Time
 }
 
 func (r ResizeOperation) TargetSpec() Spec {
@@ -37,12 +40,36 @@ func (r ResizeOperation) TargetSpec() Spec {
 	if r.PolicyChange {
 		target.ScaleToZero = r.TargetScaleToZero
 	}
+	if r.TargetStorageLimitBytes != 0 {
+		target.StorageLimitBytes = r.TargetStorageLimitBytes
+	}
 	return target
 }
 
+// ResizeDatabaseRequest changes the class, the storage limit or both. An
+// empty class keeps the class; a zero or unchanged storage limit keeps the
+// limit. Storage only grows: a volume cannot shrink under its data.
 type ResizeDatabaseRequest struct {
 	AccountID, DatabaseID, RequestID string
 	TargetClass                      ServiceClass
+	TargetStorageLimitBytes          int64
+}
+
+// resizeTarget resolves a resize request against the source spec: the
+// class it lands on, and the storage target to journal (zero: unchanged).
+func resizeTarget(source Spec, request ResizeDatabaseRequest) (ServiceClass, int64, error) {
+	class, storage := request.TargetClass, request.TargetStorageLimitBytes
+	if class == "" {
+		class = source.Class
+	}
+	if storage == source.StorageLimitBytes {
+		storage = 0
+	}
+	if request.TargetClass == "" && request.TargetStorageLimitBytes == 0 || storage < 0 ||
+		storage > 0 && (source.StorageLimitBytes <= 0 || storage < source.StorageLimitBytes) {
+		return "", 0, ErrInvalid
+	}
+	return class, storage, nil
 }
 
 // ResizeStore serializes intent admission with other catalogue mutations and
@@ -63,7 +90,8 @@ func validResizeOperation(r ResizeOperation) bool {
 	return validResizeRequestID(r.ID) && r.AccountID != "" && r.DatabaseID != "" &&
 		r.BackendID != "" && validSHA256(r.BackendFingerprint) && validOpaqueID(r.ProviderResourceID) &&
 		validDataResourceID(r.DataResourceID) && r.SourceSpec.Validate() == nil && r.TargetSpec().Validate() == nil &&
-		(r.PolicyChange && r.TargetClass == r.SourceSpec.Class || !r.PolicyChange && !r.TargetScaleToZero) &&
+		(r.PolicyChange && r.TargetClass == r.SourceSpec.Class && r.TargetStorageLimitBytes == 0 || !r.PolicyChange && !r.TargetScaleToZero) &&
+		(r.TargetStorageLimitBytes == 0 || r.SourceSpec.StorageLimitBytes > 0 && r.TargetStorageLimitBytes > r.SourceSpec.StorageLimitBytes) &&
 		r.Generation > 1 && r.State == ResizePending && !r.CreatedAt.IsZero() && r.CompletedAt.IsZero()
 }
 
@@ -99,9 +127,7 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 	}
 	existing, err := store.GetResize(ctx, request.AccountID, request.RequestID)
 	if err == nil {
-		if existing.DatabaseID != request.DatabaseID || existing.PolicyChange != (scaleToZero != nil) ||
-			(scaleToZero == nil && existing.TargetClass != request.TargetClass) ||
-			(scaleToZero != nil && existing.TargetScaleToZero != *scaleToZero) {
+		if !sameComputeChangeIntent(existing, request, scaleToZero) {
 			return ResizeOperation{}, ErrConflict
 		}
 		return existing, nil
@@ -113,12 +139,19 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 	if err != nil {
 		return ResizeOperation{}, err
 	}
-	target := database.Spec
+	now := s.now()
+	operation := ResizeOperation{ID: request.RequestID, AccountID: request.AccountID, DatabaseID: database.ID,
+		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: database.ProviderResourceID,
+		DataResourceID: database.DataResourceID, SourceSpec: database.Spec, TargetClass: database.Spec.Class,
+		Generation: database.DesiredGeneration + 1, State: ResizePending, CreatedAt: now}
 	if scaleToZero == nil {
-		target.Class = request.TargetClass
+		if operation.TargetClass, operation.TargetStorageLimitBytes, err = resizeTarget(database.Spec, request); err != nil {
+			return ResizeOperation{}, err
+		}
 	} else {
-		target.ScaleToZero = *scaleToZero
+		operation.PolicyChange, operation.TargetScaleToZero = true, *scaleToZero
 	}
+	target := operation.TargetSpec()
 	if err := target.Validate(); err != nil {
 		return ResizeOperation{}, err
 	}
@@ -135,7 +168,7 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 	if err != nil {
 		return ResizeOperation{}, err
 	}
-	if scaleToZero == nil && !backend.Capabilities.ClassResize || scaleToZero != nil && !backend.Capabilities.ScaleToZeroUpdate {
+	if !computeChangeSupported(backend.Capabilities, operation) {
 		return ResizeOperation{}, ErrUnsupported
 	}
 	if err := backend.Capabilities.Supports(target); err != nil {
@@ -150,14 +183,6 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 		if err := s.admit(ctx, request.AccountID); err != nil {
 			return ResizeOperation{}, err
 		}
-	}
-	now := s.now()
-	operation := ResizeOperation{ID: request.RequestID, AccountID: request.AccountID, DatabaseID: database.ID,
-		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: database.ProviderResourceID,
-		DataResourceID: database.DataResourceID, SourceSpec: database.Spec, TargetClass: target.Class,
-		Generation: database.DesiredGeneration + 1, State: ResizePending, CreatedAt: now}
-	if scaleToZero != nil {
-		operation.PolicyChange, operation.TargetScaleToZero = true, *scaleToZero
 	}
 	return store.ReserveResize(ctx, database, operation, now)
 }
@@ -227,11 +252,17 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	return s.store.Get(ctx, claimed.AccountID, claimed.ID)
 }
 
+// computeChangeSupported: a storage target needs StorageResize, and
+// anything but a storage-only change needs ClassResize.
 func computeChangeSupported(c Capabilities, operation ResizeOperation) bool {
 	if operation.PolicyChange {
 		return c.ScaleToZeroUpdate
 	}
-	return c.ClassResize
+	storage := operation.TargetStorageLimitBytes != 0
+	if storage && !c.StorageResize {
+		return false
+	}
+	return c.ClassResize || storage && operation.TargetClass == operation.SourceSpec.Class
 }
 
 func sameComputeChangeRequest(a, b ResizeOperation) bool {
@@ -241,5 +272,18 @@ func sameComputeChangeRequest(a, b ResizeOperation) bool {
 	if a.PolicyChange {
 		return a.TargetScaleToZero == b.TargetScaleToZero
 	}
-	return a.TargetClass == b.TargetClass
+	return a.TargetClass == b.TargetClass && a.TargetStorageLimitBytes == b.TargetStorageLimitBytes
+}
+
+// sameComputeChangeIntent reports whether a replayed request asks for what
+// the journaled operation already holds.
+func sameComputeChangeIntent(existing ResizeOperation, request ResizeDatabaseRequest, scaleToZero *bool) bool {
+	if existing.DatabaseID != request.DatabaseID || existing.PolicyChange != (scaleToZero != nil) {
+		return false
+	}
+	if scaleToZero != nil {
+		return existing.TargetScaleToZero == *scaleToZero
+	}
+	class, storage, err := resizeTarget(existing.SourceSpec, request)
+	return err == nil && existing.TargetClass == class && existing.TargetStorageLimitBytes == storage
 }

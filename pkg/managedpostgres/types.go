@@ -581,6 +581,9 @@ type Capabilities struct {
 	PointInTimeRestore bool
 	ClassResize        bool
 	ScaleToZeroUpdate  bool
+	// StorageResize means Update grows StorageLimitBytes in place. Storage
+	// never shrinks.
+	StorageResize bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.

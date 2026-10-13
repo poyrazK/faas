@@ -1026,8 +1026,8 @@ GET `/v1/postgres/databases/{id}/resizes/{resize_id}` reports `pending` or
 `succeeded`, target generation and safe diagnostics.
 
 Clients may disconnect during the change; reconnect with existing credentials.
-Region, PostgreSQL major, storage, retention, availability and scale-to-zero
-settings stay fixed. While `updating`, the catalogue retains the last confirmed
+Region, PostgreSQL major, retention, availability and scale-to-zero settings
+stay fixed; the same request can also grow storage (see [Storage](#storage)). While `updating`, the catalogue retains the last confirmed
 class. The reconciler changes the recorded primary's compute configuration and
 commits the new class only after observing provider readiness on the same dataset.
 Timeouts preserve pending intent for recovery. Conflicting deletion, another
@@ -1041,3 +1041,38 @@ marker, reconnection with existing writer/reader credentials, stable request
 replay and restoration of the original class whenever resizing is advertised.
 Requalify Neon before reopening provisioning; prior approvals cannot prove this
 new capability. Local tests do not replace live Neon qualification.
+
+## Storage
+
+A database's storage limit starts at the plan's per-database allowance unless
+the create request names a lower one. A backend that advertises
+`storage_resize` grows it in place through the resize request, alone or
+together with a class change:
+
+```sh
+gregale postgres resize DATABASE --storage-bytes 21474836480 --request-id REQUEST_UUID
+gregale postgres resize DATABASE --class burstable --storage-bytes 21474836480 --request-id REQUEST_UUID
+```
+
+The POST body takes `storage_limit_bytes`; `service_class` becomes optional,
+and at least one of the two is required. Omitting the limit, or repeating the
+current one, keeps it. Storage only grows: a lower limit is rejected
+(`managed_postgres_invalid`), because a volume cannot shrink under its data. A
+limit above the plan's per-database allowance fails with
+`managed_postgres_quota_exceeded`, carrying `limit`, `observed` and
+`docs_url`; the backend's own ceiling (`storage_limit_bytes` in capabilities)
+also applies. The resize view reports `from_storage_limit_bytes` and
+`target_storage_limit_bytes`, and the same request UUID rules apply: replaying
+the same target returns progress, a different one conflicts.
+
+On the native backend (ADR-1027) a running database parks, its volume grows
+offline (`e2fsck`, then `resize2fs`) and it wakes on the larger filesystem;
+a parked database grows before its next wake. Storage is billed by the
+provisioned limit, so the larger limit is metered from completion on. Neon
+does not advertise `storage_resize`.
+
+Qualification artifacts record `storage_resize`. A backend that advertises it
+must pass `storage_resize_probe`: the limit grows on the disposable
+qualification database with its identity, data, credentials and a stable
+replay intact, and the database reports the new limit. The probe runs last,
+since storage cannot return to the qualification spec.

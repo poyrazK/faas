@@ -4332,20 +4332,21 @@ type ManagedPostgresHealth struct {
 }
 
 type ManagedPostgresResize struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	DatabaseID         pgtype.UUID
-	BackendID          string
-	BackendFingerprint string
-	ProviderResourceID string
-	DataResourceID     string
-	SourceSpec         []byte
-	TargetClass        string
-	Generation         int64
-	State              string
-	CreatedAt          pgtype.Timestamptz
-	CompletedAt        pgtype.Timestamptz
-	TargetScaleToZero  pgtype.Bool
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	DatabaseID              pgtype.UUID
+	BackendID               string
+	BackendFingerprint      string
+	ProviderResourceID      string
+	DataResourceID          string
+	SourceSpec              []byte
+	TargetClass             string
+	Generation              int64
+	State                   string
+	CreatedAt               pgtype.Timestamptz
+	CompletedAt             pgtype.Timestamptz
+	TargetScaleToZero       pgtype.Bool
+	TargetStorageLimitBytes pgtype.Int8
 }
 
 type ManagedPostgresRestoreProof struct {

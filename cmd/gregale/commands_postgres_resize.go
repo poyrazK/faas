@@ -12,14 +12,16 @@ import (
 
 func cmdPostgresResize(args []string) int {
 	fs := newFlagSet("postgres resize", flag.ContinueOnError)
-	class := fs.String("class", "", "target service class")
+	class := fs.String("class", "", "target service class (omit to keep it)")
+	storage := fs.Int64("storage-bytes", 0, "target storage limit in bytes; storage only grows (omit to keep it)")
 	request := fs.String("request-id", "", "stable nonzero UUID; reuse after an uncertain response")
 	if err := fs.Parse(normalizePostgresAttachArgs(args)); err != nil {
 		return 1
 	}
 	id, err := uuid.Parse(*request)
-	if fs.NArg() != 1 || (*class != "development" && *class != "burstable" && *class != "production") || err != nil || id == uuid.Nil || id.String() != *request {
-		PrintUsage(os.Stderr, "usage: gregale postgres resize DATABASE --class CLASS --request-id UUID", "postgres")
+	if fs.NArg() != 1 || (*class != "" && !postgresServiceClassOK(*class)) || *storage < 0 || (*class == "" && *storage == 0) ||
+		err != nil || id == uuid.Nil || id.String() != *request {
+		PrintUsage(os.Stderr, "usage: gregale postgres resize DATABASE [--class CLASS] [--storage-bytes N] --request-id UUID", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -30,7 +32,7 @@ func cmdPostgresResize(args []string) int {
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
 	}
-	result, err := client.ResizeManagedPostgresDatabase(context.Background(), database.ID, api.ResizeManagedPostgresDatabaseRequest{RequestID: *request, ServiceClass: *class})
+	result, err := client.ResizeManagedPostgresDatabase(context.Background(), database.ID, api.ResizeManagedPostgresDatabaseRequest{RequestID: *request, ServiceClass: *class, StorageLimitBytes: *storage})
 	if err != nil {
 		return printErr("Could not request managed PostgreSQL resize", err)
 	}
@@ -68,6 +70,9 @@ func cmdPostgresResizeStatus(args []string) int {
 
 func renderPostgresResize(result api.ManagedPostgresResize) {
 	_, _ = fmt.Fprintf(osStdout, "resize %s: %s → %s (%s, generation %d)\n", result.ID, result.FromClass, result.TargetClass, result.State, result.Generation)
+	if result.TargetStorageLimitBytes != result.FromStorageLimitBytes {
+		_, _ = fmt.Fprintf(osStdout, "  storage_limit: %s → %s\n", formatPostgresStorage(result.FromStorageLimitBytes), formatPostgresStorage(result.TargetStorageLimitBytes))
+	}
 	if result.ConnectionInterruptionExpected {
 		_, _ = fmt.Fprintln(osStdout, "Clients may disconnect during resizing; reconnect using existing credentials.")
 	}

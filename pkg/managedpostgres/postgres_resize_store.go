@@ -16,7 +16,7 @@ var _ ResizeStore = (*PostgresStore)(nil)
 func resizeFromSQL(row sqlc.ManagedPostgresResize) (ResizeOperation, error) {
 	operation := ResizeOperation{ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), DatabaseID: cutoverUUID(row.DatabaseID),
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
-		PolicyChange: row.TargetScaleToZero.Valid, TargetScaleToZero: row.TargetScaleToZero.Bool,
+		PolicyChange: row.TargetScaleToZero.Valid, TargetScaleToZero: row.TargetScaleToZero.Bool, TargetStorageLimitBytes: row.TargetStorageLimitBytes.Int64,
 		DataResourceID: row.DataResourceID, TargetClass: ServiceClass(row.TargetClass), Generation: row.Generation, State: ResizeState(row.State),
 		CreatedAt: bindingDeliveryTime(row.CreatedAt), CompletedAt: bindingDeliveryTime(row.CompletedAt)}
 	if json.Unmarshal(row.SourceSpec, &operation.SourceSpec) != nil || operation.SourceSpec.Validate() != nil || operation.TargetSpec().Validate() != nil {
@@ -135,7 +135,8 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 	source, _ := json.Marshal(operation.SourceSpec)
 	row, err = q.InsertManagedPostgresResize(ctx, tx, sqlc.InsertManagedPostgresResizeParams{ID: requestID, AccountID: account, DatabaseID: id,
 		BackendID: operation.BackendID, BackendFingerprint: operation.BackendFingerprint, ProviderResourceID: operation.ProviderResourceID,
-		DataResourceID: operation.DataResourceID, SourceSpec: source, TargetClass: string(operation.TargetClass), TargetScaleToZero: pgtype.Bool{Bool: operation.TargetScaleToZero, Valid: operation.PolicyChange}, Generation: operation.Generation, CreatedAt: clock})
+		DataResourceID: operation.DataResourceID, SourceSpec: source, TargetClass: string(operation.TargetClass), TargetScaleToZero: pgtype.Bool{Bool: operation.TargetScaleToZero, Valid: operation.PolicyChange},
+		TargetStorageLimitBytes: pgtype.Int8{Int64: operation.TargetStorageLimitBytes, Valid: operation.TargetStorageLimitBytes != 0}, Generation: operation.Generation, CreatedAt: clock})
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
 	}
@@ -238,7 +239,8 @@ func (s *PostgresStore) FinishResize(ctx context.Context, expected Database, ope
 	if changed != 1 {
 		return Database{}, ErrConflict
 	}
-	row, err = q.FinishManagedPostgresResizeDatabase(ctx, tx, sqlc.FinishManagedPostgresResizeDatabaseParams{ID: id, Account: account, Token: expected.LeaseToken, Generation: actual.Generation, TargetClass: string(actual.TargetClass), TargetScaleToZero: actual.TargetSpec().ScaleToZero, At: clock})
+	row, err = q.FinishManagedPostgresResizeDatabase(ctx, tx, sqlc.FinishManagedPostgresResizeDatabaseParams{ID: id, Account: account, Token: expected.LeaseToken, Generation: actual.Generation, TargetClass: string(actual.TargetClass), TargetScaleToZero: actual.TargetSpec().ScaleToZero,
+		TargetStorageLimitBytes: actual.TargetSpec().StorageLimitBytes, At: clock})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
 	}

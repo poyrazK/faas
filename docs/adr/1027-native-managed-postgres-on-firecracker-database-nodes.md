@@ -576,10 +576,32 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   MiB/1 GiB to 2 vCPU/1 GiB/2 GiB is back in 1.5 s with `shared_buffers`
   88 MB -> 245 MB, its data intact and its filesystem 2 GiB; resized back
   while parked, it boots small at its next wake. `QualifyProvider` passes
-  26 checks, including `compute_resize_probe`.
-- A customer-facing storage change has no API yet: the service's resize
-  operation carries a target class only. The driver and schedd accept a
-  larger `StorageLimitBytes` for when it does.
+  27 checks, including `compute_resize_probe` and `storage_resize_probe`.
+- **Customers grow storage through the resize journal** that already
+  carries class and idle-policy changes (ADR-623/624), not a parallel flow:
+  one fenced operation per database, so a storage change serializes with
+  every other catalogue mutation and recovers like them.
+  `managed_postgres_resizes.target_storage_limit_bytes` (migration
+  `20261013192154603`) is null for no change; a CHECK requires it to exceed
+  a positive source limit and forbids it on an idle-policy change, and the
+  receipt trigger merges it into the target spec it compares with the
+  database row at completion. `ResizeOperation.TargetStorageLimitBytes`
+  carries it, `TargetSpec` applies it and replay compares it.
+- The API request takes `service_class` and `storage_limit_bytes`, both
+  optional but not both absent; an unchanged limit counts as absent. apid
+  (`pkg/apid/managedpg`) admits the class against the plan and the limit
+  against the plan's per-database allowance, the latter as a limit problem
+  with `limit`/`observed`; the service rejects a shrink and checks the
+  backend ceiling. A storage target needs the backend's `StorageResize`
+  capability, and anything but a storage-only change still needs
+  `ClassResize`. The view reports `from_`/`target_storage_limit_bytes`, and
+  the CLI takes `--storage-bytes`.
+- **Qualification**: a backend advertising `StorageResize` must pass
+  `storage_resize_probe` (`ProbeStorageResize`: grow by 1 GiB, identity,
+  data, credentials and replay preserved, the new limit observed). It runs
+  after every other probe, since storage cannot shrink back to the
+  qualification spec; the report's `storage_resize` must match the backend
+  for readiness. The native driver advertises it; Neon does not.
 
 ### Usage metering
 

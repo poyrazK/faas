@@ -33,6 +33,8 @@ class ManagedPostgresResize:
     database_id: str
     from_class: ManagedPostgresResizeFromClass
     target_class: ManagedPostgresResizeTargetClass
+    from_storage_limit_bytes: int
+    target_storage_limit_bytes: int
     generation: int
     state: ManagedPostgresResizeState
     connection_interruption_expected: bool
@@ -50,6 +52,10 @@ class ManagedPostgresResize:
         from_class: str = self.from_class
 
         target_class: str = self.target_class
+
+        from_storage_limit_bytes = self.from_storage_limit_bytes
+
+        target_storage_limit_bytes = self.target_storage_limit_bytes
 
         generation = self.generation
 
@@ -73,6 +79,8 @@ class ManagedPostgresResize:
                 "database_id": database_id,
                 "from_class": from_class,
                 "target_class": target_class,
+                "from_storage_limit_bytes": from_storage_limit_bytes,
+                "target_storage_limit_bytes": target_storage_limit_bytes,
                 "generation": generation,
                 "state": state,
                 "connection_interruption_expected": connection_interruption_expected,
@@ -97,6 +105,10 @@ class ManagedPostgresResize:
 
         target_class = check_managed_postgres_resize_target_class(d.pop("target_class"))
 
+        from_storage_limit_bytes = d.pop("from_storage_limit_bytes")
+
+        target_storage_limit_bytes = d.pop("target_storage_limit_bytes")
+
         generation = d.pop("generation")
 
         state = check_managed_postgres_resize_state(d.pop("state"))
@@ -119,6 +131,8 @@ class ManagedPostgresResize:
             database_id=database_id,
             from_class=from_class,
             target_class=target_class,
+            from_storage_limit_bytes=from_storage_limit_bytes,
+            target_storage_limit_bytes=target_storage_limit_bytes,
             generation=generation,
             state=state,
             connection_interruption_expected=connection_interruption_expected,
