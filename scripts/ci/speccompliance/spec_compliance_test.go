@@ -184,7 +184,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/gitlab/callback":                                    true, // GitLab.com OAuth browser callback
 	"GET /v1/gitlab/connection":                                  true, // GitLab.com session-only dashboard status
 	"DELETE /v1/gitlab/connection":                               true, // GitLab.com session-only disconnect
-	"POST /v1/gitlab/disconnect":                                  true, // GitLab.com session + CSRF form
+	"POST /v1/gitlab/disconnect":                                 true, // GitLab.com session + CSRF form
 	"POST /dashboard/install/connect":                            true, // GitHub App "Connect GitHub" button (PR-C)
 	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
 	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
