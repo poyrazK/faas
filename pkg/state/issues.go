@@ -43,9 +43,10 @@ type RecordIssueParams struct {
 }
 
 type IssueCursor struct {
-	Tag  string `json:"tag,omitempty"`
-	Time time.Time
-	ID   string
+	FilterHash string `json:"filter_hash,omitempty"`
+	Tag        string `json:"tag,omitempty"`
+	Time       time.Time
+	ID         string
 
 	// Impact fields are present only on list cursors whose query ranks or
 	// filters by the fixed 24-hour customer-impact window.

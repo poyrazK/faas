@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -255,6 +254,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		}
 		for _, stored := range rules {
 			rule := api.IssueOwnershipRule{
+				SourcePathPrefix: stored.SourcePathPrefix.String, Tag: stored.TagFilter.String,
 				ExceptionType:     stored.ExceptionType.String,
 				SourceKind:        stored.SourceKind.String,
 				RoutePrefix:       stored.RoutePrefix.String,
@@ -299,6 +299,12 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		}
 		if autoAssigned.SourceKind != "" {
 			details["source_kind"] = autoAssigned.SourceKind
+		}
+		if autoAssigned.SourcePathPrefix != "" {
+			details["source_path_prefix"] = autoAssigned.SourcePathPrefix
+		}
+		if autoAssigned.Tag != "" {
+			details["tag"] = autoAssigned.Tag
 		}
 		if autoAssigned.RoutePrefix != "" {
 			details["route_prefix"] = autoAssigned.RoutePrefix
@@ -415,21 +421,7 @@ func recordIssueImpactThresholdTransition(ctx context.Context, q *sqlc.Queries, 
 }
 
 func issueOwnershipRuleMatches(rule api.IssueOwnershipRule, event api.IssueEvent) bool {
-	if rule.ExceptionType != "" && rule.ExceptionType != event.ExceptionType {
-		return false
-	}
-	if rule.SourceKind != "" && rule.SourceKind != event.SourceKind {
-		return false
-	}
-	if rule.RoutePrefix != "" {
-		if !strings.HasPrefix(event.Route, rule.RoutePrefix) {
-			return false
-		}
-		if len(event.Route) > len(rule.RoutePrefix) && !strings.HasSuffix(rule.RoutePrefix, "/") && event.Route[len(rule.RoutePrefix)] != '/' {
-			return false
-		}
-	}
-	return true
+	return issues.OwnershipRuleMatches(rule, event)
 }
 
 func (s *PgStore) GetIssueOwnershipRules(ctx context.Context, app string) (api.IssueOwnershipRules, error) {
@@ -440,6 +432,7 @@ func (s *PgStore) GetIssueOwnershipRules(ctx context.Context, app string) (api.I
 	out := api.IssueOwnershipRules{Rules: make([]api.IssueOwnershipRule, 0, len(rows))}
 	for _, row := range rows {
 		out.Rules = append(out.Rules, api.IssueOwnershipRule{
+			SourcePathPrefix: row.SourcePathPrefix.String, Tag: row.TagFilter.String,
 			ExceptionType: row.ExceptionType.String, SourceKind: row.SourceKind.String,
 			RoutePrefix: row.RoutePrefix.String, AssigneeAccountID: issueID(row.AssigneeAccountID),
 		})
@@ -480,6 +473,8 @@ func (s *PgStore) SetIssueOwnershipRules(ctx context.Context, app, account strin
 	for i, rule := range rules {
 		if err = q.IssueInsertOwnershipRule(ctx, tx, sqlc.IssueInsertOwnershipRuleParams{
 			AppID: owner.ID, RuleOrder: int32(i),
+			SourcePathPrefix:  pgtype.Text{String: rule.SourcePathPrefix, Valid: rule.SourcePathPrefix != ""},
+			TagFilter:         pgtype.Text{String: rule.Tag, Valid: rule.Tag != ""},
 			ExceptionType:     pgtype.Text{String: rule.ExceptionType, Valid: rule.ExceptionType != ""},
 			SourceKind:        pgtype.Text{String: rule.SourceKind, Valid: rule.SourceKind != ""},
 			RoutePrefix:       pgtype.Text{String: rule.RoutePrefix, Valid: rule.RoutePrefix != ""},
@@ -581,7 +576,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 		}
 		if len(rows) > api.IssuePageSize {
 			last := out.Items[len(out.Items)-1]
-			next := IssueCursor{Time: last.LastSeenAt, ID: last.ID, Sort: sortBy, MinCustomers: filter.MinCustomers, ImpactWindowEnd: &windowEnd, Tag: filter.Tag}
+			next := IssueCursor{FilterHash: issueListFilterHash(filter), Time: last.LastSeenAt, ID: last.ID, Sort: sortBy, MinCustomers: filter.MinCustomers, ImpactWindowEnd: &windowEnd, Tag: filter.Tag}
 			if sortBy == "impact" && last.Impact24h != nil {
 				next.ImpactCustomers = last.Impact24h.IdentifiedCustomers
 			}
@@ -606,7 +601,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 	}
 	if len(rows) > api.IssuePageSize {
 		last := out.Items[len(out.Items)-1]
-		out.NextCursor = EncodeIssueCursor(IssueCursor{Time: last.LastSeenAt, ID: last.ID})
+		out.NextCursor = EncodeIssueCursor(IssueCursor{FilterHash: issueListFilterHash(filter), Time: last.LastSeenAt, ID: last.ID})
 	}
 	if len(out.Items) == 0 {
 		return out, nil

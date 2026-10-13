@@ -111,6 +111,8 @@ type UpdateIssueImpactAlertPolicyRequest struct {
 // IssueOwnershipRule applies when every populated matcher equals the incoming
 // event. The first matching rule assigns a newly-created issue to the account.
 type IssueOwnershipRule struct {
+	SourcePathPrefix  string `json:"source_path_prefix,omitempty"`
+	Tag               string `json:"tag,omitempty"`
 	ExceptionType     string `json:"exception_type,omitempty"`
 	SourceKind        string `json:"source_kind,omitempty"`
 	RoutePrefix       string `json:"route_prefix,omitempty"`
@@ -133,7 +135,7 @@ func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipR
 		rule.ExceptionType = strings.TrimSpace(rule.ExceptionType)
 		rule.SourceKind = strings.TrimSpace(rule.SourceKind)
 		rule.RoutePrefix = strings.TrimSpace(rule.RoutePrefix)
-		if rule.ExceptionType == "" && rule.SourceKind == "" && rule.RoutePrefix == "" {
+		if rule.ExceptionType == "" && rule.SourceKind == "" && rule.RoutePrefix == "" && rule.SourcePathPrefix == "" && rule.Tag == "" {
 			return nil, fmt.Errorf("rules[%d] must include at least one matcher", i)
 		}
 		if len(rule.ExceptionType) > IssueMaxTypeBytes {
@@ -144,6 +146,16 @@ func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipR
 		}
 		if rule.RoutePrefix != "" && (len(rule.RoutePrefix) > IssueMaxTypeBytes || !strings.HasPrefix(rule.RoutePrefix, "/") || strings.ContainsAny(rule.RoutePrefix, "?#")) {
 			return nil, fmt.Errorf("rules[%d].route_prefix must be a path prefix starting with / and contain no query or fragment", i)
+		}
+		if rule.SourcePathPrefix != "" {
+			prefix, err := NormalizeIssueSourcePathPrefix(rule.SourcePathPrefix)
+			if err != nil {
+				return nil, fmt.Errorf("rules[%d]: %w", i, err)
+			}
+			rule.SourcePathPrefix = prefix
+		}
+		if _, err := ParseIssueTagFilter(rule.Tag); err != nil {
+			return nil, fmt.Errorf("rules[%d]: %w", i, err)
 		}
 		id, err := uuid.Parse(strings.TrimSpace(rule.AssigneeAccountID))
 		if err != nil {

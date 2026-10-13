@@ -165,3 +165,36 @@ func (c *Client) BulkActOnIssues(ctx context.Context, slug string, in BulkIssueA
 	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/bulk-actions", in, &out)
 	return out, err
 }
+
+func issueSavedViewPath(slug, key string) string {
+	return issueAppPath(slug) + "/issue-saved-views/" + url.PathEscape(key)
+}
+func (c *Client) ListIssueSavedViews(ctx context.Context, slug string) (ListIssueSavedViewsResponse, error) {
+	var out ListIssueSavedViewsResponse
+	err := c.do(ctx, "GET", issueAppPath(slug)+"/issue-saved-views", nil, &out)
+	return out, err
+}
+func (c *Client) GetIssueSavedView(ctx context.Context, slug, key string) (IssueSavedView, error) {
+	var out IssueSavedView
+	err := c.do(ctx, "GET", issueSavedViewPath(slug, key), nil, &out)
+	return out, err
+}
+func (c *Client) PutIssueSavedView(ctx context.Context, slug, key string, in PutIssueSavedViewRequest) (IssueSavedView, error) {
+	var out IssueSavedView
+	err := c.do(ctx, "PUT", issueSavedViewPath(slug, key), in, &out)
+	return out, err
+}
+func (c *Client) DeleteIssueSavedView(ctx context.Context, slug, key string) error {
+	return c.do(ctx, "DELETE", issueSavedViewPath(slug, key), nil, nil)
+}
+func (c *Client) ListIssuesForSavedView(ctx context.Context, slug, key, cursor string) (ListIssuesResponse, error) {
+	view, err := c.GetIssueSavedView(ctx, slug, key)
+	if err != nil {
+		return ListIssuesResponse{}, err
+	}
+	q := view.Filters.Query()
+	q.Set("cursor", cursor)
+	var out ListIssuesResponse
+	err = c.do(ctx, "GET", issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
+	return out, err
+}

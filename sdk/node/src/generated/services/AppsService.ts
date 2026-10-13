@@ -61,6 +61,7 @@ import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
 import type { IssueReleaseComparison } from '../models/IssueReleaseComparison.js';
+import type { IssueSavedView } from '../models/IssueSavedView.js';
 import type { IssueSourceMapsMetadata } from '../models/IssueSourceMapsMetadata.js';
 import type { IssueSplitMatcher } from '../models/IssueSplitMatcher.js';
 import type { IssueSplitPreview } from '../models/IssueSplitPreview.js';
@@ -69,6 +70,7 @@ import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequ
 import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
+import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
@@ -86,6 +88,7 @@ import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
+import type { PutIssueSavedViewRequest } from '../models/PutIssueSavedViewRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -2474,6 +2477,149 @@ export class AppsService {
         'deployment_id': deploymentId,
       },
       errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's shared named issue inbox filters.
+   * @returns ListIssueSavedViewsResponse Up to 20 shared saved views, ordered by name and key.
+   * @throws ApiError
+   */
+  public static listIssueSavedViews({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListIssueSavedViewsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-saved-views',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the latest shared view definition.
+   * @returns IssueSavedView Named filters; me remains relative to the eventual authenticated reader.
+   * @throws ApiError
+   */
+  public static getIssueSavedView({
+    slug,
+    viewKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    viewKey: string,
+  }): CancelablePromise<IssueSavedView> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
+      path: {
+        'slug': slug,
+        'view_key': viewKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Save or replace a shared named issue inbox view.
+   * Requires deploy-write permission and session MFA. Existing keys replace their definition; new keys consume the 20-view app quota. Filters are bounded known fields, not executable queries. UUID assignees must be currently eligible app owners or active organization members. Views confer no additional read permission.
+   * @returns IssueSavedView Saved definition and editor metadata.
+   * @throws ApiError
+   */
+  public static putIssueSavedView({
+    slug,
+    viewKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    viewKey: string,
+    requestBody: PutIssueSavedViewRequest,
+  }): CancelablePromise<IssueSavedView> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
+      path: {
+        'slug': slug,
+        'view_key': viewKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Shared view quota reached.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a shared view without changing any issues.
+   * Requires deploy-write permission and session MFA.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssueSavedView({
+    slug,
+    viewKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    viewKey: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
+      path: {
+        'slug': slug,
+        'view_key': viewKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,

@@ -537,3 +537,8 @@ type BulkIssueActionRequest = api.BulkIssueActionRequest
 type BulkIssueActionResponse = api.BulkIssueActionResponse
 
 type BulkIssueLifecycleAction = api.BulkIssueLifecycleAction
+
+type IssueSavedViewFilters = api.IssueSavedViewFilters
+type IssueSavedView = api.IssueSavedView
+type PutIssueSavedViewRequest = api.PutIssueSavedViewRequest
+type ListIssueSavedViewsResponse = api.ListIssueSavedViewsResponse

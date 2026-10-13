@@ -903,3 +903,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [1203: Bounded operational context for Issues](1203-bounded-issue-operational-context.md)
 
 - [ADR-1204: Observed release comparison and atomic bulk issue triage](1204-issue-release-comparison-and-bulk-triage.md)
+
+- [ADR-1205: Shared issue views and source/tag ownership routing](1205-shared-issue-views-and-source-routing.md)

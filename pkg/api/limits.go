@@ -10431,3 +10431,11 @@ const OperationWorkflowPlaybookReviewsMax = 32
 
 // IssueBulkActionMax bounds one atomic triage transaction.
 const IssueBulkActionMax = 50
+
+// Shared inbox preferences are bounded independently from issue history.
+const (
+	IssueSavedViewsMax            = 20
+	IssueSavedViewKeyMaxBytes     = 48
+	IssueSavedViewNameMaxBytes    = 64
+	IssueSavedViewFiltersMaxBytes = 2048
+)

@@ -144,6 +144,8 @@ type UpdateIssueImpactAlertPolicyRequest struct {
 }
 
 type IssueOwnershipRule struct {
+	SourcePathPrefix  string `json:"source_path_prefix,omitempty"`
+	Tag               string `json:"tag,omitempty"`
 	ExceptionType     string `json:"exception_type,omitempty"`
 	SourceKind        string `json:"source_kind,omitempty"`
 	RoutePrefix       string `json:"route_prefix,omitempty"`

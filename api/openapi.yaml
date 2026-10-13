@@ -13419,6 +13419,89 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issue-saved-views:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listIssueSavedViews
+      summary: List the app's shared named issue inbox filters.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Up to 20 shared saved views, ordered by name and key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueSavedViewsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-saved-views/{view_key}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: view_key
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+    get:
+      tags: [apps]
+      operationId: getIssueSavedView
+      summary: Read the latest shared view definition.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Named filters; me remains relative to the eventual authenticated reader.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSavedView' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: putIssueSavedView
+      summary: Save or replace a shared named issue inbox view.
+      description: Requires deploy-write permission and session MFA. Existing keys replace their definition; new keys consume the 20-view app quota. Filters are bounded known fields, not executable queries. UUID assignees must be currently eligible app owners or active organization members. Views confer no additional read permission.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutIssueSavedViewRequest' }
+      responses:
+        '200':
+          description: Saved definition and editor metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSavedView' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Shared view quota reached. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssueSavedView
+      summary: Delete a shared view without changing any issues.
+      description: Requires deploy-write permission and session MFA.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Shared view deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issue-release-comparison:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -81922,6 +82005,42 @@ components:
       properties:
         minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
 
+    IssueSavedViewFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        state: { type: string, enum: [open, resolved, ignored], description: Omit to include every state. }
+        environment: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', description: Omit to include every issue environment. }
+        assignee: { type: string, description: 'me, unassigned, or an eligible account UUID. Omit for all owners. me resolves for each authenticated viewer.' }
+        sort: { type: string, enum: [recent, impact], default: recent }
+        min_customers: { type: integer, format: int64, minimum: 0, default: 0 }
+        tag: { type: string, maxLength: 193, description: Exact allowlisted operational key=value in retained occurrences over 24h; value is limited to 128 UTF-8 bytes. }
+    PutIssueSavedViewRequest:
+      type: object
+      additionalProperties: false
+      required: [name, filters]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, description: Trimmed display name, limited to 64 UTF-8 bytes without control characters. }
+        filters: { $ref: '#/components/schemas/IssueSavedViewFilters' }
+    IssueSavedView:
+      type: object
+      required: [key, name, filters, created_at, updated_at]
+      properties:
+        key: { type: string, maxLength: 48, pattern: '^[a-z0-9][a-z0-9-]{0,47}$' }
+        name: { type: string, maxLength: 64 }
+        filters: { $ref: '#/components/schemas/IssueSavedViewFilters' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by_account_id: { type: string, format: uuid }
+    ListIssueSavedViewsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/IssueSavedView' }
+
     IssueOwnershipRule:
       description: "Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account."
       type: object
@@ -81931,6 +82050,8 @@ components:
         exception_type: { type: string, minLength: 1, maxLength: 256, description: Exact exception type match. }
         source_kind: { type: string, enum: [exception, http, runtime, worker] }
         route_prefix: { type: string, pattern: '^/', maxLength: 256, description: Path prefix; matches only at a path-segment boundary. }
+        source_path_prefix: { type: string, minLength: 1, maxLength: 256, description: 'Local source path prefix (256 UTF-8 bytes); matches any application frame in the exception or its causes at a path-segment boundary. Backslashes and dot segments normalize; parent traversal, URLs, queries, and fragments are rejected. No glob or filesystem access.' }
+        tag: { type: string, maxLength: 193, description: 'Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes. Missing keys do not match an empty value.' }
         assignee_account_id: { type: string, format: uuid }
 
     IssueOwnershipRules:

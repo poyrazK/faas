@@ -29528,8 +29528,8 @@ func (q *Queries) IssueInsertEvent(ctx context.Context, db DBTX, arg IssueInsert
 }
 
 const issueInsertOwnershipRule = `-- name: IssueInsertOwnershipRule :exec
-INSERT INTO app_issue_ownership_rules(app_id,rule_order,exception_type,source_kind,route_prefix,assignee_account_id)
-VALUES($1,$2,$3,$4,$5,$6)
+INSERT INTO app_issue_ownership_rules(app_id,rule_order,exception_type,source_kind,route_prefix,source_path_prefix,tag_filter,assignee_account_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
 `
 
 type IssueInsertOwnershipRuleParams struct {
@@ -29538,6 +29538,8 @@ type IssueInsertOwnershipRuleParams struct {
 	ExceptionType     pgtype.Text
 	SourceKind        pgtype.Text
 	RoutePrefix       pgtype.Text
+	SourcePathPrefix  pgtype.Text
+	TagFilter         pgtype.Text
 	AssigneeAccountID pgtype.UUID
 }
 
@@ -29548,6 +29550,8 @@ func (q *Queries) IssueInsertOwnershipRule(ctx context.Context, db DBTX, arg Iss
 		arg.ExceptionType,
 		arg.SourceKind,
 		arg.RoutePrefix,
+		arg.SourcePathPrefix,
+		arg.TagFilter,
 		arg.AssigneeAccountID,
 	)
 	return err
@@ -30025,7 +30029,7 @@ func (q *Queries) IssueListGroupSplitRules(ctx context.Context, db DBTX, issueID
 }
 
 const issueListOwnershipRules = `-- name: IssueListOwnershipRules :many
-SELECT rule_order, exception_type, source_kind, route_prefix, assignee_account_id
+SELECT rule_order, exception_type, source_kind, route_prefix, source_path_prefix, tag_filter, assignee_account_id
   FROM app_issue_ownership_rules
  WHERE app_id=$1
  ORDER BY rule_order
@@ -30036,6 +30040,8 @@ type IssueListOwnershipRulesRow struct {
 	ExceptionType     pgtype.Text
 	SourceKind        pgtype.Text
 	RoutePrefix       pgtype.Text
+	SourcePathPrefix  pgtype.Text
+	TagFilter         pgtype.Text
 	AssigneeAccountID pgtype.UUID
 }
 
@@ -30053,6 +30059,8 @@ func (q *Queries) IssueListOwnershipRules(ctx context.Context, db DBTX, appID pg
 			&i.ExceptionType,
 			&i.SourceKind,
 			&i.RoutePrefix,
+			&i.SourcePathPrefix,
+			&i.TagFilter,
 			&i.AssigneeAccountID,
 		); err != nil {
 			return nil, err

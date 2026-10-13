@@ -732,6 +732,18 @@ type AppIssueOwnershipRule struct {
 	SourceKind        pgtype.Text
 	RoutePrefix       pgtype.Text
 	AssigneeAccountID pgtype.UUID
+	SourcePathPrefix  pgtype.Text
+	TagFilter         pgtype.Text
+}
+
+type AppIssueSavedView struct {
+	AppID              pgtype.UUID
+	ViewKey            string
+	Name               string
+	Filters            []byte
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	UpdatedByAccountID pgtype.UUID
 }
 
 type AppLogDrain struct {

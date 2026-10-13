@@ -821,3 +821,40 @@ gregale issues bulk --app payments --issues ISSUE_UUID_1,ISSUE_UUID_2 --action r
 `POST /v1/apps/{slug}/issues/bulk-actions` accepts `{ "issue_ids": ["UUID", "UUID"], "action": { "action": "reopen" } }`. It supports 1–50 distinct nonzero UUIDs. Merged aliases update once and return one canonical issue in `items`. The complete batch commits together; a missing issue, disallowed assignee, or deployment outside an issue's environment rolls everything back. Each changed group retains its existing lifecycle activity and webhook behavior. Unchanged state is a no-op. Regrouping is excluded. Use the standard `Idempotency-Key` header when retrying API mutations. Permissions, session MFA, and dashboard CSRF match individual triage.
 
 Go exposes `CompareIssueReleases` and `BulkActOnIssues`; generated Node and Python app clients expose the matching operations. Saved views and additional team routing/integrations remain future increments.
+
+## Shared saved inbox views
+
+Filter the Issues inbox, then use **Save or replace current filters** to save a named view. Views are shared with people who can read that app's Issues; they confer no new access. Dashboard links use a stable key and always load the latest definition. A `me` owner filter resolves for each authenticated reader. Views remain live as issues change and do not snapshot results.
+
+```sh
+gregale issues views save --app payments --key my-payments --name "My payments" --state open --assignee me --sort impact --tag component=payments
+gregale issues views list --app payments
+gregale issues views apply --app payments --key my-payments
+gregale issues views delete --app payments --key my-payments
+```
+
+`GET /v1/apps/{slug}/issue-saved-views` lists shared views. `GET`, `PUT`, and `DELETE /v1/apps/{slug}/issue-saved-views/{view_key}` read, replace, and delete a definition. PUT accepts `{ "name": "My payments", "filters": { "state": "open", "assignee": "me", "sort": "impact", "tag": "component=payments" } }`. Saving an existing key replaces its definition and preserves its creation timestamp. Delete returns 204 without changing issues. Go also provides `ListIssuesForSavedView`, which reads the latest definition before listing.
+
+Each app has at most 20 views. Keys contain 1–48 lowercase letters, digits, or hyphens and start with a letter or digit. Names contain at most 64 UTF-8 bytes without control characters. Filters support only state, environment, owner, recent/impact ordering, minimum verified customers, and the existing single allowlisted tag query. Explicit account UUID filters must refer to an eligible owner or active organization member when saved. Writes use the usual deployment-write permission and session MFA; dashboard forms also require CSRF. New list cursors bind all selected filters, including the resolved viewer identity. If a view's filters change between pages, reopen it from the first page. Historical cursors remain readable for compatibility. Inbox preferences are not copied by workload cloning.
+
+## Route new issues by source path and component
+
+Ownership rules can now require an application source path and an exact operational tag:
+
+```json
+{
+  "rules": [
+    {
+      "source_path_prefix": "/app/src/payments",
+      "tag": "component=payments",
+      "assignee_account_id": "11111111-1111-4111-8111-111111111111"
+    }
+  ]
+}
+```
+
+All populated matchers must match. Source prefixes stop at path-segment boundaries: `/app/src/payments` matches its files and subdirectories, but not `/app/src/payments-admin`. Any application frame in the exception or its causes can match; dependency frames do not. Backslashes and lexical dot segments normalize, while parent traversal, remote URLs, queries, and fragments are rejected. There is no glob evaluation or filesystem access. When deployment source maps are enabled, routing sees mapped source locations. Without them, configure the prefix against the reported frame paths.
+
+Tags use the existing allowlist and match sanitized reported values exactly. A missing key does not match an explicit empty value. They do not provide verified customer identity. The first matching rule with an eligible target assigns only a newly created group and records the matched source/tag criteria in its normal assignment activity. Recurrences and regressions preserve existing ownership, including manual changes. Configure these fields through the existing ownership-policy API, dashboard JSON form, CLI policy file, or SDK DTOs.
+
+The migration refuses rollback while saved views or source/tag matchers are in use, so rollback cannot silently discard views or broaden routing policies. CODEOWNERS ingestion, richer team objects, and provider-specific integrations remain future work.

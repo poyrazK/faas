@@ -24,6 +24,8 @@ const dashboardIssueAction = "issue_action"
 const dashboardIssueCookie = "faas_csrf_issue_action"
 
 type dashboardIssuesData struct {
+	SavedViews           *dashboard.IssueSavedViewsView
+	SavedViewKey         string
 	ReleaseComparison    *dashboard.IssueReleaseComparisonView
 	BaselineDeployment   string
 	CandidateDeployment  string
@@ -91,6 +93,9 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		return
 	}
 	data := dashboardIssuesData{AppSlug: slug, CurrentAccountID: acct.ID}
+	if !s.resolveDashboardSavedView(w, r, app, &data) {
+		return
+	}
 	data.BulkActionSaved = r.URL.Query().Get("bulk_action") == "updated"
 	data.SplitRuleSaved = r.URL.Query().Get("split_rule") == "updated"
 	data.ImpactAlertSaved = r.URL.Query().Get("impact_alert") == "updated"
@@ -132,6 +137,9 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		}
 	}
 	if !populateIssueDashboardList(w, r, app, st, &data) || !populateIssueDashboardDetail(w, r, app, acct, st, &data) {
+		return
+	}
+	if !s.populateDashboardSavedViews(w, r, app, &data) {
 		return
 	}
 	s.populateIssueDashboardChoices(r.Context(), app, acct, &data)

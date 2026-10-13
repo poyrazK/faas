@@ -22,6 +22,10 @@ import (
 var issueEnvironmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func (s *server) registerIssueRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueSavedViews)))
+	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSavedView)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putIssueSavedView))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/issue-saved-views/{view_key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteIssueSavedView))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-release-comparison", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.compareIssueReleases)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/bulk-actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.bulkActOnIssues)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishIssueSourceMaps))))

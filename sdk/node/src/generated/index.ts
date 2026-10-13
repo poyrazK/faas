@@ -801,6 +801,8 @@ export type { IssueOwnershipRules } from './models/IssueOwnershipRules.js';
 export type { IssueRelease } from './models/IssueRelease.js';
 export type { IssueReleaseComparison } from './models/IssueReleaseComparison.js';
 export type { IssueReleaseHealth } from './models/IssueReleaseHealth.js';
+export type { IssueSavedView } from './models/IssueSavedView.js';
+export type { IssueSavedViewFilters } from './models/IssueSavedViewFilters.js';
 export type { IssueSourceMapArtifact } from './models/IssueSourceMapArtifact.js';
 export type { IssueSourceMapManifest } from './models/IssueSourceMapManifest.js';
 export type { IssueSourceMapsMetadata } from './models/IssueSourceMapsMetadata.js';
@@ -843,6 +845,7 @@ export type { ListEdgeRuleListsResponse } from './models/ListEdgeRuleListsRespon
 export type { ListInstancesResponse } from './models/ListInstancesResponse.js';
 export type { ListInvocationsResponse } from './models/ListInvocationsResponse.js';
 export type { ListIssueIngestTokensResponse } from './models/ListIssueIngestTokensResponse.js';
+export type { ListIssueSavedViewsResponse } from './models/ListIssueSavedViewsResponse.js';
 export type { ListIssuesResponse } from './models/ListIssuesResponse.js';
 export type { ListJobRunsResponse } from './models/ListJobRunsResponse.js';
 export type { ListJobsResponse } from './models/ListJobsResponse.js';
@@ -1640,6 +1643,7 @@ export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCre
 export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenceRequest.js';
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
+export type { PutIssueSavedViewRequest } from './models/PutIssueSavedViewRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
 export type { PutOutboundAIPricesRequest } from './models/PutOutboundAIPricesRequest.js';

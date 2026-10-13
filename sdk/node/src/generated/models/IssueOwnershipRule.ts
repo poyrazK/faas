@@ -15,6 +15,14 @@ export type IssueOwnershipRule = {
    * Path prefix; matches only at a path-segment boundary.
    */
   route_prefix?: string;
+  /**
+   * Local source path prefix (256 UTF-8 bytes); matches any application frame in the exception or its causes at a path-segment boundary. Backslashes and dot segments normalize; parent traversal, URLs, queries, and fragments are rejected. No glob or filesystem access.
+   */
+  source_path_prefix?: string;
+  /**
+   * Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes. Missing keys do not match an empty value.
+   */
+  tag?: string;
   assignee_account_id: string;
 };
 

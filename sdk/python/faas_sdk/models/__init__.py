@@ -1625,6 +1625,10 @@ from .issue_release import IssueRelease
 from .issue_release_comparison import IssueReleaseComparison
 from .issue_release_health import IssueReleaseHealth
 from .issue_release_health_request_coverage import IssueReleaseHealthRequestCoverage
+from .issue_saved_view import IssueSavedView
+from .issue_saved_view_filters import IssueSavedViewFilters
+from .issue_saved_view_filters_sort import IssueSavedViewFiltersSort
+from .issue_saved_view_filters_state import IssueSavedViewFiltersState
 from .issue_source_map_artifact import IssueSourceMapArtifact
 from .issue_source_map_manifest import IssueSourceMapManifest
 from .issue_source_map_manifest_version import IssueSourceMapManifestVersion
@@ -1716,6 +1720,7 @@ from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
+from .list_issue_saved_views_response import ListIssueSavedViewsResponse
 from .list_issues_response import ListIssuesResponse
 from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
@@ -3116,6 +3121,7 @@ from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
+from .put_issue_saved_view_request import PutIssueSavedViewRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
@@ -5670,6 +5676,10 @@ __all__ = (
     "IssueReleaseComparison",
     "IssueReleaseHealth",
     "IssueReleaseHealthRequestCoverage",
+    "IssueSavedView",
+    "IssueSavedViewFilters",
+    "IssueSavedViewFiltersSort",
+    "IssueSavedViewFiltersState",
     "IssueSourceMapArtifact",
     "IssueSourceMapManifest",
     "IssueSourceMapManifestVersion",
@@ -5757,6 +5767,7 @@ __all__ = (
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
+    "ListIssueSavedViewsResponse",
     "ListIssuesResponse",
     "ListIssuesSort",
     "ListJobRunsResponse",
@@ -7025,6 +7036,7 @@ __all__ = (
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
+    "PutIssueSavedViewRequest",
     "PutJobRegistryCredentialRequest",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",

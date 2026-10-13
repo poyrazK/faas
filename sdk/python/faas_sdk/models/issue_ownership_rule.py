@@ -28,6 +28,13 @@ class IssueOwnershipRule:
     source_kind: IssueOwnershipRuleSourceKind | Unset = UNSET
     route_prefix: str | Unset = UNSET
     """Path prefix; matches only at a path-segment boundary."""
+    source_path_prefix: str | Unset = UNSET
+    """Local source path prefix (256 UTF-8 bytes); matches any application frame in the exception or its causes at
+    a path-segment boundary. Backslashes and dot segments normalize; parent traversal, URLs, queries, and fragments
+    are rejected. No glob or filesystem access."""
+    tag: str | Unset = UNSET
+    """Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes.
+    Missing keys do not match an empty value."""
 
     def to_dict(self) -> dict[str, Any]:
         assignee_account_id = str(self.assignee_account_id)
@@ -39,6 +46,10 @@ class IssueOwnershipRule:
             source_kind = self.source_kind
 
         route_prefix = self.route_prefix
+
+        source_path_prefix = self.source_path_prefix
+
+        tag = self.tag
 
         field_dict: dict[str, Any] = {}
 
@@ -53,6 +64,10 @@ class IssueOwnershipRule:
             field_dict["source_kind"] = source_kind
         if route_prefix is not UNSET:
             field_dict["route_prefix"] = route_prefix
+        if source_path_prefix is not UNSET:
+            field_dict["source_path_prefix"] = source_path_prefix
+        if tag is not UNSET:
+            field_dict["tag"] = tag
 
         return field_dict
 
@@ -72,11 +87,17 @@ class IssueOwnershipRule:
 
         route_prefix = d.pop("route_prefix", UNSET)
 
+        source_path_prefix = d.pop("source_path_prefix", UNSET)
+
+        tag = d.pop("tag", UNSET)
+
         issue_ownership_rule = cls(
             assignee_account_id=assignee_account_id,
             exception_type=exception_type,
             source_kind=source_kind,
             route_prefix=route_prefix,
+            source_path_prefix=source_path_prefix,
+            tag=tag,
         )
 
         return issue_ownership_rule

@@ -1,7 +1,9 @@
 package state
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 
@@ -30,6 +32,12 @@ func DecodeIssueCursor(value string) (IssueCursor, error) {
 	}
 	if _, err = uuid.Parse(c.ID); err != nil {
 		return c, ErrInvalidArgument
+	}
+	if c.FilterHash != "" {
+		digest, err := hex.DecodeString(c.FilterHash)
+		if err != nil || len(digest) != sha256.Size {
+			return c, ErrInvalidArgument
+		}
 	}
 	if _, err := api.ParseIssueTagFilter(c.Tag); err != nil {
 		return c, ErrInvalidArgument
@@ -70,12 +78,15 @@ func ValidateIssueListCursor(filter IssueListFilter, cursor IssueCursor) error {
 	if sortBy == "" {
 		sortBy = "recent"
 	}
+	if cursor.FilterHash != "" && cursor.FilterHash != issueListFilterHash(filter) {
+		return ErrInvalidArgument
+	}
 	if (sortBy != "recent" && sortBy != "impact") || filter.MinCustomers < 0 {
 		return ErrInvalidArgument
 	}
 	usesImpactQuery := sortBy == "impact" || filter.MinCustomers > 0 || filter.Tag != ""
 	if cursor.ID == "" {
-		if cursor.Time.IsZero() && cursor.Sort == "" && cursor.MinCustomers == 0 && cursor.ImpactCustomers == 0 && cursor.ImpactWindowEnd == nil && cursor.Tag == "" {
+		if cursor.Time.IsZero() && cursor.Sort == "" && cursor.MinCustomers == 0 && cursor.ImpactCustomers == 0 && cursor.ImpactWindowEnd == nil && cursor.Tag == "" && cursor.FilterHash == "" {
 			return nil
 		}
 		return ErrInvalidArgument
@@ -93,4 +104,15 @@ func ValidateIssueListCursor(filter IssueListFilter, cursor IssueCursor) error {
 		return ErrInvalidArgument
 	}
 	return nil
+}
+
+// New list cursors bind the complete normalized inbox filter set. Historical
+// cursors remain readable; opening a saved view always starts a fresh page.
+func issueListFilterHash(filter IssueListFilter) string {
+	if filter.Sort == "" {
+		filter.Sort = "recent"
+	}
+	raw, _ := json.Marshal(filter)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
 }

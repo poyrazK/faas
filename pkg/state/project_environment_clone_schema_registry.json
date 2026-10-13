@@ -642,9 +642,24 @@
       "exception_type",
       "route_prefix",
       "rule_order",
-      "source_kind"
+      "source_kind",
+      "source_path_prefix",
+      "tag_filter"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "app_issue_saved_views",
+    "columns": [
+      "app_id",
+      "created_at",
+      "filters",
+      "name",
+      "updated_at",
+      "updated_by_account_id",
+      "view_key"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_issues",

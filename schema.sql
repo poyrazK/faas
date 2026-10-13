@@ -15970,7 +15970,11 @@ CREATE TABLE public.app_issue_ownership_rules (
     source_kind text,
     route_prefix text,
     assignee_account_id uuid NOT NULL,
-    CONSTRAINT app_issue_ownership_rules_check CHECK ((((exception_type IS NOT NULL) AND ((length(exception_type) >= 1) AND (length(exception_type) <= 256))) OR (source_kind IS NOT NULL) OR (route_prefix IS NOT NULL))),
+    source_path_prefix text,
+    tag_filter text,
+    CONSTRAINT app_issue_ownership_rules_check CHECK ((exception_type IS NOT NULL AND length(exception_type) BETWEEN 1 AND 256) OR source_kind IS NOT NULL OR route_prefix IS NOT NULL OR source_path_prefix IS NOT NULL OR tag_filter IS NOT NULL),
+    CONSTRAINT app_issue_ownership_rules_source_path_prefix_check CHECK(source_path_prefix IS NULL OR octet_length(source_path_prefix) BETWEEN 1 AND 256),
+    CONSTRAINT app_issue_ownership_rules_tag_filter_check CHECK(tag_filter IS NULL OR (strpos(tag_filter,'=')>0 AND split_part(tag_filter,'=',1) IN ('component','operation','feature_flag','feature_variant','dependency','region','job_type','workflow','state','error_class','release_channel','runtime') AND octet_length(substring(tag_filter FROM strpos(tag_filter,'=')+1))<=128)),
     CONSTRAINT app_issue_ownership_rules_route_prefix_check CHECK (((route_prefix IS NULL) OR ((length(route_prefix) <= 256) AND ("left"(route_prefix, 1) = '/'::text) AND (POSITION(('?'::text) IN (route_prefix)) = 0) AND (POSITION(('#'::text) IN (route_prefix)) = 0)))),
     CONSTRAINT app_issue_ownership_rules_rule_order_check CHECK (((rule_order >= 0) AND (rule_order <= 49))),
     CONSTRAINT app_issue_ownership_rules_source_kind_check CHECK (((source_kind IS NULL) OR (source_kind = ANY (ARRAY['exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))))
@@ -58176,4 +58180,15 @@ CREATE TABLE public.issue_source_map_artifacts (
  CONSTRAINT issue_source_map_artifacts_deployment_owner_fkey FOREIGN KEY(deployment_id,app_id) REFERENCES deployments(id,app_id) ON DELETE CASCADE,
  CHECK((canonical_manifest IS NULL) = (retired_at IS NOT NULL)),
  CHECK(canonical_manifest IS NULL OR octet_length(canonical_manifest::text) <= 4259840)
+);
+
+CREATE TABLE public.app_issue_saved_views (
+ app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+ view_key text NOT NULL CHECK(view_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'),
+ name text NOT NULL CHECK(octet_length(name) BETWEEN 1 AND 64),
+ filters jsonb NOT NULL CHECK(jsonb_typeof(filters)='object' AND octet_length(filters::text)<=2048),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ updated_by_account_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
+ PRIMARY KEY(app_id,view_key)
 );
