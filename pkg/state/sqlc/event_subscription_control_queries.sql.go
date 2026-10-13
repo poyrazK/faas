@@ -22,6 +22,37 @@ func (q *Queries) EventSubscriptionCapacityAccount(ctx context.Context, db DBTX,
 	return plan, err
 }
 
+const eventSubscriptionCapacityCommandBudget = `-- name: EventSubscriptionCapacityCommandBudget :one
+SELECT count(*)::bigint AS retained_receipts,min(retain_until)::timestamptz AS earliest_expiry_at
+FROM event_subscription_capacity_commands
+WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid
+ AND retain_until>$4::timestamptz
+`
+
+type EventSubscriptionCapacityCommandBudgetParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	ObservedAt     pgtype.Timestamptz
+}
+
+type EventSubscriptionCapacityCommandBudgetRow struct {
+	RetainedReceipts int64
+	EarliestExpiryAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventSubscriptionCapacityCommandBudget(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandBudgetParams) (EventSubscriptionCapacityCommandBudgetRow, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityCommandBudget,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.ObservedAt,
+	)
+	var i EventSubscriptionCapacityCommandBudgetRow
+	err := row.Scan(&i.RetainedReceipts, &i.EarliestExpiryAt)
+	return i, err
+}
+
 const eventSubscriptionCapacityCommandGet = `-- name: EventSubscriptionCapacityCommandGet :one
 SELECT subscription_id, command_id, account_id, app_id, request, receipt, recorded_at, retain_until FROM event_subscription_capacity_commands WHERE account_id=$1::uuid AND app_id=$2::uuid
  AND subscription_id=$3::uuid AND command_id=$4::uuid AND retain_until>$5::timestamptz

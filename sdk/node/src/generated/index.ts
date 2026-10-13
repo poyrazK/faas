@@ -670,6 +670,7 @@ export type { EventSchemaRolloutResponse } from './models/EventSchemaRolloutResp
 export type { EventSchemaRolloutRetained } from './models/EventSchemaRolloutRetained.js';
 export type { EventSchemaRolloutValidation } from './models/EventSchemaRolloutValidation.js';
 export type { EventStorageUsageResponse } from './models/EventStorageUsageResponse.js';
+export type { EventSubscriptionCapacityCommandBudget } from './models/EventSubscriptionCapacityCommandBudget.js';
 export type { EventSubscriptionCapacityCommandReceipt } from './models/EventSubscriptionCapacityCommandReceipt.js';
 export type { EventSubscriptionCapacityCommands } from './models/EventSubscriptionCapacityCommands.js';
 export type { EventSubscriptionCapacityGuard } from './models/EventSubscriptionCapacityGuard.js';

@@ -86,15 +86,16 @@ type EventConsumerCapacityWaits struct {
 // Current admission pressure and effective recorded waiting reasons share one
 // snapshot. Oldest age is since acceptance, not continuous capacity-wait duration.
 type EventConsumerCapacityPressure struct {
-	PlanMaxPendingDeliveries       int                          `json:"plan_max_pending_deliveries"`
-	AppID                          string                       `json:"app_id"`
-	SubscriptionID                 string                       `json:"subscription_id"`
-	ObservedAt                     time.Time                    `json:"observed_at"`
-	Coverage                       string                       `json:"coverage"`
-	Complete                       bool                         `json:"complete"`
-	BlockingScope                  string                       `json:"blocking_scope"`
-	ConfiguredMaxPendingDeliveries int                          `json:"configured_max_pending_deliveries"`
-	Scopes                         []EventConsumerCapacityScope `json:"scopes"`
+	CapacityCommandBudget          *EventSubscriptionCapacityCommandBudget `json:"capacity_command_budget,omitempty"`
+	PlanMaxPendingDeliveries       int                                     `json:"plan_max_pending_deliveries"`
+	AppID                          string                                  `json:"app_id"`
+	SubscriptionID                 string                                  `json:"subscription_id"`
+	ObservedAt                     time.Time                               `json:"observed_at"`
+	Coverage                       string                                  `json:"coverage"`
+	Complete                       bool                                    `json:"complete"`
+	BlockingScope                  string                                  `json:"blocking_scope"`
+	ConfiguredMaxPendingDeliveries int                                     `json:"configured_max_pending_deliveries"`
+	Scopes                         []EventConsumerCapacityScope            `json:"scopes"`
 }
 
 type EventConsumerCapacityScope struct {

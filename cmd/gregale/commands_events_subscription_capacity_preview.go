@@ -13,14 +13,16 @@ import (
 )
 
 type subscriptionCapacityPreview struct {
-	Expected                      *api.EventSubscriptionCapacityGuard `json:"expected,omitempty"`
-	ReadOnly                      bool                                `json:"read_only"`
-	Advisory                      bool                                `json:"advisory"`
-	RequestedMaxPendingDeliveries int                                 `json:"requested_max_pending_deliveries"`
-	Valid                         bool                                `json:"valid"`
-	ValidationError               string                              `json:"validation_error,omitempty"`
-	Pressure                      api.EventConsumerCapacityPressure   `json:"pressure"`
-	Projection                    *subscriptionCapacityProjection     `json:"projection,omitempty"`
+	NewCommandReceiptSlotAvailable *bool                               `json:"new_command_receipt_slot_available,omitempty"`
+	ReceiptBudgetWarning           string                              `json:"receipt_budget_warning,omitempty"`
+	Expected                       *api.EventSubscriptionCapacityGuard `json:"expected,omitempty"`
+	ReadOnly                       bool                                `json:"read_only"`
+	Advisory                       bool                                `json:"advisory"`
+	RequestedMaxPendingDeliveries  int                                 `json:"requested_max_pending_deliveries"`
+	Valid                          bool                                `json:"valid"`
+	ValidationError                string                              `json:"validation_error,omitempty"`
+	Pressure                       api.EventConsumerCapacityPressure   `json:"pressure"`
+	Projection                     *subscriptionCapacityProjection     `json:"projection,omitempty"`
 }
 type subscriptionCapacityProjection struct {
 	EffectiveMaxPendingDeliveries int      `json:"effective_max_pending_deliveries"`
@@ -86,6 +88,7 @@ func cmdEventsSubscriptionCapacityPreview(args []string) int {
 		return code
 	}
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | requested %d | plan ceiling %d | valid %t | observed %s\n", sub.String(), *proposed, report.Pressure.PlanMaxPendingDeliveries, report.Valid, report.Pressure.ObservedAt.Format(time.RFC3339Nano))
+	printSubscriptionCapacityCommandBudget(report.Pressure.CapacityCommandBudget)
 	if report.Projection == nil {
 		_, _ = fmt.Fprintln(osStdout, report.ValidationError)
 		return code
@@ -139,6 +142,21 @@ func buildSubscriptionCapacityPreview(pressure *api.EventConsumerCapacityPressur
 	}
 	if pressure.Scopes[0].EffectiveLimit != expected || pressure.BlockingScope != blocker || pressure.PlanMaxPendingDeliveries > pressure.Scopes[1].EffectiveLimit {
 		return out, fmt.Errorf("inconsistent plan ceiling or admission blocker")
+	}
+	if budget := pressure.CapacityCommandBudget; budget != nil {
+		if err := validateSubscriptionCapacityCommandBudget(budget, app, sub, now, maxAge); err != nil {
+			return out, err
+		}
+		if !budget.ObservedAt.Equal(pressure.ObservedAt) {
+			return out, fmt.Errorf("receipt budget and pressure observations differ")
+		}
+		available := budget.RemainingSlots > 0
+		out.NewCommandReceiptSlotAvailable = &available
+		if budget.Full {
+			out.ReceiptBudgetWarning = "New command UUIDs can be rejected while the receipt budget is full; known unchanged-input repeats remain available."
+		}
+	} else {
+		out.ReceiptBudgetWarning = "Receipt budget unavailable; new command receipt-slot availability is unknown."
 	}
 	out.Pressure = *pressure
 	if proposed < 0 || proposed > pressure.PlanMaxPendingDeliveries {

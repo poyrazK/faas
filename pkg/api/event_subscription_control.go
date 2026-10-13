@@ -79,6 +79,7 @@ type EventSubscriptionCapacityCommandReceipt struct {
 }
 
 type EventSubscriptionDeliveryControl struct {
+	CapacityCommandBudget         *EventSubscriptionCapacityCommandBudget  `json:"capacity_command_budget,omitempty"`
 	CapacityCommandReceipt        *EventSubscriptionCapacityCommandReceipt `json:"capacity_command_receipt,omitempty"`
 	MaxPendingDeliveries          int                                      `json:"max_pending_deliveries"`
 	EffectiveMaxPendingDeliveries int                                      `json:"effective_max_pending_deliveries"`
@@ -163,4 +164,18 @@ func (c *Client) ListEventSubscriptionCapacityCommands(ctx context.Context, app,
 	}
 	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
+}
+
+// Receipt budget is a scoped advisory observation; it reserves no command slots.
+type EventSubscriptionCapacityCommandBudget struct {
+	AppID            string     `json:"app_id"`
+	SubscriptionID   string     `json:"subscription_id"`
+	ObservedAt       time.Time  `json:"observed_at"`
+	Complete         bool       `json:"complete"`
+	RetainedReceipts int        `json:"retained_receipts"`
+	Limit            int        `json:"limit"`
+	RemainingSlots   int        `json:"remaining_slots"`
+	Full             bool       `json:"full"`
+	EarliestExpiryAt *time.Time `json:"earliest_expiry_at,omitempty"`
+	Advice           string     `json:"advice"`
 }

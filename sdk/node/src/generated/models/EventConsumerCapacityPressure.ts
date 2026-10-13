@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventConsumerCapacityScope } from './EventConsumerCapacityScope.js';
+import type { EventSubscriptionCapacityCommandBudget } from './EventSubscriptionCapacityCommandBudget.js';
 /**
  * Read-only current live slot usage and effective capacity waiting reasons from one owned subscription snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after capacity drains. Age is since event acceptance, not continuous capacity-wait duration. No capacity reservation or delivery-order guarantee.
  */
 export type EventConsumerCapacityPressure = {
+  /**
+   * Optional receipt budget from the same snapshot and observed_at as this pressure. Absent on older servers; absence does not mean slots are available.
+   */
+  capacity_command_budget?: EventSubscriptionCapacityCommandBudget;
   /**
    * Current plan consumer ceiling before applying the saved subscription setting; used to validate proposed capacity changes.
    */

@@ -664,6 +664,7 @@ export type { EventSchemaRolloutResponse } from './EventSchemaRolloutResponse.js
 export type { EventSchemaRolloutRetained } from './EventSchemaRolloutRetained.js';
 export type { EventSchemaRolloutValidation } from './EventSchemaRolloutValidation.js';
 export type { EventStorageUsageResponse } from './EventStorageUsageResponse.js';
+export type { EventSubscriptionCapacityCommandBudget } from './EventSubscriptionCapacityCommandBudget.js';
 export type { EventSubscriptionCapacityCommandReceipt } from './EventSubscriptionCapacityCommandReceipt.js';
 export type { EventSubscriptionCapacityCommands } from './EventSubscriptionCapacityCommands.js';
 export type { EventSubscriptionCapacityGuard } from './EventSubscriptionCapacityGuard.js';

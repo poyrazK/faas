@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -85,6 +86,11 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 			return printErr("Capacity command acknowledgment unconfirmed; repeat the same request", err)
 		}
 	}
+	if action == "status" && out.CapacityCommandBudget != nil {
+		if err := validateSubscriptionCapacityCommandBudget(out.CapacityCommandBudget, out.AppID, positional[1], time.Now().UTC(), api.EventDeliveryHealthWatchAgeDefault); err != nil {
+			return printErr("Invalid capacity command receipt budget", err)
+		}
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
@@ -94,6 +100,9 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s: %s | rate %d/s (0=unlimited) | pending %d | processing %d | oldest pending %.0fs\n", oneLine(out.SubscriptionID), mode, out.RatePerSecond, out.PendingRecipients, out.ProcessingRecipients, out.OldestAgeSeconds)
 	_, _ = fmt.Fprintf(osStdout, "Live deliveries %d | effective subscription limit %d | configured %d (0=plan default)\n", out.LiveDeliveries, out.EffectiveMaxPendingDeliveries, out.MaxPendingDeliveries)
+	if action == "status" {
+		printSubscriptionCapacityCommandBudget(out.CapacityCommandBudget)
+	}
 	if receipt := out.CapacityCommandReceipt; receipt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Command %s | original %s setting %d (effective %d, plan %d) | retained until %s\n", receipt.CommandID, receipt.Outcome, receipt.RequestedMaxPendingDeliveries, receipt.EffectiveMaxPendingDeliveries, receipt.PlanMaxPendingDeliveries, receipt.RetainUntil.Format("2006-01-02T15:04:05Z07:00"))
 	}

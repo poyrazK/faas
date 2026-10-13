@@ -84,6 +84,10 @@ func (s *PgStore) GetEventConsumerCapacityPressure(ctx context.Context, account,
 		return out, err
 	}
 	out = buildEventConsumerCapacityPressure(app, sub, now, limits.EventDeliveries, int(configured), [3]int64{counts.ConsumerCount, counts.AppCount, counts.AccountCount}, [3]int64{waits.ConsumerWaiting, waits.AppWaiting, waits.AccountWaiting}, [3]*time.Time{timestamptzToTimePtr(waits.ConsumerOldest), timestamptzToTimePtr(waits.AppOldest), timestamptzToTimePtr(waits.AccountOldest)})
+	out.CapacityCommandBudget, err = readCapacityCommandBudget(ctx, q, tx, account, app, sub, now)
+	if err != nil {
+		return out, err
+	}
 	return out, tx.Commit(ctx)
 }
 
@@ -116,7 +120,9 @@ func (m *MemStore) GetEventConsumerCapacityPressure(ctx context.Context, account
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
-	return buildEventConsumerCapacityPressure(app, sub, now, m.eventDeliveryLimitsLocked(account), configured, [3]int64{consumer, application, acct}, waiting, oldest), nil
+	out = buildEventConsumerCapacityPressure(app, sub, now, m.eventDeliveryLimitsLocked(account), configured, [3]int64{consumer, application, acct}, waiting, oldest)
+	out.CapacityCommandBudget, err = m.capacityCommandBudgetLocked(ctx, account, app, sub, now)
+	return out, err
 }
 
 func (m *MemStore) eventConsumerPressureWaitsLocked(ctx context.Context, account, app, sub string, now time.Time) ([3]int64, [3]*time.Time, error) {

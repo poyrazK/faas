@@ -15,9 +15,11 @@ from ..models.event_consumer_capacity_pressure_coverage import (
     EventConsumerCapacityPressureCoverage,
     check_event_consumer_capacity_pressure_coverage,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_consumer_capacity_scope import EventConsumerCapacityScope
+    from ..models.event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
 
 
 T = TypeVar("T", bound="EventConsumerCapacityPressure")
@@ -50,6 +52,10 @@ class EventConsumerCapacityPressure:
     scopes: list[EventConsumerCapacityScope]
     """Consumer, app and account scopes in admission priority order. Waiting counts refer only to this
     subscription; live app/account counts include sibling deliveries in those scopes."""
+    capacity_command_budget: EventSubscriptionCapacityCommandBudget | Unset = UNSET
+    """Complete scoped advisory observation of all unexpired successful capacity-command receipts. Neither reserves
+    receipt slots nor modifies retention. Known unchanged-input command repeats remain available when full; commands
+    without UUIDs have no idempotent receipt evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         plan_max_pending_deliveries = self.plan_max_pending_deliveries
@@ -73,6 +79,10 @@ class EventConsumerCapacityPressure:
             scopes_item = scopes_item_data.to_dict()
             scopes.append(scopes_item)
 
+        capacity_command_budget: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.capacity_command_budget, Unset):
+            capacity_command_budget = self.capacity_command_budget.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -88,12 +98,15 @@ class EventConsumerCapacityPressure:
                 "scopes": scopes,
             }
         )
+        if capacity_command_budget is not UNSET:
+            field_dict["capacity_command_budget"] = capacity_command_budget
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.event_consumer_capacity_scope import EventConsumerCapacityScope
+        from ..models.event_subscription_capacity_command_budget import EventSubscriptionCapacityCommandBudget
 
         d = dict(src_dict)
         plan_max_pending_deliveries = d.pop("plan_max_pending_deliveries")
@@ -119,6 +132,13 @@ class EventConsumerCapacityPressure:
 
             scopes.append(scopes_item)
 
+        _capacity_command_budget = d.pop("capacity_command_budget", UNSET)
+        capacity_command_budget: EventSubscriptionCapacityCommandBudget | Unset
+        if isinstance(_capacity_command_budget, Unset):
+            capacity_command_budget = UNSET
+        else:
+            capacity_command_budget = EventSubscriptionCapacityCommandBudget.from_dict(_capacity_command_budget)
+
         event_consumer_capacity_pressure = cls(
             plan_max_pending_deliveries=plan_max_pending_deliveries,
             app_id=app_id,
@@ -129,6 +149,7 @@ class EventConsumerCapacityPressure:
             blocking_scope=blocking_scope,
             configured_max_pending_deliveries=configured_max_pending_deliveries,
             scopes=scopes,
+            capacity_command_budget=capacity_command_budget,
         )
 
         return event_consumer_capacity_pressure

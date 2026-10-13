@@ -2696,7 +2696,7 @@ Read retained original capacity-command evidence without applying a change
 
 ### events subscription-capacity-preview
 
-Preview a proposed subscription capacity limit without changing controls
+Preview delivery capacity and command receipt budget without changing controls
 
 `gregale events subscription-capacity-preview [--max-pending <N>] [--timeout <DURATION>] [--max-age <DURATION>] <app> <subscription-id>`
 

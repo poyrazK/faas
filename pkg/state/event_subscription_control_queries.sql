@@ -76,3 +76,9 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AN
  AND (sqlc.arg(outcome)::text='any' OR receipt->>'outcome'=sqlc.arg(outcome)::text)
  AND (NOT sqlc.arg(has_after)::boolean OR (recorded_at,command_id)<(sqlc.arg(after_recorded_at)::timestamptz,sqlc.arg(after_command_id)::uuid))
 ORDER BY recorded_at DESC,command_id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventSubscriptionCapacityCommandBudget :one
+SELECT count(*)::bigint AS retained_receipts,min(retain_until)::timestamptz AS earliest_expiry_at
+FROM event_subscription_capacity_commands
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid
+ AND retain_until>sqlc.arg(observed_at)::timestamptz;

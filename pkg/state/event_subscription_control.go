@@ -73,18 +73,23 @@ func (s *PgStore) GetEventSubscriptionDeliveryControl(ctx context.Context, accou
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err = q.EventSubscriptionControlTarget(ctx, tx, sqlc.EventSubscriptionControlTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
+	if _, err = q.EventConsumerPressureTarget(ctx, tx, sqlc.EventConsumerPressureTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)}); errors.Is(err, pgx.ErrNoRows) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
 	} else if err != nil {
 		return api.EventSubscriptionDeliveryControl{}, err
 	}
+	now := time.Now().UTC()
 	out, err := getSubscriptionControl(ctx, q, tx, account, app, sub)
+	if err != nil {
+		return out, err
+	}
+	out.CapacityCommandBudget, err = readCapacityCommandBudget(ctx, q, tx, account, app, sub, now)
 	if err != nil {
 		return out, err
 	}
@@ -246,7 +251,11 @@ func (m *MemStore) GetEventSubscriptionDeliveryControl(ctx context.Context, acco
 	if !m.eventSubscriptionControlTargetLocked(account, app, sub) {
 		return api.EventSubscriptionDeliveryControl{}, ErrNotFound
 	}
-	return m.eventSubscriptionControlResponseLocked(account, app, sub), nil
+	now := time.Now().UTC()
+	out := m.eventSubscriptionControlResponseLocked(account, app, sub)
+	var err error
+	out.CapacityCommandBudget, err = m.capacityCommandBudgetLocked(ctx, account, app, sub, now)
+	return out, err
 }
 func (m *MemStore) SetEventSubscriptionDeliveryControl(ctx context.Context, account, app, sub string, paused bool, rate int) (api.EventSubscriptionDeliveryControl, error) {
 	if err := ctx.Err(); err != nil {

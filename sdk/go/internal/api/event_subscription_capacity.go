@@ -110,3 +110,17 @@ func (c *Client) ListEventSubscriptionCapacityCommands(ctx context.Context, app,
 	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
+
+// Receipt budget is a scoped advisory observation; it reserves no command slots.
+type EventSubscriptionCapacityCommandBudget struct {
+	AppID            string     `json:"app_id"`
+	SubscriptionID   string     `json:"subscription_id"`
+	ObservedAt       time.Time  `json:"observed_at"`
+	Complete         bool       `json:"complete"`
+	RetainedReceipts int        `json:"retained_receipts"`
+	Limit            int        `json:"limit"`
+	RemainingSlots   int        `json:"remaining_slots"`
+	Full             bool       `json:"full"`
+	EarliestExpiryAt *time.Time `json:"earliest_expiry_at,omitempty"`
+	Advice           string     `json:"advice"`
+}

@@ -63320,6 +63320,7 @@ components:
       description: Read-only current live slot usage and effective capacity waiting reasons from one owned subscription snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after capacity drains. Age is since event acceptance, not continuous capacity-wait duration. No capacity reservation or delivery-order guarantee.
       required: [app_id, subscription_id, observed_at, coverage, complete, blocking_scope, configured_max_pending_deliveries, plan_max_pending_deliveries, scopes]
       properties:
+        capacity_command_budget: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandBudget', description: "Optional receipt budget from the same snapshot and observed_at as this pressure. Absent on older servers; absence does not mean slots are available." }
         plan_max_pending_deliveries: { type: integer, minimum: 1, description: "Current plan consumer ceiling before applying the saved subscription setting; used to validate proposed capacity changes." }
         app_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
@@ -63852,6 +63853,23 @@ components:
         has_more: { type: boolean, description: Whether another matching retained receipt existed at this observation. }
         next_after: { type: string, maxLength: 512, description: Opaque scope-bound boundary for the next page. Present only when has_more is true. }
 
+    EventSubscriptionCapacityCommandBudget:
+      type: object
+      additionalProperties: false
+      description: Complete scoped advisory observation of all unexpired successful capacity-command receipts. Neither reserves receipt slots nor modifies retention. Known unchanged-input command repeats remain available when full; commands without UUIDs have no idempotent receipt evidence.
+      required: [app_id, subscription_id, observed_at, complete, retained_receipts, limit, remaining_slots, full, advice]
+      properties:
+        app_id: { type: string, format: uuid, description: Owned application identifier. }
+        subscription_id: { type: string, format: uuid, description: Owned subscription or retained control identifier. }
+        observed_at: { type: string, format: date-time, description: Logical observation time used for receipt expiry. }
+        complete: { type: boolean, description: All matching unexpired receipts were counted rather than sampled from a history page. }
+        retained_receipts: { type: integer, minimum: 0, maximum: 128, description: Successful applied and unchanged command receipts whose retention deadline is after observed_at. }
+        limit: { type: integer, enum: [128], description: Maximum retained receipts per subscription. }
+        remaining_slots: { type: integer, minimum: 0, maximum: 128, description: Limit minus retained receipts at the observation. Concurrent writes may consume slots. }
+        full: { type: boolean, description: Whether no slots for new command UUIDs were available at the observation. }
+        earliest_expiry_at: { type: string, format: date-time, description: Earliest retained receipt deadline that could free a slot. Omitted when no receipts remain. Logical expiry frees quota without waiting for physical pruning. }
+        advice: { type: string, description: Advisory guidance without a reservation or write authorization guarantee. }
+
     EventSubscriptionCapacityCommandReceipt:
       type: object
       additionalProperties: false
@@ -63876,6 +63894,7 @@ components:
       description: Live operator controls for a captured application subscription. Pending and processing counts include publication and historical backfill recipients retained in the backlog.
       required: [subscription_id, app_id, paused, rate_per_second, pending_recipients, processing_recipients, oldest_age_seconds, max_pending_deliveries, effective_max_pending_deliveries, live_deliveries]
       properties:
+        capacity_command_budget: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandBudget', description: "Optional complete receipt budget in read-only delivery-control status. Mutation responses may omit it; absence means unknown." }
         capacity_command_receipt: { $ref: '#/components/schemas/EventSubscriptionCapacityCommandReceipt' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Configured live-delivery ceiling; zero uses the current plan limit. }
         effective_max_pending_deliveries: { type: integer, minimum: 1, description: Effective ceiling after applying the current plan limit. }

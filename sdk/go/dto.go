@@ -549,3 +549,5 @@ type EventExecutionLineageRetryJobControlFilters = api.EventExecutionLineageRetr
 
 type EventSubscriptionCapacityCommands = api.EventSubscriptionCapacityCommands
 type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityCommandsQuery
+
+type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
