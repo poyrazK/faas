@@ -18,11 +18,9 @@
 package main
 
 import (
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -104,7 +102,7 @@ func writeWorkloadIdentity(dir string, rotate bool) (kid, kept string, err error
 		if parseErr != nil {
 			return "", "", parseErr
 		}
-		prev, jwkErr := workloadIdentityJWK(&key.PublicKey)
+		prev, jwkErr := workloadidentity.PublicJWK(&key.PublicKey)
 		if jwkErr != nil {
 			return "", "", jwkErr
 		}
@@ -118,7 +116,7 @@ func writeWorkloadIdentity(dir string, rotate bool) (kid, kept string, err error
 	if err != nil {
 		return "", "", fmt.Errorf("generate RSA key: %w", err)
 	}
-	current, err := workloadIdentityJWK(&key.PublicKey)
+	current, err := workloadidentity.PublicJWK(&key.PublicKey)
 	if err != nil {
 		return "", "", err
 	}
@@ -158,18 +156,6 @@ func writeWorkloadIdentity(dir string, rotate bool) (kid, kept string, err error
 	return current.KeyID, kept, nil
 }
 
-// workloadIdentityJWK is the public JWK with its RFC 7638 thumbprint as key id,
-// so every key has a distinct, reproducible id.
-func workloadIdentityJWK(pub *rsa.PublicKey) (jose.JSONWebKey, error) {
-	jwk := jose.JSONWebKey{Key: pub, Use: "sig", Algorithm: string(jose.RS256)}
-	thumb, err := jwk.Thumbprint(crypto.SHA256)
-	if err != nil {
-		return jose.JSONWebKey{}, fmt.Errorf("key thumbprint: %w", err)
-	}
-	jwk.KeyID = base64.RawURLEncoding.EncodeToString(thumb)
-	return jwk, nil
-}
-
 func writeWorkloadIdentityFile(path string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
@@ -207,7 +193,7 @@ func cmdWorkloadIdentityStatus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
 		return 1
 	}
-	jwk, err := workloadIdentityJWK(&key.PublicKey)
+	jwk, err := workloadidentity.PublicJWK(&key.PublicKey)
 	if err != nil {
 		fmt.Fprintf(stderr, "gregalectl workload-identity status: %v\n", err)
 		return 1

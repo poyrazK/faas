@@ -4,7 +4,10 @@
 // from guest-init's loopback endpoint (127.0.0.1:2773/oidc/token) on real
 // Firecracker: guest-init forwards the request over vsock 1030, vmmd mints
 // it for the instance the stream belongs to, and the token verifies against
-// the signer's JWKS with this app's identity.
+// the signer's JWKS with this app's identity. vmmd and apid are configured
+// the way the ADR-1141 drop-ins configure them (key path + thumbprint key id;
+// cluster JWKS), and a gregale:queues token leases the app's pull queue
+// through apid (ADR-1140), recording the serving instance on the lease.
 //
 // Requires /dev/kvm, root, Firecracker on PATH and FAAS_TEST_KERNEL.
 package e2e_test
@@ -23,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
@@ -53,12 +57,25 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, "", workloadidentity.DefaultTokenTTL)
+	// The key id and JWKS gregalectl workload-identity init writes (ADR-1141).
+	jwk, err := workloadidentity.PublicJWK(&key.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := workloadidentity.NewSigner(key, workloadidentity.DefaultIssuer, jwk.KeyID, workloadidentity.DefaultTokenTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	verifier, err := workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
+		t.Fatal(err)
+	}
+	jwks, err := json.Marshal(signer.JWKS())
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwksPath := filepath.Join(t.TempDir(), "workload-identity.jwks.json")
+	if err := os.WriteFile(jwksPath, jwks, 0o444); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +87,8 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath)
+	h := e2etest.Start(t, pool, e2etest.DeployWake, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath,
+		"FAAS_WORKLOAD_IDENTITY_KEY_ID="+jwk.KeyID, "FAAS_WORKLOAD_JWKS_PATH="+jwksPath)
 	apiKey := h.SeedAccount(context.Background(), api.PlanPro)
 	img, _ := e2etest.IdentityProbeImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)
@@ -79,6 +97,14 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, apiKey, "hello")
+	// A pull binding for the lease check. It is created before the first
+	// boot characterizes the app, so a worker-class binding is accepted on
+	// this HTTP fixture; the lease path only needs the enabled pull binding.
+	if body, code := doReq(t, h, apiKey, http.MethodPost, "/v1/apps/hello/queue-bindings", api.CreateQueueBindingRequest{
+		Name: "jobs", QueueName: "jobs", Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 2,
+	}); code != http.StatusCreated {
+		t.Fatalf("create pull binding: %d %s", code, body)
+	}
 	// vmmd keeps VMs running across a restart, so idle-park the app before
 	// the harness stops or its microVM leaks on the host.
 	t.Cleanup(func() {
@@ -144,5 +170,58 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 	}
 	if _, err := verifier.Verify(token.AccessToken, "other-audience", time.Now()); err == nil {
 		t.Fatal("token verified for an audience it was not minted for")
+	}
+	assertWorkloadTokenLeasesQueue(t, h, pool, apiKey, appID, serving[0].ID)
+}
+
+// assertWorkloadTokenLeasesQueue fetches a gregale:queues token inside the
+// guest and leases the app's pull queue with it through apid's cluster
+// workload trust (ADR-1140, ADR-1141).
+func assertWorkloadTokenLeasesQueue(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, apiKey, appID, instanceID string) {
+	t.Helper()
+	_, body, status := doReqHeaders(t, h, "hello.apps.test.example", http.MethodGet, "/identity?audience="+workloadidentity.QueuesAudience, nil)
+	if status != http.StatusOK {
+		t.Fatalf("/identity queues = %d %s", status, body)
+	}
+	var token struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &token); err != nil || token.AccessToken == "" {
+		t.Fatalf("queues token response = %s (%v)", body, err)
+	}
+	sent, code := doReq(t, h, apiKey, http.MethodPost, "/v1/apps/hello/queues/send", api.QueueSendRequest{
+		QueueName: "jobs", Payload: json.RawMessage(`{"job":"resize"}`),
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("queue send: %d %s", code, sent)
+	}
+	var queued api.QueueSendResponse
+	if err := json.Unmarshal(sent, &queued); err != nil || queued.ID == "" {
+		t.Fatalf("queue send response %s (%v)", sent, err)
+	}
+	leased, code := doReq(t, h, token.AccessToken, http.MethodPost, "/v1/apps/hello/queues/jobs/leases", api.QueueLeaseRequest{
+		MaxMessages: 10, WaitSeconds: 5,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("lease with the workload token: %d %s", code, leased)
+	}
+	var lease api.QueueLeaseResponse
+	if err := json.Unmarshal(leased, &lease); err != nil || len(lease.Messages) != 1 || lease.Messages[0].ID != queued.ID {
+		t.Fatalf("lease response %s (%v), want message %s", leased, err, queued.ID)
+	}
+	inv, err := state.NewPgStore(pool).InvocationByID(context.Background(), queued.ID)
+	if err != nil || inv.State != state.InvocationDispatching || inv.InstanceID != instanceID || inv.AppID != appID {
+		t.Fatalf("leased row %+v (%v), want dispatching on instance %s", inv, err, instanceID)
+	}
+	acked, code := doReq(t, h, token.AccessToken, http.MethodPost, "/v1/apps/hello/queues/jobs/leases:ack", api.QueueLeaseReceiptsRequest{
+		Receipts: []string{lease.Messages[0].Receipt},
+	})
+	var outcome api.QueueLeaseReceiptsResponse
+	if code != http.StatusOK || json.Unmarshal(acked, &outcome) != nil || len(outcome.Succeeded) != 1 {
+		t.Fatalf("ack: %d %s", code, acked)
+	}
+	// A JWT-shaped bearer that vmmd did not sign is refused.
+	if _, code := doReq(t, h, "eyJhbGciOiJSUzI1NiJ9.e30.c2ln", http.MethodPost, "/v1/apps/hello/queues/jobs/leases", api.QueueLeaseRequest{}); code != http.StatusUnauthorized {
+		t.Fatalf("forged workload token: status %d, want 401", code)
 	}
 }
