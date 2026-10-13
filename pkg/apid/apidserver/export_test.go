@@ -932,6 +932,9 @@ func (r *server) CreateFinancialBudget(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) CreateFullProjectEnvironmentClone(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createFullProjectEnvironmentClone(p0, p1, p2)
 }
+func (r *server) CreateImageRun(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.createImageRun(p0, p1, p2)
+}
 func (r *server) CreateProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createProjectEnvironment(p0, p1, p2)
 }
@@ -1042,6 +1045,9 @@ func (r *server) IssueProjectEnvironmentPromotionApproval(p0 context.Context, p1
 }
 func (r *server) ListEgressFlows(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.listEgressFlows(p0, p1, p2)
+}
+func (r *server) ListJobs(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.listJobs(p0, p1, p2)
 }
 func (r *server) ListManagedPostgresDatabases(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.listManagedPostgresDatabases(p0, p1, p2)
@@ -1189,6 +1195,9 @@ func (r *server) UpdateAccountBillingInfo(p0 http.ResponseWriter, p1 *http.Reque
 }
 func (r *server) UpdateApp(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.updateApp(p0, p1, p2)
+}
+func (r *server) UpdateJob(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.updateJob(p0, p1, p2)
 }
 func (r *server) UpdateProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.updateProject(p0, p1, p2)

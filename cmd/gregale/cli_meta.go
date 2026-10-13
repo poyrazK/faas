@@ -3468,8 +3468,19 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "run",
 		DocSlug: "run",
-		Short:   "Run untrusted code in an isolated disposable microVM",
+		Short:   "Run untrusted code in an isolated disposable microVM, or one command from an OCI image (--image)",
+		Examples: []string{
+			"gregale run --image alpine echo hello",
+			"gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'",
+		},
 		Flags: []cliFlag{
+			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD (ADR-1151)", Value: "REF"},
+			{Name: "entrypoint", Short: "with --image, override the image ENTRYPOINT; with --dir, the bundle file to execute", Value: "CMD|FILE"},
+			{Name: "env", Short: "with --image, KEY=VALUE environment variable (repeatable; -e)", Value: "KEY=VALUE"},
+			{Name: "ram", Short: "with --image, memory in MB (default: Job default)", Value: "MB"},
+			{Name: "timeout", Short: "with --image, task deadline (default: the plan's Job ceiling)", Value: "D"},
+			{Name: "pull", Short: "with --image, re-pull a cached tag (always) or reuse it (missing)", Value: "P", ClosedSet: []string{"missing", "always"}},
+			{Name: "detach", Short: "with --image, queue the run and print its id without waiting (-d)"},
 			{Name: "workflow-id", Short: "caller-generated workflow grouping id", Value: "ID"},
 			{Name: "step-label", Short: "short label for this step within --workflow-id", Value: "LABEL"},
 			{Name: "profile", Short: "preinstalled dependencies (data requires python313)", Value: "P", ClosedSet: []string{"standard", "python-data-v1"}},

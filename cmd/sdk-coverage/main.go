@@ -835,6 +835,7 @@ var methodRouteMap = map[string]string{
 	// cmd/gregale/commands_jobs.go.
 	"GET /v1/jobs":                                       "ListJobs",
 	"POST /v1/jobs":                                      "CreateJob",
+	"POST /v1/image-runs":                                "CreateImageRun",
 	"GET /v1/jobs/{name}":                                "GetJob",
 	"PATCH /v1/jobs/{name}":                              "UpdateJob",
 	"DELETE /v1/jobs/{name}":                             "DeleteJob",

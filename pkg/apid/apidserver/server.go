@@ -375,6 +375,9 @@ type server struct {
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
 	appTaskAPIEnabled       bool
+	// imageRunsEnabled is the operator gate for POST /v1/image-runs
+	// (ADR-1151, FAAS_IMAGE_RUNS).
+	imageRunsEnabled        bool
 	outboundProbeGatewayURL string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
@@ -758,6 +761,12 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+// WithImageRunsEnabled attaches the image-run gate (ADR-1151).
+func (s *server) WithImageRunsEnabled(enabled bool) *server {
+	s.imageRunsEnabled = enabled
 	return s
 }
 
@@ -2348,6 +2357,7 @@ func (s *server) handler() http.Handler {
 	// empty lists on Free (read gate is not in the plan).
 	mux.HandleFunc("GET /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobs))))
 	mux.HandleFunc("POST /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJob)))))
+	mux.HandleFunc("POST /v1/image-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createImageRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))

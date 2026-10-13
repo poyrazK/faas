@@ -39,7 +39,7 @@ import (
 
 // Job is one row of public.jobs (migrations/00255 + 00572 for command and
 // the image-materialization columns added by the Epic #1184 follow-up).
-// Kind is the closed vocabulary ('batch' | 'recurring') enforced by the
+// Kind is the closed vocabulary ('batch' | 'recurring' | 'image_run') enforced by the
 // jobs_kind_check and schedule-kind constraints; Status is ('active' | 'paused' | 'deleted')
 // enforced by jobs_status_check. EnvOverrides is jsonb so the customer-
 // facing knob is open-vocabulary; Command is the OCI entrypoint added
@@ -53,7 +53,7 @@ type Job struct {
 	ScheduleRevision int64
 	ID               string
 	AccountID        string
-	Kind             string // 'batch' | 'recurring'
+	Kind             string // 'batch' | 'recurring' | 'image_run' (ADR-1151)
 	Name             string
 	ImageRef         string
 	RAMMB            int
@@ -87,6 +87,12 @@ type Job struct {
 	// contract while transient failures are retried durably.
 	ImageMaterializationAttempts      int
 	ImageMaterializationNextAttemptAt *time.Time
+	// ImageEntrypoint and ImageCmd are the source image's own ENTRYPOINT and
+	// CMD, recorded by imaged before it publishes a ready artifact (ADR-1151).
+	// ImageConfigRecorded is false for artifacts published before that.
+	ImageEntrypoint     []string
+	ImageCmd            []string
+	ImageConfigRecorded bool
 }
 
 // JobScheduleStore is the durable scheduling seam used by schedd. Listing is

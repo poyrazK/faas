@@ -23298,6 +23298,54 @@ paths:
   # cancel). Plan-tier gate (Free → 402) lives in the handler;
   # the OpenAPI surfaces the 402 response on every write.
 
+  /v1/image-runs:
+    post:
+      tags: [jobs]
+      operationId: createImageRun
+      summary: Run one command from an OCI image (ADR-1151).
+      description: |
+        `docker run`-shaped entry point. apid keeps one platform-managed
+        runner job (kind `image_run`) per account and normalized image, so
+        the image is pulled once and later runs start from the cached
+        artifact. While the image is being pulled the call returns 202
+        `pulling`; call again once `GET /v1/jobs/{job}` reports
+        `image_materialization_status: ready` to create a one-task run
+        (201 `queued`). The command follows Docker's rules: `entrypoint`
+        replaces the image ENTRYPOINT (and drops its CMD unless `args` is
+        set) and `args` replaces the image CMD. Runs, logs and cancellation
+        use `/v1/jobs/{job}/runs`. Free accounts get 402
+        `jobs_not_allowed`; the route returns 404 until the operator sets
+        `FAAS_IMAGE_RUNS=1`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateImageRunRequest' }
+      responses:
+        '201':
+          description: A one-task run was queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageRunResponse' }
+        '202':
+          description: The image is being pulled; call again when the runner job's image is ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImageRunResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Image runs need a plan with Jobs (not Free).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/PlanLimit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/jobs:
     get:
       tags: [jobs]
@@ -66793,6 +66841,58 @@ components:
         input_id: { type: string, minLength: 1, maxLength: 128 }
         input_ref: { type: string, minLength: 1, maxLength: 2048 }
 
+    CreateImageRunRequest:
+      description: "Body of POST /v1/image-runs (ADR-1151)."
+      type: object
+      required: [image]
+      properties:
+        image:
+          type: string
+          maxLength: 2048
+          description: "OCI image reference; normalized before use (alpine → docker.io/library/alpine:latest)."
+        entrypoint:
+          type: array
+          maxItems: 64
+          items: { type: string }
+          description: "Replaces the image ENTRYPOINT; without args the image CMD is dropped."
+        args:
+          type: array
+          maxItems: 64
+          items: { type: string }
+          description: "Replaces the image CMD."
+        env:
+          type: object
+          additionalProperties: { type: string }
+          description: "Per-run environment, validated like Job run env_overrides."
+        ram_mb:
+          type: integer
+          minimum: 0
+          description: "Task memory in MB; 0 means the Job default. Capped by the plan's Job RAM ceiling."
+        timeout_sec:
+          type: integer
+          minimum: 0
+          description: "Task deadline in seconds; 0 means the plan's Job task timeout ceiling."
+        pull:
+          type: string
+          enum: [missing, always]
+          default: missing
+          description: "always re-pulls a cached image so a moved tag is resolved again."
+    ImageRunResponse:
+      description: "Answer to POST /v1/image-runs. job names the runner job; run_id addresses /v1/jobs/{job}/runs/{run_id} once status is queued."
+      type: object
+      required: [status, job, image, image_status]
+      properties:
+        status: { type: string, enum: [pulling, queued] }
+        job: { type: string, description: "Runner job name (ir-<hash>)." }
+        image: { type: string, description: "Normalized image reference." }
+        image_status: { type: string, enum: [pending, verifying_legacy, ready, failed] }
+        image_error: { type: string, description: "Last pull or build error while the image is retried." }
+        image_digest: { type: string, description: "Resolved manifest digest once ready." }
+        run_id: { type: string, format: uuid }
+        command:
+          type: array
+          items: { type: string }
+          description: "The resolved argv the task runs."
     JobResponse:
       description: "Wire projection of state.Job."
       type: object
@@ -66801,7 +66901,7 @@ components:
         id: { type: string, format: uuid }
         account_id: { type: string, format: uuid }
         name: { type: string, example: "nightly-export" }
-        kind: { type: string, enum: [batch, recurring] }
+        kind: { type: string, enum: [batch, recurring, image_run] }
         schedule: { type: string, description: "Recurring five-field cron expression, when configured." }
         timezone: { type: string, description: "IANA timezone used to evaluate the recurring schedule." }
         last_scheduled_at: { type: string, format: date-time, description: "Most recent scheduled occurrence that created a run." }

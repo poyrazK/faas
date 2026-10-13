@@ -4686,6 +4686,8 @@
       "env_overrides",
       "failure_rules",
       "id",
+      "image_cmd",
+      "image_entrypoint",
       "image_materialization_attempts",
       "image_materialization_error",
       "image_materialization_lease_owner",

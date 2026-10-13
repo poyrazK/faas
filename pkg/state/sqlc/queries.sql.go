@@ -10339,7 +10339,7 @@ func (q *Queries) CustomerOperationIDForInvocation(ctx context.Context, db DBTX,
 }
 
 const customerOperationJobByName = `-- name: CustomerOperationJobByName :one
-SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
+SELECT id, account_id, kind, name, image_ref, ram_mb, task_timeout_s, max_parallelism, retry_max, env_overrides, status, created_at, updated_at, command, image_resolved_digest, image_storage_key, image_materialization_status, image_materialization_error, image_materialized_at, image_materialization_attempts, image_materialization_next_attempt_at, image_materialization_lease_owner, image_materialization_lease_until, cron_schedule, cron_timezone, last_scheduled_at, schedule_policy, failure_rules, schedule_revision, image_entrypoint, image_cmd FROM jobs WHERE account_id=$1::uuid AND name=$2::text AND status <> 'deleted' FOR SHARE
 `
 
 type CustomerOperationJobByNameParams struct {
@@ -10381,6 +10381,8 @@ func (q *Queries) CustomerOperationJobByName(ctx context.Context, db DBTX, arg C
 		&i.SchedulePolicy,
 		&i.FailureRules,
 		&i.ScheduleRevision,
+		&i.ImageEntrypoint,
+		&i.ImageCmd,
 	)
 	return i, err
 }

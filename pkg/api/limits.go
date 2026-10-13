@@ -6178,6 +6178,12 @@ var (
 	// account may own concurrently (status <> 'deleted').
 	JobMaxPerAccount = [4]int{0, 5, 25, 100}
 
+	// ImageRunCachedImages caps the platform-managed image-run runner jobs
+	// (ADR-1151) an account keeps live, one per cached image. They do not
+	// count against JobMaxPerAccount; at the cap the least recently used
+	// idle image is evicted.
+	ImageRunCachedImages = [4]int{0, 3, 10, 25}
+
 	// JobConcurrentPerAccount caps the live job-task instances
 	// (kind='job_task' AND state IN ('waking','cold_booting','running'))
 	// belonging to any single account. Independent of the app-wake

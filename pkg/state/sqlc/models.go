@@ -3933,6 +3933,8 @@ type Job struct {
 	SchedulePolicy                    []byte
 	FailureRules                      []byte
 	ScheduleRevision                  int64
+	ImageEntrypoint                   []string
+	ImageCmd                          []string
 }
 
 type JobRegistryCredential struct {
