@@ -6,6 +6,9 @@ import pg from 'pg'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
+import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
+import { storageBindings } from './storage.mjs'
+import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { gotrue, limits, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
@@ -66,8 +69,9 @@ export function upstreamPath(url) {
   return null
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime } = {}) {
   return http.createServer((req, res) => {
+    if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (authz && req.url.startsWith(authzPrefix)) return authz(req, res, '/' + req.url.slice(authzPrefix.length).split('?')[0])
     if (ui && serveUI(req, res, ui)) return
     if (req.url === '/healthz') {
@@ -122,7 +126,10 @@ export function start(env = process.env) {
   pool.on('error', () => {})
   const invitations = { mailer, external: config.external, app: config.app }
   const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app }
-  const server = createServer({ authz: createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations }), ui })
+  const workflows = workflowsConfig(env)
+  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows) })
+  const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
+  const server = createServer({ authz, ui, realtime })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()

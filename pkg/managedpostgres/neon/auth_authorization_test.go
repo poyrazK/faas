@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -16,7 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
-const authorizationSQL = "../../../cmd/gregale/templates/auth/sql/0001_authorization.sql"
+const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
@@ -33,12 +35,20 @@ func installAuthorization(t *testing.T, f *credentialFixture) (credentialRole, *
 		t.Fatal(err)
 	}
 	owner := f.connect(t, role.name)
-	body, err := os.ReadFile(authorizationSQL)
-	if err != nil {
-		t.Fatal(err)
-	}
 	executeSQL(t, owner, goTrueStub)
-	executeSQL(t, owner, string(body))
+	// The release task applies every file in order; so does the test.
+	files, err := filepath.Glob(filepath.Join(authorizationSQLDir, "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatal("no authorization SQL", err)
+	}
+	sort.Strings(files)
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		executeSQL(t, owner, string(body))
+	}
 	return role, owner
 }
 
@@ -237,4 +247,45 @@ func TestSQLReadOnlyVerifierRejectsUnmarkedOrWritableDefiners(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSQLSubjectAuthorizationForRealtimeIsOwnerOnlyAndUserLevel(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	actAs(t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	executeSQL(t, owner, `SELECT gregale_auth.apply_authz('{"policies":[{"action":"realtime:read","resource":"room","permission":"org:read"}]}')`)
+	executeSQL(t, owner, `SELECT set_config('request.jwt.claims', '', false)`)
+	resource := "org/" + org.String() + "/room/lobby"
+	check := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT gregale_auth.authorize_subject($1, 'realtime:read', $2)`, u.id, resource)
+	}
+	if !check(alice) || check(bob) {
+		t.Fatal("subject authorization wrong for member and non-member")
+	}
+	if queryBool(t, owner, `SELECT gregale_auth.authorize_subject($1, 'realtime:write', $2)`, alice.id, resource) {
+		t.Fatal("an action without a policy was allowed")
+	}
+	// Signing out everywhere or a ban ends realtime grants at the next check.
+	executeSQL(t, owner, `UPDATE auth.users SET banned_until = now() + interval '1 hour' WHERE id = $1`, alice.id)
+	if check(alice) {
+		t.Fatal("banned user authorized")
+	}
+	executeSQL(t, owner, `UPDATE auth.users SET banned_until = NULL WHERE id = $1`, alice.id)
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE user_id = $1`, alice.id)
+	if check(alice) {
+		t.Fatal("user without a live session authorized")
+	}
+	// The function trusts its subject argument, so no other login may call it.
+	if err := f.manager.Ensure(ctx, f.material, f.readonly); err != nil {
+		t.Fatal(err)
+	}
+	reader := f.connect(t, f.readonly.name)
+	deniedSQL(t, reader, `SELECT gregale_auth.authorize_subject('`+bob.id.String()+`', 'realtime:read', '`+resource+`')`)
+	deniedSQL(t, reader, `SELECT gregale_auth.user_active('`+bob.id.String()+`')`)
 }

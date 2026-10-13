@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto'
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
 import { EmailError, invitationMessage } from './email.mjs'
+import { objectResource, objectURL, presign } from './storage.mjs'
+import { WorkflowError } from './workflows.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -73,7 +75,7 @@ async function inSession(pool, claims, work) {
 
 function sqlError(err) {
   if (err instanceof HTTPError) return err
-  if (err instanceof EmailError) return new HTTPError(err.status, err.code)
+  if (err instanceof EmailError || err instanceof WorkflowError) return new HTTPError(err.status, err.code)
   const status = codes.get(err?.code)
   if (status) return new HTTPError(status, stableMessages.has(err.message) ? err.message : 'invalid_request')
   return new HTTPError(500, 'internal_error')
@@ -91,7 +93,8 @@ function requireString(body, name, max) {
 }
 
 // routes returns [status, body] for one authenticated request.
-export async function route(pool, claims, method, path, body, invitations = {}) {
+export async function route(pool, claims, method, path, body, services = {}) {
+  const invitations = services.invitations ?? {}
   const parts = path.split('/').filter(Boolean)
   const run = work => inSession(pool, claims, work)
   const rows = async (sql, args) => (await run(c => c.query(sql, args))).rows
@@ -143,6 +146,30 @@ export async function route(pool, claims, method, path, body, invitations = {}) 
     const [membership] = await rows('SELECT org_id, role FROM gregale_auth.accept_invitation($1)', [hashToken(body?.token)])
     return [200, membership]
   }
+  if (path === '/storage/sign' && method === 'POST') {
+    const bucket = requireString(body, 'bucket', 64)
+    const binding = services.storage?.get(bucket)
+    if (!binding) throw new HTTPError(404, 'unknown_bucket')
+    const operation = body.operation ?? 'read'
+    if (operation !== 'read' && operation !== 'write') throw new HTTPError(400, 'invalid_operation')
+    const resource = objectResource(bucket, body.key)
+    if (!resource) throw new HTTPError(400, 'invalid_key')
+    const [{ allowed }] = await rows('SELECT gregale_auth.authorize($1, $2) AS allowed', [`storage:${operation}`, resource])
+    if (!allowed) throw new HTTPError(403, 'forbidden')
+    const httpMethod = operation === 'write' ? 'PUT' : 'GET'
+    const url = presign({ method: httpMethod, url: objectURL(binding, body.key), region: binding.region, accessKeyId: binding.accessKeyId, secretAccessKey: binding.secretAccessKey, expires: limits.storageURLSeconds })
+    return [200, { url, method: httpMethod, expires_in: limits.storageURLSeconds }]
+  }
+  const start = /^\/workflows\/([a-z0-9][a-z0-9_-]{0,62})\/start$/.exec(path)
+  if (start && method === 'POST') {
+    const org = requireUUID(body?.org ?? '')
+    const idempotencyKey = body?.idempotency_key ?? randomBytes(16).toString('hex')
+    if (typeof idempotencyKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(idempotencyKey)) throw new HTTPError(400, 'invalid_idempotency_key')
+    const [{ allowed }] = await rows('SELECT gregale_auth.authorize($1, $2) AS allowed', ['workflow:start', `org/${org}/workflow/${start[1]}`])
+    if (!allowed) throw new HTTPError(403, 'forbidden')
+    if (!services.workflows) throw new HTTPError(503, 'workflows_unconfigured')
+    return [202, await services.workflows({ name: start[1], org, user: claims.sub, input: body.input, idempotencyKey })]
+  }
   if (path === '/authorize' && method === 'POST') {
     const [{ allowed }] = await rows('SELECT gregale_auth.authorize($1, $2) AS allowed', [requireString(body, 'action', 64), requireString(body, 'resource', 1024)])
     return [200, { allowed }]
@@ -165,7 +192,7 @@ function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {} }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -181,7 +208,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, invitations)
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

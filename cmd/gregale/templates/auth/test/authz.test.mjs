@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -157,4 +157,44 @@ test('a failed invitation email rolls the invitation back', async t => {
   assert.deepEqual(response.body, { status: 503, code: 'email_provider_unavailable' })
   assert.ok(pool.log.some(entry => entry.sql === 'ROLLBACK'))
   assert.ok(!pool.log.some(entry => entry.sql === 'COMMIT'))
+})
+
+test('signs object URLs only after authorize allows the operation', async t => {
+  let allowed = true
+  const pool = fakePool(() => ({ rows: [{ allowed }] }))
+  const storage = new Map([['uploads', { endpoint: new URL('https://s3.gregale.dev'), region: 'us-east-1', bucket: 'b-123', accessKeyId: 'AK', secretAccessKey: 'SK', virtualHosted: false }]])
+  const call = await serve(t, pool, { storage })
+  const key = `org/${org}/reports/q3.pdf`
+  const read = await call('POST', '/storage/sign', { body: { bucket: 'uploads', key } })
+  assert.equal(read.status, 200)
+  assert.equal(read.body.method, 'GET')
+  assert.equal(read.body.expires_in, 60)
+  assert.match(read.body.url, /^https:\/\/s3\.gregale\.dev\/b-123\/org\/[0-9a-f-]+\/reports\/q3\.pdf\?X-Amz-Algorithm=AWS4-HMAC-SHA256&.*X-Amz-Expires=60&.*X-Amz-Signature=[0-9a-f]{64}$/)
+  assert.doesNotMatch(read.body.url, /SK/)
+  assert.deepEqual(pool.log.find(entry => entry.sql.includes('authorize(')).args, ['storage:read', `org/${org}/uploads/reports/q3.pdf`])
+  const write = await call('POST', '/storage/sign', { body: { bucket: 'uploads', key, operation: 'write' } })
+  assert.equal(write.body.method, 'PUT')
+  allowed = false
+  assert.equal((await call('POST', '/storage/sign', { body: { bucket: 'uploads', key } })).status, 403)
+  assert.equal((await call('POST', '/storage/sign', { body: { bucket: 'other', key } })).body.code, 'unknown_bucket')
+  assert.equal((await call('POST', '/storage/sign', { body: { bucket: 'uploads', key: 'no-org/x' } })).body.code, 'invalid_key')
+  assert.equal((await call('POST', '/storage/sign', { body: { bucket: 'uploads', key, operation: 'delete' } })).body.code, 'invalid_operation')
+})
+
+test('starts workflows only when authorized and configured', async t => {
+  let allowed = true
+  const starts = []
+  const pool = fakePool(() => ({ rows: [{ allowed }] }))
+  const call = await serve(t, pool, { workflows: async request => { starts.push(request); return { accepted: true, duplicate: false, source: 'app.x' } } })
+  const response = await call('POST', '/workflows/onboard/start', { body: { org, input: { plan: 'pro' }, idempotency_key: 'req-1' } })
+  assert.equal(response.status, 202)
+  assert.deepEqual(starts[0], { name: 'onboard', org, user: member, input: { plan: 'pro' }, idempotencyKey: 'req-1' })
+  assert.deepEqual(pool.log.find(entry => entry.sql.includes('authorize(')).args, ['workflow:start', `org/${org}/workflow/onboard`])
+  assert.equal((await call('POST', '/workflows/onboard/start', { body: { org, idempotency_key: 'has space' } })).body.code, 'invalid_idempotency_key')
+  assert.equal((await call('POST', '/workflows/Bad Name/start', { body: { org } })).status, 404)
+  allowed = false
+  assert.equal((await call('POST', '/workflows/onboard/start', { body: { org } })).status, 403)
+  assert.equal(starts.length, 1)
+  const unconfigured = await serve(t, fakePool(() => ({ rows: [{ allowed: true }] })))
+  assert.equal((await unconfigured('POST', '/workflows/onboard/start', { body: { org } })).body.code, 'workflows_unconfigured')
 })
