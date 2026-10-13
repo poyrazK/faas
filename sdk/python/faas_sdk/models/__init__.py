@@ -2162,6 +2162,10 @@ from .open_api_contract_diff_response import OpenAPIContractDiffResponse
 from .open_api_contract_diff_response_source import OpenAPIContractDiffResponseSource
 from .open_api_contract_unknown import OpenAPIContractUnknown
 from .operation_accepted_response import OperationAcceptedResponse
+from .operation_approval_request import OperationApprovalRequest
+from .operation_approval_request_decision import OperationApprovalRequestDecision
+from .operation_approval_spec import OperationApprovalSpec
+from .operation_approval_spec_approver import OperationApprovalSpecApprover
 from .operation_artifact_request import OperationArtifactRequest
 from .operation_artifact_upload_request import OperationArtifactUploadRequest
 from .operation_artifact_upload_response import OperationArtifactUploadResponse
@@ -2268,6 +2272,9 @@ from .operation_submission_scope import OperationSubmissionScope
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_waiting_state import OperationWaitingState
+from .operation_waiting_state_approver import OperationWaitingStateApprover
+from .operation_waiting_state_kind import OperationWaitingStateKind
 from .operation_workflow_action_obligation import OperationWorkflowActionObligation
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
@@ -6486,6 +6493,10 @@ __all__ = (
     "OpenAPIContractDiffResponseSource",
     "OpenAPIContractUnknown",
     "OperationAcceptedResponse",
+    "OperationApprovalRequest",
+    "OperationApprovalRequestDecision",
+    "OperationApprovalSpec",
+    "OperationApprovalSpecApprover",
     "OperationArtifactRequest",
     "OperationArtifactUploadRequest",
     "OperationArtifactUploadResponse",
@@ -6592,6 +6603,9 @@ __all__ = (
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationWaitingState",
+    "OperationWaitingStateApprover",
+    "OperationWaitingStateKind",
     "OperationWorkflowActionObligation",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",

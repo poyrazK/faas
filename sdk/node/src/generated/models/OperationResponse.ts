@@ -6,6 +6,7 @@ import type { OperationDeliveryResponse } from './OperationDeliveryResponse.js';
 import type { OperationProgress } from './OperationProgress.js';
 import type { OperationResultArtifact } from './OperationResultArtifact.js';
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWaitingState } from './OperationWaitingState.js';
 /**
  * Customer business work; execution recovery and delivery retain independent semantics.
  */
@@ -14,7 +15,7 @@ export type OperationResponse = {
   id: string;
   name: string;
   generation: number;
-  state: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
+  state: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation';
   progress?: OperationProgress;
   /**
    * Pinned-schema-validated business result, when confirmed successful.
@@ -24,6 +25,7 @@ export type OperationResponse = {
   completion_delivery: OperationDeliveryResponse;
   cancellation_requested: boolean;
   failure_code?: string;
+  waiting?: OperationWaitingState;
   latest_sequence: number;
   created_at: string;
   updated_at: string;

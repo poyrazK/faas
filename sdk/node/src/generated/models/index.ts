@@ -1074,6 +1074,8 @@ export type { OpenAPIContractDiffResponse } from './OpenAPIContractDiffResponse.
 export type { OpenAPIContractUnknown } from './OpenAPIContractUnknown.js';
 export type { OperationAcceptedResponse } from './OperationAcceptedResponse.js';
 export type { OperationAfter } from './OperationAfter.js';
+export type { OperationApprovalRequest } from './OperationApprovalRequest.js';
+export type { OperationApprovalSpec } from './OperationApprovalSpec.js';
 export type { OperationArtifact } from './OperationArtifact.js';
 export type { OperationArtifactRequest } from './OperationArtifactRequest.js';
 export type { OperationArtifactUploadRequest } from './OperationArtifactUploadRequest.js';
@@ -1152,6 +1154,7 @@ export type { OperationSubmissionLookupResponse } from './OperationSubmissionLoo
 export type { OperationSubmissionScope } from './OperationSubmissionScope.js';
 export type { OperationSummary } from './OperationSummary.js';
 export type { OperationTenantIdentity } from './OperationTenantIdentity.js';
+export type { OperationWaitingState } from './OperationWaitingState.js';
 export type { OperationWorkflowActionObligation } from './OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './OperationWorkflowActionPreviewResponse.js';

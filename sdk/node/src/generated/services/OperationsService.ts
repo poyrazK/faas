@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationAcceptedResponse } from '../models/OperationAcceptedResponse.js';
+import type { OperationApprovalRequest } from '../models/OperationApprovalRequest.js';
 import type { OperationArtifactRequest } from '../models/OperationArtifactRequest.js';
 import type { OperationArtifactUploadRequest } from '../models/OperationArtifactUploadRequest.js';
 import type { OperationArtifactUploadResponse } from '../models/OperationArtifactUploadResponse.js';
@@ -3896,7 +3897,7 @@ export class OperationsService {
     /**
      * Business state filter.
      */
-    state?: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
+    state?: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
     /**
      * Business reference type for this account-owned app. Requires subject_id; supply both selectors together.
      */
@@ -4410,6 +4411,61 @@ export class OperationsService {
     });
   }
   /**
+   * Decide an account approval on waiting work (ADR-1156).
+   * Requires deploy:write and MFA. Only a step whose definition names the account approver. The same decision is idempotent; a different one conflicts. Rejection settles the operation failed with approval_rejected.
+   * @returns OperationResponse The decision is recorded; the operation resumes or settles approval_rejected.
+   * @throws ApiError
+   */
+  public static decideOperationApproval({
+    slug,
+    id,
+    step,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Approval step declared by the operation definition.
+     */
+    step: string,
+    requestBody: OperationApprovalRequest,
+  }): CancelablePromise<OperationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/operations/{id}/approvals/{step}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'step': step,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Discover and reopen this customer's retained work.
    * Requires platform_tenant:operations:read and an explicit app_id and environment scope. Identity comes only from the authenticated tenant token. Pages contain status summaries, never source input, result bytes, artifact locations or execution authority. Active work remains visible; expired settled work is omitted. Creation time and ID determine descending order. An opaque cursor is bound to the account, tenant, app, scope and filters. This is a live view, not a transaction snapshot: state filters and retention can change membership. Closed preview admission does not disable history reads.
    * @returns OperationListResponse Customer-scoped summaries and an optional continuation cursor.
@@ -4448,7 +4504,7 @@ export class OperationsService {
     /**
      * Current business state filter, independent of delivery.
      */
-    state?: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
+    state?: 'accepted' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'requires_reconciliation',
     /**
      * Maximum summaries in this page.
      */
@@ -4716,6 +4772,55 @@ export class OperationsService {
         404: `code: not_found`,
         409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         410: `The retained result expired; its identity remains reserved for the deduplication window.`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Decide this customer's approval on its waiting operation (ADR-1156).
+   * Requires platform_tenant:operations:manage. Only a step whose definition names the customer approver, on the customer's own operation. The same decision is idempotent; a different one conflicts.
+   * @returns OperationResponse The customer's decision is recorded; its operation resumes or settles approval_rejected.
+   * @throws ApiError
+   */
+  public static decidePlatformTenantSelfOperationApproval({
+    id,
+    step,
+    requestBody,
+  }: {
+    /**
+     * Stable logical operation identity.
+     */
+    id: string,
+    /**
+     * Approval step that the definition assigns to the customer.
+     */
+    step: string,
+    requestBody: OperationApprovalRequest,
+  }): CancelablePromise<OperationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/customer-operations/{id}/approvals/{step}',
+      path: {
+        'id': id,
+        'step': step,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `A pinned contract, idempotency payload or execution generation conflicts with the retained state.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

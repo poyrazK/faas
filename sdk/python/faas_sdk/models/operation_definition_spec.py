@@ -26,6 +26,7 @@ from ..models.operation_definition_spec_transaction_receipt import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_approval_spec import OperationApprovalSpec
     from ..models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
     from ..models.operation_subject_spec import OperationSubjectSpec
     from ..models.operation_workflow_step import OperationWorkflowStep
@@ -36,9 +37,10 @@ T = TypeVar("T", bound="OperationDefinitionSpec")
 
 @_attrs_define
 class OperationDefinitionSpec:
-    """Resolved immutable contract for an HTTP handler or a named linear HTTP workflow from the same deployment. Workflow
-    definitions require POST ingress, reconciliation recovery and stages matching the steps. Ownership comes from
-    verified authentication. Production admission remains disabled pending qualification.
+    """Resolved immutable contract for an HTTP handler or a named linear workflow from the same deployment. Workflow
+    definitions require POST ingress, reconciliation recovery and stages matching the steps; steps are HTTP actions,
+    fixed timers or declared approvals, ending with an HTTP action. Ownership comes from verified authentication.
+    Production admission remains disabled pending qualification.
 
     """
 
@@ -51,6 +53,9 @@ class OperationDefinitionSpec:
     output_schema: Any
     """Bundled schema for the business result selected by the execution target."""
     progress_stages: list[str]
+    approvals: list[OperationApprovalSpec] | Unset = UNSET
+    """ADR-1156 approvals for a workflow definition. Every wait_for_callback step must be listed and decided by the
+    named approver."""
     milestones: OperationDefinitionSpecMilestones | Unset = UNSET
     """Declared public milestone names mapped to bundled JSON Schemas. Requires http_transaction_version 1. At most
     16 names, with an aggregate 16384 schema bytes."""
@@ -89,6 +94,13 @@ class OperationDefinitionSpec:
         output_schema = self.output_schema
 
         progress_stages = self.progress_stages
+
+        approvals: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.approvals, Unset):
+            approvals = []
+            for approvals_item_data in self.approvals:
+                approvals_item = approvals_item_data.to_dict()
+                approvals.append(approvals_item)
 
         milestones: dict[str, Any] | Unset = UNSET
         if not isinstance(self.milestones, Unset):
@@ -138,6 +150,8 @@ class OperationDefinitionSpec:
                 "progress_stages": progress_stages,
             }
         )
+        if approvals is not UNSET:
+            field_dict["approvals"] = approvals
         if milestones is not UNSET:
             field_dict["milestones"] = milestones
         if workflow_steps is not UNSET:
@@ -161,6 +175,7 @@ class OperationDefinitionSpec:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_approval_spec import OperationApprovalSpec
         from ..models.operation_definition_spec_milestones import OperationDefinitionSpecMilestones
         from ..models.operation_subject_spec import OperationSubjectSpec
         from ..models.operation_workflow_step import OperationWorkflowStep
@@ -179,6 +194,15 @@ class OperationDefinitionSpec:
         output_schema = d.pop("output_schema")
 
         progress_stages = cast(list[str], d.pop("progress_stages"))
+
+        _approvals = d.pop("approvals", UNSET)
+        approvals: list[OperationApprovalSpec] | Unset = UNSET
+        if _approvals is not UNSET:
+            approvals = []
+            for approvals_item_data in _approvals:
+                approvals_item = OperationApprovalSpec.from_dict(approvals_item_data)
+
+                approvals.append(approvals_item)
 
         _milestones = d.pop("milestones", UNSET)
         milestones: OperationDefinitionSpecMilestones | Unset
@@ -245,6 +269,7 @@ class OperationDefinitionSpec:
             input_schema=input_schema,
             output_schema=output_schema,
             progress_stages=progress_stages,
+            approvals=approvals,
             milestones=milestones,
             workflow_steps=workflow_steps,
             subject=subject,

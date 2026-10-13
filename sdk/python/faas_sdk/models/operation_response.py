@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.operation_progress import OperationProgress
     from ..models.operation_result_artifact import OperationResultArtifact
     from ..models.operation_subject import OperationSubject
+    from ..models.operation_waiting_state import OperationWaitingState
 
 
 T = TypeVar("T", bound="OperationResponse")
@@ -45,6 +46,8 @@ class OperationResponse:
     """Pinned-schema-validated business result, when confirmed successful."""
     artifacts: list[OperationResultArtifact] | Unset = UNSET
     failure_code: str | Unset = UNSET
+    waiting: OperationWaitingState | Unset = UNSET
+    """Why a waiting operation holds no execution. until is the timer's wake time or the approval deadline."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,6 +90,10 @@ class OperationResponse:
 
         failure_code = self.failure_code
 
+        waiting: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.waiting, Unset):
+            waiting = self.waiting.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -113,6 +120,8 @@ class OperationResponse:
             field_dict["artifacts"] = artifacts
         if failure_code is not UNSET:
             field_dict["failure_code"] = failure_code
+        if waiting is not UNSET:
+            field_dict["waiting"] = waiting
 
         return field_dict
 
@@ -122,6 +131,7 @@ class OperationResponse:
         from ..models.operation_progress import OperationProgress
         from ..models.operation_result_artifact import OperationResultArtifact
         from ..models.operation_subject import OperationSubject
+        from ..models.operation_waiting_state import OperationWaitingState
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -171,6 +181,13 @@ class OperationResponse:
 
         failure_code = d.pop("failure_code", UNSET)
 
+        _waiting = d.pop("waiting", UNSET)
+        waiting: OperationWaitingState | Unset
+        if isinstance(_waiting, Unset):
+            waiting = UNSET
+        else:
+            waiting = OperationWaitingState.from_dict(_waiting)
+
         operation_response = cls(
             id=id,
             name=name,
@@ -187,6 +204,7 @@ class OperationResponse:
             result=result,
             artifacts=artifacts,
             failure_code=failure_code,
+            waiting=waiting,
         )
 
         operation_response.additional_properties = d
