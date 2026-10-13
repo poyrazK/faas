@@ -6,6 +6,7 @@ import (
 )
 
 type executionCoverage struct {
+	repair                  lineageRepairProgress
 	reconciliationRequested *time.Time
 	ledgerStarted           time.Time
 	ledgerBaseline          bool

@@ -34,5 +34,6 @@ func cmdEventsExecutionReconciliation(args []string, request bool) int {
 		return jsonOut(writeJSON(out))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | %s | requested %v | collection start %v | unattributed execution present %t\n", oneLine(out.SubscriptionID), oneLine(out.Status), out.RequestedAt, out.CollectionStartedAt, out.UnattributedExecutionPresent)
+	_, _ = fmt.Fprintf(osStdout, "Repair scanned %d | repaired %d | unresolved %d | conflicts %d\n", out.RepairScanned, out.RepairRepaired, out.RepairUnresolved, out.RepairConflicts)
 	return 0
 }

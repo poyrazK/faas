@@ -3,6 +3,22 @@
 /* tslint:disable */
 /* eslint-disable */
 export type EventExecutionReconciliation = {
+  /**
+   * Cumulative retained receipt candidates examined by this request.
+   */
+  repair_scanned: number;
+  /**
+   * Newly associated authoritative roots; existing associations are not counted.
+   */
+  repair_repaired: number;
+  /**
+   * Examined candidates with missing or incompatible execution evidence; not a live blocker count.
+   */
+  repair_unresolved: number;
+  /**
+   * Examined candidates with competing acceptance or incompatible existing lineage; not a live blocker count.
+   */
+  repair_conflicts: number;
   subscription_id: string;
   app_id: string;
   status: 'not_requested' | 'waiting_for_lineage' | 'completed' | 'not_required';

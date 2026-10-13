@@ -75,6 +75,10 @@ func (h EventConsumerExecutionHealth) CompleteWindowEvidence() bool {
 
 // EventExecutionReconciliation reports a durable forward-only coverage request.
 type EventExecutionReconciliation struct {
+	RepairScanned                int64      `json:"repair_scanned"`
+	RepairRepaired               int64      `json:"repair_repaired"`
+	RepairUnresolved             int64      `json:"repair_unresolved"`
+	RepairConflicts              int64      `json:"repair_conflicts"`
 	SubscriptionID               string     `json:"subscription_id"`
 	AppID                        string     `json:"app_id"`
 	Status                       string     `json:"status"`

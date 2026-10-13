@@ -33566,7 +33566,7 @@ paths:
       tags: [events]
       operationId: getEventExecutionReconciliation
       summary: Inspect durable execution coverage reconciliation.
-      description: Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+      description: Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -33602,7 +33602,7 @@ paths:
       tags: [events]
       operationId: requestEventExecutionReconciliation
       summary: Request a forward-only execution coverage boundary.
-      description: Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+      description: Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -62365,8 +62365,12 @@ components:
     EventExecutionReconciliation:
       type: object
       additionalProperties: false
-      required: [subscription_id, app_id, status, unattributed_execution_present]
+      required: [subscription_id, app_id, status, unattributed_execution_present, repair_scanned, repair_repaired, repair_unresolved, repair_conflicts]
       properties:
+        repair_scanned: { type: integer, format: int64, minimum: 0, description: Cumulative retained receipt candidates examined by this request. }
+        repair_repaired: { type: integer, format: int64, minimum: 0, description: Newly associated authoritative roots; existing associations are not counted. }
+        repair_unresolved: { type: integer, format: int64, minimum: 0, description: Examined candidates with missing or incompatible execution evidence; not a live blocker count. }
+        repair_conflicts: { type: integer, format: int64, minimum: 0, description: Examined candidates with competing acceptance or incompatible existing lineage; not a live blocker count. }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         status: { type: string, enum: [not_requested, waiting_for_lineage, completed, not_required] }

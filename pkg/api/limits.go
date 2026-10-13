@@ -10391,3 +10391,5 @@ const OperationWorkflowPlaybookReviewsMax = 32
 
 // Bounded scheduler work for legacy execution-ledger reconciliation.
 const EventExecutionReconciliationBatch = 100
+
+const EventExecutionLineageRepairBatch = 100

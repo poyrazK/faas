@@ -1495,7 +1495,7 @@ export class EventsService {
   }
   /**
    * Inspect durable execution coverage reconciliation.
-   * Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+   * Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
    * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests.
    * @throws ApiError
    */
@@ -1530,7 +1530,7 @@ export class EventsService {
   }
   /**
    * Request a forward-only execution coverage boundary.
-   * Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+   * Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
    * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests.
    * @throws ApiError
    */

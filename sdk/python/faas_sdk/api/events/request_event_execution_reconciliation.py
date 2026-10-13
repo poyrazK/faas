@@ -91,10 +91,12 @@ def sync_detailed(
 ) -> Response[EventExecutionReconciliation | Problem]:
     """Request a forward-only execution coverage boundary.
 
-     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown
-    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
-    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
-    after blockers clear. Recorded losses and unknown outcomes remain applicable.
+     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans
+    repair unambiguous lineage from retained captured recipients, deterministic delivery identity and
+    matching root content. Historical unknown outcomes are not reconstructed. Retained app executions
+    without authoritative ledger lineage block completion, including unrelated app invocations. The
+    scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown
+    outcomes remain applicable.
 
     Args:
         slug (str):
@@ -128,10 +130,12 @@ def sync(
 ) -> EventExecutionReconciliation | Problem | None:
     """Request a forward-only execution coverage boundary.
 
-     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown
-    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
-    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
-    after blockers clear. Recorded losses and unknown outcomes remain applicable.
+     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans
+    repair unambiguous lineage from retained captured recipients, deterministic delivery identity and
+    matching root content. Historical unknown outcomes are not reconstructed. Retained app executions
+    without authoritative ledger lineage block completion, including unrelated app invocations. The
+    scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown
+    outcomes remain applicable.
 
     Args:
         slug (str):
@@ -160,10 +164,12 @@ async def asyncio_detailed(
 ) -> Response[EventExecutionReconciliation | Problem]:
     """Request a forward-only execution coverage boundary.
 
-     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown
-    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
-    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
-    after blockers clear. Recorded losses and unknown outcomes remain applicable.
+     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans
+    repair unambiguous lineage from retained captured recipients, deterministic delivery identity and
+    matching root content. Historical unknown outcomes are not reconstructed. Retained app executions
+    without authoritative ledger lineage block completion, including unrelated app invocations. The
+    scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown
+    outcomes remain applicable.
 
     Args:
         slug (str):
@@ -195,10 +201,12 @@ async def asyncio(
 ) -> EventExecutionReconciliation | Problem | None:
     """Request a forward-only execution coverage boundary.
 
-     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown
-    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
-    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
-    after blockers clear. Recorded losses and unknown outcomes remain applicable.
+     Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans
+    repair unambiguous lineage from retained captured recipients, deterministic delivery identity and
+    matching root content. Historical unknown outcomes are not reconstructed. Retained app executions
+    without authoritative ledger lineage block completion, including unrelated app invocations. The
+    scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown
+    outcomes remain applicable.
 
     Args:
         slug (str):

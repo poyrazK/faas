@@ -25,7 +25,7 @@ requires every retained invocation in the app to have authoritative ledger-root
 lineage with matching account, app and root incarnation. Because unmapped
 executions cannot safely be assigned to a consumer, unrelated app invocations
 also conservatively block completion. This first version does not infer ownership
-from headers, recreate deleted outcomes, delete blockers, or repair lineage.
+from headers, recreate deleted outcomes, delete blockers, or infer lineage. ADR-1152 adds bounded repair from authoritative retained evidence.
 
 Event routing already associates roots and captures retained prior outcomes in
 its admission transaction. Mapped active executions can cross the new boundary;
@@ -52,6 +52,5 @@ Existing consumers can opt into provable future windows without being recreated.
 Reconciliation adds no new table, lease or daemon. It relies on the existing
 retention sweep cadence and durable coverage row. It may wait indefinitely for
 unattributed retained app executions; customers can inspect that condition, but
-this operation does not recommend deleting evidence to force eligibility. A
-future authoritative lineage-repair mechanism can reduce those conservative
-blockers. Migration adds one operational column and a pending-request index.
+this operation does not recommend deleting evidence to force eligibility. Authoritative lineage repair (ADR-1152) reduces those conservative
+blockers when retained evidence is unambiguous. Migration adds one operational column and a pending-request index.

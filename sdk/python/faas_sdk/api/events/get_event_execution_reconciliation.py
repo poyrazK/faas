@@ -86,10 +86,11 @@ def sync_detailed(
 ) -> Response[EventExecutionReconciliation | Problem]:
     """Inspect durable execution coverage reconciliation.
 
-     Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app
-    executions without authoritative ledger lineage block completion, including unrelated app
-    invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded
-    losses and unknown outcomes remain applicable.
+     Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained
+    captured recipients, deterministic delivery identity and matching root content. Historical unknown
+    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
+    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
+    after blockers clear. Recorded losses and unknown outcomes remain applicable.
 
     Args:
         slug (str):
@@ -123,10 +124,11 @@ def sync(
 ) -> EventExecutionReconciliation | Problem | None:
     """Inspect durable execution coverage reconciliation.
 
-     Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app
-    executions without authoritative ledger lineage block completion, including unrelated app
-    invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded
-    losses and unknown outcomes remain applicable.
+     Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained
+    captured recipients, deterministic delivery identity and matching root content. Historical unknown
+    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
+    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
+    after blockers clear. Recorded losses and unknown outcomes remain applicable.
 
     Args:
         slug (str):
@@ -155,10 +157,11 @@ async def asyncio_detailed(
 ) -> Response[EventExecutionReconciliation | Problem]:
     """Inspect durable execution coverage reconciliation.
 
-     Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app
-    executions without authoritative ledger lineage block completion, including unrelated app
-    invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded
-    losses and unknown outcomes remain applicable.
+     Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained
+    captured recipients, deterministic delivery identity and matching root content. Historical unknown
+    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
+    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
+    after blockers clear. Recorded losses and unknown outcomes remain applicable.
 
     Args:
         slug (str):
@@ -190,10 +193,11 @@ async def asyncio(
 ) -> EventExecutionReconciliation | Problem | None:
     """Inspect durable execution coverage reconciliation.
 
-     Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app
-    executions without authoritative ledger lineage block completion, including unrelated app
-    invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded
-    losses and unknown outcomes remain applicable.
+     Requires `apps:read` or `admin`. Bounded durable scans repair unambiguous lineage from retained
+    captured recipients, deterministic delivery identity and matching root content. Historical unknown
+    outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block
+    completion, including unrelated app invocations. The scheduler establishes a new collection boundary
+    after blockers clear. Recorded losses and unknown outcomes remain applicable.
 
     Args:
         slug (str):

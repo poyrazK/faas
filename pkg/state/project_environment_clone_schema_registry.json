@@ -3259,6 +3259,7 @@
       "ledger_baseline_known",
       "ledger_lost_through_at",
       "ledger_started_at",
+      "lineage_repair_progress",
       "loss_reason",
       "lost_at",
       "reconciliation_requested_at",

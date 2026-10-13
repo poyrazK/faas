@@ -726,6 +726,12 @@ type Querier interface {
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
 	EventDeliveryReplayAccount(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryReplayAccountRow, error)
 	EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg EventExecutionLedgerWindowParams) (EventExecutionLedgerWindowRow, error)
+	EventExecutionLineageRepairAmbiguous(ctx context.Context, db DBTX, arg EventExecutionLineageRepairAmbiguousParams) (bool, error)
+	EventExecutionLineageRepairExistingRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairExistingRootParams) (EventExecutionLineageRepairExistingRootRow, error)
+	EventExecutionLineageRepairJobs(ctx context.Context, db DBTX, jobLimit int32) ([]EventExecutionLineageRepairJobsRow, error)
+	// Admission roots include settled receipts and materialized backfill recipients.
+	EventExecutionLineageRepairReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageRepairReceiptsParams) ([]EventExecutionLineageRepairReceiptsRow, error)
+	EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairRootParams) (EventExecutionLineageRepairRootRow, error)
 	EventExecutionRecoveryBoundary(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	EventExecutionRecoveryCandidates(ctx context.Context, db DBTX, arg EventExecutionRecoveryCandidatesParams) ([]EventExecutionRecoveryCandidatesRow, error)
 	EventExecutionRecoveryReceipt(ctx context.Context, db DBTX, arg EventExecutionRecoveryReceiptParams) (int64, error)
@@ -3496,6 +3502,7 @@ type Querier interface {
 	SaveAutomation(ctx context.Context, db DBTX, arg SaveAutomationParams) error
 	SaveCheckedRollback(ctx context.Context, db DBTX, arg SaveCheckedRollbackParams) error
 	SaveEnvironmentGitOpsProgress(ctx context.Context, db DBTX, arg SaveEnvironmentGitOpsProgressParams) (int64, error)
+	SaveEventExecutionLineageRepairProgress(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRepairProgressParams) error
 	SaveExclusiveWorkKey(ctx context.Context, db DBTX, arg SaveExclusiveWorkKeyParams) error
 	SaveExclusiveWorkOperation(ctx context.Context, db DBTX, arg SaveExclusiveWorkOperationParams) error
 	SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg SaveExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)

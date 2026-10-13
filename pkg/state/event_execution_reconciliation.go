@@ -62,6 +62,11 @@ func (s *PgStore) EventExecutionReconciliation(ctx context.Context, account, app
 		return out, err
 	} else {
 		out = reconciliationStatus(app, sub, row.LedgerBaselineKnown, timestamptzToTimePtr(row.ReconciliationRequestedAt), timestamptzToTimePtr(row.LedgerStartedAt), row.UnattributedExecutionPresent)
+		progress, decodeErr := decodeLineageRepairProgress(row.LineageRepairProgress)
+		if decodeErr != nil {
+			return out, decodeErr
+		}
+		applyLineageRepairProgress(&out, progress)
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return api.EventExecutionReconciliation{}, err
@@ -71,6 +76,9 @@ func (s *PgStore) EventExecutionReconciliation(ctx context.Context, account, app
 func (s *PgStore) AdvanceEventExecutionReconciliations(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 || limit > api.EventExecutionReconciliationBatch {
 		limit = api.EventExecutionReconciliationBatch
+	}
+	if err := s.repairEventExecutionLineage(ctx, limit); err != nil {
+		return 0, err
 	}
 	n, err := sqlc.New().AdvanceEventExecutionReconciliations(ctx, s.pool, int32(limit))
 	return int(n), err
@@ -125,7 +133,9 @@ func (m *MemStore) EventExecutionReconciliation(ctx context.Context, account, ap
 	if !c.ledgerStarted.IsZero() {
 		started = &c.ledgerStarted
 	}
-	return reconciliationStatus(canonicalMemUUID(app), id, c.ledgerBaseline, c.reconciliationRequested, started, m.unattributedExecutionLocked(account, app)), nil
+	out = reconciliationStatus(canonicalMemUUID(app), id, c.ledgerBaseline, c.reconciliationRequested, started, m.unattributedExecutionLocked(account, app))
+	applyLineageRepairProgress(&out, c.repair)
+	return out, nil
 }
 func (m *MemStore) AdvanceEventExecutionReconciliations(ctx context.Context, limit int) (int, error) {
 	if err := ctx.Err(); err != nil {
@@ -144,16 +154,34 @@ func (m *MemStore) AdvanceEventExecutionReconciliations(ctx context.Context, lim
 	}
 	sort.Slice(ids, func(i, j int) bool {
 		a, b := m.eventExecutionCoverage[ids[i]], m.eventExecutionCoverage[ids[j]]
-		if !a.reconciliationRequested.Equal(*b.reconciliationRequested) {
-			return a.reconciliationRequested.Before(*b.reconciliationRequested)
+		x, y := a.reconciliationRequested, b.reconciliationRequested
+		if a.repair.LastScan != nil {
+			x = a.repair.LastScan
+		}
+		if b.repair.LastScan != nil {
+			y = b.repair.LastScan
+		}
+		if !x.Equal(*y) {
+			return x.Before(*y)
 		}
 		return ids[i] < ids[j]
 	})
 	n := 0
+	remaining := api.EventExecutionLineageRepairBatch
+	checked := 0
 	for _, id := range ids {
+
 		c := m.eventExecutionCoverage[id]
 		app, ok := m.apps[c.app]
-		if !ok || app.Status == AppDeleted || m.unattributedExecutionLocked(app.AccountID, c.app) {
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		if remaining > 0 && checked < limit {
+			checked++
+			remaining -= m.repairEventExecutionLineageLocked(app.AccountID, c.app, id, remaining)
+			c = m.eventExecutionCoverage[id]
+		}
+		if m.unattributedExecutionLocked(app.AccountID, c.app) {
 			continue
 		}
 		boundary := time.Now().UTC()

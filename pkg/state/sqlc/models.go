@@ -2830,6 +2830,7 @@ type EventExecutionCoverage struct {
 	LedgerBaselineKnown       bool
 	LedgerLostThroughAt       pgtype.Timestamptz
 	ReconciliationRequestedAt pgtype.Timestamptz
+	LineageRepairProgress     []byte
 }
 
 type EventExecutionOutcome struct {

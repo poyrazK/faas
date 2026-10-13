@@ -19475,6 +19475,7 @@ CREATE TABLE public.event_execution_coverage (
     ledger_baseline_known boolean DEFAULT false NOT NULL,
     ledger_lost_through_at timestamp with time zone,
     reconciliation_requested_at timestamp with time zone,
+    lineage_repair_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT event_execution_coverage_check CHECK (((lost_at IS NULL) = (loss_reason = ''::text))),
     CONSTRAINT event_execution_coverage_loss_reason_check CHECK ((loss_reason = ANY (ARRAY[''::text, 'receipt_deleted'::text, 'recipient_deleted'::text, 'invocation_deleted'::text, 'attempt_deleted'::text, 'execution_replaced'::text])))
 );

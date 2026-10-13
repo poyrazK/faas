@@ -22,9 +22,12 @@ restarts resume the saved request.
 
 `unattributed_execution_present` means an app invocation lacks authoritative
 ledger lineage. Such executions block completion, including unrelated app
-execution sources and terminal invocations still retained for replay. This
-operation never guesses ownership, deletes evidence, reruns handlers, or repairs
-historical outcomes. A busy app with unrelated retained executions may remain
+execution sources and terminal invocations still retained for replay. The scheduler now attempts bounded authoritative lineage repair before testing
+completion. A retained enqueued receipt must uniquely match the deterministic
+delivery ID, root incarnation, account/app, normal async invocation shape and
+event content. Missing, incompatible or competing evidence remains unresolved.
+It never guesses ownership from headers, deletes evidence, reruns handlers, or
+reconstructs historical outcomes. A busy app with unrelated retained executions may remain
 blocked indefinitely.
 
 `collection_started_at` becomes available when reconciliation completes or an
@@ -34,3 +37,25 @@ retention, sample requirements and fresh observations still govern SLO eligibili
 For a five-minute health window, allow at least five minutes after the boundary
 before checking eligibility. Reconciliation does not claim exactly-once delivery
 or complete historical evidence.
+
+## Repair progress
+
+The same API, CLI and SDK response reports `repair_scanned`, `repair_repaired`,
+`repair_unresolved`, and `repair_conflicts`. These are cumulative examined-receipt
+counts for the request, not current execution totals or live blocker counts.
+Existing matching root associations are scanned but not counted as newly repaired.
+Use `unattributed_execution_present` and `status` to determine current readiness.
+
+The durable cursor and counters commit with root associations. Failed database
+transactions do not advance the cursor, and restarts resume the same scan.
+A scheduler pass examines at most 100 receipt candidates across all repair jobs.
+Jobs rotate by their last scan so an unresolved app does not monopolize repair.
+Scans move forward through retained enqueued receipts; absent or ambiguous
+historical evidence is not inferred or automatically rewritten on a later retry.
+Normal new admissions continue associating their own roots transactionally.
+
+Repair records lineage only. It does not backfill prior attempt/completion
+outcomes, clear loss markers or establish historical completeness. Mapped active
+roots and their replay descendants record subsequent outcomes through the existing
+ledger transitions. Reconciliation still establishes a new forward-only boundary
+before future SLO windows can qualify.
