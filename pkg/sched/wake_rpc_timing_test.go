@@ -9,13 +9,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const wakeTimingPostRPCDelay = 200 * time.Millisecond
 
 type wakeTimingStore struct {
-	*state.MemStore
+	MemStore    *state.MemStore
 	boostWrites int
 }
 
@@ -71,7 +72,7 @@ func TestWakeRPCPhasesSeparatePostRPCStoreDelay(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			store := &wakeTimingStore{MemStore: state.NewMemStore()}
-			e, ops, app := seedWakeTiming(t, store, &fakeVMM{}, restore, 250)
+			e, ops, app := seedWakeTiming(t, statetest.NewMem(store), &fakeVMM{}, restore, 250)
 			if _, err := e.Wake(context.Background(), app.ID, "", "", ""); err != nil {
 				t.Fatal(err)
 			}

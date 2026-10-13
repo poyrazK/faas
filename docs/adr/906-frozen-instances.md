@@ -129,6 +129,43 @@ zram, and then the 3 GB device was full. zram's `disksize` caps the
 size the pool (`max_pool_percent`) by the compressed bytes the host can
 spare. A node must stop freezing and start parking when the pool is full.
 
+## At density (measured 2026-10-12)
+
+`TestMetalFreezeDensity` (`pkg/fcvm`) froze twelve 1 GiB Node VMs on the
+n2 node through vmmd's Manager, then thawed each and timed first byte and
+a CPU-bound request. Swap was a 4 GB lz4 zram device:
+
+| VMs | swap | VM cgroup per VM, before → after freeze | host memory freed | freeze p50 | thaw first byte p50 / p99 | CPU-bound request p50 |
+|---|---|---|---|---|---|---|
+| cold booted | none | 301 → 299 MB | ~0 | 1.3 ms | 4.7 / 12.6 ms | 14 ms |
+| cold booted | zram | 307 → 1.5 MB | 2,056 MB, 171 MB per VM | 973 ms | 135 / 822 ms | 919 ms |
+| restored from one snapshot | none | 12.1 → 10.8 MB | ~0 | 2.3 ms | 34 / 759 ms | 148 ms |
+| restored from one snapshot | zram | 10.9 → 1.2 MB | ~0 | 50 ms | 83 / 200 ms | 68 ms |
+
+What this changes:
+
+- **Restored instances hold almost nothing of their own.** A VM restored
+  from a snapshot reads its memory from the snapshot file, whose page cache
+  all instances of the app share and the kernel can reclaim (ADR-908's
+  one-memory-file bound: 52 MB per VM at six VMs). Its own cgroup held
+  about 11 MB. A paused restored instance is therefore already cheap in
+  memory, and reclaim adds little. Its real cost is its admission charge:
+  1,032 MB under invariant 2, but the 64 MB floor under measured admission
+  (ADR-909).
+- **Cold-booted instances need swap to give memory back.** Their memory is
+  anonymous. With zram, freezing freed 171 MB per VM after compression
+  (about 2.2×), but thawing then faults the working set back: first byte
+  p50 135 ms, p99 822 ms, and the first CPU-bound request took 919 ms.
+- **Thaw beats restore when little was swapped.** Without swap, thaw
+  reached first byte in 5–34 ms p50, against 130–300 ms for a snapshot
+  wake. With swap, it stays below a restore at p50 but not always at p99.
+
+So the frozen tier should freeze without reclaiming anonymous memory by
+default. Instances restored from a snapshot are the common case, and for
+them that keeps the latency win at almost no memory cost. Swap-backed
+reclaim should be kept for host pressure, as in the ADR-909 overcommit
+prototype, rather than applied to every freeze.
+
 ## Prototype results
 
 `TestMetalFreezeThawCycle`, n2 test node (nested KVM), Firecracker 1.17,
@@ -145,3 +182,118 @@ A paused guest refused HTTP connections, and after each thaw its `Date`
 header was within 2 s of host time. The restored guest's cgroup charge is
 small because the snapshot file's page cache stays charged to the cgroup
 that wrote it; apps with larger working sets move more pages to swap.
+
+## Pause on idle (measured 2026-10-12)
+
+A raw Firecracker 1.17 harness on the n2 node (guest 6.18, Node 22 app,
+1 GiB guest) put a small gateway in front of each VM. The gateway resumed
+the VM on a request and paused it after an idle threshold, without
+reclaiming memory. This tests freezing seconds after the last request
+rather than at the idle timeout.
+
+Cost of the pause:
+
+- Pause and resume calls took 0.4 ms each (p99 1.7 and 4.1 ms). 1,000
+  cycles had no failures, and a snapshot of the cycled VM restored and
+  served.
+- A request that found the VM paused took 1–3 ms longer at p50 (2 s
+  threshold, gaps of 3–30 s). A CPU-bound request right after resume took
+  the same 9 ms as on a VM that was never paused. A VM restored from a
+  snapshot reached first byte 5–14 ms after resume, occasionally ~100 ms.
+- A paused VM used no host CPU. An idle running Node VM used about 107 ms
+  of CPU every 30 s.
+- With a 2 s threshold the VM was paused 48% of the time at 3 s request
+  gaps and 84% at 10 s gaps, resuming about 10 times a minute. An app with
+  a request every second gains nothing.
+
+What stops while paused:
+
+- Guest timers do not fire. Resuming the VM briefly on a schedule
+  ("breathing") does not make them fire on time.
+- After resume the guest clock ran a constant ~75 ms behind the host. The
+  offset was the same after 3, 30 and 120 s pauses, so it does not drift.
+- A plain outbound connection survived a 5 min pause. A server with an 8 s
+  keepalive dropped it after pauses longer than ~8 s unless the VM breathed
+  for 50 ms every 2 s (~0.35% of a core). A server with a 60 s idle timeout
+  closed it.
+- Inbound traffic that bypassed the resume path, either a new connection or
+  a kept-alive one, timed out after 3 s. Breathing 50 ms every 1 s brought
+  it to 716 ms.
+- A response stream paused mid-flight resumed, but the client saw a gap
+  as long as the pause.
+
+Under load on the 2-vCPU host:
+
+- Resuming 11 VMs at once: first byte p50 19–73 ms, max 28–318 ms. Twelve
+  concurrent snapshot restores on the same host took 7–10 s.
+- 11 VMs with Poisson arrivals at a 5 s mean gap: p50 6.4 ms against 3.1 ms
+  for VMs that were never paused, max 906 against 436 ms.
+
+So a short threshold is cheap per request, but only safe when every ingress
+path resumes the VM (gateway, internal service calls, triggers and
+kept-alive connections) and nothing is in flight: no open request, stream
+or websocket. Apps that depend on timers, background workers or
+connection keepalives would need an opt-out, or a threshold no shorter than
+today's idle timeout.
+
+## Economics (simulated 2026-10-12)
+
+Production traffic is internal testing, so the simulation replays the
+public Azure Functions 2019 trace: 3,000 randomly sampled HTTP-triggered
+apps over 7 days, 665 million invocations, with arrivals spread uniformly
+inside each minute. Each app gets a plan at random in the financial
+model's mix (80% Free; paid apps 55/40/5 Hobby/Pro/Scale) with today's
+prices, idle timeouts and included GB-h. A request that finds a frozen
+instance waits 8 ms (measured thaw), a parked app 340 ms (prod restore
+p50) and a cold one 3 s. Admission is measured (ADR-909), frozen instances
+are charged at its 64 MB floor and hold no vCPU slot. A node's capacity is
+the most apps whose combined state, sampled at 2,000 instants, stays inside
+every limit at the 99.9th percentile. The simulator is in
+`scripts/experiments/frozen-tier-economics`.
+
+| policy | billed GB-h per app-month | revenue per app-month | wakes served by thaw | mean wake latency | apps per EX44 (€44) | infra per app, EX44 | apps per n2-standard-4 (~€130) | infra per app, n2 |
+|---|---|---|---|---|---|---|---|---|
+| today: idle timeout, then park | 29.4 | €3.94 | 0% | 340 ms | 251 | €0.175 | 42 | €3.10 |
+| freeze at the idle timeout, park after 1 h (this ADR as proposed) | 29.4 | €3.94 | 99.1% | 10.9 ms | 251 | €0.175 | 42 | €3.10 |
+| freeze after 2 s, park after 1 h | 9.3 | €3.83 | 99.8% | 8.5 ms | 716 | €0.061 | 118 | €1.10 |
+| same, frozen time billed | 67.2 | €4.25 | 99.8% | 8.5 ms | 716 | €0.061 | 118 | €1.10 |
+| freeze after 2 s, park after 10 min | 9.3 | €3.83 | 99.1% | 11.0 ms | 716 | €0.061 | 118 | €1.10 |
+| freeze after 10 s, park after 1 h | 16.1 | €3.87 | 99.6% | 9.3 ms | 395 | €0.111 | 69 | €1.88 |
+| freeze after 0.5 s, park after 1 h | 6.5 | €3.81 | 99.9% | 8.3 ms | 1,010 | €0.044 | 170 | €0.77 |
+
+What it shows:
+
+- **vCPU slots are the binding limit in every policy**, not RAM (160 slots
+  on an EX44, 32 on an n2-standard-4: host threads × `CPUOvercommit`).
+  Measured admission alone leaves today at 251 apps per EX44.
+- **Freezing at the idle timeout buys latency, not capacity.** The
+  instance still runs, holding its vCPU slots, through the whole 30–600 s
+  idle timeout. Capacity comes from freezing soon after the last request:
+  a 2 s threshold fits 2.85× the apps on the same node.
+- **Revenue barely moves if frozen time is unbilled.** Customers stop
+  paying for the idle tail, so billed GB-h falls to a third, but
+  subscriptions dominate revenue: overage falls from €0.16 to €0.05 per
+  app-month and revenue by 3%. On an EX44 the infra saving offsets that
+  almost exactly; on an n2-standard-4 the margin per app rises from €0.85
+  to €2.73. Billing frozen time would raise bills above today's, because an
+  instance stays frozen for up to an hour.
+- **The threshold is the lever.** 0.5 s fits 41% more apps than 2 s but
+  resumes 1.7× as often (11,924 against 6,901 wakes per app-week; today has
+  1,096 restores).
+- **The frozen footprint barely matters.** With a frozen instance keeping
+  5%, 15% or 50% of its running RAM, the results are identical, except at
+  0.5 s with 50%, where RAM binds first (861 apps per EX44, 146 per
+  n2-standard-4).
+
+Limits of the simulation:
+
+- The trace is serverless functions from 2019, not long-running services.
+  Services that are busy, or exempt because of background work, gain less.
+- Plans are assigned at random, not by how busy an app is.
+- The 7-day window never reaches the cold tier.
+- Thaw is assumed to find a free vCPU slot. At the capacity limit that
+  fails in up to 0.1% of instants; what the thaw does then is not modelled.
+
+The decision above freezes at the idle timeout. Freezing within seconds is
+what buys capacity, and it needs the conditions in "Pause on idle". That
+choice is still open.

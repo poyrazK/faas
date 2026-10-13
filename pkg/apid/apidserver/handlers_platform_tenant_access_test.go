@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -11,16 +11,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantAccessTokenOwnUsageAndStatementsOnly(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "self-service", "Self service", 250)
+	e := apidserver.Setup(t, api.PlanPro)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "self-service", "Self service", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+	created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "customer billing", Scopes: []string{api.ScopePlatformTenantStatementsRead},
 	}, nil)
 	if created.Code != http.StatusCreated || created.Header().Get("Cache-Control") != "no-store" {
@@ -33,7 +34,7 @@ func TestPlatformTenantAccessTokenOwnUsageAndStatementsOnly(t *testing.T) {
 	if !api.ValidPlatformTenantAccessTokenFormat(token.Token) || token.TenantID != tenant.ID {
 		t.Fatalf("created tenant token = %+v", token)
 	}
-	metadata := e.do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", nil, nil)
+	metadata := e.Do(t, http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", nil, nil)
 	if metadata.Code != http.StatusOK || strings.Contains(metadata.Body.String(), token.Token) || strings.Contains(metadata.Body.String(), `"token"`) {
 		t.Fatalf("token list returned plaintext or failed: %d %s", metadata.Code, metadata.Body)
 	}
@@ -43,7 +44,7 @@ func TestPlatformTenantAccessTokenOwnUsageAndStatementsOnly(t *testing.T) {
 		req := httptest.NewRequest(method, path, nil)
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
@@ -69,7 +70,7 @@ func TestPlatformTenantAccessTokenOwnUsageAndStatementsOnly(t *testing.T) {
 		t.Fatalf("self-service write status=%d, want 405: %s", writeRoute.Code, writeRoute.Body)
 	}
 
-	revoked := e.do(t, http.MethodDelete, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens/"+token.ID, nil, nil)
+	revoked := e.Do(t, http.MethodDelete, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens/"+token.ID, nil, nil)
 	if revoked.Code != http.StatusOK {
 		t.Fatalf("revoke token: %d %s", revoked.Code, revoked.Body)
 	}
@@ -79,8 +80,8 @@ func TestPlatformTenantAccessTokenOwnUsageAndStatementsOnly(t *testing.T) {
 }
 
 func TestCreatePlatformTenantAccessTokenRejectsAccountWideScopes(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID, "bad-scope", "Bad scope", 250)
+	e := apidserver.Setup(t, api.PlanPro)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "bad-scope", "Bad scope", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,66 +90,66 @@ func TestCreatePlatformTenantAccessTokenRejectsAccountWideScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 	rec := httptest.NewRecorder()
-	e.h.ServeHTTP(rec, req)
+	(*e.H()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("account scope token creation: %d %s", rec.Code, rec.Body)
 	}
-	if rows, err := e.store.ListPlatformTenantAccessTokens(context.Background(), e.acct.ID, tenant.ID); err != nil || len(rows) != 0 {
+	if rows, err := (*e.Store()).ListPlatformTenantAccessTokens(context.Background(), (*e.Acct()).ID, tenant.ID); err != nil || len(rows) != 0 {
 		t.Fatalf("invalid scope wrote token rows: %+v, %v", rows, err)
 	}
 }
 
 func TestPlatformTenantSelfActivationIsScopedAndRedacted(t *testing.T) {
-	withTenantSurfacesEnabled(t)
-	e := setup(t, api.PlanPro)
+	apidserver.WithTenantSurfacesEnabled(t)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	tenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "activation-self", "Activation self", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "activation-self", "Activation self", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	appID := mustSeedApp(t, e, "activation-self")
-	surfaceID := seedTenantSurface(t, e, appID, "Customer web")
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenant.ID, surfaceID); err != nil {
+	appID := apidserver.MustSeedApp(t, e, "activation-self")
+	surfaceID := apidserver.SeedTenantSurface(t, e, appID, "Customer web")
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, tenant.ID, surfaceID); err != nil {
 		t.Fatal(err)
 	}
-	otherTenant, _, err := e.store.CreatePlatformTenant(ctx, e.acct.ID, "activation-other", "Other tenant", 250)
+	otherTenant, _, err := (*e.Store()).CreatePlatformTenant(ctx, (*e.Acct()).ID, "activation-other", "Other tenant", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherSurfaceID := seedTenantSurface(t, e, appID, "Other customer web")
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, otherTenant.ID, otherSurfaceID); err != nil {
+	otherSurfaceID := apidserver.SeedTenantSurface(t, e, appID, "Other customer web")
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, otherTenant.ID, otherSurfaceID); err != nil {
 		t.Fatal(err)
 	}
-	limits, ok := api.LimitsFor(e.acct.Plan)
+	limits, ok := api.LimitsFor((*e.Acct()).Plan)
 	if !ok {
-		t.Fatalf("LimitsFor(%q) returned false", e.acct.Plan)
+		t.Fatalf("LimitsFor(%q) returned false", (*e.Acct()).Plan)
 	}
 	const challenge = "dns-challenge-must-not-leak"
-	if _, err := e.store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
+	if _, err := (*e.Store()).CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
 		SurfaceID: surfaceID, Hostname: "activation.customer.example", ChallengeToken: challenge,
 	}, limits); err != nil {
 		t.Fatal(err)
 	}
 	const providerFailure = "private certificate provider response"
-	if err := e.store.MarkTenantHostnameCheckFailed(ctx, "activation.customer.example", providerFailure); err != nil {
+	if err := (*e.Store()).MarkTenantHostnameCheckFailed(ctx, "activation.customer.example", providerFailure); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.UpdateTenantSurfaceCert(ctx, state.UpdateSurfaceCertParams{
+	if err := (*e.Store()).UpdateTenantSurfaceCert(ctx, state.UpdateSurfaceCertParams{
 		SurfaceID: surfaceID, CertState: state.CertStateFailed, LastError: providerFailure,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	const privateCommit = "0123456789abcdef0123456789abcdef01234567"
-	deployment, err := e.store.CreateDeployment(ctx, state.Deployment{
+	deployment, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:private-image-digest",
 		CommitSHA: privateCommit, Error: "private deployment failure details", Status: state.DeployFailed,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := e.do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
+	created := e.Do(t, http.MethodPost, "/v1/account/platform-tenants/"+tenant.ID+"/access-tokens", api.CreatePlatformTenantAccessTokenRequest{
 		Name: "activation portal", Scopes: []string{api.ScopePlatformTenantActivationRead},
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -162,7 +163,7 @@ func TestPlatformTenantSelfActivationIsScopedAndRedacted(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, req)
+		(*e.H()).ServeHTTP(rec, req)
 		return rec
 	}
 	response := request("/v1/platform-tenant-self/activation")
@@ -193,7 +194,7 @@ func TestPlatformTenantSelfActivationIsScopedAndRedacted(t *testing.T) {
 	accountReq := httptest.NewRequest(http.MethodGet, "/v1/account/platform-tenants/"+tenant.ID, nil)
 	accountReq.Header.Set("Authorization", "Bearer "+token.Token)
 	accountRec := httptest.NewRecorder()
-	e.h.ServeHTTP(accountRec, accountReq)
+	(*e.H()).ServeHTTP(accountRec, accountReq)
 	if accountRec.Code != http.StatusForbidden {
 		t.Fatalf("activation token reached account route: %d %s", accountRec.Code, accountRec.Body)
 	}

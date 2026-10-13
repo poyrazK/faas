@@ -1,0 +1,71 @@
+# Traffic anomaly baselines (ADR-039) average the recorded 5m rate series
+# instead of re-running a [3d:5m] subquery over the raw counters on every
+# evaluation (production-us hunt #9, H9-132: the subqueries cost 15s of
+# every 30s on the control plane). These cases pin that the cheaper form
+# still produces the same signals: steady traffic sits at its baseline, and
+# a sustained account spike still opens FaasTrafficSpikeAccount.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "steady traffic sits at its 3d baseline"
+    input_series:
+      # 0.5 rps for 2h on one apid route and one gateway route.
+      - series: 'apid_request_total{account_id="acct-1",route="GET /v1/apps",code="ok"}'
+        values: '0+15x240'
+      - series: 'gateway_requests_by_route_total{app="app-1",route="GET /"}'
+        values: '0+15x240'
+    promql_expr_test:
+      - expr: 'abs(faas_apid_request_rate_3d_baseline:by_route - 0.5) < bool 0.01'
+        eval_time: 2h
+        exp_samples:
+          - labels: '{route="GET /v1/apps"}'
+            value: 1
+      - expr: 'abs(faas_apid_request_rate_ratio:by_route - 1) < bool 0.02'
+        eval_time: 2h
+        exp_samples:
+          - labels: '{route="GET /v1/apps"}'
+            value: 1
+      - expr: 'abs(faas_gateway_request_rate_3d_baseline:by_route - 0.5) < bool 0.01'
+        eval_time: 2h
+        exp_samples:
+          - labels: '{app="app-1",route="GET /"}'
+            value: 1
+      - expr: 'abs(faas_apid_anomaly_score:by_account - 1) < bool 0.02'
+        eval_time: 2h
+        exp_samples:
+          - labels: '{account_id="acct-1"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: FaasTrafficSpikeAccount
+      - eval_time: 2h
+        alertname: FaasTrafficDropAccount
+
+  - interval: 30s
+    name: "a sustained account spike still opens FaasTrafficSpikeAccount"
+    input_series:
+      # 0.1 rps for 6h (720 samples), then 30 rps for 30m (60 samples).
+      - series: 'apid_request_total{account_id="acct-spike",route="POST /v1/deploy",code="ok"}'
+        values: '0+3x720 2160+900x60'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: FaasTrafficSpikeAccount
+      - eval_time: 6h25m
+        alertname: FaasTrafficSpikeAccount
+        exp_alerts:
+          - exp_labels:
+              account_id: acct-spike
+              severity: warn
+              component: apid
+              family: traffic_anomaly
+              mode: account
+              direction: spike
+            exp_annotations:
+              summary: "Account acct-spike traffic > 10x its 3d average"
+              description: "Customer acct-spike has been above 10x its 3d trailing average for 15m. Higher threshold than fleet-wide to suppress per-customer noise. account_id=\"__other__\" is the bounded overflow bucket (issue #278) — drill-down on it means the customer is past the 10k admission cap."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"

@@ -6,7 +6,7 @@
 // is. We test the constructor's empty-socket branch, the liveClient
 // nil-safety guard (the only code path that diverges from "delegate to
 // githubdgrpc.Client"), and a sweep that pins every stub method.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // errGithubdNotReadyCode is the stable code returned by every stub
@@ -26,7 +27,7 @@ const errGithubdNotReadyCode = "githubd_not_ready"
 
 // Compile-time check that the package-level sentinel is still an
 // api.Problem (callers branch on its Code field).
-var _ = errGithubdNotReady
+var _ = (*apidserver.ErrGithubdNotReady)
 
 // errGithubdNotReadyReference ensures the package-level sentinel stays
 // reachable from this test file. If the variable gets renamed or moved
@@ -61,13 +62,13 @@ func assertGithubdNotReadyError(t *testing.T, method string, err error) {
 // default: no socket configured → stub. The constructor must NEVER
 // dial and must NEVER return nil.
 func TestNewGithubdClient_EmptySocketReturnsStub(t *testing.T) {
-	c := newGithubdClient(context.Background(), "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c := apidserver.NewGithubdClient(context.Background(), "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if c == nil {
 		t.Fatal("newGithubdClient returned nil for empty socket path")
 	}
 	// Type-assert to stub and check the not-ready sentinel is what
 	// every method returns.
-	stub, ok := c.(stubGithubdClient)
+	stub, ok := c.(apidserver.StubGithubdClient)
 	if !ok {
 		t.Fatalf("got %T, want stubGithubdClient", c)
 	}
@@ -94,12 +95,12 @@ func TestNewGithubdClient_EmptySocketReturnsStub(t *testing.T) {
 // one worth a unit test.
 func TestLiveClient_CloseNilSafe(t *testing.T) {
 	// nil receiver → no panic.
-	var l *liveClient
+	var l *apidserver.LiveClient
 	if err := l.Close(); err != nil {
 		t.Errorf("nil receiver Close: err = %v, want nil", err)
 	}
 	// receiver non-nil but wrapped client nil → no panic.
-	l = &liveClient{}
+	l = &apidserver.LiveClient{}
 	if err := l.Close(); err != nil {
 		t.Errorf("nil client Close: err = %v, want nil", err)
 	}
@@ -111,14 +112,14 @@ func TestLiveClient_CloseNilSafe(t *testing.T) {
 // real value, or returns the problem from a different source, would
 // break the "GitHub not connected" UX — so pin the surface.
 func TestStubGithubdClient_EveryMethodReturnsNotReady(t *testing.T) {
-	var s stubGithubdClient
+	var s apidserver.StubGithubdClient
 	ctx := context.Background()
 
 	// (install, token, login, err) — install must be the unspecified
 	// sentinel because the dashboard branches on it.
 	inst, tok, login, err := s.GetInstallState(ctx, "a")
 	assertGithubdNotReadyError(t, "GetInstallState", err)
-	if inst != InstallStateUnspecified {
+	if inst != apidserver.InstallStateUnspecified {
 		t.Errorf("GetInstallState: inst = %v, want unspecified", inst)
 	}
 	if tok != "" || login != "" {
@@ -137,7 +138,7 @@ func TestStubGithubdClient_EveryMethodReturnsNotReady(t *testing.T) {
 	assertGithubdNotReadyError(t, "GetAppBinding", err)
 	_, _, err = s.CreateDeploymentFromPush(ctx, "r", "ref", "sha", "pusher")
 	assertGithubdNotReadyError(t, "CreateDeploymentFromPush", err)
-	err = s.WriteCheck(ctx, "r", "sha", CheckPhaseBuilding, "url", "summary")
+	err = s.WriteCheck(ctx, "r", "sha", apidserver.CheckPhaseBuilding, "url", "summary")
 	assertGithubdNotReadyError(t, "WriteCheck", err)
 	_, _, _, err = s.VerifyInstallation(ctx, 123, "")
 	assertGithubdNotReadyError(t, "VerifyInstallation", err)

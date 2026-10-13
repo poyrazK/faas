@@ -1,0 +1,45 @@
+version: 1
+suites:
+  http-retry:
+    scenarios:
+      - {scenario: retry-after, engine: real-vm, profile: warm}
+scenarios:
+  retry-after:
+    project: retry-after-example
+    source: ./app
+    timeout: 5m
+    services:
+      inventory:
+        source: ./inventory
+    steps:
+      - name: baseline
+        requests:
+          - name: first-attempt-success
+            method: GET
+            path: /fetch
+            expect: {status: 200, json: {'/attempts': 1, '/dependency_available': true}}
+      - name: rate-limited
+        chaos:
+          duration: 30s
+          rules:
+            - to: inventory
+              kind: http_status
+              status_code: 429
+              retry_after: 1s
+              percent: 100
+              min_matches: 3
+        command: [node, ../test/acceptance.mjs, outage]
+        checks:
+          - name: bounded-retry-attempts
+            method: GET
+            path: /fetch
+            expect: {status: 503, json: {'/attempts': 3, '/error': dependency_unavailable}}
+      - name: restore-inventory
+        clear_chaos: true
+      - name: recovery
+        command: [node, ../test/acceptance.mjs, recovery]
+        checks:
+          - name: dependency-recovered
+            method: GET
+            path: /fetch
+            expect: {status: 200, json: {'/attempts': 1, '/dependency_available': true}}

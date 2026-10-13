@@ -1,16 +1,18 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/url"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestParseDebugTelemetryFilters_NormalizesAndMaps(t *testing.T) {
 	deploymentID := uuid.New()
 	consumerID := uuid.New()
-	filters, err := parseDebugTelemetryFilters(url.Values{
+	filters, err := apidserver.ParseDebugTelemetryFilters(url.Values{
 		"deployment_id":  []string{"  " + deploymentID.String() + "  "},
 		"status":         []string{"503"},
 		"cold_boot":      []string{"false"},
@@ -26,19 +28,19 @@ func TestParseDebugTelemetryFilters_NormalizesAndMaps(t *testing.T) {
 	if filters.ColdBoot == nil || *filters.ColdBoot {
 		t.Fatalf("cold_boot = %v, want pointer to false", filters.ColdBoot)
 	}
-	if got := filters.sqlColdBootFilter(); got != 0 {
+	if got := filters.SqlColdBootFilter(); got != 0 {
 		t.Fatalf("sqlColdBootFilter() = %d, want 0", got)
 	}
-	if got := filters.sqlConsumerID(); got != consumerID.String() || filters.sqlConsumerAnonymous() {
-		t.Fatalf("consumer SQL mapping = %q anonymous=%v", got, filters.sqlConsumerAnonymous())
+	if got := filters.SqlConsumerID(); got != consumerID.String() || filters.SqlConsumerAnonymous() {
+		t.Fatalf("consumer SQL mapping = %q anonymous=%v", got, filters.SqlConsumerAnonymous())
 	}
 
-	anonymous, err := parseDebugTelemetryFilters(url.Values{"consumer_id": []string{debugTelemetryAnonymousConsumer}})
+	anonymous, err := apidserver.ParseDebugTelemetryFilters(url.Values{"consumer_id": []string{apidserver.DebugTelemetryAnonymousConsumer}})
 	if err != nil {
 		t.Fatalf("anonymous filter error = %v", err)
 	}
-	if !anonymous.sqlConsumerAnonymous() || anonymous.sqlConsumerID() != "" {
-		t.Fatalf("anonymous SQL mapping = id=%q anonymous=%v", anonymous.sqlConsumerID(), anonymous.sqlConsumerAnonymous())
+	if !anonymous.SqlConsumerAnonymous() || anonymous.SqlConsumerID() != "" {
+		t.Fatalf("anonymous SQL mapping = id=%q anonymous=%v", anonymous.SqlConsumerID(), anonymous.SqlConsumerAnonymous())
 	}
 }
 
@@ -58,7 +60,7 @@ func TestParseDebugTelemetryFilters_RejectsInvalidValues(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := parseDebugTelemetryFilters(url.Values{test.key: []string{test.value}}); err == nil {
+			if _, err := apidserver.ParseDebugTelemetryFilters(url.Values{test.key: []string{test.value}}); err == nil {
 				t.Fatalf("parseDebugTelemetryFilters(%s=%q) error = nil", test.key, test.value)
 			}
 		})
@@ -67,16 +69,16 @@ func TestParseDebugTelemetryFilters_RejectsInvalidValues(t *testing.T) {
 
 func TestDebugTelemetryFiltersMatchCursor(t *testing.T) {
 	value := true
-	filters := debugTelemetryFilters{
+	filters := apidserver.DebugTelemetryFilters{
 		DeploymentID: uuid.NewString(), Status: 500, ColdBoot: &value,
-		ConsumerID: debugTelemetryAnonymousConsumer, MinLatencyMS: 100,
+		ConsumerID: apidserver.DebugTelemetryAnonymousConsumer, MinLatencyMS: 100,
 	}
-	if !filters.same(filters.cursor()) {
+	if !filters.Same(filters.Cursor()) {
 		t.Fatal("filters should match their cursor representation")
 	}
-	other := filters.cursor()
+	other := filters.Cursor()
 	other.MinLatencyMS++
-	if filters.same(other) {
+	if filters.Same(other) {
 		t.Fatal("changed latency filter should not match cursor")
 	}
 }

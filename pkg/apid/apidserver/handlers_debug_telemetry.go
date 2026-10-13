@@ -227,14 +227,20 @@ func (s *server) debugTelemetryCoverageHandler(w http.ResponseWriter, r *http.Re
 }
 
 const (
-	debugDependencyHistoryMaxRows        = 2000
-	debugDependencyHistoryMaxGroups      = 256
-	debugDependencyHistoryMaxOutput      = 50
-	debugDependencyHistoryMaxEdgeGroups  = 512
-	debugDependencyHistoryMaxEdgeOutput  = 100
-	debugDependencyHistoryMinCalls       = int64(5)
-	debugDependencyRegressionFactor      = 1.5
-	debugDependencyRegressionDeltaMS     = int64(25)
+	debugDependencyHistoryMaxRows       = 2000
+	debugDependencyHistoryMaxGroups     = 256
+	debugDependencyHistoryMaxOutput     = 50
+	debugDependencyHistoryMaxEdgeGroups = 512
+	debugDependencyHistoryMaxEdgeOutput = 100
+	debugDependencyHistoryMinCalls      = int64(5)
+	debugDependencyRegressionFactor     = 1.5
+	debugDependencyRegressionDeltaMS    = int64(25)
+	// A failure regression needs at least this many failed calls on the
+	// current side, an error-rate rise of at least this many percentage
+	// points, and at least double the baseline rate.
+	debugDependencyFailureMinErrors      = int64(3)
+	debugDependencyFailureMinDeltaPct    = 5.0
+	debugDependencyFailureMinFactor      = 2.0
 	debugCriticalPathHistoryMaxGroups    = 128
 	debugCriticalPathHistoryMaxOutput    = 25
 	debugCriticalPathHistoryMaxExemplars = 3
@@ -700,6 +706,7 @@ type debugDependencyHistorySample struct {
 	exclusiveNanos      uint64
 	weight              int64
 	isError             bool
+	errorType           string
 	requestID           string
 	traceID             string
 	receivedAt          pgtype.Timestamptz
@@ -719,6 +726,10 @@ type debugDependencyHistoryRollup struct {
 	currentCalls   int64
 	baselineErrors int64
 	currentErrors  int64
+	// errorTypes and currentErrorTypes count failure classes, weighted like
+	// calls; only the dependency rollup reads them.
+	errorTypes        map[string]int64
+	currentErrorTypes map[string]int64
 }
 
 type debugDependencyHistoryAggregate struct {
@@ -753,6 +764,8 @@ type debugDependencyHistoryMetrics struct {
 	baselineErrorRatePct   float64
 	currentErrorRatePct    float64
 	errorRateDeltaPct      float64
+	failureRegression      bool
+	topErrorType           string
 }
 
 func buildDebugDependencyLatencyHistory(rows []sqlc.ListRequestTelemetryDependencySpansRow, windowStart, windowEnd time.Time) ([]api.DebugDependencyLatencyItem, []api.DebugDependencyImpactEdge, bool, int64, int64) {
@@ -814,6 +827,7 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 				exclusiveNanos: minDebugDependencyDuration(exclusives[index]),
 				weight:         weight,
 				isError:        strings.EqualFold(span.Status, "error"),
+				errorType:      span.ErrorType,
 				requestID:      debugCriticalPathRequestID(row),
 				traceID:        textFromPg(row.TraceID),
 				receivedAt:     row.ReceivedAt,
@@ -875,11 +889,16 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			BaselineErrorRatePct:   metrics.baselineErrorRatePct,
 			CurrentErrorRatePct:    metrics.currentErrorRatePct,
 			ErrorRateDeltaPct:      metrics.errorRateDeltaPct,
+			FailureRegression:      metrics.failureRegression,
+			TopErrorType:           metrics.topErrorType,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Regression != out[j].Regression {
 			return out[i].Regression
+		}
+		if out[i].FailureRegression != out[j].FailureRegression {
+			return out[i].FailureRegression
 		}
 		if out[i].CurrentP95MS != out[j].CurrentP95MS {
 			return out[i].CurrentP95MS > out[j].CurrentP95MS
@@ -1037,12 +1056,14 @@ func addDebugDependencyHistorySample(rollup *debugDependencyHistoryRollup, sampl
 	rollup.calls += sample.weight
 	if sample.isError {
 		rollup.errors += sample.weight
+		rollup.errorTypes = addDebugDependencyErrorType(rollup.errorTypes, sample)
 	}
 	if isCurrent {
 		rollup.current = append(rollup.current, sample)
 		rollup.currentCalls += sample.weight
 		if sample.isError {
 			rollup.currentErrors += sample.weight
+			rollup.currentErrorTypes = addDebugDependencyErrorType(rollup.currentErrorTypes, sample)
 		}
 		return
 	}
@@ -1090,7 +1111,56 @@ func summarizeDebugDependencyHistory(rollup *debugDependencyHistoryRollup) debug
 		baselineErrorRatePct: baselineErrorRate,
 		currentErrorRatePct:  currentErrorRate,
 		errorRateDeltaPct:    currentErrorRate - baselineErrorRate,
+		failureRegression:    debugDependencyFailureRegression(rollup, baselineErrorRate, currentErrorRate),
+		topErrorType:         topDebugDependencyErrorType(rollup),
 	}
+}
+
+// debugDependencyFailureRegression reports a dependency that fails
+// materially more often on the current side than on the baseline, with
+// enough calls on both sides that a handful of failures cannot trip it.
+func debugDependencyFailureRegression(rollup *debugDependencyHistoryRollup, baselineRate, currentRate float64) bool {
+	if rollup.baselineCalls < debugDependencyHistoryMinCalls || rollup.currentCalls < debugDependencyHistoryMinCalls ||
+		rollup.currentErrors < debugDependencyFailureMinErrors {
+		return false
+	}
+	if currentRate-baselineRate < debugDependencyFailureMinDeltaPct {
+		return false
+	}
+	return baselineRate == 0 || currentRate >= baselineRate*debugDependencyFailureMinFactor
+}
+
+// debugDependencyErrorTypeMaxDistinct bounds the failure classes tracked per
+// rollup; later distinct classes still count as errors.
+const debugDependencyErrorTypeMaxDistinct = 16
+
+func addDebugDependencyErrorType(counts map[string]int64, sample debugDependencyHistorySample) map[string]int64 {
+	if sample.errorType == "" {
+		return counts
+	}
+	if counts == nil {
+		counts = make(map[string]int64)
+	}
+	if _, ok := counts[sample.errorType]; ok || len(counts) < debugDependencyErrorTypeMaxDistinct {
+		counts[sample.errorType] += sample.weight
+	}
+	return counts
+}
+
+// topDebugDependencyErrorType names the most frequent failure class, from
+// the current side when it has one; ties break alphabetically.
+func topDebugDependencyErrorType(rollup *debugDependencyHistoryRollup) string {
+	counts := rollup.currentErrorTypes
+	if len(counts) == 0 {
+		counts = rollup.errorTypes
+	}
+	top, topCount := "", int64(0)
+	for errorType, count := range counts {
+		if count > topCount || (count == topCount && errorType < top) {
+			top, topCount = errorType, count
+		}
+	}
+	return top
 }
 
 func minDebugDependencyDuration(duration uint64) uint64 {

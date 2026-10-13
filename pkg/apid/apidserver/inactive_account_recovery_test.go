@@ -1,5 +1,5 @@
 // adr: 380
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,8 +41,8 @@ func TestInactiveAccount_CanStillPay(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
-			tc.setup(t, env.store, env.acct.ID)
+			env, _ := apidserver.SetupChangePlan(t, api.PlanHobby, "si_test")
+			tc.setup(t, (*env.Store()), (*env.Acct()).ID)
 			for _, rt := range []struct {
 				method, path string
 				want         int
@@ -59,8 +60,8 @@ func TestInactiveAccount_CanStillPay(t *testing.T) {
 			} {
 				rec := httptest.NewRecorder()
 				r := httptest.NewRequest(rt.method, rt.path, nil)
-				r.Header.Set("Authorization", "Bearer "+env.key)
-				env.h.ServeHTTP(rec, r)
+				r.Header.Set("Authorization", "Bearer "+(*env.Key()))
+				(*env.H()).ServeHTTP(rec, r)
 				if rec.Code != rt.want {
 					t.Errorf("%s %s = %d, want %d\nbody = %s", rt.method, rt.path, rec.Code, rt.want, rec.Body.String())
 				}
@@ -74,7 +75,7 @@ func TestInactiveAccount_CanStillPay(t *testing.T) {
 // them straight back: the 402's "resolve billing to continue:
 // /dashboard/billing" link was a redirect loop.
 func TestInactiveAccount_DashboardLandsOnRecoveryPage(t *testing.T) {
-	srv, _, store, mgr := newAuthedDashboardServerFull(t)
+	srv, _, store, mgr := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -82,11 +83,11 @@ func TestInactiveAccount_DashboardLandsOnRecoveryPage(t *testing.T) {
 	if err := store.UpdateAccountStatus(t.Context(), acct.ID, state.AccountSuspended); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	raw, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sid := &http.Cookie{Name: sessionCookie, Value: raw}
+	sid := &http.Cookie{Name: apidserver.SessionCookie, Value: raw}
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodGet, path, nil)
@@ -112,24 +113,24 @@ func TestInactiveAccount_DashboardLandsOnRecoveryPage(t *testing.T) {
 // "the 30-day grace window has lapsed" on the day the deletion was
 // scheduled. The answer is 402 with the way out: pay.
 func TestRestore_DunningDeletionSaysPay(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	env, _ := apidserver.SetupChangePlan(t, api.PlanHobby, "si_test")
 	for _, step := range [][2]state.AccountStatus{
 		{state.AccountActive, state.AccountPastDue},
 		{state.AccountPastDue, state.AccountSuspended},
 		{state.AccountSuspended, state.AccountDeletedPending},
 	} {
-		if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, step[0], step[1]); err != nil {
+		if err := (*env.Store()).MarkDunningStep(t.Context(), (*env.Acct()).ID, step[0], step[1]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/account/restore", nil)
-	r.Header.Set("Authorization", "Bearer "+env.key)
-	env.h.ServeHTTP(rec, r)
+	r.Header.Set("Authorization", "Bearer "+(*env.Key()))
+	(*env.H()).ServeHTTP(rec, r)
 	if rec.Code != http.StatusPaymentRequired || strings.Contains(rec.Body.String(), "lapsed") {
 		t.Fatalf("restore of a dunning deletion = %d %s, want 402 naming payment", rec.Code, rec.Body.String())
 	}
-	if got, _ := env.store.AccountByID(t.Context(), env.acct.ID); got.Status != state.AccountDeletedPending {
+	if got, _ := (*env.Store()).AccountByID(t.Context(), (*env.Acct()).ID); got.Status != state.AccountDeletedPending {
 		t.Fatalf("status = %s; a refused restore must leave the deletion in place", got.Status)
 	}
 }
@@ -139,19 +140,19 @@ func TestRestore_DunningDeletionSaysPay(t *testing.T) {
 // admits past_due so its apps keep serving, and no deploy path checked
 // anything stricter: a past_due account deployed with a 202.
 func TestPastDueAccount_CannotDeploy(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
+	env, _ := apidserver.SetupChangePlan(t, api.PlanHobby, "si_test")
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Authorization", "Bearer "+(*env.Key()))
 		r.Header.Set("Content-Type", "application/json")
-		env.h.ServeHTTP(rec, r)
+		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
 	if rec := do("POST", "/v1/apps", `{"slug":"pd-app","runtime":"node22"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("create app = %d %s", rec.Code, rec.Body.String())
 	}
-	if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+	if err := (*env.Store()).MarkDunningStep(t.Context(), (*env.Acct()).ID, state.AccountActive, state.AccountPastDue); err != nil {
 		t.Fatal(err)
 	}
 	deploy := `{"image":"registry.gregale.dev/app@sha256:a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"}`
@@ -164,7 +165,7 @@ func TestPastDueAccount_CannotDeploy(t *testing.T) {
 		t.Fatalf("past_due app read = %d, want 200", rec.Code)
 	}
 	// Paying lifts the block.
-	if err := env.store.UpdateAccountStatus(t.Context(), env.acct.ID, state.AccountActive); err != nil {
+	if err := (*env.Store()).UpdateAccountStatus(t.Context(), (*env.Acct()).ID, state.AccountActive); err != nil {
 		t.Fatal(err)
 	}
 	if rec := do("POST", "/v1/apps/pd-app/deployments", deploy); rec.Code != http.StatusAccepted {
@@ -177,18 +178,18 @@ func TestPastDueAccount_CannotDeploy(t *testing.T) {
 // refusal as a 503 "could not mark for deletion", which a customer
 // retries forever. It is a 409 that names the blocker.
 func TestDeleteAccount_PastDueGetsAReason(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanHobby, "si_test")
-	if err := env.store.MarkDunningStep(t.Context(), env.acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
+	env, _ := apidserver.SetupChangePlan(t, api.PlanHobby, "si_test")
+	if err := (*env.Store()).MarkDunningStep(t.Context(), (*env.Acct()).ID, state.AccountActive, state.AccountPastDue); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/v1/account", nil)
-	r.Header.Set("Authorization", "Bearer "+env.key)
-	env.h.ServeHTTP(rec, r)
+	r.Header.Set("Authorization", "Bearer "+(*env.Key()))
+	(*env.H()).ServeHTTP(rec, r)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "outstanding payment") {
 		t.Fatalf("DELETE /v1/account on past_due = %d %s, want 409 naming the outstanding payment", rec.Code, rec.Body.String())
 	}
-	if got, _ := env.store.AccountByID(t.Context(), env.acct.ID); got.Status != state.AccountPastDue || got.DeletionRequestedAt != nil {
+	if got, _ := (*env.Store()).AccountByID(t.Context(), (*env.Acct()).ID); got.Status != state.AccountPastDue || got.DeletionRequestedAt != nil {
 		t.Fatalf("after refused delete: status=%s deletion_requested_at=%v", got.Status, got.DeletionRequestedAt)
 	}
 }
@@ -197,13 +198,13 @@ func TestDeleteAccount_PastDueGetsAReason(t *testing.T) {
 // count it against the plan: on Free (one app), delete A → create B →
 // restore A left two live apps, and repeating the cycle had no ceiling.
 func TestRestoreApp_HonoursDeployedAppQuota(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanFree, "")
+	env, _ := apidserver.SetupChangePlan(t, api.PlanFree, "")
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Authorization", "Bearer "+(*env.Key()))
 		r.Header.Set("Content-Type", "application/json")
-		env.h.ServeHTTP(rec, r)
+		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
 	for _, step := range []struct {
@@ -231,13 +232,13 @@ func TestRestoreApp_HonoursDeployedAppQuota(t *testing.T) {
 // to [floor, plan default × 2] and treats 0 as the plan default, but the API
 // accepted and echoed -5 or 999999999, a timeout that never applied.
 func TestAppIdleTimeout_OutOfRangeIsRejected(t *testing.T) {
-	env, _ := setupChangePlan(t, api.PlanPro, "")
+	env, _ := apidserver.SetupChangePlan(t, api.PlanPro, "")
 	do := func(method, path, body string) int {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer "+env.key)
+		r.Header.Set("Authorization", "Bearer "+(*env.Key()))
 		r.Header.Set("Content-Type", "application/json")
-		env.h.ServeHTTP(rec, r)
+		(*env.H()).ServeHTTP(rec, r)
 		return rec.Code
 	}
 	floor, ceiling := api.MustLimitsFor(api.PlanPro).IdleTimeoutBounds()

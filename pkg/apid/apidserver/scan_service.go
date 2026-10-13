@@ -1708,8 +1708,14 @@ func (s *server) scanService(
 	// calls are self-contained (no shared scan state).
 	preCanApply, preNotAllowed, preReasons, _ := evaluateProjectedQuotaGate(preDesiredCrons, limits, preProjectedApps, preCronGate)
 	canApply, notAllowed, reasons, _ = evaluateProjectedQuotaGate(desiredCrons, limits, projectedApps, cronGate)
+	slugHolders, holderErr := reconcile.SlugHolders(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps)
+	if holderErr != nil {
+		// Fail open: the create still refuses a taken slug atomically.
+		s.log.Warn("apid: scan slug holder lookup failed", "account_id", acct.ID, "err", holderErr)
+	}
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, result.Workloads, slugHolders)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -1718,6 +1724,7 @@ func (s *server) scanService(
 		// applicable no-op; the skipped partition records that intent.
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
+		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, filteredW, slugHolders)...)
 	}
 	if len(preAdmissionReasons) > 0 {
 		preCanApply = false

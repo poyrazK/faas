@@ -244,7 +244,7 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 	if (record.Status == nil && record.Outcome != "aborted") || (record.Status != nil && (*record.Status < 100 || *record.Status > 599)) {
 		return record, true, errors.New("invalid request status")
 	}
-	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "request_too_large", "query_timeout", "schema_document_too_large", "schema_contract_mismatch", "upstream_error") {
+	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "request_too_large", "query_timeout", "schema_document_too_large", "schema_contract_mismatch", "upstream_error") {
 		return record, true, errors.New("invalid request code")
 	}
 	if err := validateDataAPIQueryShape(record); err != nil {
@@ -348,7 +348,7 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 		switch *record.Code {
 		case "query_timeout":
 			c.report.Failures.Timeouts++
-		case "data_api_unavailable", "serving_contract_unavailable":
+		case "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "serving_contract_unavailable":
 			c.report.Failures.Unavailable++
 		case "schema_contract_mismatch":
 			c.report.Failures.ContractMismatch++

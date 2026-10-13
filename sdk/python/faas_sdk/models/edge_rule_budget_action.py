@@ -32,9 +32,10 @@ class EdgeRuleBudgetAction:
 
     Field-by-field:
       * `budget_ms` — required wall-clock budget. Must be > 0
-        and ≤ the per-plan max (`Plan.RequestBudgetMaxMs`, default
-        `RequestBudgetMax = 30 s`). A 0 or negative value is
-        rejected at create-time with 422.
+        and ≤ 15 min (`RequestBudgetPlanMax`). The plan's ceiling
+        (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro
+        5 min, Scale 15 min; ADR-1150) clamps it at request time.
+        A 0 or negative value is rejected at create-time with 422.
       * `allow_override_header` — optional HTTP request header
         that lets a customer set a per-request override
         (default `x-faas-budget-ms`). Empty (default) =
@@ -52,7 +53,7 @@ class EdgeRuleBudgetAction:
     """
 
     budget_ms: int
-    """Per-request wall-clock budget in milliseconds (1 ms – 30 s)."""
+    """Per-request wall-clock budget in milliseconds (1 ms – 15 min; the plan's ceiling applies at request time)."""
     allow_override_header: str | Unset = UNSET
     """Optional RFC 7230 token header name for per-request override (default `x-faas-budget-ms`). Empty = no
     override."""

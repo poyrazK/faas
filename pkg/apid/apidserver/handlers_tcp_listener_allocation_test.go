@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,13 +10,15 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type tcpAllocationStore struct {
-	*state.MemStore
-	creates int
-	race    bool
+	MemStore *state.MemStore
+	creates  int
+	race     bool
 }
 
 func (s *tcpAllocationStore) CreateTCPListener(ctx context.Context, listener state.TCPListener) (state.TCPListener, error) {
@@ -53,12 +55,12 @@ func TestTCPListenerAllocationConflicts(t *testing.T) {
 				}
 			}
 			store := &tcpAllocationStore{MemStore: memory, race: scenario.race}
-			server := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+			server := apidserver.NewServer(statetest.NewMem(store), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 			request := httptest.NewRequest(http.MethodPost, "/v1/apps/tcp-allocation/tcp-listeners", strings.NewReader(`{"name":"echo","guest_port":9000}`))
 			request.Header.Set("Authorization", "Bearer "+key)
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
-			server.handler().ServeHTTP(response, request)
+			server.Handler().ServeHTTP(response, request)
 			if response.Code != scenario.status || store.creates != scenario.creates {
 				t.Fatalf("status=%d creates=%d, want status=%d creates=%d: %s", response.Code, store.creates, scenario.status, scenario.creates, response.Body.String())
 			}

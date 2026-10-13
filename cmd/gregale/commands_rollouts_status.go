@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,22 +20,34 @@ type rolloutStatusClient interface {
 	GetDeployment(context.Context, string) (api.DeploymentResponse, error)
 }
 
-func pollRolloutStatus(ctx context.Context, client rolloutStatusClient, appID, deploymentID string, wait bool, interval time.Duration) (api.DeploymentResponse, error) {
+// pollRolloutStatus reads the deployment until its rollout settles when wait
+// is set. progress, when non-nil, sees every change of state while waiting.
+// A wait outlives transient read failures: on a busy control plane one
+// timed-out poll ended the wait with a stale "rolling_out (50%)" while the
+// rollout was already at 100% (production-us hunt #9).
+func pollRolloutStatus(ctx context.Context, client rolloutStatusClient, appID, deploymentID string, wait bool, interval time.Duration, progress func(api.DeploymentResponse)) (api.DeploymentResponse, error) {
 	var last api.DeploymentResponse
+	seen := ""
 	for {
 		d, err := client.GetDeployment(ctx, deploymentID)
-		if err != nil {
+		switch {
+		case err != nil && (!wait || ctx.Err() != nil || !retryableRolloutPoll(err)):
 			return last, err
-		}
-		if !sameBindingDeployment(d.ID, deploymentID) || d.AppID != appID {
-			return last, fmt.Errorf("server returned a different deployment or app")
-		}
-		last = d
-		if !wait || rolloutStatusComplete(d) {
-			return last, nil
-		}
-		if d.Status == "failed" || d.Status == "superseded" || d.RolloutState == "complete" || d.RolloutState == "aborted" {
-			return last, fmt.Errorf("deployment became terminal before its handoff completed")
+		case err == nil:
+			if !sameBindingDeployment(d.ID, deploymentID) || d.AppID != appID {
+				return last, fmt.Errorf("server returned a different deployment or app")
+			}
+			last = d
+			if key := rolloutProgressKey(d); progress != nil && key != seen {
+				seen = key
+				progress(d)
+			}
+			if !wait || rolloutStatusComplete(d) {
+				return last, nil
+			}
+			if d.Status == "failed" || d.Status == "superseded" || d.RolloutState == "complete" || d.RolloutState == "aborted" {
+				return last, fmt.Errorf("deployment became terminal before its handoff completed")
+			}
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -43,6 +57,27 @@ func pollRolloutStatus(ctx context.Context, client rolloutStatusClient, appID, d
 		case <-timer.C:
 		}
 	}
+}
+
+func retryableRolloutPoll(err error) bool {
+	var ae *api.APIError
+	if !errors.As(err, &ae) {
+		return true
+	}
+	switch ae.Problem.Status {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests,
+		http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	return false
+}
+
+func rolloutProgressKey(d api.DeploymentResponse) string {
+	key := fmt.Sprintf("%s/%s/%d", d.Status, d.RolloutState, d.TrafficPercent)
+	if h := d.ServiceRolloutHandoff; h != nil {
+		key += "/" + h.Action + "/" + h.Phase + "/" + h.LastError
+	}
+	return key
 }
 
 func rolloutStatusComplete(d api.DeploymentResponse) bool {
@@ -102,11 +137,15 @@ func cmdRolloutsStatus(args []string) int {
 		}
 		return printErr("Resolve deployment failed", err)
 	}
-	d, err := pollRolloutStatus(ctx, client, app.ID, deploymentID, *wait, *interval)
+	var progress func(api.DeploymentResponse)
+	if *wait && !jsonOutput {
+		progress = printRolloutStatus
+	}
+	d, err := pollRolloutStatus(ctx, client, app.ID, deploymentID, *wait, *interval, progress)
 	if signalCtx.Err() != nil {
 		return 130
 	}
-	if d.ID != "" {
+	if d.ID != "" && progress == nil {
 		if jsonOutput {
 			if code := jsonOut(writeJSON(d)); code != 0 {
 				return code

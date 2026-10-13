@@ -1,5 +1,5 @@
 // adr: 712
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -56,7 +56,7 @@ func scheduleAPIAlarm(t *testing.T, e entityHTTPEnv, request api.DurableEntityIn
 	if result.Version != 1 {
 		t.Fatalf("schedule version = %d", result.Version)
 	}
-	page, err := e.s.durable.Engine.ScanDueAlarms(t.Context(), "")
+	page, err := (*e.s.Durable()).Engine.ScanDueAlarms(t.Context(), "")
 	if err != nil || len(page.Alarms) != 1 || page.Failed != 0 {
 		t.Fatalf("scheduled alarm discovery = %+v %v", page, err)
 	}
@@ -65,17 +65,17 @@ func scheduleAPIAlarm(t *testing.T, e entityHTTPEnv, request api.DurableEntityIn
 
 func TestDurableEntityAlarmDispatchCommitReplayAndWorkerSweep(t *testing.T) {
 	e, app, dispatch, _ := entityAPIFixture(t, true)
-	e.s.durable.AlarmsEnabled = true
+	(*e.s.Durable()).AlarmsEnabled = true
 	request := entityRequest("schedule")
 	request.Environment = "staging"
 	alarm := scheduleAPIAlarm(t, e, request)
-	if _, err := e.s.durable.SweepAlarms(t.Context(), durable.AlarmCursor{}); err != nil {
+	if _, err := (*e.s.Durable()).SweepAlarms(t.Context(), durable.AlarmCursor{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.s.durable.DeliverAlarm(t.Context(), alarm); err != nil {
+	if err := (*e.s.Durable()).DeliverAlarm(t.Context(), alarm); err != nil {
 		t.Fatal(err)
 	}
-	view, err := e.s.durable.Engine.Read(t.Context(), alarm.Entity)
+	view, err := (*e.s.Durable()).Engine.Read(t.Context(), alarm.Entity)
 	if err != nil || view.AlarmAt != nil || view.Version != 2 || string(view.Data) != `{"count":2}` {
 		t.Fatalf("alarm transition = %+v %v", view, err)
 	}
@@ -109,7 +109,7 @@ func TestDurableEntityAlarmRechecksCustomerAndRuntimeAdmission(t *testing.T) {
 	for _, kind := range []string{"customer", "account", "app", "allowlist", "disabled", "environment"} {
 		t.Run(kind, func(t *testing.T) {
 			e, app, dispatch, _ := entityAPIFixture(t, kind == "environment")
-			e.s.durable.AlarmsEnabled = true
+			(*e.s.Durable()).AlarmsEnabled = true
 			request := entityRequest("schedule")
 			if kind == "environment" {
 				request.Environment = "staging"
@@ -136,9 +136,9 @@ func TestDurableEntityAlarmRechecksCustomerAndRuntimeAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "allowlist":
-				delete(e.s.durable.Apps, app.ID)
+				delete((*e.s.Durable()).Apps, app.ID)
 			case "disabled":
-				e.s.durable.AlarmsEnabled = false
+				(*e.s.Durable()).AlarmsEnabled = false
 			case "environment":
 				dep, err := e.store.LiveDeploymentForScope(t.Context(), app.ID, "staging")
 				if err != nil {
@@ -161,13 +161,13 @@ func TestDurableEntityAlarmRechecksCustomerAndRuntimeAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := e.s.durable.DeliverAlarm(t.Context(), alarm); err == nil {
+			if err := (*e.s.Durable()).DeliverAlarm(t.Context(), alarm); err == nil {
 				t.Fatal("held alarm was delivered")
 			}
 			if dispatch.calls.Load() != 1 {
 				t.Fatal("inadmissible alarm reached guest")
 			}
-			view, err := e.s.durable.Engine.Read(t.Context(), alarm.Entity)
+			view, err := (*e.s.Durable()).Engine.Read(t.Context(), alarm.Entity)
 			if err != nil || view.Version != 1 || view.AlarmAt == nil {
 				t.Fatal("held alarm lost its deadline", view, err)
 			}
@@ -177,29 +177,29 @@ func TestDurableEntityAlarmRechecksCustomerAndRuntimeAdmission(t *testing.T) {
 
 func TestDurableEntityAlarmFailedGuestKeepsDeadline(t *testing.T) {
 	e, _, dispatch, bucket := entityAPIFixture(t, false)
-	e.s.durable.AlarmsEnabled = true
+	(*e.s.Durable()).AlarmsEnabled = true
 	alarm := scheduleAPIAlarm(t, e, entityRequest("schedule"))
 	dispatch.badBody.Store(true)
-	if err := e.s.durable.DeliverAlarm(t.Context(), alarm); !errors.Is(err, durableentity.ErrInvalid) {
+	if err := (*e.s.Durable()).DeliverAlarm(t.Context(), alarm); !errors.Is(err, durableentity.ErrInvalid) {
 		t.Fatalf("invalid alarm guest response = %v", err)
 	}
-	view, err := e.s.durable.Engine.Read(t.Context(), alarm.Entity)
+	view, err := (*e.s.Durable()).Engine.Read(t.Context(), alarm.Entity)
 	if err != nil || view.Version != 1 || view.AlarmAt == nil {
 		t.Fatal("invalid guest consumed alarm", view, err)
 	}
 	dispatch.badBody.Store(false)
-	if err := e.s.durable.DeliverAlarm(t.Context(), alarm); !errors.Is(err, durableentity.ErrAlarmBackoff) {
+	if err := (*e.s.Durable()).DeliverAlarm(t.Context(), alarm); !errors.Is(err, durableentity.ErrAlarmBackoff) {
 		t.Fatal("alarm ignored durable retry backoff", err)
 	}
 	engine, err := durableentity.Open(t.Context(), bucket, durableentity.Options{Now: func() time.Time { return time.Now().Add(api.DurableEntityAlarmRetryBase) }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine = engine
-	if err := e.s.durable.DeliverAlarm(t.Context(), alarm); err != nil {
+	(*e.s.Durable()).Engine = engine
+	if err := (*e.s.Durable()).DeliverAlarm(t.Context(), alarm); err != nil {
 		t.Fatal(err)
 	}
-	view, err = e.s.durable.Engine.Read(t.Context(), alarm.Entity)
+	view, err = (*e.s.Durable()).Engine.Read(t.Context(), alarm.Entity)
 	if err != nil || view.Version != 2 || view.AlarmAt != nil || string(view.Data) != `{"count":2}` {
 		t.Fatal("alarm retry lost or duplicated state", view, err)
 	}
@@ -207,7 +207,7 @@ func TestDurableEntityAlarmFailedGuestKeepsDeadline(t *testing.T) {
 
 func TestDurableEntityAlarmsRequirePreviewAndCancelWorker(t *testing.T) {
 	e := entityAPISetup(t)
-	if err := e.s.configureDurableEntities(t.Context(), func(key string) string {
+	if err := e.s.ConfigureDurableEntities(t.Context(), func(key string) string {
 		if key == "FAAS_DURABLE_ENTITY_ALARMS_ENABLED" {
 			return "1"
 		}
@@ -215,12 +215,12 @@ func TestDurableEntityAlarmsRequirePreviewAndCancelWorker(t *testing.T) {
 	}); err == nil {
 		t.Fatal("alarm gate accepted without entity preview")
 	}
-	e.s.durable.RunAlarms(t.Context()) // disabled returns immediately
+	(*e.s.Durable()).RunAlarms(t.Context()) // disabled returns immediately
 	e, _, _, _ = entityAPIFixture(t, false)
-	e.s.durable.AlarmsEnabled = true
+	(*e.s.Durable()).AlarmsEnabled = true
 	ctx, cancel := context.WithCancel(t.Context())
 	finished := make(chan struct{})
-	go func() { e.s.durable.RunAlarms(ctx); close(finished) }()
+	go func() { (*e.s.Durable()).RunAlarms(ctx); close(finished) }()
 	cancel()
 	select {
 	case <-finished:

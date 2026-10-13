@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -49,9 +51,9 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 		t.Fatal(err)
 	}
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -66,22 +68,22 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	executeReq, executeRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
+	executeReq, executeRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
 	executeReq.SetPathValue("environment", "production")
 	executeReq.Header.Set("Idempotency-Key", "promotion-test-1")
-	srv.promoteProjectEnvironment(executeRec, executeReq, acct)
+	srv.PromoteProjectEnvironment(executeRec, executeReq, acct)
 	if executeRec.Code != http.StatusConflict {
 		t.Fatalf("missing approval status=%d body=%s", executeRec.Code, executeRec.Body.String())
 	}
 
-	approvalToken, approval, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, approval, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
 	}
-	approvalStatusReq, approvalStatusRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/approvals/"+approval.ID, "shop", nil)
+	approvalStatusReq, approvalStatusRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/approvals/"+approval.ID, "shop", nil)
 	approvalStatusReq.SetPathValue("environment", "production")
 	approvalStatusReq.SetPathValue("approval", approval.ID)
-	srv.getProjectEnvironmentApprovalStatus(approvalStatusRec, approvalStatusReq, acct)
+	srv.GetProjectEnvironmentApprovalStatus(approvalStatusRec, approvalStatusReq, acct)
 	if approvalStatusRec.Code != http.StatusOK {
 		t.Fatalf("approval status=%d body=%s", approvalStatusRec.Code, approvalStatusRec.Body.String())
 	}
@@ -98,10 +100,10 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	executeReq, executeRec = projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
+	executeReq, executeRec = apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
 	executeReq.SetPathValue("environment", "production")
 	executeReq.Header.Set("Idempotency-Key", "promotion-test-1")
-	srv.promoteProjectEnvironment(executeRec, executeReq, acct)
+	srv.PromoteProjectEnvironment(executeRec, executeReq, acct)
 	if executeRec.Code != http.StatusOK {
 		t.Fatalf("promotion status=%d body=%s", executeRec.Code, executeRec.Body.String())
 	}
@@ -115,10 +117,10 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if response.PromotionID == "" {
 		t.Fatal("promotion response did not include durable promotion id")
 	}
-	approvalStatusReq, approvalStatusRec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/approvals/"+approval.ID, "shop", nil)
+	approvalStatusReq, approvalStatusRec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/approvals/"+approval.ID, "shop", nil)
 	approvalStatusReq.SetPathValue("environment", "production")
 	approvalStatusReq.SetPathValue("approval", approval.ID)
-	srv.getProjectEnvironmentApprovalStatus(approvalStatusRec, approvalStatusReq, acct)
+	srv.GetProjectEnvironmentApprovalStatus(approvalStatusRec, approvalStatusReq, acct)
 	if approvalStatusRec.Code != http.StatusOK {
 		t.Fatalf("consumed approval status=%d body=%s", approvalStatusRec.Code, approvalStatusRec.Body.String())
 	}
@@ -129,17 +131,17 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 		t.Fatalf("consumed approval status response=%+v", approvalStatus)
 	}
 	// A fresh idempotency key cannot reuse a consumed approval.
-	reuseReq, reuseRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
+	reuseReq, reuseRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
 	reuseReq.SetPathValue("environment", "production")
 	reuseReq.Header.Set("Idempotency-Key", "promotion-test-reuse")
-	srv.promoteProjectEnvironment(reuseRec, reuseReq, acct)
+	srv.PromoteProjectEnvironment(reuseRec, reuseReq, acct)
 	if reuseRec.Code != http.StatusConflict {
 		t.Fatalf("consumed approval reuse status=%d body=%s", reuseRec.Code, reuseRec.Body.String())
 	}
-	statusReq, statusRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID, "shop", nil)
+	statusReq, statusRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID, "shop", nil)
 	statusReq.SetPathValue("environment", "production")
 	statusReq.SetPathValue("promotion", response.PromotionID)
-	srv.getProjectEnvironmentPromotionStatus(statusRec, statusReq, acct)
+	srv.GetProjectEnvironmentPromotionStatus(statusRec, statusReq, acct)
 	if statusRec.Code != http.StatusOK {
 		t.Fatalf("promotion status=%d body=%s", statusRec.Code, statusRec.Body.String())
 	}
@@ -155,10 +157,10 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	}
 	// A replay with the same idempotency key returns the durable result even
 	// though the original target now points at the promoted deployment.
-	replayReq, replayRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
+	replayReq, replayRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", requestBody)
 	replayReq.SetPathValue("environment", "production")
 	replayReq.Header.Set("Idempotency-Key", "promotion-test-1")
-	srv.promoteProjectEnvironment(replayRec, replayReq, acct)
+	srv.PromoteProjectEnvironment(replayRec, replayReq, acct)
 	if replayRec.Code != http.StatusOK || replayRec.Body.String() != executeRec.Body.String() {
 		t.Fatalf("promotion replay status=%d body=%s want=%s", replayRec.Code, replayRec.Body.String(), executeRec.Body.String())
 	}
@@ -169,11 +171,11 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if live.ID == target.ID || live.SourceSHA256 != source.SourceSHA256 || live.RootfsKey != "apps/source.ext4" {
 		t.Fatalf("promoted live deployment=%+v", live)
 	}
-	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
+	rollbackReq, rollbackRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
 	rollbackReq.SetPathValue("promotion", response.PromotionID)
 	rollbackReq.Header.Set("Idempotency-Key", "rollback-test-1")
-	srv.rollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
+	srv.RollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
 	if rollbackRec.Code != http.StatusOK {
 		t.Fatalf("rollback status=%d body=%s", rollbackRec.Code, rollbackRec.Body.String())
 	}
@@ -191,11 +193,11 @@ func TestProjectEnvironmentPromotionRequiresApprovalAndPromotesArtifact(t *testi
 	if live.ID != target.ID {
 		t.Fatalf("restored live deployment=%+v want=%s", live, target.ID)
 	}
-	replayRollbackReq, replayRollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
+	replayRollbackReq, replayRollbackRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
 	replayRollbackReq.SetPathValue("environment", "production")
 	replayRollbackReq.SetPathValue("promotion", response.PromotionID)
 	replayRollbackReq.Header.Set("Idempotency-Key", "rollback-test-1")
-	srv.rollbackProjectEnvironmentPromotion(replayRollbackRec, replayRollbackReq, acct)
+	srv.RollbackProjectEnvironmentPromotion(replayRollbackRec, replayRollbackReq, acct)
 	if replayRollbackRec.Code != http.StatusOK || replayRollbackRec.Body.String() != rollbackRec.Body.String() {
 		t.Fatalf("rollback replay status=%d body=%s want=%s", replayRollbackRec.Code, replayRollbackRec.Body.String(), rollbackRec.Body.String())
 	}
@@ -230,7 +232,7 @@ func (s *corruptProjectEnvironmentPromotionVerificationStore) UpdateProjectEnvir
 }
 
 func TestProjectEnvironmentPromotionVerificationAutomaticallyRollsBack(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
@@ -245,9 +247,9 @@ func TestProjectEnvironmentPromotionVerificationAutomaticallyRollsBack(t *testin
 	if err := store.MarkDeploymentLive(ctx, source.ID); err != nil {
 		t.Fatal(err)
 	}
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -255,19 +257,19 @@ func TestProjectEnvironmentPromotionVerificationAutomaticallyRollsBack(t *testin
 	if err := json.Unmarshal(previewRec.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, _, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
 	}
-	srv.store = &corruptProjectEnvironmentPromotionVerificationStore{Store: store}
+	(*srv.Store()) = &corruptProjectEnvironmentPromotionVerificationStore{Store: store}
 	body, err := json.Marshal(api.PromoteProjectEnvironmentRequest{FromEnvironment: "staging", PromotionToken: preview.PromotionToken, ApprovalToken: approvalToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
 	req.SetPathValue("environment", "production")
 	req.Header.Set("Idempotency-Key", "promotion-verification-failure")
-	srv.promoteProjectEnvironment(rec, req, acct)
+	srv.PromoteProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "automatically rolled back") {
 		t.Fatalf("promotion failure status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -284,12 +286,12 @@ func TestProjectEnvironmentPromotionVerificationAutomaticallyRollsBack(t *testin
 }
 
 func TestProjectEnvironmentPromotionRollbackClearsNewTarget(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	promotionID := "promotion-no-prior"
 	candidate, err := store.CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, Scope: "production", SourceSHA256: "promoted-source",
-		Status: state.DeployPending, Reason: projectEnvironmentPromotionDeploymentReason(promotionID),
+		Status: state.DeployPending, Reason: apidserver.ProjectEnvironmentPromotionDeploymentReason(promotionID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -312,11 +314,11 @@ func TestProjectEnvironmentPromotionRollbackClearsNewTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promotionID+"/rollback", "shop", nil)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promotionID+"/rollback", "shop", nil)
 	req.SetPathValue("environment", "production")
 	req.SetPathValue("promotion", promotionID)
 	req.Header.Set("Idempotency-Key", "rollback-no-prior")
-	srv.rollbackProjectEnvironmentPromotion(rec, req, acct)
+	srv.RollbackProjectEnvironmentPromotion(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rollback status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -333,7 +335,7 @@ func TestProjectEnvironmentPromotionRollbackClearsNewTarget(t *testing.T) {
 }
 
 func TestProjectEnvironmentPromotionPreviewComparesLiveReleasesAndConfig(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -371,9 +373,9 @@ func TestProjectEnvironmentPromotionPreviewComparesLiveReleasesAndConfig(t *test
 		t.Fatal(err)
 	}
 
-	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	req, rec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	req.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(rec, req, acct)
+	srv.PreviewProjectEnvironmentPromotion(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -399,15 +401,15 @@ func TestProjectEnvironmentPromotionPreviewComparesLiveReleasesAndConfig(t *test
 }
 
 func TestProjectEnvironmentPromotionPreviewBlocksMissingSourceRelease(t *testing.T) {
-	srv, store, acct, project, _ := newProjectLifecycleFixture(t)
+	srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
 	if _, err := store.CreateProjectEnvironment(context.Background(), state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	req, rec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	req.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(rec, req, acct)
+	srv.PreviewProjectEnvironmentPromotion(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -423,7 +425,7 @@ func TestProjectEnvironmentPromotionPreviewBlocksMissingSourceRelease(t *testing
 func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testing.T) {
 	for _, activeEnvironment := range []string{"staging", "production"} {
 		t.Run(activeEnvironment, func(t *testing.T) {
-			srv, store, acct, project, app := newProjectLifecycleFixture(t)
+			srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 			ctx := context.Background()
 			if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 				AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -458,18 +460,18 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 			}
 			var qualification state.ProjectEnvironmentQualification
 			if activeEnvironment == "staging" {
-				previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+				previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 				previewReq.SetPathValue("environment", "production")
-				srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+				srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 				var blocked api.ProjectEnvironmentPromotionPreviewResponse
 				if previewRec.Code != http.StatusOK || json.Unmarshal(previewRec.Body.Bytes(), &blocked) != nil ||
 					blocked.CanPromote || !blocked.QualificationRequired || blocked.Qualification != nil {
 					t.Fatalf("unqualified graph preview should be blocked: status=%d preview=%+v body=%s", previewRec.Code, blocked, previewRec.Body.String())
 				}
 				createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", release.ID, "failed", "passed")
-				previewReq, previewRec = projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+				previewReq, previewRec = apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 				previewReq.SetPathValue("environment", "production")
-				srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+				srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 				if previewRec.Code != http.StatusOK || json.Unmarshal(previewRec.Body.Bytes(), &blocked) != nil ||
 					blocked.CanPromote || blocked.Qualification == nil || blocked.Qualification.Status != "failed" {
 					t.Fatalf("failed graph qualification should block preview: status=%d preview=%+v body=%s", previewRec.Code, blocked, previewRec.Body.String())
@@ -477,9 +479,9 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 				qualification = createProjectEnvironmentQualificationForTest(t, store, acct, project, "staging", release.ID, "passed", "passed")
 			}
 
-			req, rec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+			req, rec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 			req.SetPathValue("environment", "production")
-			srv.previewProjectEnvironmentPromotion(rec, req, acct)
+			srv.PreviewProjectEnvironmentPromotion(rec, req, acct)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("preview status=%d body=%s", rec.Code, rec.Body.String())
 			}
@@ -502,7 +504,7 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 				graph.Members[0].AppID != app.ID || graph.Members[0].DeploymentID != activeDeploymentID {
 				t.Fatalf("promotion preview release graph = %+v, want release %s with deployment %s", graph, release.ID, activeDeploymentID)
 			}
-			wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
+			wire, err := apidserver.DecodeProjectEnvironmentPromotionToken(preview.PromotionToken)
 			if err != nil {
 				t.Fatalf("decode promotion token: %v", err)
 			}
@@ -526,9 +528,9 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 				}); err != nil {
 					t.Fatal(err)
 				}
-				driftReq, driftRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+				driftReq, driftRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 				driftReq.SetPathValue("environment", "production")
-				srv.previewProjectEnvironmentPromotion(driftRec, driftReq, acct)
+				srv.PreviewProjectEnvironmentPromotion(driftRec, driftReq, acct)
 				var driftPreview api.ProjectEnvironmentPromotionPreviewResponse
 				if driftRec.Code != http.StatusOK || json.Unmarshal(driftRec.Body.Bytes(), &driftPreview) != nil ||
 					driftPreview.CanPromote || !strings.Contains(strings.Join(driftPreview.BlockingReasons, " "), "configuration changed after qualification") {
@@ -540,7 +542,7 @@ func TestProjectEnvironmentPromotionPreviewSupportsActiveReleaseGraphs(t *testin
 }
 
 func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -585,9 +587,9 @@ func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing
 		t.Fatal(err)
 	}
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -598,7 +600,7 @@ func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing
 	if !preview.CanPromote || !preview.ReleaseGraphMode || preview.ReleaseTTLSeconds != 1800 {
 		t.Fatalf("graph promotion preview=%+v", preview)
 	}
-	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, _, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
 	}
@@ -608,10 +610,10 @@ func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
 	req.SetPathValue("environment", "production")
 	req.Header.Set("Idempotency-Key", "release-graph-promotion")
-	srv.promoteProjectEnvironment(rec, req, acct)
+	srv.PromoteProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("promotion status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -640,11 +642,11 @@ func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing
 		t.Fatalf("graph activation changed weighted route: %+v err=%v", weighted, err)
 	}
 
-	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promoted.PromotionID+"/rollback", "shop", nil)
+	rollbackReq, rollbackRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promoted.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
 	rollbackReq.SetPathValue("promotion", promoted.PromotionID)
 	rollbackReq.Header.Set("Idempotency-Key", "release-graph-rollback")
-	srv.rollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
+	srv.RollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
 	if rollbackRec.Code != http.StatusOK {
 		t.Fatalf("rollback status=%d body=%s", rollbackRec.Code, rollbackRec.Body.String())
 	}
@@ -667,7 +669,7 @@ func TestProjectEnvironmentPromotionActivatesAndRollsBackReleaseGraph(t *testing
 }
 
 func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -707,9 +709,9 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 		t.Fatal(err)
 	}
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -720,7 +722,7 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	if !preview.CanPromote || !preview.ReleaseGraphMode || preview.ToReleaseSet != nil {
 		t.Fatalf("first target graph preview=%+v", preview)
 	}
-	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, _, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
 	}
@@ -730,10 +732,10 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	promoteReq, promoteRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	promoteReq, promoteRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
 	promoteReq.SetPathValue("environment", "production")
 	promoteReq.Header.Set("Idempotency-Key", "first-release-graph-promotion")
-	srv.promoteProjectEnvironment(promoteRec, promoteReq, acct)
+	srv.PromoteProjectEnvironment(promoteRec, promoteReq, acct)
 	if promoteRec.Code != http.StatusOK {
 		t.Fatalf("promotion status=%d body=%s", promoteRec.Code, promoteRec.Body.String())
 	}
@@ -748,11 +750,11 @@ func TestProjectEnvironmentPromotionRollbackRestoresFallbackWithoutPriorGraph(t 
 		t.Fatalf("first graph activation changed weighted fallback: %+v err=%v", weighted, err)
 	}
 
-	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promoted.PromotionID+"/rollback", "shop", nil)
+	rollbackReq, rollbackRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+promoted.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
 	rollbackReq.SetPathValue("promotion", promoted.PromotionID)
 	rollbackReq.Header.Set("Idempotency-Key", "first-release-graph-rollback")
-	srv.rollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
+	srv.RollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
 	if rollbackRec.Code != http.StatusOK {
 		t.Fatalf("rollback status=%d body=%s", rollbackRec.Code, rollbackRec.Body.String())
 	}
@@ -795,16 +797,16 @@ func TestProjectEnvironmentPromotionRejectsFlagEditDuringCreation(t *testing.T) 
 }
 
 type flagDriftDuringPromotionCreationStore struct {
-	*state.MemStore
-	scope state.FeatureFlagScope
+	MemStore *state.MemStore
+	scope    state.FeatureFlagScope
 }
 
 func (s *flagDriftDuringPromotionCreationStore) CreateProjectEnvironmentPromotion(ctx context.Context, promotion state.ProjectEnvironmentPromotion, workloads []state.ProjectEnvironmentPromotionWorkload) (state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload, error) {
-	current, err := s.GetFeatureFlags(ctx, s.scope, 0)
+	current, err := s.MemStore.GetFeatureFlags(ctx, s.scope, 0)
 	if err != nil {
 		return state.ProjectEnvironmentPromotion{}, nil, err
 	}
-	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: s.scope, ExpectedVersion: current.Version, Config: current.Config, Actor: "external"}); err != nil {
+	if _, err := s.MemStore.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: s.scope, ExpectedVersion: current.Version, Config: current.Config, Actor: "external"}); err != nil {
 		return state.ProjectEnvironmentPromotion{}, nil, err
 	}
 	return s.MemStore.CreateProjectEnvironmentPromotion(ctx, promotion, workloads)
@@ -813,7 +815,7 @@ func (s *flagDriftDuringPromotionCreationStore) CreateProjectEnvironmentPromotio
 func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, withFlags bool, flagsOnly ...bool) {
 	t.Helper()
 	onlyFlags := len(flagsOnly) != 0 && flagsOnly[0]
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
 		t.Fatal(err)
@@ -916,9 +918,9 @@ func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, wi
 	}
 	createLive("production", "sha256:production-newer", "production-newer")
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging&sync_config=true", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging&sync_config=true", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -949,20 +951,20 @@ func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, wi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken); problem == nil {
+		if _, _, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken); problem == nil {
 			t.Fatal("approval accepted a target flag revision changed after preview")
 		}
-		fresh, problem := srv.buildProjectEnvironmentPromotionPlan(ctx, acct, project.Slug, "staging", "production", true)
+		fresh, problem := srv.BuildProjectEnvironmentPromotionPlan(ctx, acct, project.Slug, "staging", "production", true)
 		if problem != nil || fresh.Preview.PromotionHash == oldHash || !fresh.Preview.CanPromote {
 			t.Fatalf("flag revision did not change preview identity: %v", problem)
 		}
 		preview = fresh.Preview
 	}
-	wire, err := decodeProjectEnvironmentPromotionToken(preview.PromotionToken)
+	wire, err := apidserver.DecodeProjectEnvironmentPromotionToken(preview.PromotionToken)
 	if err != nil || !wire.SyncConfig {
 		t.Fatalf("promotion token sync_config=%t err=%v", wire.SyncConfig, err)
 	}
-	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, _, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
 	}
@@ -972,14 +974,14 @@ func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, wi
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
 	req.SetPathValue("environment", "production")
 	req.Header.Set("Idempotency-Key", "promotion-graph-atomic")
 	creationRace := len(flagsOnly) > 1 && flagsOnly[1]
 	if creationRace {
-		srv.store = &flagDriftDuringPromotionCreationStore{MemStore: store, scope: targetFlagScope}
+		(*srv.Store()) = statetest.NewMem(&flagDriftDuringPromotionCreationStore{MemStore: store, scope: targetFlagScope})
 	}
-	srv.promoteProjectEnvironment(rec, req, acct)
+	srv.PromoteProjectEnvironment(rec, req, acct)
 	if creationRace {
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "feature flags changed") {
 			t.Fatalf("flag drift during creation returned status=%d body=%s", rec.Code, rec.Body.String())
@@ -1035,19 +1037,19 @@ func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, wi
 	if err != nil || previousRuntime.RAMMB != previousRAM || previousRuntime.StartCommand == "serve stage tested" {
 		t.Fatalf("retained graph configuration changed: %+v, %v", previousRuntime, err)
 	}
-	resumePlan, resumeProblem := srv.buildProjectEnvironmentPromotionResumePlan(ctx, acct, promotion, workloads)
+	resumePlan, resumeProblem := srv.BuildProjectEnvironmentPromotionResumePlan(ctx, acct, promotion, workloads)
 	if resumeProblem != nil {
 		t.Fatalf("configuration cutover cannot resume: %v", resumeProblem)
 	}
-	if problem := validateProjectEnvironmentPromotionResume(wire, promotion, workloads, resumePlan); problem != nil {
+	if problem := apidserver.ValidateProjectEnvironmentPromotionResume(wire, promotion, workloads, resumePlan); problem != nil {
 		t.Fatalf("captured configuration identity changed after cutover: %v", problem)
 	}
 
-	rollbackReq, rollbackRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
+	rollbackReq, rollbackRec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promotions/"+response.PromotionID+"/rollback", "shop", nil)
 	rollbackReq.SetPathValue("environment", "production")
 	rollbackReq.SetPathValue("promotion", response.PromotionID)
 	rollbackReq.Header.Set("Idempotency-Key", "rollback-graph-atomic")
-	srv.rollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
+	srv.RollbackProjectEnvironmentPromotion(rollbackRec, rollbackReq, acct)
 	if rollbackRec.Code != http.StatusOK {
 		t.Fatalf("graph rollback status=%d body=%s", rollbackRec.Code, rollbackRec.Body.String())
 	}
@@ -1086,12 +1088,12 @@ func testProjectEnvironmentPromotionSyncsConfigWithReleaseGraph(t *testing.T, wi
 
 func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T) {
 	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
-	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+	first, err := apidserver.ProjectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
 		false, "release-source-a", "release-target", "qualification-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+	second, err := apidserver.ProjectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
 		false, "release-source-b", "release-target", "qualification-a", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1104,7 +1106,7 @@ func TestProjectEnvironmentPromotionHashIncludesReleaseSetIdentity(t *testing.T)
 // Spec §4.7: past_due blocks deploys. A promotion writes new live
 // deployments into the target environment, so it must be refused too.
 func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
-	srv, store, acct, project, app := newProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{
 		AccountID: acct.ID, ProjectID: project.ID, Slug: "staging",
@@ -1129,9 +1131,9 @@ func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	previewReq, previewRec := projectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
+	previewReq, previewRec := apidserver.ProjectRequest(http.MethodGet, "/v1/projects/shop/environments/production/promotion-preview?from=staging", "shop", nil)
 	previewReq.SetPathValue("environment", "production")
-	srv.previewProjectEnvironmentPromotion(previewRec, previewReq, acct)
+	srv.PreviewProjectEnvironmentPromotion(previewRec, previewReq, acct)
 	if previewRec.Code != http.StatusOK {
 		t.Fatalf("preview status=%d body=%s", previewRec.Code, previewRec.Body.String())
 	}
@@ -1139,7 +1141,7 @@ func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
 	if err := json.Unmarshal(previewRec.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
-	approvalToken, _, problem := srv.issueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
+	approvalToken, _, problem := srv.IssueProjectEnvironmentPromotionApproval(ctx, acct, project.Slug, "production", preview.PromotionToken)
 	if problem != nil {
 		t.Fatalf("issue promotion approval: %v", problem)
 	}
@@ -1151,10 +1153,10 @@ func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
 	}
 	pastDue := acct
 	pastDue.Status = state.AccountPastDue
-	req, rec := projectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
+	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environments/production/promote", "shop", body)
 	req.SetPathValue("environment", "production")
 	req.Header.Set("Idempotency-Key", "promotion-past-due")
-	srv.promoteProjectEnvironment(rec, req, pastDue)
+	srv.PromoteProjectEnvironment(rec, req, pastDue)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("past_due promotion status=%d body=%s, want 402", rec.Code, rec.Body.String())
 	}
@@ -1169,12 +1171,12 @@ func TestProjectEnvironmentPromotionBlockedWhilePastDue(t *testing.T) {
 
 func TestProjectEnvironmentPromotionHashIncludesQualificationIdentity(t *testing.T) {
 	configDiff := api.ProjectEnvironmentConfigDiffResponse{FromHash: "from", ToHash: "to"}
-	first, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+	first, err := apidserver.ProjectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
 		false, "release-source", "release-target", "qualification-a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := projectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
+	second, err := apidserver.ProjectEnvironmentPromotionHash("shop", "staging", "production", configDiff,
 		false, "release-source", "release-target", "qualification-b", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1232,7 +1234,7 @@ func createProjectEnvironmentQualificationForTest(t *testing.T, store *state.Mem
 		}
 		revisions := make([]api.ProjectEnvironmentSecretRevision, 0, len(secrets))
 		for _, secret := range secrets {
-			managedBy, bindingID := projectEnvironmentSecretOwner(secret)
+			managedBy, bindingID := apidserver.ProjectEnvironmentSecretOwner(secret)
 			revisions = append(revisions, api.ProjectEnvironmentSecretRevision{
 				Key: secret.Key, Version: secret.SecretVersion, ManagedBy: managedBy,
 				BindingID: bindingID, CredentialGeneration: secret.ManagedCredentialGeneration,

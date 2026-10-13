@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,20 +7,21 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing"
 )
 
 func TestBillingStatusCustomerRoute(t *testing.T) {
-	e := setup(t, api.PlanScale)
-	e.s.WithBillingProviderName("stripe")
-	if err := e.store.UpdateAccountProviderCustomerID(context.Background(), e.acct.ID, "cus_customer"); err != nil {
+	e := apidserver.Setup(t, api.PlanScale)
+	(*e.S()).WithBillingProviderName("stripe")
+	if err := (*e.Store()).UpdateAccountProviderCustomerID(context.Background(), (*e.Acct()).ID, "cus_customer"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.UpdateAccountStripeSubscriptionItem(context.Background(), e.acct.ID, "si_customer"); err != nil {
+	if err := (*e.Store()).UpdateAccountStripeSubscriptionItem(context.Background(), (*e.Acct()).ID, "si_customer"); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, http.MethodGet, "/v1/billing/status", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/billing/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -40,21 +41,21 @@ func TestBillingStatusCustomerRoute(t *testing.T) {
 }
 
 func TestBillingStatusRequiresCustomerAuthentication(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	req, err := http.NewRequest(http.MethodGet, "/v1/billing/status", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, req.Method, req.URL.Path, nil, map[string]string{"Authorization": ""})
+	rec := e.Do(t, req.Method, req.URL.Path, nil, map[string]string{"Authorization": ""})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestBillingStatusDisabledIsTruthful(t *testing.T) {
-	e := setup(t, api.PlanFree)
-	e.s.WithBillingProviderName("stripe").WithBillingMode(billing.ModeDisabled)
-	rec := e.do(t, http.MethodGet, "/v1/billing/status", nil, nil)
+	e := apidserver.Setup(t, api.PlanFree)
+	(*e.S()).WithBillingProviderName("stripe").WithBillingMode(billing.ModeDisabled)
+	rec := e.Do(t, http.MethodGet, "/v1/billing/status", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -65,7 +66,7 @@ func TestBillingStatusDisabledIsTruthful(t *testing.T) {
 	if got.Mode != "disabled" || got.Enabled || got.UsageReconciliationEnabled {
 		t.Fatalf("disabled projection = %+v", got)
 	}
-	if url := e.s.billingPortalURLForProvider(context.Background(), e.acct); url != "" {
+	if url := (*e.S()).BillingPortalURLForProvider(context.Background(), (*e.Acct())); url != "" {
 		t.Fatalf("disabled mode exposed portal URL %q", url)
 	}
 }

@@ -37,6 +37,7 @@ type ServiceDiscoveryDNSHandler struct {
 	onBlocked     func(category string)
 	onResolved    ResolvedEgressHook
 	serviceAddr   ServiceAddressLookup
+	scenarioChaos *serviceDiscoveryDNSChaos
 }
 
 // ServiceAddressLookup returns the private service address (ADR-576) the
@@ -230,22 +231,24 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 		h.forward(w, req)
 		return
 	}
+	if h.applyScenarioDNSChaos(lookupCtx, w, req, remoteAddress(w)) {
+		return
+	}
 	// Every question belongs to our private suffix. Respond authoritatively so
 	// resolvers do not leak unknown service names to a public upstream.
 	msg := new(dns.Msg)
 	msg.SetReply(req)
 	msg.Authoritative = true
 	msg.RecursionAvailable = false
-	remote := ""
-	if addr := w.RemoteAddr(); addr != nil {
-		remote = addr.String()
-	}
+	remote := remoteAddress(w)
+	responseCtx, cancelResponse := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
+	defer cancelResponse()
 	for _, question := range req.Question {
 		switch question.Qtype {
 		case dns.TypeA:
 			answer := h.bridgeIP
 			if service := serviceDiscoveryName(question.Name); service != "" && h.serviceAddr != nil {
-				if addr, ok := h.serviceAddr(lookupCtx, remote, service); ok && addr.Is4() {
+				if addr, ok := h.serviceAddr(responseCtx, remote, service); ok && addr.Is4() {
 					answer = addr
 				}
 			}
@@ -265,9 +268,21 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	}
 }
 
+func remoteAddress(w dns.ResponseWriter) string {
+	if w == nil || w.RemoteAddr() == nil {
+		return ""
+	}
+	return w.RemoteAddr().String()
+}
+
 func (h *ServiceDiscoveryDNSHandler) writeRcode(w dns.ResponseWriter, req *dns.Msg, code int) {
+	h.writeRcodeWithAuthority(w, req, code, false)
+}
+
+func (h *ServiceDiscoveryDNSHandler) writeRcodeWithAuthority(w dns.ResponseWriter, req *dns.Msg, code int, authoritative bool) {
 	msg := new(dns.Msg)
 	msg.SetRcode(req, code)
+	msg.Authoritative = authoritative
 	if err := w.WriteMsg(msg); err != nil {
 		h.log.Debug("service discovery DNS response failed", "err", err)
 	}

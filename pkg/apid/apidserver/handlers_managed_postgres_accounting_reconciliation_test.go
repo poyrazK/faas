@@ -1,5 +1,5 @@
 // adr: 591 — legacy accounting repairs use strict mutation authentication.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
 func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 100, Defaults: map[string]string{"us-east-1": "primary"}, Backends: []managedpostgres.BackendConfig{{ID: "primary", Driver: "fixture", Region: "us-east-1", Namespace: "imports"}}, Usage: managedpostgres.UsageConfig{Enabled: true, CollectionIntervalSeconds: 300, WindowSeconds: 3600, StaleAfterSeconds: 10800, MaxMonthlyCostMillicents: 1000, MaxMonthlyComputeUnitSeconds: 1000, MaxMonthlyStorageByteSeconds: 1000, MaxMonthlyEgressBytes: 1000, ComputeUnitHourMillicents: 3600}}, func(string) string { return "" }, map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
 		return diagnosticsNoProvider{}, nil
 	}})
@@ -29,7 +31,7 @@ func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.managedPostgres = service
+	(*(*e.S()).ManagedPostgres()) = service
 	account := uuid.NewString()
 	databaseID := uuid.NewString()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -53,11 +55,11 @@ func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
 		ShutdownAt: now.Add(-5 * time.Hour), ObservedAt: now.Add(-time.Hour),
 		EvidenceReference: "retained/shutdown", EvidenceSHA256: strings.Repeat("a", 64), Reason: "Repair lost identity and confirmed shutdown"}
 	path := "/v1/admin/managed-postgres/accounting/" + account + "/reconciliations"
-	if rec := e.do(t, http.MethodPost, path+"/preview", request, nil); rec.Code != http.StatusForbidden {
+	if rec := e.Do(t, http.MethodPost, path+"/preview", request, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("customer preview=%d", rec.Code)
 	}
-	e.s.WithAdminAllowlist(e.acct.Email)
-	rec := e.do(t, http.MethodPost, path+"/preview", request, nil)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
+	rec := e.Do(t, http.MethodPost, path+"/preview", request, nil)
 	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("preview: %d %s", rec.Code, rec.Body)
 	}
@@ -68,7 +70,7 @@ func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
 	if preview.Applied || !preview.RequiresUsageRecovery || strings.Contains(rec.Body.String(), "private-provider") {
 		t.Fatalf("unsafe preview: %s", rec.Body)
 	}
-	if rec := e.do(t, http.MethodPost, path, request, nil); rec.Code != http.StatusForbidden {
+	if rec := e.Do(t, http.MethodPost, path, request, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("bearer apply: %d %s", rec.Code, rec.Body)
 	}
 	request.ExpectedRevision = preview.Revision
@@ -89,7 +91,7 @@ func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
-			e.addAdminSession(t, r)
+			e.AddAdminSession(t, r)
 			r.Header.Set("Content-Type", "application/json")
 			if tc.key != "" {
 				r.Header.Set("Idempotency-Key", tc.key)
@@ -99,7 +101,7 @@ func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
 				r.Header.Set("Sec-Fetch-Site", "cross-site")
 			}
 			rec := httptest.NewRecorder()
-			e.h.ServeHTTP(rec, r)
+			(*e.H()).ServeHTTP(rec, r)
 			if rec.Code != tc.want {
 				t.Fatalf("status=%d want=%d body=%s", rec.Code, tc.want, rec.Body)
 			}
@@ -107,9 +109,9 @@ func TestManagedPostgresAccountingReconciliationRoute(t *testing.T) {
 	}
 	for _, bad := range []string{`{"unexpected":true}`, string(data) + ` {}`, strings.Repeat(" ", 32<<10) + string(data)} {
 		r := httptest.NewRequest(http.MethodPost, path+"/preview", strings.NewReader(bad))
-		r.Header.Set("Authorization", "Bearer "+e.key)
+		r.Header.Set("Authorization", "Bearer "+(*e.Key()))
 		rec := httptest.NewRecorder()
-		e.h.ServeHTTP(rec, r)
+		(*e.H()).ServeHTTP(rec, r)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid body: %d %s", rec.Code, rec.Body)
 		}

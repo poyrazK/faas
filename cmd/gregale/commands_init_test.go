@@ -21,12 +21,15 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
@@ -43,6 +46,11 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		files     []string // files that must exist post-materialize
 		readmeHas []string // substrings the README must contain
 	}{
+		{
+			name:      "object-storage-node",
+			files:     []string{"app.mjs", "server.mjs", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+			readmeHas: []string{"GREGALE_S3_ASSETS", "gregale add bucket", "STORAGE_APP_TOKEN", "SIGHUP", "lease", "--create-only"},
+		},
 		{
 			name:      "customer-platform",
 			files:     []string{"app/server.js", "app/http.js", "app/store.js", "app/schema.sql", "app/migrate.js", "tools/customer.js", "tools/client.js", "Procfile", "Dockerfile", "package.json", "package-lock.json", "README.md"},
@@ -405,6 +413,7 @@ func TestCmdInit_NextStepsFor(t *testing.T) {
 		want []string
 	}{
 		{"customer-platform", []string{"DATABASE_URL", "BYPASSRLS", "--platform-tenant-required", "--no-require-authn", "tools/customer.js"}},
+		{"object-storage-node", []string{"--create-only", "--secrets-file", "GREGALE_S3_ASSETS", "STORAGE_APP_TOKEN", "read_write"}},
 		{"s3-uploader", []string{"--create-only", "s3-uploader", "S3_BUCKET", "gregale secrets set", "cd <dest>"}},
 		{"slack-bot", []string{"--create-only", "slack-bot", "SLACK_SIGNING_SECRET", "gregale secrets set", "cd <dest>"}},
 		{"rest-api-postgres", []string{"--create-only", "rest-api-postgres", "DATABASE_URL", "gregale secrets set", "cd <dest>"}},
@@ -461,6 +470,8 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		want  string
 		noErr bool
 	}{
+		{tpl: "object-storage-node", want: "missing required secret(s): STORAGE_APP_TOKEN"},
+		{tpl: "object-storage-node", pairs: []secretsPair{{Key: "STORAGE_APP_TOKEN", Value: strings.Repeat("a", 48)}}, noErr: true},
 		{tpl: "customer-platform", want: "missing required secret(s): DATABASE_URL"},
 		{tpl: "customer-platform", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}}, want: "S3_REGION"},
@@ -720,5 +731,56 @@ func TestCmdInit_PreservesStdoutBytes(t *testing.T) {
 	}
 	if throwaway.Len() != 0 {
 		t.Errorf("osStdout seam was written to (%d bytes); should be untouched when explicit stdout is passed", throwaway.Len())
+	}
+}
+
+type templateSecretsApps struct {
+	err   error
+	calls int
+}
+
+func (a *templateSecretsApps) GetApp(context.Context, string) (api.AppResponse, error) {
+	a.calls++
+	return api.AppResponse{}, a.err
+}
+
+// TestRequireTemplateSecretsBeforeFirstStart pins H9-164: a first deploy of a
+// template that cannot start without secrets is refused before the build
+// instead of failing after it (7.6 minutes for ai-chat on production-us).
+func TestRequireTemplateSecretsBeforeFirstStart(t *testing.T) {
+	notFound := &APIError{Problem: api.Problem{Status: http.StatusNotFound}}
+	unavailable := &APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable}}
+	cases := []struct {
+		name        string
+		tpl         string
+		secretsFile string
+		createOnly  bool
+		lookupErr   error
+		wantErr     bool
+		wantLookup  bool
+	}{
+		{name: "ai-chat first deploy without secrets", tpl: "ai-chat", lookupErr: notFound, wantErr: true, wantLookup: true},
+		{name: "rest-api-postgres first deploy without secrets", tpl: "rest-api-postgres", lookupErr: notFound, wantErr: true, wantLookup: true},
+		{name: "existing app may already hold secrets", tpl: "ai-chat", wantLookup: true},
+		{name: "lookup failure keeps the old behaviour", tpl: "ai-chat", lookupErr: unavailable, wantLookup: true},
+		{name: "secrets file supplied", tpl: "ai-chat", secretsFile: "/tmp/s", lookupErr: notFound},
+		{name: "create-only reserves the app", tpl: "ai-chat", createOnly: true, lookupErr: notFound},
+		{name: "template without required secrets", tpl: "hello-node", lookupErr: notFound},
+		{name: "not a template deploy", lookupErr: notFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			apps := &templateSecretsApps{err: tc.lookupErr}
+			err := requireTemplateSecretsBeforeFirstStart(context.Background(), apps, tc.tpl, tc.secretsFile, tc.createOnly, "demo")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if (apps.calls > 0) != tc.wantLookup {
+				t.Fatalf("app lookups = %d, want lookup %v", apps.calls, tc.wantLookup)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "--secrets-file") {
+				t.Fatalf("err = %v, want the --secrets-file remedy", err)
+			}
+		})
 	}
 }

@@ -1,15 +1,16 @@
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestDelayedTaskScheduleAcceptsRelativeDelay(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	got, problem := delayedTaskSchedule(now, api.DelayedTaskRequest{DelaySeconds: 30 * 60})
+	got, problem := apidserver.DelayedTaskSchedule(now, api.DelayedTaskRequest{DelaySeconds: 30 * 60})
 	if problem != nil {
 		t.Fatalf("problem = %+v", problem)
 	}
@@ -28,7 +29,7 @@ func TestDelayedTaskScheduleRejectsAmbiguousAndOutOfWindow(t *testing.T) {
 		{ScheduledAt: now.Add((365*24*time.Hour + time.Second))},
 	}
 	for _, req := range cases {
-		if _, problem := delayedTaskSchedule(now, req); problem == nil || problem.Code != "invalid_scheduled_at" {
+		if _, problem := apidserver.DelayedTaskSchedule(now, req); problem == nil || problem.Code != "invalid_scheduled_at" {
 			t.Errorf("request %+v problem = %+v, want invalid_scheduled_at", req, problem)
 		}
 	}

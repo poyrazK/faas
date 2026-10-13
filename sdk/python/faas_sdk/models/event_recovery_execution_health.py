@@ -14,6 +14,7 @@ from ..models.event_recovery_execution_health_job_limit import (
     EventRecoveryExecutionHealthJobLimit,
     check_event_recovery_execution_health_job_limit,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.event_recovery_execution_job_health import EventRecoveryExecutionJobHealth
@@ -24,8 +25,8 @@ T = TypeVar("T", bound="EventRecoveryExecutionHealth")
 
 @_attrs_define
 class EventRecoveryExecutionHealth:
-    """Oldest retained terminal admission jobs still missing exact saved execution results. Counts overlap and are lower
-    bounds when counts_complete is false. Reads do not capture results or notifications.
+    """Oldest retained admission jobs including active native recovery jobs still missing exact saved execution results.
+    Counts overlap and are lower bounds when counts_complete is false. Reads do not capture results or notifications.
 
     """
 
@@ -40,6 +41,8 @@ class EventRecoveryExecutionHealth:
     wait_warning_seconds: int
     retention_warning_seconds: int
     jobs: list[EventRecoveryExecutionJobHealth]
+    stalled_jobs: int | Unset = UNSET
+    deadline_exceeded_jobs: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,6 +71,10 @@ class EventRecoveryExecutionHealth:
             jobs_item = jobs_item_data.to_dict()
             jobs.append(jobs_item)
 
+        stalled_jobs = self.stalled_jobs
+
+        deadline_exceeded_jobs = self.deadline_exceeded_jobs
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -85,6 +92,10 @@ class EventRecoveryExecutionHealth:
                 "jobs": jobs,
             }
         )
+        if stalled_jobs is not UNSET:
+            field_dict["stalled_jobs"] = stalled_jobs
+        if deadline_exceeded_jobs is not UNSET:
+            field_dict["deadline_exceeded_jobs"] = deadline_exceeded_jobs
 
         return field_dict
 
@@ -120,6 +131,10 @@ class EventRecoveryExecutionHealth:
 
             jobs.append(jobs_item)
 
+        stalled_jobs = d.pop("stalled_jobs", UNSET)
+
+        deadline_exceeded_jobs = d.pop("deadline_exceeded_jobs", UNSET)
+
         event_recovery_execution_health = cls(
             coverage=coverage,
             observed_jobs=observed_jobs,
@@ -132,6 +147,8 @@ class EventRecoveryExecutionHealth:
             wait_warning_seconds=wait_warning_seconds,
             retention_warning_seconds=retention_warning_seconds,
             jobs=jobs,
+            stalled_jobs=stalled_jobs,
+            deadline_exceeded_jobs=deadline_exceeded_jobs,
         )
 
         event_recovery_execution_health.additional_properties = d

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -450,6 +451,8 @@ type InstanceStatsPoller interface {
 type InstanceActivity struct {
 	Inflight    int64
 	LastRequest time.Time
+	// ResidentMB is the instance's cgroup memory; 0 when unmeasured.
+	ResidentMB int
 }
 
 // InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
@@ -2376,15 +2379,16 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	apps = owned
-	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps and
-	// suspended accounts from the table source of truth on every reaper tick so
-	// a restart or missed lifecycle notification cannot leave unbillable VMs
-	// live. This runs before the normal idle snapshot.
+	// pg_notify is a wakeup hint, not a durable queue. Reconcile parked apps,
+	// suspended accounts and accounts at their spend cap (ADR-1162) from the
+	// table source of truth on every reaper tick so a restart or missed
+	// lifecycle notification cannot leave unbillable VMs live. This runs
+	// before the normal idle snapshot.
 	for _, app := range apps {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
-				mustPark = account.Status == state.AccountSuspended || account.AbuseHeld()
+				mustPark = l.engine.appMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
 			}
@@ -2716,6 +2720,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.runReaperAggressive(ctx, apps, snapshot, instanceToApp, cooldownHeldByApp, now)
 	}
 
+	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
 		if err := l.engine.Evict(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
@@ -3301,7 +3306,7 @@ func DialGatewaySynth(socketPath string, log *slog.Logger) (GatewaySynth, error)
 			return net.Dial("unix", socketPath)
 		},
 	}
-	c := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	c := &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout}
 	return &httpGatewaySynth{
 		client:     c,
 		basePrefix: httpUnixBasePrefix,
@@ -3343,7 +3348,7 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			},
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: httpUnixBasePrefix,
 			log:        log,
 		}, nil
@@ -3353,11 +3358,15 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			scheme = httpsScheme
 		}
 		tr := &http.Transport{
-			TLSClientConfig:       tlsCfg,
-			ResponseHeaderTimeout: 30 * time.Second,
+			TLSClientConfig: tlsCfg,
+			// The gateway answers a dispatch only when the invocation ends.
+			// The context-bound client shares this transport, so the header
+			// wait must cover the longest dispatch (ADR-1180); the client's
+			// Timeout or the call's context bounds every other call.
+			ResponseHeaderTimeout: api.AsyncInvocationDispatchMax,
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: scheme + "://" + t.Address,
 			log:        log,
 		}, nil
@@ -3428,6 +3437,11 @@ func (h *httpGatewaySynth) WithMintInternalSvcToken(mint func(appID string) (str
 	return h
 }
 
+// triggerClientTimeout is the trigger client's outer bound: the longest
+// batch any app's invocations allow (ADR-1180). postBatch sets each call's
+// own deadline.
+const triggerClientTimeout = api.AsyncInvocationDispatchMax + api.AsyncInvocationLeaseMargin
+
 func HTTPClientForGatewaySynthTarget(target string) (*http.Client, string, error) {
 	if target == "" {
 		return nil, "", errors.New("sched: gateway synth target is empty")
@@ -3443,13 +3457,26 @@ func HTTPClientForGatewaySynthTarget(target string) (*http.Client, string, error
 				return net.Dial("unix", t.Address)
 			},
 		}
-		return &http.Client{Transport: tr, Timeout: 60 * time.Second}, httpUnixBasePrefix, nil
+		return &http.Client{Transport: tr, Timeout: triggerClientTimeout}, httpUnixBasePrefix, nil
 	case wire.SchemeTCP, wire.SchemeDNS:
 		scheme := httpScheme
-		return &http.Client{Timeout: 60 * time.Second}, scheme + "://" + t.Address, nil
+		return &http.Client{Timeout: triggerClientTimeout}, scheme + "://" + t.Address, nil
 	default:
 		return nil, "", fmt.Errorf("sched: gateway synth target scheme %q not supported", t.Scheme)
 	}
+}
+
+type longDispatchKey struct{}
+
+// withLongDispatch marks an invocation of a long-timeout app (ADR-1180): the
+// context's deadline, not the synth client's 30 s, bounds its dispatch.
+func withLongDispatch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, longDispatchKey{}, true)
+}
+
+func isLongDispatch(ctx context.Context) bool {
+	long, _ := ctx.Value(longDispatchKey{}).(bool)
+	return long
 }
 
 // SynthesizeRequest posts {app_id, method, path} to gatewayd-internal's internal
@@ -3560,6 +3587,18 @@ func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appI
 }
 
 func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, time.Time, error) {
+	// The step's own timeout (bounded per plan by WorkflowStepMaxTimeout) is
+	// the attempt deadline. The shared synth client's fixed Timeout used to
+	// cut every step at 30 s whatever it declared (production-us hunt #9,
+	// H9-151), so steps use a client bounded only by this context. A step
+	// without a timeout keeps that client's limit.
+	client := h.client
+	if timeout > 0 {
+		client = h.contextBoundClient()
+	} else if client != nil && client.Timeout > 0 {
+		timeout = client.Timeout
+		client = h.contextBoundClient()
+	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3591,11 +3630,46 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 		ManagedOperationGeneration: generation,
 		OperationResultVersion:     boolToProtocolVersion(operationID != ""),
 	}
-	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
+	out, statusCode, err := h.invokeWithStatusUsing(ctx, client, appID, inv, nil)
 	if err != nil {
 		return 0, nil, time.Time{}, err
 	}
 	return statusCode, out.Result, api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()), nil
+}
+
+// invocationDoError keeps transport detail out of the invocation's
+// customer-visible last_error when an attempt simply ran out of time. The
+// HTTP client's error names the internal unix-socket URL ("Post
+// \"http://unix/v1/invocations:dispatch\": … Client.Timeout exceeded") and
+// says nothing about the limit (production-us hunt #9, H9-135). A caller whose
+// own context ended keeps the original error.
+func invocationDoError(ctx context.Context, err error) error {
+	var netErr net.Error
+	if ctx.Err() == nil && errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("%w: the invocation attempt exceeded the %s dispatch limit", ErrDispatchTimeout, api.GatewaySynthDispatchTimeout)
+	}
+	return fmt.Errorf("sched: invocation do: %w", err)
+}
+
+// dispatchProblemSuffix carries a customer-facing problem from a failed
+// gateway dispatch into the invocation's last_error, e.g. " (plan_limit_
+// concurrency: scale app max_concurrency is 2; 2 already live.)". Plain-text
+// bodies are internal and stay out of customer-visible errors.
+func dispatchProblemSuffix(resp *http.Response) string {
+	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/problem+json") {
+		return ""
+	}
+	var p struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&p); err != nil || p.Code == "" {
+		return ""
+	}
+	if p.Detail == "" {
+		return " (" + safetext.Ellipsis(p.Code, invocationFailureDetailMaxBytes) + ")"
+	}
+	return " (" + safetext.Ellipsis(p.Code+": "+p.Detail, invocationFailureDetailMaxBytes) + ")"
 }
 
 func boolToProtocolVersion(enabled bool) int {
@@ -3630,6 +3704,27 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 }
 
 func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
+	// A long-timeout app's invocation is bounded by its own dispatch
+	// deadline, not the client's 30 s (ADR-1180).
+	client := h.client
+	if isLongDispatch(ctx) {
+		client = h.contextBoundClient()
+	}
+	return h.invokeWithStatusUsing(ctx, client, appID, inv, wake)
+}
+
+// contextBoundClient shares the synth transport but drops the client-wide
+// Timeout, leaving the request's context as the only deadline.
+func (h *httpGatewaySynth) contextBoundClient() *http.Client {
+	if h.client == nil {
+		return &http.Client{}
+	}
+	bound := *h.client
+	bound.Timeout = 0
+	return &bound
+}
+
+func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *http.Client, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
 	var headers map[string]string
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -3717,13 +3812,13 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 			}
 		}
 	}
-	resp, err := h.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return inv, 0, fmt.Errorf("sched: invocation do: %w", err)
+		return inv, 0, invocationDoError(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		err := fmt.Errorf("sched: invocation: gateway returned %d%s", resp.StatusCode, dispatchProblemSuffix(resp))
 		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
 		}
@@ -4567,6 +4662,18 @@ func nonZeroSchedTimePtr(value time.Time) *time.Time {
 	return &value
 }
 
+// cronHandsOffToDrain reports whether a cron fire for appID is delivered by
+// the drain rather than inline: true when the app's invocations may run past
+// 30 s (ADR-1180). A failed lookup keeps the inline path.
+func (l *Loop) cronHandsOffToDrain(ctx context.Context, appID string) bool {
+	store := l.engine.Store()
+	app, err := store.AppByID(ctx, appID)
+	if err != nil {
+		return false
+	}
+	return state.AsyncInvocationTimeout(ctx, store, app) > api.AsyncInvocationTimeoutFloor
+}
+
 // dispatchCronLocked is the post-boundary part of the cron fire path.
 // Called by both the 60s tick (trigger=TriggerSchedule) and the
 // fire-now API (trigger=TriggerManual). The deferred audit emit is
@@ -4745,6 +4852,14 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// the lifecycle must mirror the drain's: claim → invoke → stamp
 	// → complete. Doing the claim here also keeps the row out of
 	// the drain's next tick (which filters state='pending').
+	// A function whose invocations may run past 30 s would hold this loop,
+	// and every cron behind it, for the whole run. Leave the persisted row to
+	// the drain, which delivers it in the background under a lease sized to
+	// the run (ADR-1180).
+	if enq.ID != "" && l.cronHandsOffToDrain(ctx, c.AppID) {
+		l.log.Debug("cron: long invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID)
+		return CronRun{InvocationID: enq.ID}, true
+	}
 	if enq.ID != "" {
 		maxInflight := api.MustLimitsFor(acct.Plan).MaxAsyncInvocationsPerAccount
 		claimed, claimErr := l.engine.Store().ClaimInvocationWithCap(ctx, enq.ID, "", 60, maxInflight)
@@ -4985,4 +5100,43 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
+// ceiling (ADR-909). It runs only under measured admission: otherwise each
+// VM's memory.max keeps a node's memory under its reservations. A node
+// without a fresh vmmd capacity report is skipped.
+func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
+	ledger := l.engine.Ledger()
+	if !ledger.MeasuredAdmissionEnabled() {
+		return
+	}
+	used, ceiling := map[string]int{}, map[string]int{}
+	for _, in := range snapshot {
+		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
+			continue
+		}
+		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
+		if !ok {
+			continue
+		}
+		used[in.NodeID] = int(report.UsedMB)
+		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
+	}
+	resident := make(map[string]int, len(activity))
+	for id, a := range activity {
+		resident[id] = a.ResidentMB
+	}
+	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
+		if err := l.engine.Evict(ctx, id); err != nil {
+			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
+			continue
+		}
+		l.log.Info("reaper: evicted under measured memory pressure", "instance", id)
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "measured_memory"); counter != nil {
+				counter.Inc()
+			}
+		}
+	}
 }

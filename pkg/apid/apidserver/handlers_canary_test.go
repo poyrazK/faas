@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -11,24 +11,25 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestAdvanceCanaryDerivesStageAndRejectsStaleWorker(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "canary-advance"})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "canary-advance"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+	prior, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	canary, err := e.store.CreateDeployment(ctx, state.Deployment{
+	canary, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		AppID:            app.ID,
 		ImageDigest:      "sha256:canary",
 		CanaryPreset:     "balanced",
@@ -40,11 +41,11 @@ func TestAdvanceCanaryDerivesStageAndRejectsStaleWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, canary.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, canary.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	rec := e.do(t, http.MethodPost, "/v1/deployments/"+canary.ID+"/canary/advance",
+	rec := e.Do(t, http.MethodPost, "/v1/deployments/"+canary.ID+"/canary/advance",
 		api.AdvanceCanaryRequest{ExpectedStep: 0}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("advance status = %d, body=%s", rec.Code, rec.Body.String())
@@ -59,11 +60,11 @@ func TestAdvanceCanaryDerivesStageAndRejectsStaleWorker(t *testing.T) {
 	if out.AuditID == "" {
 		t.Fatal("advance response audit_id is empty")
 	}
-	if got, err := e.store.DeploymentByID(ctx, prior.ID); err != nil || got.TrafficPercent != 90 {
+	if got, err := (*e.Store()).DeploymentByID(ctx, prior.ID); err != nil || got.TrafficPercent != 90 {
 		t.Fatalf("prior after advance = %+v, %v; want traffic=90", got, err)
 	}
 
-	stale := e.do(t, http.MethodPost, "/v1/deployments/"+canary.ID+"/canary/advance",
+	stale := e.Do(t, http.MethodPost, "/v1/deployments/"+canary.ID+"/canary/advance",
 		api.AdvanceCanaryRequest{ExpectedStep: 0}, nil)
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("stale status = %d, body=%s", stale.Code, stale.Body.String())
@@ -75,7 +76,7 @@ func TestAdvanceCanaryDerivesStageAndRejectsStaleWorker(t *testing.T) {
 	if problem.Code != api.CodeCanaryStepConflict {
 		t.Fatalf("stale problem code = %q, want %q", problem.Code, api.CodeCanaryStepConflict)
 	}
-	if _, _, err := e.store.AdvanceCanary(ctx, canary.ID, state.CanaryAdvanceParams{
+	if _, _, err := (*e.Store()).AdvanceCanary(ctx, canary.ID, state.CanaryAdvanceParams{
 		ExpectedStep: 0, TrafficPercent: 10,
 	}); !errors.Is(err, state.ErrCanaryStepConflict) {
 		t.Fatalf("direct stale transition error = %v, want ErrCanaryStepConflict", err)
@@ -83,39 +84,39 @@ func TestAdvanceCanaryDerivesStageAndRejectsStaleWorker(t *testing.T) {
 }
 
 func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	other, err := e.store.CreateAccount(ctx, "canary-other@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(ctx, "canary-other@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "other-account-canary"})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: other.ID, Slug: "other-account-canary"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+	prior, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	canary, err := e.store.CreateDeployment(ctx, state.Deployment{
+	canary, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
 		AppID: app.ID, ImageDigest: "sha256:canary", CanaryPreset: "balanced",
 		CanaryStep: 0, CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, canary.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, canary.ID); err != nil {
 		t.Fatal(err)
 	}
 	publicPath := "/v1/deployments/" + canary.ID + "/canary/advance"
-	if rec := e.do(t, http.MethodPost, publicPath, api.AdvanceCanaryRequest{ExpectedStep: 0}, nil); rec.Code != http.StatusNotFound {
+	if rec := e.Do(t, http.MethodPost, publicPath, api.AdvanceCanaryRequest{ExpectedStep: 0}, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-account customer bearer status = %d, want 404", rec.Code)
 	}
 	internalPath := "/v1/internal/safe-deploy/deployments/" + canary.ID + "/canary/advance"
-	if rec := e.do(t, http.MethodPost, internalPath, api.AdvanceCanaryRequest{ExpectedStep: 0}, nil); rec.Code != http.StatusNotFound {
+	if rec := e.Do(t, http.MethodPost, internalPath, api.AdvanceCanaryRequest{ExpectedStep: 0}, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("internal route on public mux status = %d, want 404", rec.Code)
 	}
 
@@ -126,12 +127,12 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 		{addr: "127.0.0.1:9101", canary: "short", action: actionToken},
 		{addr: "127.0.0.1:9101", canary: canaryToken, action: canaryToken},
 	} {
-		if err := e.s.mountInternalSafeDeploy(http.NewServeMux(), tt.addr, tt.canary, tt.action); err == nil {
+		if err := (*e.S()).MountInternalSafeDeploy(http.NewServeMux(), tt.addr, tt.canary, tt.action); err == nil {
 			t.Fatalf("accepted invalid operator listener/service credentials: %+v", tt)
 		}
 	}
 	mux := http.NewServeMux()
-	if err := e.s.mountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
+	if err := (*e.S()).MountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(mux)
@@ -148,7 +149,7 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 			t.Fatalf("token/remote %q/%q: status=%d, want %d", token, remote, rec.Code, want)
 		}
 	}
-	checkDenied(e.key, "127.0.0.1:1234", http.StatusUnauthorized)
+	checkDenied((*e.Key()), "127.0.0.1:1234", http.StatusUnauthorized)
 	checkDenied(actionToken, "127.0.0.1:1234", http.StatusUnauthorized)
 	checkDenied(canaryToken, "192.0.2.10:1234", http.StatusForbidden)
 	body, _ := json.Marshal(api.AdvanceCanaryRequest{ExpectedStep: 0})
@@ -157,16 +158,16 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+canaryToken)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeSafeReleaseUnavailable)
-	unchanged, err := e.store.DeploymentByID(ctx, canary.ID)
+	apidserver.AssertProblem(t, rec, http.StatusServiceUnavailable, api.CodeSafeReleaseUnavailable)
+	unchanged, err := (*e.Store()).DeploymentByID(ctx, canary.ID)
 	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
 		t.Fatalf("worker advance without lease mutated canary = %+v, err=%v", unchanged, err)
 	}
-	audit, err := e.store.ListDeploymentAudit(ctx, canary.ID, 10)
+	audit, err := (*e.Store()).ListDeploymentAudit(ctx, canary.ID, 10)
 	if err != nil || len(audit) != 0 {
 		t.Fatalf("worker advance without lease audit = %d rows, err=%v", len(audit), err)
 	}
-	if err := e.store.StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
+	if err := (*e.Store()).StampSafeReleaseWorkerLease(ctx, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	req = httptest.NewRequest(http.MethodPost, internalPath, bytes.NewReader(body))
@@ -174,16 +175,16 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+canaryToken)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	assertProblem(t, rec, http.StatusConflict, api.CodeConflict)
-	unchanged, err = e.store.DeploymentByID(ctx, canary.ID)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeConflict)
+	unchanged, err = (*e.Store()).DeploymentByID(ctx, canary.ID)
 	if err != nil || unchanged.CanaryStep != 0 || unchanged.TrafficPercent != 1 {
 		t.Fatalf("early worker advance mutated canary = %+v, err=%v", unchanged, err)
 	}
-	audit, err = e.store.ListDeploymentAudit(ctx, canary.ID, 10)
+	audit, err = (*e.Store()).ListDeploymentAudit(ctx, canary.ID, 10)
 	if err != nil || len(audit) != 0 {
 		t.Fatalf("early worker advance audit = %d rows, err=%v", len(audit), err)
 	}
-	if err := e.store.SetDeploymentCanaryState(ctx, canary.ID, "balanced", 0, 4, time.Now().Add(-24*time.Hour), "rolling_out"); err != nil {
+	if err := (*e.Store()).SetDeploymentCanaryState(ctx, canary.ID, "balanced", 0, 4, time.Now().Add(-24*time.Hour), "rolling_out"); err != nil {
 		t.Fatal(err)
 	}
 	client := api.NewInternalSafeDeployClient(server.URL, canaryToken, actionToken)
@@ -215,47 +216,47 @@ func TestInternalSafeDeployCrossAccountAndPublicIsolation(t *testing.T) {
 	if recovered.Deployment.RolloutState != "aborted" {
 		t.Fatalf("recovered state = %q, want aborted", recovered.Deployment.RolloutState)
 	}
-	if got, err := e.store.DeploymentByID(ctx, prior.ID); err != nil || got.TrafficPercent != 100 {
+	if got, err := (*e.Store()).DeploymentByID(ctx, prior.ID); err != nil || got.TrafficPercent != 100 {
 		t.Fatalf("exact recovery predecessor = traffic:%d err:%v; want restored to 100%%", got.TrafficPercent, err)
 	}
 }
 
 func TestInternalSafeDeployRollbackAcrossAccount(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	other, err := e.store.CreateAccount(ctx, "rollback-other@example.com", api.PlanPro)
+	other, err := (*e.Store()).CreateAccount(ctx, "rollback-other@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := e.store.CreateApp(ctx, state.App{AccountID: other.ID, Slug: "other-account-rollback"})
+	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: other.ID, Slug: "other-account-rollback"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	prior, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+	prior, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.SetDeploymentRootfs(ctx, prior.ID, "/srv/fc/apps/"+app.Slug+"/"+prior.ID+".ext4", "apps/"+app.Slug+"/"+prior.ID+".ext4", 1); err != nil {
+	if err := (*e.Store()).SetDeploymentRootfs(ctx, prior.ID, "/srv/fc/apps/"+app.Slug+"/"+prior.ID+".ext4", "apps/"+app.Slug+"/"+prior.ID+".ext4", 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
-	current, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:current"})
+	current, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:current"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentLive(ctx, current.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentLive(ctx, current.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.MarkDeploymentSuperseded(ctx, prior.ID); err != nil {
+	if err := (*e.Store()).MarkDeploymentSuperseded(ctx, prior.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	const canaryToken = "canary-service-secret-0000000000000001"
 	const actionToken = "action-service-secret-0000000000000001"
 	mux := http.NewServeMux()
-	if err := e.s.mountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
+	if err := (*e.S()).MountInternalSafeDeploy(mux, "127.0.0.1:9101", canaryToken, actionToken); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(mux)
@@ -268,7 +269,7 @@ func TestInternalSafeDeployRollbackAcrossAccount(t *testing.T) {
 	if queued.ID != prior.ID || queued.Status != string(state.DeploySnapshotting) {
 		t.Fatalf("rollback response = %+v, want prior deployment queued for snapshot validation", queued)
 	}
-	stillLive, err := e.store.DeploymentByID(ctx, current.ID)
+	stillLive, err := (*e.Store()).DeploymentByID(ctx, current.ID)
 	if err != nil || stillLive.Status != state.DeployLive {
 		t.Fatalf("current deployment = %+v, err=%v; must stay live until rollback validates", stillLive, err)
 	}

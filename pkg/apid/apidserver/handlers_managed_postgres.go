@@ -15,9 +15,12 @@ import (
 
 func managedPostgresProblem(w http.ResponseWriter, err error) {
 	status, code, title := http.StatusInternalServerError, "managed_postgres_error", "Managed PostgreSQL error"
+	detail := err.Error()
 	switch {
+	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_provisioning_not_enabled", "Managed PostgreSQL provisioning is closed", managedpostgres.ProvisioningClosedDetail
 	case errors.Is(err, managedpostgres.ErrUnavailable):
-		status, code, title = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable"
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable", managedpostgres.UnavailableDetail
 	case errors.Is(err, managedpostgres.ErrNotFound):
 		status, code, title = http.StatusNotFound, "managed_postgres_not_found", "Managed PostgreSQL resource not found"
 	case errors.Is(err, managedpostgres.ErrConflict):
@@ -27,14 +30,11 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, managedpostgres.ErrUnsupported):
 		status, code, title = http.StatusUnprocessableEntity, "managed_postgres_unsupported", "Managed PostgreSQL feature unsupported"
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
-		status, code, title = http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
+		status, code, title = managedpostgres.QuotaProblem(err)
 	case errors.Is(err, managedpostgres.ErrUsageStale):
-		status, code, title = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale"
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_usage_stale", "Managed PostgreSQL usage is stale", managedpostgres.UsageStaleDetail
 	}
-	detail := err.Error()
-	if errors.Is(err, managedpostgres.ErrUnavailable) {
-		detail = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
-	} else if status >= 500 {
+	if status >= 500 && !errors.Is(err, managedpostgres.ErrUsageStale) && !errors.Is(err, managedpostgres.ErrUnavailable) {
 		detail = "The managed PostgreSQL operation could not be completed."
 	}
 	problem := api.NewProblem(status, code, title, detail)
@@ -171,7 +171,7 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 	view := api.ManagedPostgresUsageResponse{
 		PeriodStart: summary.Snapshot.PeriodStart, PolicyEnabled: summary.PolicyEnabled,
 		Fresh: summary.Fresh, GuardrailState: state,
-		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: limits.DatabasesMax,
+		ReadyDatabases: summary.Snapshot.ReadyDatabases, DatabaseLimit: summary.EnforcedDatabaseLimit(limits.DatabasesMax),
 		StorageLimitBytes:       limits.StorageLimitBytes,
 		ComputeUnitSeconds:      summary.Snapshot.ComputeUnitSeconds,
 		StorageByteSeconds:      summary.Snapshot.StorageByteSeconds,

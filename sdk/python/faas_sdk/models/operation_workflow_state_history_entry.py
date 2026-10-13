@@ -12,9 +12,13 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_blocker import OperationWorkflowBlocker
     from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+    from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
     from ..models.operation_workflow_dependency import OperationWorkflowDependency
     from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+    from ..models.operation_workflow_outcome_link import OperationWorkflowOutcomeLink
+    from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
     from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
+    from ..models.operation_workflow_revision_comparison import OperationWorkflowRevisionComparison
 
 
 T = TypeVar("T", bound="OperationWorkflowStateHistoryEntry")
@@ -36,6 +40,17 @@ class OperationWorkflowStateHistoryEntry:
     contract_version: int
     occurred_at: datetime.datetime
     published_at: datetime.datetime
+    outcome_link: OperationWorkflowOutcomeLink | Unset = UNSET
+    """Observed report-to-outcome path on the same retained history page. Links reported sequence without
+    establishing business causation; durations are meaningful only for linked status."""
+    change_reason: OperationWorkflowChangeReason | Unset = UNSET
+    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
+   """
+    comparison: OperationWorkflowRevisionComparison | Unset = UNSET
+    """Derived comparison with the preceding retained report on this history page in the same workflow run and
+    tenant. Gaps and unavailable baselines prevent inferred changes or causal claims."""
+    selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
     """Current retained-evidence status for verification obligations in this history report."""
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
@@ -88,6 +103,25 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = self.occurred_at.isoformat()
 
         published_at = self.published_at.isoformat()
+
+        outcome_link: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.outcome_link, Unset):
+            outcome_link = self.outcome_link.to_dict()
+
+        change_reason: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.change_reason, Unset):
+            change_reason = self.change_reason.to_dict()
+
+        comparison: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.comparison, Unset):
+            comparison = self.comparison.to_dict()
+
+        selected_paths: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.selected_paths, Unset):
+            selected_paths = []
+            for selected_paths_item_data in self.selected_paths:
+                selected_paths_item = selected_paths_item_data.to_dict()
+                selected_paths.append(selected_paths_item)
 
         resolution_verifications: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.resolution_verifications, Unset):
@@ -161,6 +195,14 @@ class OperationWorkflowStateHistoryEntry:
                 "published_at": published_at,
             }
         )
+        if outcome_link is not UNSET:
+            field_dict["outcome_link"] = outcome_link
+        if change_reason is not UNSET:
+            field_dict["change_reason"] = change_reason
+        if comparison is not UNSET:
+            field_dict["comparison"] = comparison
+        if selected_paths is not UNSET:
+            field_dict["selected_paths"] = selected_paths
         if resolution_verifications is not UNSET:
             field_dict["resolution_verifications"] = resolution_verifications
         if depends_on is not UNSET:
@@ -196,9 +238,13 @@ class OperationWorkflowStateHistoryEntry:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_blocker import OperationWorkflowBlocker
         from ..models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
+        from ..models.operation_workflow_change_reason import OperationWorkflowChangeReason
         from ..models.operation_workflow_dependency import OperationWorkflowDependency
         from ..models.operation_workflow_evidence_milestone import OperationWorkflowEvidenceMilestone
+        from ..models.operation_workflow_outcome_link import OperationWorkflowOutcomeLink
+        from ..models.operation_workflow_path_selection import OperationWorkflowPathSelection
         from ..models.operation_workflow_resolution_verification import OperationWorkflowResolutionVerification
+        from ..models.operation_workflow_revision_comparison import OperationWorkflowRevisionComparison
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -218,6 +264,36 @@ class OperationWorkflowStateHistoryEntry:
         occurred_at = datetime.datetime.fromisoformat(d.pop("occurred_at"))
 
         published_at = datetime.datetime.fromisoformat(d.pop("published_at"))
+
+        _outcome_link = d.pop("outcome_link", UNSET)
+        outcome_link: OperationWorkflowOutcomeLink | Unset
+        if isinstance(_outcome_link, Unset):
+            outcome_link = UNSET
+        else:
+            outcome_link = OperationWorkflowOutcomeLink.from_dict(_outcome_link)
+
+        _change_reason = d.pop("change_reason", UNSET)
+        change_reason: OperationWorkflowChangeReason | Unset
+        if isinstance(_change_reason, Unset):
+            change_reason = UNSET
+        else:
+            change_reason = OperationWorkflowChangeReason.from_dict(_change_reason)
+
+        _comparison = d.pop("comparison", UNSET)
+        comparison: OperationWorkflowRevisionComparison | Unset
+        if isinstance(_comparison, Unset):
+            comparison = UNSET
+        else:
+            comparison = OperationWorkflowRevisionComparison.from_dict(_comparison)
+
+        _selected_paths = d.pop("selected_paths", UNSET)
+        selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
+        if _selected_paths is not UNSET:
+            selected_paths = []
+            for selected_paths_item_data in _selected_paths:
+                selected_paths_item = OperationWorkflowPathSelection.from_dict(selected_paths_item_data)
+
+                selected_paths.append(selected_paths_item)
 
         _resolution_verifications = d.pop("resolution_verifications", UNSET)
         resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
@@ -304,6 +380,10 @@ class OperationWorkflowStateHistoryEntry:
             contract_version=contract_version,
             occurred_at=occurred_at,
             published_at=published_at,
+            outcome_link=outcome_link,
+            change_reason=change_reason,
+            comparison=comparison,
+            selected_paths=selected_paths,
             resolution_verifications=resolution_verifications,
             depends_on=depends_on,
             dependencies_only=dependencies_only,

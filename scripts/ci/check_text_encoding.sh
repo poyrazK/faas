@@ -59,7 +59,9 @@ text_ident_re='(msg|message|errMsg|errmsg|reason|cause|detail|line|text|body|tit
 # strings.Index or a scan is cutting at a boundary the caller already found,
 # which is safe by construction — those are the majority of matches and
 # flagging them would bury the real ones.
-fixed_bound_re='([0-9]+|[a-zA-Z_.]*[Mm]ax[A-Za-z]*)'
+# Resetting a buffer or string to [:0] cannot split a UTF-8 rune. Keep
+# rejecting every positive literal cap (including leading-zero literals).
+fixed_bound_re='([0-9]*[1-9][0-9]*|[a-zA-Z_.]*[Mm]ax[A-Za-z]*)'
 
 rule2_allow_re='pkg/safetext/|_test\.go'
 

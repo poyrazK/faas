@@ -215,14 +215,17 @@ func TestPostgresCutoverAdmissionFencesOldTransactions(t *testing.T) {
 				_, insertErr := old.Exec(ctx, `INSERT INTO instances(app_id,state,ram_mb,node_id) VALUES($1,'cold_booting',256,$2)`, c.AppID, node.ID)
 				done <- insertErr
 			}()
-			waitForAdmissionLock(t, ctx, s, pid)
+			waiting, admissionErr := waitForAdmissionLockOrCompletion(t, ctx, s, pid, done)
 			if _, err = blocker.Exec(ctx, `UPDATE apps SET managed_postgres_admission_cutover_id=$2,managed_postgres_admission_fenced_at=clock_timestamp() WHERE id=$1`, c.AppID, c.ID); err != nil {
 				t.Fatal(err)
 			}
 			if err = blocker.Commit(ctx); err != nil {
 				t.Fatal(err)
 			}
-			err = <-done
+			if waiting {
+				admissionErr = <-done
+			}
+			err = admissionErr
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) || (pgErr.ConstraintName != "managed_postgres_cutover_admission_fenced" && pgErr.Code != "40001") {
 				t.Fatalf("old transaction admitted a VM: %v", err)
@@ -338,15 +341,22 @@ func waitForAdmissionAppLock(t *testing.T, ctx context.Context, s *PostgresStore
 	}
 }
 
-func waitForAdmissionLock(t *testing.T, ctx context.Context, s *PostgresStore, pid uint32) {
+// A stricter admission trigger can reject an obsolete snapshot before reaching
+// the app lock. Preserve that result so the caller still verifies refusal.
+func waitForAdmissionLockOrCompletion(t *testing.T, ctx context.Context, s *PostgresStore, pid uint32, done <-chan error) (bool, error) {
 	t.Helper()
 	for {
+		select {
+		case err := <-done:
+			return false, err
+		default:
+		}
 		var waiting bool
 		if err := s.pool.QueryRow(ctx, `SELECT coalesce(wait_event_type='Lock',false) FROM pg_stat_activity WHERE pid=$1`, pid).Scan(&waiting); err != nil {
 			t.Fatal(err)
 		}
 		if waiting {
-			return
+			return true, nil
 		}
 		select {
 		case <-ctx.Done():

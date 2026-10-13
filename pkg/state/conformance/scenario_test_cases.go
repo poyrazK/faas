@@ -33,12 +33,15 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 		return app
 	}
 	app := newPreview()
+	callerApp := newPreview()
 	runID := strings.Repeat("a", 32)
 	member := state.ScenarioTestMember{Workload: "worker", AppID: app.ID}
 	if err := s.RegisterScenarioTestMembers(ctx, accountID, runID, []state.ScenarioTestMember{{Workload: "primary", AppID: fx.App.ID}}); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("register production app = %v, want ErrNotFound", err)
 	}
-	if err := s.RegisterScenarioTestMembers(ctx, accountID, runID, []state.ScenarioTestMember{member}); err != nil {
+	if err := s.RegisterScenarioTestMembers(ctx, accountID, runID, []state.ScenarioTestMember{
+		member, {Workload: "primary", AppID: callerApp.ID},
+	}); err != nil {
 		t.Fatalf("RegisterScenarioTestMembers: %v", err)
 	}
 	if got, err := s.ScenarioTestMemberByApp(ctx, app.ID); err != nil || got.AccountID != accountID || got.RunID != runID || got.Workload != "worker" {
@@ -62,6 +65,48 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	if err != nil || lease.CallerWorkload != "worker" || len(lease.Rules) != 1 || lease.Rules[0].StatusCode != 503 {
 		t.Fatalf("ScenarioTestChaosForCall = (%+v, %v)", lease, err)
 	}
+	strictRule := chaos.Rule{From: "primary", To: "worker", Kind: chaos.KindHTTPStatus, StatusCode: 503, Percent: 100, CorrelationScope: "0123456789abcdef"}
+	strictPlan := chaos.Plan{DurationMS: 10_000, Rules: []chaos.Rule{strictRule}}
+	strictLease, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, strictPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	injections := []chaos.InjectionBatch{}
+	for _, id := range []string{chaos.RuleID(strictRule), chaos.CorrelationSupportID(strictRule), chaos.CorrelationCounterID(strictRule, 1)} {
+		injections = append(injections, chaos.InjectionBatch{RunID: runID, CallerApp: callerApp.ID, Generation: strictLease.Generation, RuleID: id, Count: 2})
+	}
+	if err := s.RecordScenarioTestChaosInjections(ctx, injections); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil || evidence.Generation != strictLease.Generation || len(evidence.Matches) != 3 {
+		t.Fatalf("strict persisted counters: %+v %v", evidence, err)
+	}
+	for _, match := range evidence.Matches {
+		if match.Count != 2 {
+			t.Fatalf("strict counter lost: %+v", match)
+		}
+	}
+	strictRule.CorrelationScope = "fedcba9876543210"
+	strictPlan.Rules = []chaos.Rule{strictRule}
+	replacement, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, strictPlan)
+	if err != nil || replacement.Generation == strictLease.Generation {
+		t.Fatalf("strict replacement: %+v %v", replacement, err)
+	}
+	if err := s.RecordScenarioTestChaosInjections(ctx, injections); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil || evidence.Generation != replacement.Generation || len(evidence.Matches) != 0 {
+		t.Fatalf("stale strict generation escaped: %+v %v", evidence, err)
+	}
+	if err := s.ClearScenarioTestChaosPlan(ctx, accountID, runID); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = s.ScenarioTestChaosMatchEvidence(ctx, accountID, runID)
+	if err != nil || len(evidence.Matches) != 0 {
+		t.Fatalf("strict clear retained counters: %+v %v", evidence, err)
+	}
 	for _, rule := range []chaos.Rule{
 		{Kind: chaos.KindTCPLatency, LatencyMS: 100},
 		{Kind: chaos.KindTCPBandwidth, RateKiBPerSecond: 32, Direction: chaos.DirectionDownstream},
@@ -76,6 +121,37 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 		if err != nil || len(got.Rules) != 1 || got.Rules[0] != rule {
 			t.Fatalf("TCP rule roundtrip: %+v %v", got, err)
 		}
+	}
+	dnsPlan := chaos.Plan{DurationMS: 10_000, Rules: []chaos.Rule{{
+		From: "primary", To: "worker", Kind: chaos.KindDNSNXDomain, Percent: 100,
+	}}}
+	if _, err := s.SetScenarioTestChaosPlan(ctx, accountID, runID, dnsPlan); err != nil {
+		t.Fatalf("SetScenarioTestChaosPlan(DNS): %v", err)
+	}
+	callerInstance, err := s.CreateInstance(ctx, callerApp.ID, "", string(state.StateColdBooting), 128, fx.Node.ID, "")
+	if err != nil {
+		t.Fatalf("CreateInstance(DNS caller): %v", err)
+	}
+	if _, err := s.PublishInstanceRuntime(ctx, callerInstance.ID, string(state.StateColdBooting), "scenario-dns-caller", "10.99.0.77", 20077); err != nil {
+		t.Fatalf("PublishInstanceRuntime(DNS caller): %v", err)
+	}
+	dnsPolicy, err := s.ScenarioTestDNSChaosByHostIP(ctx, fx.Node.Name, "10.99.0.77", "worker")
+	if err != nil || dnsPolicy.RunID != runID || dnsPolicy.CallerAppID != callerApp.ID ||
+		len(dnsPolicy.Lease.Rules) != 1 || dnsPolicy.Lease.Rules[0].Kind != chaos.KindDNSNXDomain {
+		t.Fatalf("ScenarioTestDNSChaosByHostIP = (%+v, %v)", dnsPolicy, err)
+	}
+	if policy, err := s.ScenarioTestDNSChaosByHostIP(ctx, fx.Node.Name, "10.99.0.77", "production"); err != nil || len(policy.Lease.Rules) != 0 {
+		t.Fatalf("DNS lookup escaped the run namespace = (%+v, %v)", policy, err)
+	}
+	productionInstance, err := s.CreateInstance(ctx, fx.App.ID, fx.Deployment.ID, string(state.StateColdBooting), 128, fx.Node.ID, "")
+	if err != nil {
+		t.Fatalf("CreateInstance(production caller): %v", err)
+	}
+	if _, err := s.PublishInstanceRuntime(ctx, productionInstance.ID, string(state.StateColdBooting), "scenario-dns-production", "10.99.0.78", 20078); err != nil {
+		t.Fatalf("PublishInstanceRuntime(production caller): %v", err)
+	}
+	if policy, err := s.ScenarioTestDNSChaosByHostIP(ctx, fx.Node.Name, "10.99.0.78", "worker"); err != nil || len(policy.Lease.Rules) != 0 {
+		t.Fatalf("production caller received DNS chaos = (%+v, %v)", policy, err)
 	}
 	if err := s.ClearScenarioTestChaosPlan(ctx, accountID, runID); err != nil {
 		t.Fatalf("ClearScenarioTestChaosPlan: %v", err)
@@ -109,11 +185,14 @@ func testScenarioTestNamespace(t *testing.T, fx *Fixture) {
 	if err := s.DeleteApp(ctx, app.ID); err != nil {
 		t.Fatalf("DeleteApp: %v", err)
 	}
+	if err := s.DeleteApp(ctx, callerApp.ID); err != nil {
+		t.Fatalf("DeleteApp(DNS caller): %v", err)
+	}
 	if _, err := s.ScenarioTestAppByWorkload(ctx, accountID, runID, "worker"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("lookup deleted preview = %v, want ErrNotFound", err)
 	}
-	if n, err := s.PruneScenarioTestMembers(ctx, 1); err != nil || n != 1 {
-		t.Fatalf("prune deleted namespace = (%d, %v), want (1, nil)", n, err)
+	if n, err := s.PruneScenarioTestMembers(ctx, 2); err != nil || n != 2 {
+		t.Fatalf("prune deleted namespace = (%d, %v), want (2, nil)", n, err)
 	}
 	if _, err := s.ScenarioTestMemberByApp(ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("lookup pruned member = %v, want ErrNotFound", err)

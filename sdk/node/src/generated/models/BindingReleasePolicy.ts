@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
 /**
  * Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
  */
 export type BindingReleasePolicy = {
+  object_storage_requirements?: ObjectStorageReleaseRequirements;
   app_id: string;
   scope: string;
   mode: 'off' | 'enforce';

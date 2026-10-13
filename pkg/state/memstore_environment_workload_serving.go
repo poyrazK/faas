@@ -100,6 +100,16 @@ func (m *MemStore) recordEnvironmentGitOpsQueueServingAcknowledgementLocked(
 	if matchedGraph.ID == "" || matchedConsumer.BindingID == "" {
 		return ErrConflict
 	}
+	releaseID := m.activeProjectReleaseSets[releaseKey(matchedMemory.source.ProjectID, matchedMemory.source.EnvironmentSlug)]
+	release, releaseExists := m.projectReleaseSets[releaseID]
+	invocation, invocationExists := m.invocations[acknowledgement.InvocationID]
+	if !releaseExists || !release.Active || release.CreatedAt.IsZero() || !invocationExists ||
+		invocation.State != InvocationCompleted || invocation.CompletedAt == nil ||
+		invocation.CompletedAt.Before(release.CreatedAt) || invocation.Source != InvocationQueue ||
+		invocation.AppID != acknowledgement.AppID || invocation.QueueBindingID != acknowledgement.BindingID ||
+		invocation.DeploymentScope != acknowledgement.Scope {
+		return ErrConflict
+	}
 	if m.environmentWorkloadQueueServingAcks == nil {
 		m.environmentWorkloadQueueServingAcks = map[string]map[string]EnvironmentWorkloadServingQueueAck{}
 	}
@@ -118,8 +128,6 @@ func (m *MemStore) recordEnvironmentGitOpsQueueServingAcknowledgementLocked(
 		InvocationID: acknowledgement.InvocationID, Acknowledged: time.Now().UTC()}
 	acks[matchedConsumer.BindingID] = ack
 	if receipt, exists := m.environmentWorkloadServingReceipts[matchedGraph.ID]; exists {
-		releaseID := m.activeProjectReleaseSets[releaseKey(matchedMemory.source.ProjectID, matchedMemory.source.EnvironmentSlug)]
-		release := m.projectReleaseSets[releaseID]
 		receipt.ExpectedQueueConsumers = matchedConsumers
 		receipt.QueueAcknowledgements = m.environmentWorkloadQueueServingAcksLocked(matchedGraph.ID)
 		receipt.ReleaseCreatedAt = release.CreatedAt
@@ -209,6 +217,8 @@ func (m *MemStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, 
 	receiptGateways := gateways
 	if len(routes) == 0 {
 		receiptGateways = []string{}
+	} else if !slices.Equal(gateways, m.environmentServingGatewayNamesLocked()) {
+		return EnvironmentWorkloadServingReceipt{}, false, ErrConflict
 	}
 	slices.SortFunc(routes, func(a, b EnvironmentWorkloadServingRoute) int { return strings.Compare(a.AppID, b.AppID) })
 	receipt, exists := m.environmentWorkloadServingReceipts[graph.ID]

@@ -9,6 +9,7 @@ packages = [
 ]
 include = [
     "faas_sdk/py.typed",
+    { path = "faas_sdk/event_consumer_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/operation_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/customer_operation_schema.sql", format = ["sdist", "wheel"] },
 ]
@@ -17,6 +18,10 @@ include = [
 python = "^3.11"
 httpx = ">=0.23.1,<0.29.0"
 attrs = ">=22.2.0"
+websockets = { version = ">=15.0.1,<16", optional = true }
+
+[tool.poetry.extras]
+realtime = ["websockets"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

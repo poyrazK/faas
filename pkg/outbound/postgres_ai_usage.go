@@ -27,6 +27,8 @@ type aiSettlementLimits struct {
 	accountID                           uuid.UUID
 	name                                string
 	dailyTokens, dailyCost, monthlyCost int64
+	// Per-end-user UTC-day limits (ADR-995).
+	userTokens, userCost int64
 }
 
 // RecordAIUsageAlerts settles one AI call and, in the same transaction,
@@ -40,8 +42,8 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	if err != nil {
 		return nil, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
 	}
-	if record.Caller != AIUsageCallerRuns && !validUUID(record.Caller) {
-		return nil, fmt.Errorf("%w: AI usage caller must be an app UUID or %q", ErrInvalidIntegration, AIUsageCallerRuns)
+	if appCaller(record.Caller) && !validUUID(record.Caller) {
+		return nil, fmt.Errorf("%w: AI usage caller must be an app UUID, %q or %q", ErrInvalidIntegration, AIUsageCallerRuns, AIUsageCallerReplay)
 	}
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -51,6 +53,10 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	if err := insertAIUsageRollup(ctx, tx, integrationID, record); err != nil {
 		return nil, err
 	}
+	user, err := insertAIUserUsageRollup(ctx, tx, integrationID, record)
+	if err != nil {
+		return nil, err
+	}
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
 		return nil, err
@@ -58,16 +64,20 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	var limits aiSettlementLimits
 	if err := tx.QueryRow(ctx, `
 		SELECT account_id, name, COALESCE(ai_daily_token_limit, 0),
-		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0)
+		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
+		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
 		  FROM outbound_integrations WHERE id = $1`, integrationID).
-		Scan(&limits.accountID, &limits.name, &limits.dailyTokens, &limits.dailyCost, &limits.monthlyCost); err != nil {
+		Scan(&limits.accountID, &limits.name, &limits.dailyTokens, &limits.dailyCost, &limits.monthlyCost,
+			&limits.userTokens, &limits.userCost); err != nil {
 		return nil, err
 	}
 	crossings, err := settleAIUsageCounters(ctx, tx, integrationID, record, limits, now)
 	if err != nil {
 		return nil, err
 	}
-	alerts, err := recordAIBudgetAlerts(ctx, tx, integrationID, limits, aiBudgetAlertsFor(record.IntegrationID, crossings, now.UTC()))
+	crossings = append(crossings, userBudgetCrossings(user.endUser, utcDayStart(now), positiveLimit(limits.userTokens),
+		positiveLimit(limits.userCost), user.tokens, user.cost, record.Usage.InputTokens+record.Usage.OutputTokens, record.CostMillicents)...)
+	alerts, err := recordAIBudgetAlerts(ctx, tx, integrationID, limits, record.Caller, aiBudgetAlertsFor(record.IntegrationID, crossings, now.UTC()))
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +105,8 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 	_, err := tx.Exec(ctx, `
 		INSERT INTO outbound_ai_usage_daily AS usage
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
-		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents)
+		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
+		     images, audio_seconds, characters)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -103,7 +114,7 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -114,10 +125,13 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 		    cache_write_tokens = usage.cache_write_tokens + EXCLUDED.cache_write_tokens,
 		    output_tokens = usage.output_tokens + EXCLUDED.output_tokens,
 		    cost_millicents = usage.cost_millicents + EXCLUDED.cost_millicents,
+		    images = usage.images + EXCLUDED.images,
+		    audio_seconds = usage.audio_seconds + EXCLUDED.audio_seconds,
+		    characters = usage.characters + EXCLUDED.characters,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
-		usage.OutputTokens, record.CostMillicents)
+		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters)
 	return err
 }
 
@@ -153,14 +167,14 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 		if err == nil {
 			day, month := utcDayStart(now), utcMonthStart(now)
 			crossings = append(crossings,
-				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens},
-				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost},
-				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost})
+				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, ""},
+				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, ""},
+				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, ""})
 		}
 	}
 	// ADR-990: the app's own binding counter, when the app has a binding row.
 	// Operator attachments and Runs have none, so nothing is updated.
-	if budgetTokens > 0 && record.Caller != AIUsageCallerRuns {
+	if budgetTokens > 0 && appCaller(record.Caller) {
 		appID := uuid.MustParse(record.Caller)
 		var bindingTokens, bindingLimit int64
 		err := tx.QueryRow(ctx, `
@@ -186,7 +200,7 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 		}
 		if err == nil {
 			crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, utcDayStart(now),
-				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens})
+				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, ""})
 		}
 	}
 	return crossings, nil
@@ -194,8 +208,10 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 
 // recordAIBudgetAlerts stores first-time alerts and enqueues one
 // outbound.ai_budget.threshold webhook per affected app: the app itself for
-// an app budget, every bound app for an integration budget.
-func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, limits aiSettlementLimits, alerts []AIBudgetAlert) ([]AIBudgetAlert, error) {
+// an app budget, every bound app for an integration budget, and the calling
+// app for an end user's budget (ADR-995).
+func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, limits aiSettlementLimits, caller string,
+	alerts []AIBudgetAlert) ([]AIBudgetAlert, error) {
 	var recorded []AIBudgetAlert
 	for _, alert := range alerts {
 		var appID *uuid.UUID
@@ -207,10 +223,10 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 		var crossedAt time.Time
 		err := tx.QueryRow(ctx, `
 			INSERT INTO outbound_ai_budget_alerts
-			    (integration_id, account_id, budget, app_id, period_start, threshold_percent, limit_value, used_value)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			    (integration_id, account_id, budget, app_id, end_user, period_start, threshold_percent, limit_value, used_value)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9)
 			ON CONFLICT DO NOTHING
-			RETURNING id, crossed_at`, integrationID, limits.accountID, alert.Budget, appID, alert.PeriodStart,
+			RETURNING id, crossed_at`, integrationID, limits.accountID, alert.Budget, appID, alert.EndUser, alert.PeriodStart,
 			alert.ThresholdPercent, alert.Limit, alert.Used).Scan(&id, &crossedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
@@ -219,15 +235,27 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 			return nil, err
 		}
 		alert.ID, alert.CrossedAt = id.String(), crossedAt.UTC()
-		if err := enqueueAIBudgetWebhooks(ctx, tx, integrationID, limits, alert); err != nil {
-			return nil, err
+		notify := alert.AppID
+		if alert.EndUser != "" {
+			// Runs have no app to notify; the alert is still listed.
+			notify = ""
+			if appCaller(caller) {
+				notify = caller
+			}
+		}
+		if alert.EndUser == "" || notify != "" {
+			if err := enqueueAIBudgetWebhooks(ctx, tx, integrationID, limits, alert, notify); err != nil {
+				return nil, err
+			}
 		}
 		recorded = append(recorded, alert)
 	}
 	return recorded, nil
 }
 
-func enqueueAIBudgetWebhooks(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, limits aiSettlementLimits, alert AIBudgetAlert) error {
+// enqueueAIBudgetWebhooks notifies the bound app notifyApp, or every bound
+// app when it is empty.
+func enqueueAIBudgetWebhooks(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID, limits aiSettlementLimits, alert AIBudgetAlert, notifyApp string) error {
 	payload := api.OutboundAIBudgetThresholdWebhookPayload{
 		AlertID: alert.ID, IntegrationID: alert.IntegrationID, IntegrationName: limits.name, Budget: alert.Budget,
 		PeriodStart: alert.PeriodStart.Format("2006-01-02"), ThresholdPercent: int32(alert.ThresholdPercent),
@@ -235,6 +263,9 @@ func enqueueAIBudgetWebhooks(ctx context.Context, tx pgx.Tx, integrationID uuid.
 	}
 	if alert.AppID != "" {
 		payload.AppID = &alert.AppID
+	}
+	if alert.EndUser != "" {
+		payload.EndUser = &alert.EndUser
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -253,7 +284,7 @@ func enqueueAIBudgetWebhooks(ctx context.Context, tx pgx.Tx, integrationID uuid.
 		   AND (cardinality(hook.event_filter) = 0 OR 'outbound.ai_budget.threshold' = ANY(hook.event_filter))
 		 GROUP BY target.app_id
 		ON CONFLICT (event, source_id) DO NOTHING`,
-		limits.accountID, alert.ID, string(encoded), integrationID, nullableAppID(alert.AppID))
+		limits.accountID, alert.ID, string(encoded), integrationID, nullableAppID(notifyApp))
 	return err
 }
 
@@ -275,19 +306,58 @@ func insertAIRequestLog(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID,
 		routeID = &parsed
 	}
 	usage := record.Usage
-	_, err := tx.Exec(ctx, `
+	var logID uuid.UUID
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
-		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''))
+		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
-		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts)
+		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser).Scan(&logID); err != nil {
+		return err
+	}
+	return insertAIRequestContent(ctx, tx, integrationID, logID, record.Log.Content)
+}
+
+// insertAIRequestContent stores a logged call's captured bodies while the
+// integration has fewer than the day's capped captures (ADR-996). A
+// transaction lock per integration keeps concurrent settlements from
+// overshooting the cap; it is the transaction's last statement, so the lock
+// is never held while waiting on another.
+func insertAIRequestContent(ctx context.Context, tx pgx.Tx, integrationID, logID uuid.UUID, content *AIRequestContent) error {
+	if content == nil {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('outbound-ai-content:' || $1::uuid::text, 0))`,
+		integrationID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO outbound_ai_request_content
+		    (log_id, integration_id, request_body, request_truncated, response_body, response_truncated, response_content_type,
+		     request_path)
+		SELECT $1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($9, '')
+		 WHERE (SELECT count(*) FROM (SELECT 1 FROM outbound_ai_request_content
+		                               WHERE integration_id = $2
+		                                 AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+		                               LIMIT $8) captured) < $8`,
+		logID, integrationID, nonNilBytes(content.Request), content.RequestTruncated, nonNilBytes(content.Response),
+		content.ResponseTruncated, content.ResponseContentType, api.OutboundAIContentCapturesPerDay, content.RequestPath)
 	return err
 }
 
+func nonNilBytes(b []byte) []byte {
+	if b == nil {
+		return []byte{}
+	}
+	return b
+}
+
 // PruneAIUsage deletes UTC-day AI usage rollups and budget alerts older
-// than the rollup retention, and request-log rows older than theirs. It is
+// than the rollup retention, and request-log rows and captured content
+// older than theirs. It is
 // idempotent, so every outboundd replica may run it.
 func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 	var total int64
@@ -298,6 +368,18 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_budget_alerts WHERE period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUsageRetentionDays},
 		{`DELETE FROM outbound_ai_request_log WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIRequestLogRetentionDays},
+		// ADR-996: captured content expires sooner, and an integration that
+		// turned capture off loses what it captured within one prune.
+		{`DELETE FROM outbound_ai_request_content content
+		   WHERE content.created_at < now() - make_interval(days => $1::int)
+		      OR NOT EXISTS (SELECT 1 FROM outbound_integrations integration
+		                      WHERE integration.id = content.integration_id AND integration.ai_request_log_content)`,
+			api.OutboundAIRequestContentRetentionDays},
+		// ADR-997: replays and their results.
+		{`DELETE FROM outbound_ai_replays WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIReplayRetentionDays},
+		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR-995: end users' alerts follow the per-user rollup retention.
+		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 	} {
 		command, err := b.pool.Exec(ctx, statement.sql, statement.days)
 		if err != nil {

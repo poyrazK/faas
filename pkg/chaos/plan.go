@@ -20,12 +20,19 @@ const (
 	MaxHTTPStatus         = 599
 	KindLatency           = "latency"
 	KindHTTPStatus        = "http_status"
+	KindHTTPMalformedJSON = "http_malformed_json"
+	KindHTTPTruncatedBody = "http_truncated_body"
+	KindHTTPResponseLost  = "http_response_lost"
 	KindTCPLatency        = "tcp_latency"
 	KindTCPBandwidth      = "tcp_bandwidth"
 	KindTCPTimeout        = "tcp_timeout"
 	KindTCPReset          = "tcp_reset"
 	KindTCPConnectTimeout = "tcp_connect_timeout"
 	KindTCPConnectRefused = "tcp_connect_refused"
+	KindDNSLatency        = "dns_latency"
+	KindDNSTimeout        = "dns_timeout"
+	KindDNSServFail       = "dns_servfail"
+	KindDNSNXDomain       = "dns_nxdomain"
 	DirectionUpstream     = "upstream"
 	DirectionDownstream   = "downstream"
 	DirectionBoth         = "both"
@@ -36,17 +43,19 @@ var workloadNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]
 // Rule targets one declared service call in an isolated scenario run.
 // From is empty to match calls from any workload in that run.
 type Rule struct {
-	From             string `json:"from,omitempty"`
-	To               string `json:"to"`
-	Kind             string `json:"kind"`
-	Percent          int    `json:"percent"`
-	LatencyMS        int64  `json:"latency_ms,omitempty"`
-	StatusCode       int    `json:"status_code,omitempty"`
-	Seed             uint64 `json:"seed"`
-	Port             int    `json:"port,omitempty"`
-	Direction        string `json:"direction,omitempty"`
-	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
-	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
+	CorrelationScope  string `json:"correlation_scope,omitempty"`
+	From              string `json:"from,omitempty"`
+	To                string `json:"to"`
+	Kind              string `json:"kind"`
+	Percent           int    `json:"percent"`
+	LatencyMS         int64  `json:"latency_ms,omitempty"`
+	StatusCode        int    `json:"status_code,omitempty"`
+	RetryAfterSeconds int64  `json:"retry_after_seconds,omitempty"`
+	Seed              uint64 `json:"seed"`
+	Port              int    `json:"port,omitempty"`
+	Direction         string `json:"direction,omitempty"`
+	RateKiBPerSecond  int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS      int64  `json:"reset_after_ms,omitempty"`
 }
 
 // Plan is installed as a short-lived lease on one scenario test run.
@@ -73,12 +82,16 @@ func (p Plan) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(p.Rules))
 	validatedTCP := make([]Rule, 0, len(p.Rules))
+	validatedDNS := make([]Rule, 0, len(p.Rules))
 	for i, rule := range p.Rules {
 		if !validWorkloadName(rule.To) {
 			return fmt.Errorf("rule %d has an invalid target workload", i+1)
 		}
 		if rule.From != "" && (!validWorkloadName(rule.From) || rule.From == rule.To) {
 			return fmt.Errorf("rule %d has an invalid source workload", i+1)
+		}
+		if rule.CorrelationScope != "" && (!correlationScopePattern.MatchString(rule.CorrelationScope) || rule.From == "" || rule.Percent != 100 || (rule.Kind != KindLatency && rule.Kind != KindHTTPStatus)) {
+			return fmt.Errorf("rule %d correlation_scope requires 16 lowercase hexadecimal characters and a full-coverage HTTP latency/status rule with an explicit source", i+1)
 		}
 		if rule.Percent < 1 || rule.Percent > 100 {
 			return fmt.Errorf("rule %d percent must be between 1 and 100", i+1)
@@ -88,6 +101,9 @@ func (p Plan) Validate() error {
 			return fmt.Errorf("rule %d duplicates a source, target, and kind", i+1)
 		}
 		seen[key] = struct{}{}
+		if rule.RetryAfterSeconds != 0 && (rule.Kind != KindHTTPStatus || (rule.StatusCode != 429 && rule.StatusCode != 503) || rule.RetryAfterSeconds < 1 || rule.RetryAfterSeconds > int64(MaxLatency/time.Second)) {
+			return fmt.Errorf("rule %d retry_after_seconds must be between 1 and 30 and requires http_status 429 or 503", i+1)
+		}
 		if rule.IsTCP() {
 			if err := validateTCPRule(rule); err != nil {
 				return fmt.Errorf("rule %d: %w", i+1, err)
@@ -102,6 +118,32 @@ func (p Plan) Validate() error {
 			validatedTCP = append(validatedTCP, rule)
 			continue
 		}
+		if rule.IsDNS() {
+			if rule.Port != 0 || rule.Direction != "" || rule.RateKiBPerSecond != 0 || rule.ResetAfterMS != 0 || rule.StatusCode != 0 {
+				return fmt.Errorf("rule %d TCP and HTTP fields are not valid for DNS faults", i+1)
+			}
+			switch rule.Kind {
+			case KindDNSLatency:
+				if rule.LatencyMS < 1 || rule.LatencyMS > MaxLatency.Milliseconds() {
+					return fmt.Errorf("rule %d latency_ms must be between 1 and %d", i+1, MaxLatency.Milliseconds())
+				}
+			case KindDNSTimeout, KindDNSServFail, KindDNSNXDomain:
+				if rule.LatencyMS != 0 {
+					return fmt.Errorf("rule %d latency_ms is only valid for dns_latency", i+1)
+				}
+			default:
+				return fmt.Errorf("rule %d has unsupported DNS fault kind %q", i+1, rule.Kind)
+			}
+			for _, previous := range validatedDNS {
+				sameTarget := rule.To == previous.To
+				sameCaller := rule.From == "" || previous.From == "" || rule.From == previous.From
+				if sameTarget && sameCaller && rule.IsDNSTerminalFault() && previous.IsDNSTerminalFault() {
+					return fmt.Errorf("rule %d conflicts with %s for an overlapping DNS query", i+1, previous.Kind)
+				}
+			}
+			validatedDNS = append(validatedDNS, rule)
+			continue
+		}
 		if rule.Port != 0 || rule.Direction != "" || rule.RateKiBPerSecond != 0 || rule.ResetAfterMS != 0 {
 			return fmt.Errorf("rule %d TCP fields require a TCP fault kind", i+1)
 		}
@@ -110,9 +152,13 @@ func (p Plan) Validate() error {
 			if rule.LatencyMS < 1 || rule.LatencyMS > MaxLatency.Milliseconds() || rule.StatusCode != 0 {
 				return fmt.Errorf("rule %d latency_ms must be between 1 and %d and status_code must be omitted", i+1, MaxLatency.Milliseconds())
 			}
+		case KindHTTPMalformedJSON, KindHTTPTruncatedBody, KindHTTPResponseLost:
+			if rule.StatusCode != 0 || rule.LatencyMS != 0 {
+				return fmt.Errorf("rule %d HTTP body faults require status_code and latency_ms to be omitted", i+1)
+			}
 		case KindHTTPStatus:
-			if rule.StatusCode < MinHTTPStatus || rule.StatusCode > MaxHTTPStatus || rule.LatencyMS != 0 {
-				return fmt.Errorf("rule %d status_code must be between %d and %d and latency_ms must be omitted", i+1, MinHTTPStatus, MaxHTTPStatus)
+			if (rule.StatusCode != 429 && (rule.StatusCode < MinHTTPStatus || rule.StatusCode > MaxHTTPStatus)) || rule.LatencyMS != 0 {
+				return fmt.Errorf("rule %d status_code must be 429 or between %d and %d and latency_ms must be omitted", i+1, MinHTTPStatus, MaxHTTPStatus)
 			}
 		default:
 			return fmt.Errorf("rule %d has unsupported fault kind %q", i+1, rule.Kind)

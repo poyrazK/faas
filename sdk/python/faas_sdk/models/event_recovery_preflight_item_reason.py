@@ -1,7 +1,20 @@
 from typing import Literal
 
 EventRecoveryPreflightItemReason = Literal[
-    "capacity", "changed", "eligible", "expired", "legacy_claim", "receipt_expired", "target_unavailable", "unknown"
+    "capacity",
+    "changed",
+    "eligible",
+    "expired",
+    "legacy_claim",
+    "not_admitted",
+    "outcome_not_failed",
+    "outcome_not_saved",
+    "receipt_expired",
+    "resume_ineligible",
+    "resume_limit_reached",
+    "run_not_retained",
+    "target_unavailable",
+    "unknown",
 ]
 
 EVENT_RECOVERY_PREFLIGHT_ITEM_REASON_VALUES: set[EventRecoveryPreflightItemReason] = {
@@ -10,7 +23,13 @@ EVENT_RECOVERY_PREFLIGHT_ITEM_REASON_VALUES: set[EventRecoveryPreflightItemReaso
     "eligible",
     "expired",
     "legacy_claim",
+    "not_admitted",
+    "outcome_not_failed",
+    "outcome_not_saved",
     "receipt_expired",
+    "resume_ineligible",
+    "resume_limit_reached",
+    "run_not_retained",
     "target_unavailable",
     "unknown",
 }

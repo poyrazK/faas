@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *testing.T) {
 	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "reconciliation-apply")
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "reconciliation-apply")
 	initial := api.ApplyPlatformTenantRequest{ExternalRef: "apply-customer", Name: "Apply Customer",
 		Consumers: []api.ApplyPlatformTenantConsumerRequest{
 			{AppID: appID, ExternalRef: "managed-keep", Name: "Managed Keep"},
@@ -25,29 +26,29 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 			{AppID: appID, Name: "Managed Keep Surface", Hostnames: []string{"keep.example.com", "remove.example.com"}},
 			{AppID: appID, Name: "Managed Remove Surface", Hostnames: []string{"orphan.example.com"}},
 		}}
-	created := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply", initial, nil))
+	created := readApplyResponse(t, e.Do(t, http.MethodPost, "/v1/account/platform-tenants/apply", initial, nil))
 	tenantID := created.TenantID
 	keepSurfaceID, removeSurfaceID := created.Surfaces[0].ID, created.Surfaces[1].ID
 
 	ctx := context.Background()
-	unmanagedConsumer, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, "unmanaged", "Unmanaged")
+	unmanagedConsumer, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appID, "unmanaged", "Unmanaged")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(ctx, e.acct.ID, tenantID, unmanagedConsumer.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, tenantID, unmanagedConsumer.ID); err != nil {
 		t.Fatal(err)
 	}
-	limits, ok := api.LimitsFor(e.acct.Plan)
+	limits, ok := api.LimitsFor((*e.Acct()).Plan)
 	if !ok {
 		t.Fatal("missing account plan limits")
 	}
-	if _, err := e.store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
+	if _, err := (*e.Store()).CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{
 		SurfaceID: keepSurfaceID, Hostname: "legacy.example.com", ChallengeToken: "legacy-token",
 	}, limits); err != nil {
 		t.Fatal(err)
 	}
-	unmanagedSurfaceID := seedTenantSurface(t, e, appID, "Unmanaged Surface")
-	if _, err := e.store.LinkPlatformTenantSurface(ctx, e.acct.ID, tenantID, unmanagedSurfaceID); err != nil {
+	unmanagedSurfaceID := apidserver.SeedTenantSurface(t, e, appID, "Unmanaged Surface")
+	if _, err := (*e.Store()).LinkPlatformTenantSurface(ctx, (*e.Acct()).ID, tenantID, unmanagedSurfaceID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -62,7 +63,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 		},
 	}
 	planPath := "/v1/account/platform-tenants/" + tenantID + "/reconciliation-plan"
-	planResp := e.do(t, http.MethodPost, planPath, desired, nil)
+	planResp := e.Do(t, http.MethodPost, planPath, desired, nil)
 	if planResp.Code != http.StatusOK {
 		t.Fatalf("plan = %d %s", planResp.Code, planResp.Body.String())
 	}
@@ -78,7 +79,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 		Surfaces: desired.Surfaces, ExpectedPlanHash: plan.PlanHash}
 	applyPath := planPath + "/apply"
 	key := map[string]string{"Idempotency-Key": "apply-reconcile-1"}
-	applyResp := e.do(t, http.MethodPost, applyPath, applyReq, key)
+	applyResp := e.Do(t, http.MethodPost, applyPath, applyReq, key)
 	if applyResp.Code != http.StatusOK {
 		t.Fatalf("apply = %d %s", applyResp.Code, applyResp.Body.String())
 	}
@@ -90,7 +91,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 		t.Fatalf("apply response = %+v", applied)
 	}
 	historyPath := "/v1/account/platform-tenants/" + tenantID + "/reconciliations"
-	historyResp := e.do(t, http.MethodGet, historyPath+"?page_size=1", nil, nil)
+	historyResp := e.Do(t, http.MethodGet, historyPath+"?page_size=1", nil, nil)
 	if historyResp.Code != http.StatusOK {
 		t.Fatalf("list reconciliation history = %d %s", historyResp.Code, historyResp.Body.String())
 	}
@@ -101,7 +102,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	if len(history.Receipts) != 1 || history.Receipts[0].ReceiptID != applied.ReceiptID || history.Receipts[0].ChangeCount != len(applied.Changes) {
 		t.Fatalf("reconciliation history = %+v, apply = %+v", history, applied)
 	}
-	receiptResp := e.do(t, http.MethodGet, historyPath+"/"+applied.ReceiptID, nil, nil)
+	receiptResp := e.Do(t, http.MethodGet, historyPath+"/"+applied.ReceiptID, nil, nil)
 	if receiptResp.Code != http.StatusOK {
 		t.Fatalf("get reconciliation receipt = %d %s", receiptResp.Code, receiptResp.Body.String())
 	}
@@ -144,35 +145,35 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	assertAppliedChange("hostname", "removed", "", "remove.example.com", "Managed Keep Surface")
 	assertAppliedChange("surface", "detached", "", "", "Managed Remove Surface")
 
-	consumers, err := e.store.ListPlatformTenantConsumers(ctx, e.acct.ID, tenantID)
+	consumers, err := (*e.Store()).ListPlatformTenantConsumers(ctx, (*e.Acct()).ID, tenantID)
 	if err != nil || len(consumers) != 3 {
 		t.Fatalf("linked consumers after apply = %+v, %v; want keep, new, and unmanaged", consumers, err)
 	}
-	surfaces, err := e.store.ListPlatformTenantSurfaces(ctx, e.acct.ID, tenantID)
+	surfaces, err := (*e.Store()).ListPlatformTenantSurfaces(ctx, (*e.Acct()).ID, tenantID)
 	if err != nil || len(surfaces) != 3 {
 		t.Fatalf("linked surfaces after apply = %+v, %v; want keep, new, and unmanaged", surfaces, err)
 	}
-	keepHosts, err := e.store.ListTenantHostnamesForSurface(ctx, keepSurfaceID)
+	keepHosts, err := (*e.Store()).ListTenantHostnamesForSurface(ctx, keepSurfaceID)
 	if err != nil || len(keepHosts) != 2 {
 		t.Fatalf("keep surface hostnames = %+v, %v; want kept and unmanaged hostnames", keepHosts, err)
 	}
-	removedSurfaceHosts, err := e.store.ListTenantHostnamesForSurface(ctx, removeSurfaceID)
+	removedSurfaceHosts, err := (*e.Store()).ListTenantHostnamesForSurface(ctx, removeSurfaceID)
 	if err != nil || len(removedSurfaceHosts) != 1 {
 		t.Fatalf("detached surface hostnames = %+v, %v; want underlying resource retained", removedSurfaceHosts, err)
 	}
-	newHosts, err := e.store.ListTenantHostnamesForSurface(ctx, newSurface.ID)
+	newHosts, err := (*e.Store()).ListTenantHostnamesForSurface(ctx, newSurface.ID)
 	if err != nil || len(newHosts) != 1 || newHosts[0].Hostname != "new.example.com" {
 		t.Fatalf("new surface hostnames = %+v, %v", newHosts, err)
 	}
 
-	replay := e.do(t, http.MethodPost, applyPath, applyReq, key)
+	replay := e.Do(t, http.MethodPost, applyPath, applyReq, key)
 	if replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replayed") != "true" || replay.Body.String() != applyResp.Body.String() {
 		t.Fatalf("idempotent replay = %d replay=%q body=%s", replay.Code, replay.Header().Get("Idempotent-Replayed"), replay.Body.String())
 	}
 
 	// A later confirmed no-op gets its own durable receipt; cursor pagination
 	// still lets the caller recover the earlier result without offset drift.
-	secondPlanResp := e.do(t, http.MethodPost, planPath, desired, nil)
+	secondPlanResp := e.Do(t, http.MethodPost, planPath, desired, nil)
 	if secondPlanResp.Code != http.StatusOK {
 		t.Fatalf("second plan = %d %s", secondPlanResp.Code, secondPlanResp.Body.String())
 	}
@@ -182,7 +183,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	}
 	secondApplyReq := applyReq
 	secondApplyReq.ExpectedPlanHash = secondPlan.PlanHash
-	secondApply := e.do(t, http.MethodPost, applyPath, secondApplyReq, map[string]string{"Idempotency-Key": "apply-reconcile-2"})
+	secondApply := e.Do(t, http.MethodPost, applyPath, secondApplyReq, map[string]string{"Idempotency-Key": "apply-reconcile-2"})
 	if secondApply.Code != http.StatusOK {
 		t.Fatalf("second apply = %d %s", secondApply.Code, secondApply.Body.String())
 	}
@@ -193,7 +194,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	if secondApplied.ReceiptID == applied.ReceiptID {
 		t.Fatalf("distinct apply reused receipt ID %q", applied.ReceiptID)
 	}
-	latestResp := e.do(t, http.MethodGet, historyPath+"?page_size=1", nil, nil)
+	latestResp := e.Do(t, http.MethodGet, historyPath+"?page_size=1", nil, nil)
 	if latestResp.Code != http.StatusOK {
 		t.Fatalf("list latest receipts = %d %s", latestResp.Code, latestResp.Body.String())
 	}
@@ -204,7 +205,7 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 	if len(latest.Receipts) != 1 || latest.Receipts[0].ReceiptID != secondApplied.ReceiptID || latest.NextPageToken == "" {
 		t.Fatalf("latest reconciliation page = %+v", latest)
 	}
-	previousResp := e.do(t, http.MethodGet, historyPath+"?page_size=1&page_token="+url.QueryEscape(latest.NextPageToken), nil, nil)
+	previousResp := e.Do(t, http.MethodGet, historyPath+"?page_size=1&page_token="+url.QueryEscape(latest.NextPageToken), nil, nil)
 	if previousResp.Code != http.StatusOK {
 		t.Fatalf("list previous receipts = %d %s", previousResp.Code, previousResp.Body.String())
 	}
@@ -218,13 +219,13 @@ func TestPlatformTenantReconciliationApplyIsConfirmedAtomicAndOwnershipAware(t *
 }
 
 func TestPlatformTenantReconciliationApplyRejectsStalePlanWithoutWrites(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	appID := mustSeedApp(t, e, "reconciliation-stale")
-	created := readApplyResponse(t, e.do(t, http.MethodPost, "/v1/account/platform-tenants/apply",
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "reconciliation-stale")
+	created := readApplyResponse(t, e.Do(t, http.MethodPost, "/v1/account/platform-tenants/apply",
 		api.ApplyPlatformTenantRequest{ExternalRef: "stale-customer", Name: "Stale Customer",
 			Consumers: []api.ApplyPlatformTenantConsumerRequest{{AppID: appID, ExternalRef: "managed", Name: "Managed"}}}, nil))
 	path := "/v1/account/platform-tenants/" + created.TenantID + "/reconciliation-plan"
-	planResp := e.do(t, http.MethodPost, path, api.PlanPlatformTenantReconciliationRequest{}, nil)
+	planResp := e.Do(t, http.MethodPost, path, api.PlanPlatformTenantReconciliationRequest{}, nil)
 	if planResp.Code != http.StatusOK {
 		t.Fatalf("plan = %d %s", planResp.Code, planResp.Body.String())
 	}
@@ -233,19 +234,19 @@ func TestPlatformTenantReconciliationApplyRejectsStalePlanWithoutWrites(t *testi
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	other, err := e.store.CreateAPIConsumer(ctx, e.acct.ID, appID, "joined-after-preview", "Joined After Preview")
+	other, err := (*e.Store()).CreateAPIConsumer(ctx, (*e.Acct()).ID, appID, "joined-after-preview", "Joined After Preview")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.store.LinkPlatformTenantConsumer(ctx, e.acct.ID, created.TenantID, other.ID); err != nil {
+	if _, err := (*e.Store()).LinkPlatformTenantConsumer(ctx, (*e.Acct()).ID, created.TenantID, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	resp := e.do(t, http.MethodPost, path+"/apply", api.ApplyPlatformTenantReconciliationRequest{ExpectedPlanHash: plan.PlanHash},
+	resp := e.Do(t, http.MethodPost, path+"/apply", api.ApplyPlatformTenantReconciliationRequest{ExpectedPlanHash: plan.PlanHash},
 		map[string]string{"Idempotency-Key": "apply-stale-plan-1"})
 	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "platform_tenant_plan_stale") {
 		t.Fatalf("stale apply = %d %s", resp.Code, resp.Body.String())
 	}
-	consumers, err := e.store.ListPlatformTenantConsumers(ctx, e.acct.ID, created.TenantID)
+	consumers, err := (*e.Store()).ListPlatformTenantConsumers(ctx, (*e.Acct()).ID, created.TenantID)
 	if err != nil || len(consumers) != 2 {
 		t.Fatalf("stale apply changed linked consumers = %+v, %v", consumers, err)
 	}

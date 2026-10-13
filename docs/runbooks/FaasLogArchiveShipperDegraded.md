@@ -14,8 +14,8 @@ Metrics use the daemon prefix (`apid_` or `vmmd_`):
 For control-plane checks use the `apid` prefix and `apid` service below; on a
 compute host substitute the `vmmd` prefix and `faas-vmmd` service.
 Issue: #562.
-Severity: page (ticket-tier at warn; page at critical when local
-spool approaches `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX`).
+Severity: warn, including when the local spool approaches
+`FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX` (ADR-1236 demoted that page).
 
 ## Symptom
 

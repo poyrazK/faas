@@ -43,7 +43,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 	// database. Restore qualification also owns a separate disposable DB.
 	// Platform migrations must never install either one's public tables.
 	var customerTablesInPlatform bool
-	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL OR to_regclass('public.gregale_qualification_restore_probe') IS NOT NULL OR to_regclass('public.gregale_mcp_tasks') IS NOT NULL OR to_regclass('public.gregale_mcp_task_worker_handlers') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT to_regclass('public.gregale_realtime_outbox') IS NOT NULL OR to_regclass('public.gregale_outbox') IS NOT NULL OR to_regclass('public.gregale_commit_binding') IS NOT NULL OR to_regclass('public.gregale_qualification_restore_probe') IS NOT NULL OR to_regclass('public.gregale_mcp_tasks') IS NOT NULL OR to_regclass('public.gregale_mcp_task_worker_handlers') IS NOT NULL`).Scan(&customerTablesInPlatform); err != nil {
 		t.Fatal(err)
 	}
 	if customerTablesInPlatform {
@@ -55,6 +55,13 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := customerPool.Exec(ctx, string(customerSchema)); err != nil {
+		t.Fatal(err)
+	}
+	realtimeSchema, err := os.ReadFile("../../pkg/commit/realtime_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := customerPool.Exec(ctx, string(realtimeSchema)); err != nil {
 		t.Fatal(err)
 	}
 	customerConn, err := customerPool.Acquire(ctx)

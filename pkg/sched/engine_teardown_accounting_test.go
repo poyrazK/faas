@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -215,7 +216,7 @@ func TestEngineTeardownRetainsAccountingUntilConfirmed(t *testing.T) {
 }
 
 type accountingReadFailureStore struct {
-	state.Store
+	Store         state.Store
 	failAt, reads int
 	err           error
 }
@@ -241,7 +242,7 @@ func TestEngineTeardownReadFailureRetainsAccounting(t *testing.T) {
 					_, app, dep := seedApp(t, base, api.PlanPro, 512, 1)
 					s := &accountingReadFailureStore{Store: base, failAt: read, err: readErr}
 					v := &fakeVMM{}
-					e := newEngine(t, s, v, &fakeNotifier{}, "1.10.0")
+					e := newEngine(t, statetest.NewStore(s), v, &fakeNotifier{}, "1.10.0")
 					i := admitAccountingInstance(t, base, e, app, dep, tc.initial)
 					if err := tc.stop(t.Context(), e, i); !errors.Is(err, readErr) {
 						t.Fatalf("read failure not propagated: %v", err)

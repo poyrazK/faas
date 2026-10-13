@@ -1,5 +1,5 @@
 // ADR-521: only an owning account can authorize a fenced recovery of uncertain effects.
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -79,11 +80,11 @@ func testOperationsHTTPAccountRecoveryBoundary(t *testing.T, receipt bool) {
 	if err := store.FailInvocation(ctx, inv.ID, "lost handler response", time.Second, 10, state.WithClaimAttempt(inv.Attempts)); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	if srv.operation.AdmissionEnabled {
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	if (*srv.Operation()).AdmissionEnabled {
 		t.Fatal("test must exercise recovery with admission closed")
 	}
-	handler := srv.handler()
+	handler := srv.Handler()
 	path := "/v1/apps/" + app.Slug + "/operations/" + op.ID + "/recover"
 	if receipt {
 		path += "-receipt"

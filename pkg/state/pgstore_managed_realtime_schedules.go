@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	ttlq "github.com/onebox-faas/faas/pkg/state/realtimettl/sqlc"
 	"strings"
 	"time"
 )
 
-const realtimeScheduleColumns = `endpoint_id,channel,schedule_id,data,is_binary,metadata,deliver_at,version,status,sequence,last_error,created_at,updated_at,max_attempts,backoff_seconds,attempts,cycle_attempts,next_attempt_at,last_attempt_at,interval_seconds,max_occurrences,end_at,initial_deliver_at,occurrence,completed_occurrences,conditions,on_condition_failure,skipped_occurrences,skip_reason,schedule_group`
+const realtimeScheduleColumns = `endpoint_id,channel,schedule_id,data,is_binary,metadata,deliver_at,version,status,sequence,last_error,created_at,updated_at,max_attempts,backoff_seconds,attempts,cycle_attempts,next_attempt_at,last_attempt_at,interval_seconds,max_occurrences,end_at,initial_deliver_at,occurrence,completed_occurrences,conditions,on_condition_failure,skipped_occurrences,skip_reason,schedule_group,ttl_seconds`
 
 func scanRealtimeSchedulePG(scanner interface{ Scan(...any) error }) (ManagedRealtimeSchedule, error) {
 	var row ManagedRealtimeSchedule
-	err := scanner.Scan(&row.EndpointID, &row.Channel, &row.ID, &row.Data, &row.Binary, &row.Metadata, &row.DeliverAt, &row.Version, &row.Status, &row.Sequence, &row.LastError, &row.CreatedAt, &row.UpdatedAt, &row.MaxAttempts, &row.BackoffSeconds, &row.Attempts, &row.CycleAttempts, &row.NextAttemptAt, &row.LastAttemptAt, &row.IntervalSeconds, &row.MaxOccurrences, &row.EndAt, &row.InitialDeliverAt, &row.Occurrence, &row.CompletedOccurrences, &row.Conditions, &row.OnConditionFailure, &row.SkippedOccurrences, &row.SkipReason, &row.Group)
+	err := scanner.Scan(&row.EndpointID, &row.Channel, &row.ID, &row.Data, &row.Binary, &row.Metadata, &row.DeliverAt, &row.Version, &row.Status, &row.Sequence, &row.LastError, &row.CreatedAt, &row.UpdatedAt, &row.MaxAttempts, &row.BackoffSeconds, &row.Attempts, &row.CycleAttempts, &row.NextAttemptAt, &row.LastAttemptAt, &row.IntervalSeconds, &row.MaxOccurrences, &row.EndAt, &row.InitialDeliverAt, &row.Occurrence, &row.CompletedOccurrences, &row.Conditions, &row.OnConditionFailure, &row.SkippedOccurrences, &row.SkipReason, &row.Group, &row.TTLSeconds)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -66,10 +67,15 @@ func (s *PgStore) PutManagedRealtimeSchedule(ctx context.Context, row ManagedRea
 	if count >= ManagedRealtimeScheduleLimit {
 		return row, ErrManagedRealtimeScheduleLimit
 	}
+	ttlSeconds := row.TTLSeconds
 	row, err = scanRealtimeSchedulePG(tx.QueryRow(ctx, `insert into managed_realtime_schedules(endpoint_id,channel,schedule_id,data,is_binary,metadata,deliver_at,max_attempts,backoff_seconds,interval_seconds,max_occurrences,end_at,initial_deliver_at,conditions,on_condition_failure,schedule_group) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$7,$13,$14,$15) returning `+realtimeScheduleColumns, row.EndpointID, row.Channel, row.ID, row.Data, row.Binary, metadataJSON(row.Metadata), row.DeliverAt, row.MaxAttempts, row.BackoffSeconds, row.IntervalSeconds, row.MaxOccurrences, row.EndAt, nullableScheduleConditions(row.Conditions), row.OnConditionFailure, row.Group))
 	if err != nil {
 		return row, err
 	}
+	if err = new(ttlq.Queries).SetScheduleTTL(ctx, tx, ttlq.SetScheduleTTLParams{EndpointID: row.EndpointID, Channel: row.Channel, ScheduleID: row.ID, TtlSeconds: int32(ttlSeconds)}); err != nil {
+		return row, err
+	}
+	row.TTLSeconds = ttlSeconds
 	if err = recordRealtimeScheduleHistoryPG(ctx, tx, row, "created"); err != nil {
 		return row, err
 	}
@@ -158,6 +164,10 @@ func (s *PgStore) ListDueManagedRealtimeSchedules(ctx context.Context, limit int
 	return out, rows.Err()
 }
 func (s *PgStore) PublishManagedRealtimeSchedule(ctx context.Context, row ManagedRealtimeSchedule) (ManagedRealtimeChannelMessage, error) {
+	ctx, err := ttlContext(ctx, row.TTLSeconds)
+	if err != nil {
+		return ManagedRealtimeChannelMessage{}, err
+	}
 	return s.appendManagedRealtimeChannel(ctx, row.EndpointID, row.Channel, row.Data, row.Binary, "", scheduledRealtimeMetadata(row), nil, nil, &row)
 }
 func (s *PgStore) FailManagedRealtimeSchedule(ctx context.Context, candidate ManagedRealtimeSchedule, code string) error {

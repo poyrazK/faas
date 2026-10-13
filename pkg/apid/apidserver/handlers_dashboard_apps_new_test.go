@@ -6,7 +6,7 @@
 // by handlers_install_github_test.go) and bindAppToRepo (covered by
 // the same file). These tests assert the dashboard renders the right
 // copy + form fields, NOT the bind-time invariants.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -32,11 +33,11 @@ import (
 // the interface requires them.
 type appsNewFake struct {
 	bindPickerFake
-	repos   []Repo
+	repos   []apidserver.Repo
 	listErr error
 }
 
-func (f *appsNewFake) ListInstallableRepos(_ context.Context, _ string, _ int64) ([]Repo, error) {
+func (f *appsNewFake) ListInstallableRepos(_ context.Context, _ string, _ int64) ([]apidserver.Repo, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -49,7 +50,7 @@ func (f *appsNewFake) ListInstallableRepos(_ context.Context, _ string, _ int64)
 // install/repo/template <select>s would 403 at submit time, so the
 // wizard must not show them.
 func TestRenderAppNew_ConnectGitHubFirstWhenNoSessionLogin(t *testing.T) {
-	srv, cookie := newAuthedDashboardServer(t)
+	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/new", nil)
 	r.AddCookie(cookie)
@@ -87,7 +88,7 @@ func TestRenderAppNew_ConnectGitHubFirstWhenNoSessionLogin(t *testing.T) {
 func TestRenderAppNew_GitHubDegradedDegrades(t *testing.T) {
 	gh := &appsNewFake{repos: nil}
 	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice"}
-	gh.listErr = errGithubdNotReady
+	gh.listErr = (*apidserver.ErrGithubdNotReady)
 
 	store := state.NewMemStore()
 	acct, err := store.CreateAccount(t.Context(), "alice@example.com", "free")
@@ -99,21 +100,21 @@ func TestRenderAppNew_GitHubDegradedDegrades(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed GitHub install: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	rawCookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
 	stamped := stampCookie(t, mgr, rawCookie, "alice")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler()
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler()
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/new", nil)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -139,7 +140,7 @@ func TestRenderAppNew_GitHubDegradedDegrades(t *testing.T) {
 // URL with the repo query param; the wizard must echo it so the
 // form's <option selected> lands on the right row.
 func TestRenderAppNew_PreFillsRepo(t *testing.T) {
-	gh := &appsNewFake{repos: []Repo{
+	gh := &appsNewFake{repos: []apidserver.Repo{
 		{FullName: "poyrazK/gregale", DefaultBranch: "main"},
 		{FullName: "poyrazK/other", DefaultBranch: "main"},
 	}}
@@ -155,21 +156,21 @@ func TestRenderAppNew_PreFillsRepo(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed GitHub install: %v", err)
 	}
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	rawCookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
 	stamped := stampCookie(t, mgr, rawCookie, "alice")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(store, log, "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler()
+	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler()
 
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/new?repo=poyrazK/gregale", nil)
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: stamped})
+	r.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: stamped})
 	srv.ServeHTTP(rec, r)
 
 	if rec.Code != http.StatusOK {
@@ -206,7 +207,7 @@ func TestRenderAppNew_PreFillsRepo(t *testing.T) {
 // literal-equal branch (favoring the prefix-match) would send
 // /apps/new through renderAppDetail and 404 on the missing slug.
 func TestRenderAppNew_DispatchRouteIsMounted(t *testing.T) {
-	srv, cookie := newAuthedDashboardServer(t)
+	srv, cookie := apidserver.NewAuthedDashboardServer(t)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/dashboard/apps/new?repo=poyrazK/gregale", nil)
 	r.AddCookie(cookie)
@@ -228,11 +229,11 @@ func TestRenderAppNew_DispatchRouteIsMounted(t *testing.T) {
 	}
 }
 
-func newGitHubWizardPostServer(t *testing.T, gh GithubdClient) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
+func newGitHubWizardPostServer(t *testing.T, gh apidserver.GithubdClient) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
 	return newGitHubWizardPostServerFor(t, gh, true)
 }
 
-func newGitHubWizardPostServerFor(t *testing.T, gh GithubdClient, verified bool) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
+func newGitHubWizardPostServerFor(t *testing.T, gh apidserver.GithubdClient, verified bool) (http.Handler, *state.MemStore, *session.Manager, state.Account, string) {
 	t.Helper()
 	store := state.NewMemStore()
 	res, err := store.CreateAccountWithPersonalOrg(t.Context(), state.CreateAccountWithPersonalOrgParams{
@@ -242,23 +243,23 @@ func newGitHubWizardPostServerFor(t *testing.T, gh GithubdClient, verified bool)
 		t.Fatalf("seed account: %v", err)
 	}
 	acct := res.Account
-	mgr, err := session.NewEphemeralManager(sessionCookieLifetime)
+	mgr, err := session.NewEphemeralManager(apidserver.SessionCookieLifetime)
 	if err != nil {
 		t.Fatalf("session manager: %v", err)
 	}
-	rawCookie, err := mintDashboardSession(t.Context(), store, mgr, acct.ID)
+	rawCookie, err := apidserver.MintDashboardSession(t.Context(), store, mgr, acct.ID)
 	if err != nil {
 		t.Fatalf("issue session: %v", err)
 	}
-	return newServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}, "", noopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").handler(), store, mgr, acct, stampCookie(t, mgr, rawCookie, "alice")
+	return apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, gh, mgr, nil, 15*60_000_000_000, "").Handler(), store, mgr, acct, stampCookie(t, mgr, rawCookie, "alice")
 }
 
 func TestCreateAppFromGitHubWizard_CreatesAndBinds(t *testing.T) {
-	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
 	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", defaultBranch: "main", bindReturn: "bind-created"}
 	h, store, mgr, acct, sessionValue := newGitHubWizardPostServer(t, gh)
 
-	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
+	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, apidserver.GithubWizardCreateAction, acct.ID, apidserver.GithubWizardCreateCSRFCookie)
 	if err != nil {
 		t.Fatalf("issue wizard csrf: %v", err)
 	}
@@ -271,8 +272,8 @@ func TestCreateAppFromGitHubWizard_CreatesAndBinds(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sessionValue})
-	req.AddCookie(&http.Cookie{Name: githubWizardCreateCSRFCookie, Value: csrf})
+	req.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: sessionValue})
+	req.AddCookie(&http.Cookie{Name: apidserver.GithubWizardCreateCSRFCookie, Value: csrf})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -294,7 +295,7 @@ func TestCreateAppFromGitHubWizard_CreatesAndBinds(t *testing.T) {
 }
 
 func TestCreateAppFromGitHubWizard_RejectsMissingCSRF(t *testing.T) {
-	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
 	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice"}
 	h, store, _, _, sessionValue := newGitHubWizardPostServer(t, gh)
 	form := url.Values{
@@ -305,7 +306,7 @@ func TestCreateAppFromGitHubWizard_RejectsMissingCSRF(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sessionValue})
+	req.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: sessionValue})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -327,11 +328,11 @@ func TestCreateAppFromGitHubWizard_RejectsMissingCSRF(t *testing.T) {
 // requires a verified email; the dashboard wizard created the app (and
 // bound the repo) without one.
 func TestCreateAppFromGitHubWizard_RequiresVerifiedEmail(t *testing.T) {
-	gh := &appsNewFake{repos: []Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
+	gh := &appsNewFake{repos: []apidserver.Repo{{FullName: "octocat/hello", DefaultBranch: "main"}}}
 	gh.bindPickerFake = bindPickerFake{verified: true, accountLogin: "alice", defaultBranch: "main", bindReturn: "bind-created"}
 	h, store, mgr, acct, sessionValue := newGitHubWizardPostServerFor(t, gh, false)
 
-	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
+	csrf, err := middleware.IssueForAuthenticatedNamed(mgr, apidserver.GithubWizardCreateAction, acct.ID, apidserver.GithubWizardCreateCSRFCookie)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,8 +342,8 @@ func TestCreateAppFromGitHubWizard_RequiresVerifiedEmail(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/apps/new", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: sessionValue})
-	req.AddCookie(&http.Cookie{Name: githubWizardCreateCSRFCookie, Value: csrf})
+	req.AddCookie(&http.Cookie{Name: apidserver.SessionCookie, Value: sessionValue})
+	req.AddCookie(&http.Cookie{Name: apidserver.GithubWizardCreateCSRFCookie, Value: csrf})
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if _, err := store.AppBySlug(t.Context(), "unverified-app"); err == nil {
 		t.Fatal("the wizard created an app for an unverified account")

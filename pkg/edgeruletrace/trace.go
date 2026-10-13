@@ -54,9 +54,13 @@ type Input struct {
 	Country  string
 	// ASN is the simulated client autonomous system for asn conditions
 	// (ADR-966); 0 means unknown.
-	ASN     uint32
-	Headers http.Header
-	Body    []byte
+	ASN uint32
+	// VerifiedBot simulates a client IP that passes crawler verification
+	// (ADR-973): verified_bot is then the known crawler the User-Agent
+	// header claims. The simulator does no DNS.
+	VerifiedBot bool
+	Headers     http.Header
+	Body        []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -1912,7 +1916,7 @@ func resolveBudgetPolicy(input Input, rule *api.EdgeRuleResponse, headers http.H
 		}
 	}
 	policy.ConfiguredMS = configuredMS
-	platformMaxMS := api.RequestBudgetMax.Milliseconds()
+	platformMaxMS := api.RequestBudgetPlanMax.Milliseconds()
 	if rule != nil && (candidateMS <= 0 || candidateMS > platformMaxMS) {
 		candidateMS, source = platformMaxMS, "ceiling_clamp"
 		if policy.OverrideStatus == "applied" {
@@ -2617,7 +2621,22 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	return program.Matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
+		VerifiedBot: traceVerifiedBot(input.VerifiedBot, headers),
 	})
+}
+
+// traceVerifiedBot is the simulated verified_bot value (ADR-973).
+func traceVerifiedBot(verified bool, headers http.Header) func() string {
+	if !verified {
+		return nil
+	}
+	return func() string {
+		bot, ok := api.ClaimedEdgeRuleBot(headers.Get("User-Agent"))
+		if !ok {
+			return ""
+		}
+		return bot.Name
+	}
 }
 
 // ReferencedEdgeRuleLists returns the distinct list names the rules'

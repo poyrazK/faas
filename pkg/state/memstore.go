@@ -138,7 +138,13 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
+	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
+	eventExecutionCoverage               map[string]executionCoverage
 	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
+	workflowFailureEvidence              map[string][]workflowFailureEvidence
+	workflowFailureCaptureStartedAt      time.Time
+	recoveryPolicies                     map[string]*memWorkflowRecoveryPolicy
 	eventRecoveryExecutionResults        map[recoveryResultKey]memRecoveryExecutionResult
 	managedRealtimeReducers              map[managedRealtimeHistoryKey]ManagedRealtimeReducerState
 	managedRealtimeSchedules             map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
@@ -163,6 +169,7 @@ type MemStore struct {
 	qualificationExecutions              map[string]EnvironmentQualificationExecutionStatus
 	environmentExternalOwners            map[string]environmentExternalFieldOwner
 	environmentGitOps                    map[string]*environmentGitOpsMemory
+	gitlabOAuthConnections               map[string]GitLabOAuthConnection
 	financialEvidence                    []FinancialUsageRecord
 	financialSamplingWindows             map[time.Time]financialSamplingWindow
 	financialNextSequence                int64
@@ -282,6 +289,9 @@ type MemStore struct {
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
+	outboundAIRequestContent    map[string]OutboundAIRequestContent
+	outboundAIReplays           map[string]OutboundAIReplay
+	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex
@@ -403,6 +413,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
+	devWatchCommands     map[string]string
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string
@@ -729,6 +740,8 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskAttach holds ADR-1037 interactive-session records by task id.
+	appTaskAttach map[string]AppTaskAttach
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -1093,6 +1106,9 @@ type MemStore struct {
 	runtimeUpgradeCutovers          map[string]RuntimeUpgradeCutover
 	runtimeUpgradeOperations        map[string]RuntimeUpgradeOperation
 	appHealthHistory                map[string]appHealthRecord
+	realtimeTickets                 map[string]storedRealtimeTicket
+	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
+	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -1266,32 +1282,33 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore() *MemStore {
 	m := &MemStore{
-		deploymentDependencyGates:   map[string]DeploymentDependencyGate{},
-		qualificationExecutions:     map[string]EnvironmentQualificationExecutionStatus{},
-		financialRetainedFrom:       time.Now().UTC(),
-		revisionPins:                map[string]time.Time{},
-		operationCodePins:           map[string]time.Time{},
-		objectAccessGrants:          map[string]ObjectBucketAccessGrant{},
-		objectS3Credentials:         map[string]ObjectS3Credential{},
-		objectMultipartUploads:      map[string]ObjectMultipartUpload{},
-		objectUploadRoutes:          map[string]ObjectUploadRoute{},
-		objectUploadCompletions:     map[string]ObjectUploadCompletion{},
-		outboundIntegrationOffers:   map[string]OutboundIntegrationOffer{},
-		outboundAppBindings:         map[string]OutboundAppBinding{},
-		outboundCredentials:         map[string][]byte{},
-		outboundCredentialRevisions: map[string]int64{},
-		outboundProbePolicies:       map[string]api.OutboundBindingProbePolicy{},
-		accounts:                    map[string]Account{},
-		freeQuotaSuspended:          map[string]bool{},
-		accountDeployRates:          map[string]accountDeployRateRow{},
-		keys:                        map[string]APIKey{},
-		keyByHash:                   map[string]APIKey{},
-		deployTokens:                map[string]DeployToken{},
-		deployTokenByHash:           map[string]DeployToken{},
-		apps:                        map[string]App{},
-		scenarioTestChaosPlans:      map[string]chaos.Lease{},
-		scenarioTestChaosMatches:    map[string]map[string]int64{},
-		privateNetworkAttachments:   map[string]AppPrivateNetworkAttachment{},
+		workflowFailureCaptureStartedAt: time.Now().UTC(),
+		deploymentDependencyGates:       map[string]DeploymentDependencyGate{},
+		qualificationExecutions:         map[string]EnvironmentQualificationExecutionStatus{},
+		financialRetainedFrom:           time.Now().UTC(),
+		revisionPins:                    map[string]time.Time{},
+		operationCodePins:               map[string]time.Time{},
+		objectAccessGrants:              map[string]ObjectBucketAccessGrant{},
+		objectS3Credentials:             map[string]ObjectS3Credential{},
+		objectMultipartUploads:          map[string]ObjectMultipartUpload{},
+		objectUploadRoutes:              map[string]ObjectUploadRoute{},
+		objectUploadCompletions:         map[string]ObjectUploadCompletion{},
+		outboundIntegrationOffers:       map[string]OutboundIntegrationOffer{},
+		outboundAppBindings:             map[string]OutboundAppBinding{},
+		outboundCredentials:             map[string][]byte{},
+		outboundCredentialRevisions:     map[string]int64{},
+		outboundProbePolicies:           map[string]api.OutboundBindingProbePolicy{},
+		accounts:                        map[string]Account{},
+		freeQuotaSuspended:              map[string]bool{},
+		accountDeployRates:              map[string]accountDeployRateRow{},
+		keys:                            map[string]APIKey{},
+		keyByHash:                       map[string]APIKey{},
+		deployTokens:                    map[string]DeployToken{},
+		deployTokenByHash:               map[string]DeployToken{},
+		apps:                            map[string]App{},
+		scenarioTestChaosPlans:          map[string]chaos.Lease{},
+		scenarioTestChaosMatches:        map[string]map[string]int64{},
+		privateNetworkAttachments:       map[string]AppPrivateNetworkAttachment{},
 
 		privateNetworkAttachmentNodeStatuses: map[string]PrivateNetworkAttachmentNodeStatus{},
 
@@ -6539,6 +6556,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for key, v := range m.invocations {
 		if v.AppID == id {
+			m.captureEventExecutionTransitionLocked(v, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(v.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, key)
 			delete(m.eventDeliverySlots, key)
 			m.deleteInvocationAttemptsLocked(key)
@@ -6618,13 +6637,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.objectNotifications, key)
 		}
 	}
-	filteredUsage := m.usage[:0]
-	for _, v := range m.usage {
-		if v.AppID != id {
-			filteredUsage = append(filteredUsage, v)
-		}
-	}
-	m.usage = filteredUsage
+	// m.usage (usage_minutes) is retained like PgStore: it is the
+	// account's billing evidence for the month (ADR-1162).
 	filteredLogEvents := m.logEvents[:0]
 	for _, event := range m.logEvents {
 		if event.AppID != id {
@@ -6665,6 +6679,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
+	m.deleteEventExecutionLedgerAppLocked(id)
 	delete(m.apps, id)
 	delete(m.appHealthHistory, id)
 	return nil
@@ -14699,7 +14714,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateDraining):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
 			out = append(out, ins)
 		}
 	}
@@ -14776,7 +14791,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm, StateFrozen:
 		default:
 			continue
 		}
@@ -18613,9 +18628,10 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 }
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
-// from the UTC month start, removes the account plan's included calendar-
-// month allowance, and converts the remainder to integer cents. Integer
-// math only — never float on money (CLAUDE.md).
+// from the UTC month start, removes the month's included allowance (the
+// largest plan grant recorded this month, ADR-1162), and converts the
+// remainder to integer cents. Integer math only — never float on money
+// (CLAUDE.md).
 //
 // Mirrors pgstore.CurrentMonthOverageCents: the scan is O(rows-in-month)
 // which on a one-box is bounded. The `now` argument is the caller's
@@ -18639,7 +18655,13 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 		}
 		mbSeconds += u.MBSeconds
 	}
-	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
+	var snapshots []FinancialPriceSnapshot
+	for _, p := range m.financialPrices {
+		if p.AccountID == accountID && p.PeriodStart.Equal(monthStart) {
+			snapshots = append(snapshots, p)
+		}
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -26120,6 +26142,8 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		}
 		if inv, ok := m.invocations[id]; ok {
 			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
+			m.captureEventExecutionTransitionLocked(inv, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)

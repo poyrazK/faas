@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Handler tests for GET /v1/crons/{id}/runs (issue #791).
 //
@@ -25,14 +25,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedCron creates a cron on a freshly-seeded app and returns both ids.
-func seedCron(t *testing.T, e testEnv, slug, schedule string) (cronID, appID string) {
+func seedCron(t *testing.T, e apidserver.TestEnv, slug, schedule string) (cronID, appID string) {
 	t.Helper()
-	appID = mustSeedApp(t, e, slug)
-	c, err := e.store.CreateCron(context.Background(), appID, schedule, "/cron", true)
+	appID = apidserver.MustSeedApp(t, e, slug)
+	c, err := (*e.Store()).CreateCron(context.Background(), appID, schedule, "/cron", true)
 	if err != nil {
 		t.Fatalf("CreateCron: %v", err)
 	}
@@ -43,13 +44,13 @@ func seedCron(t *testing.T, e testEnv, slug, schedule string) (cronID, appID str
 // the outcome column is written by production code, not by the test.
 // terminal selects the ending: "success", "failed", "timeout",
 // "uncertain", or "running" (claimed but never terminated).
-func seedCronRun(t *testing.T, e testEnv, cronID, appID, terminal string, createdAt time.Time) string {
+func seedCronRun(t *testing.T, e apidserver.TestEnv, cronID, appID, terminal string, createdAt time.Time) string {
 	t.Helper()
 	ctx := context.Background()
 	id := cronID
-	inv, err := e.store.EnqueueInvocation(ctx, state.Invocation{
+	inv, err := (*e.Store()).EnqueueInvocation(ctx, state.Invocation{
 		AppID:     appID,
-		AccountID: e.acct.ID,
+		AccountID: (*e.Acct()).ID,
 		Source:    state.InvocationCron,
 		Method:    "POST",
 		Path:      "/cron",
@@ -60,25 +61,25 @@ func seedCronRun(t *testing.T, e testEnv, cronID, appID, terminal string, create
 	if err != nil {
 		t.Fatalf("EnqueueInvocation: %v", err)
 	}
-	if _, err := e.store.ClaimInvocation(ctx, inv.ID, "inst-"+terminal, 30); err != nil {
+	if _, err := (*e.Store()).ClaimInvocation(ctx, inv.ID, "inst-"+terminal, 30); err != nil {
 		t.Fatalf("ClaimInvocation: %v", err)
 	}
 	switch terminal {
 	case "success":
-		if err := e.store.CompleteInvocation(ctx, inv.ID, nil); err != nil {
+		if err := (*e.Store()).CompleteInvocation(ctx, inv.ID, nil); err != nil {
 			t.Fatalf("CompleteInvocation: %v", err)
 		}
 	case "failed":
-		if err := e.store.FailInvocation(ctx, inv.ID, "boom", 0, 0); err != nil {
+		if err := (*e.Store()).FailInvocation(ctx, inv.ID, "boom", 0, 0); err != nil {
 			t.Fatalf("FailInvocation: %v", err)
 		}
 	case "timeout":
-		if err := e.store.FailInvocation(ctx, inv.ID, "invoke: deadline", 0, 0,
+		if err := (*e.Store()).FailInvocation(ctx, inv.ID, "invoke: deadline", 0, 0,
 			state.WithOutcome(state.OutcomeTimeout)); err != nil {
 			t.Fatalf("FailInvocation timeout: %v", err)
 		}
 	case "uncertain":
-		if err := e.store.FailInvocation(ctx, inv.ID, "invoke receipt uncertain", 0, 0,
+		if err := (*e.Store()).FailInvocation(ctx, inv.ID, "invoke receipt uncertain", 0, 0,
 			state.WithOutcome(state.OutcomeUncertain)); err != nil {
 			t.Fatalf("FailInvocation uncertain: %v", err)
 		}
@@ -90,9 +91,9 @@ func seedCronRun(t *testing.T, e testEnv, cronID, appID, terminal string, create
 	return inv.ID
 }
 
-func getRuns(t *testing.T, e testEnv, path string) api.ListCronRunsResponse {
+func getRuns(t *testing.T, e apidserver.TestEnv, path string) api.ListCronRunsResponse {
 	t.Helper()
-	rec := e.do(t, "GET", path, nil, nil)
+	rec := e.Do(t, "GET", path, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET %s status %d: %s", path, rec.Code, rec.Body)
 	}
@@ -106,7 +107,7 @@ func getRuns(t *testing.T, e testEnv, path string) api.ListCronRunsResponse {
 // TestListCronRuns_HappyPath pins the headline shape: newest-first
 // ordering and a server-computed duration on a completed run.
 func TestListCronRuns_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, appID := seedCron(t, e, "cron-runs-happy", "0 */6 * * *")
 	base := time.Now().UTC().Add(-2 * time.Hour)
 	seedCronRun(t, e, cronID, appID, "success", base)
@@ -138,7 +139,7 @@ func TestListCronRuns_HappyPath(t *testing.T) {
 // which is exactly what the pre-#791 schema could not express. An
 // in-flight row reports "running" rather than an empty outcome.
 func TestListCronRuns_OutcomeVariants(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, appID := seedCron(t, e, "cron-runs-outcomes", "0 */6 * * *")
 	base := time.Now().UTC().Add(-3 * time.Hour)
 	seedCronRun(t, e, cronID, appID, "failed", base)
@@ -171,9 +172,9 @@ func TestListCronRuns_OutcomeVariants(t *testing.T) {
 // not see each other's runs. Without the cron_id predicate this
 // silently returns the union.
 func TestListCronRuns_FiltersBySibling(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronA, appID := seedCron(t, e, "cron-runs-filter", "0 */6 * * *")
-	cronB, err := e.store.CreateCron(context.Background(), appID, "0 * * * *", "/other", true)
+	cronB, err := (*e.Store()).CreateCron(context.Background(), appID, "0 * * * *", "/other", true)
 	if err != nil {
 		t.Fatalf("CreateCron B: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestListCronRuns_FiltersBySibling(t *testing.T) {
 // TestListCronRuns_LimitAndCursor walks the page boundary: ?limit
 // truncates, and ?before= resumes strictly older than the cursor.
 func TestListCronRuns_LimitAndCursor(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, appID := seedCron(t, e, "cron-runs-paging", "0 */6 * * *")
 	base := time.Now().UTC().Add(-10 * time.Hour)
 	for i := range 5 {
@@ -226,9 +227,9 @@ func TestListCronRuns_LimitAndCursor(t *testing.T) {
 // TestListCronRuns_EmptyIsArray: a cron that has never fired returns
 // an empty array, not null. Clients iterate without a nil guard.
 func TestListCronRuns_EmptyIsArray(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "cron-runs-empty", "0 */6 * * *")
-	rec := e.do(t, "GET", "/v1/crons/"+cronID+"/runs", nil, nil)
+	rec := e.Do(t, "GET", "/v1/crons/"+cronID+"/runs", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -244,9 +245,9 @@ func TestListCronRuns_EmptyIsArray(t *testing.T) {
 // TestListCronRuns_UnknownID: an id that does not exist is a 404,
 // with no hint that it merely belongs to someone else.
 func TestListCronRuns_UnknownID(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "GET", "/v1/crons/nonexistent-id/runs", nil, nil)
-	assertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "GET", "/v1/crons/nonexistent-id/runs", nil, nil)
+	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
 // TestListCronRuns_LimitValidation: a malformed or out-of-range
@@ -254,7 +255,7 @@ func TestListCronRuns_UnknownID(t *testing.T) {
 // substituted the default on garbage input, which hid client bugs.
 // Mirrors the validation contract of GET /v1/invoices.
 func TestListCronRuns_LimitValidation(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	cronID, _ := seedCron(t, e, "cron-runs-bad-limit", "0 */6 * * *")
 
 	cases := []struct {
@@ -267,7 +268,7 @@ func TestListCronRuns_LimitValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rec := e.do(t, "GET", "/v1/crons/"+cronID+"/runs"+tc.q, nil, nil)
+			rec := e.Do(t, "GET", "/v1/crons/"+cronID+"/runs"+tc.q, nil, nil)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body)
 			}
@@ -291,12 +292,12 @@ func TestListCronRuns_LimitValidation(t *testing.T) {
 // TestListCronRuns_CrossAccount is the IDOR tripwire: a stranger
 // holding a valid cron id must get 404, never 403 and never a page.
 func TestListCronRuns_CrossAccount(t *testing.T) {
-	owner := setup(t, api.PlanPro)
+	owner := apidserver.Setup(t, api.PlanPro)
 	cronID, appID := seedCron(t, owner, "cron-runs-owned", "0 */6 * * *")
 	seedCronRun(t, owner, cronID, appID, "success", time.Now().UTC().Add(-time.Hour))
 
-	foreign := setup(t, api.PlanPro)
-	rec := foreign.do(t, "GET", "/v1/crons/"+cronID+"/runs", nil, nil)
+	foreign := apidserver.Setup(t, api.PlanPro)
+	rec := foreign.Do(t, "GET", "/v1/crons/"+cronID+"/runs", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-account read status = %d, want 404 (IDOR-safe); body=%s",
 			rec.Code, rec.Body.String())
@@ -308,8 +309,8 @@ func TestListCronRuns_CrossAccount(t *testing.T) {
 // is not enough — if the cron's app has moved to another account, the
 // read must 404. Pins the AppByID half of the two-step check.
 func TestListCronRuns_AppTransferredAway(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	foreignApp, err := e.store.CreateApp(context.Background(), state.App{
+	e := apidserver.Setup(t, api.PlanPro)
+	foreignApp, err := (*e.Store()).CreateApp(context.Background(), state.App{
 		AccountID: "00000000-0000-0000-0000-000000000099",
 		Slug:      "cron-foreign-app",
 		Type:      state.AppTypeApp,
@@ -318,11 +319,11 @@ func TestListCronRuns_AppTransferredAway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateApp foreign: %v", err)
 	}
-	c, err := e.store.CreateCron(context.Background(), foreignApp.ID, "0 * * * *", "/cron", true)
+	c, err := (*e.Store()).CreateCron(context.Background(), foreignApp.ID, "0 * * * *", "/cron", true)
 	if err != nil {
 		t.Fatalf("CreateCron: %v", err)
 	}
-	rec := e.do(t, "GET", "/v1/crons/"+c.ID+"/runs", nil, nil)
+	rec := e.Do(t, "GET", "/v1/crons/"+c.ID+"/runs", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("transferred-app read status = %d, want 404; body=%s",
 			rec.Code, rec.Body.String())

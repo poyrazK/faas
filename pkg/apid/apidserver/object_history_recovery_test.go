@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -16,6 +16,7 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -167,14 +168,14 @@ func TestGatewayHistoricalWriteRecoveryPG(t *testing.T) {
 				for pass := range 2 {
 					// Both the server and store are reconstructed between history pages.
 					restarted := state.NewPgStore(f.pool)
-					e := setup(t, api.PlanHobby)
-					e.s.store = restarted
-					e.s.WithObjectStorage(f.registry)
-					setS3Flag(t, e, false)
+					e := apidserver.Setup(t, api.PlanHobby)
+					(*(*e.S()).Store()) = restarted
+					(*e.S()).WithObjectStorage(f.registry)
+					apidserver.SetS3Flag(t, e, false)
 					if _, err = f.pool.Exec(ctx, `UPDATE object_upload_completions SET recovery_retry_at=now()-interval '1 second' WHERE id=$1`, id); err != nil {
 						t.Fatal(err)
 					}
-					if err = e.s.object.ReconcileObjectUploads(ctx, nil); err != nil {
+					if err = (*(*e.S()).Object()).ReconcileObjectUploads(ctx, nil); err != nil {
 						t.Fatal(err)
 					}
 					c, err := restarted.GetObjectUploadReceipt(ctx, f.account.ID, f.app.ID, "", f.credential.ID, id)

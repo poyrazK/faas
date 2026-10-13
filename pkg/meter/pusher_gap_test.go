@@ -44,6 +44,7 @@ func TestPushPendingComputeIncludesDeliveredGaps(t *testing.T) {
 			}
 			provider := &recordingOverage{}
 			pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(3 * time.Hour) }, nil)
+			completeUsageThrough(t, ctx, store, start.Add(3*time.Hour))
 			if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {
 				t.Fatalf("PushPending = (%d, %v), want one billable window", pushed, err)
 			}
@@ -85,6 +86,7 @@ func TestPushPendingEgressIncludesDeliveredGaps(t *testing.T) {
 			}
 			provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
 			pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(3 * time.Hour) }, nil)
+			completeUsageThrough(t, ctx, store, start.Add(3*time.Hour))
 			if pushed, err := pusher.PushPending(ctx, 24*time.Hour); err != nil || pushed != 1 {
 				t.Fatalf("PushPending = (%d, %v), want one billable window", pushed, err)
 			}
@@ -108,6 +110,7 @@ func TestPushPendingNeverReceiptsPartialLookbackHour(t *testing.T) {
 	}
 	provider := &recordingStripe{}
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(2 * time.Hour) }, nil)
+	completeUsageThrough(t, ctx, store, start.Add(2*time.Hour))
 	if pushed, err := pusher.PushPending(ctx, 90*time.Minute); err != nil || pushed != 1 {
 		t.Fatalf("90m lookback = (%d, %v), want only the complete last hour", pushed, err)
 	}

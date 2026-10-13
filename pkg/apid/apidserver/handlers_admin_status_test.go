@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,15 +7,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
 )
 
 func TestAdminStatusCreateUpdateResolveAndList(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithAdminAllowlist(e.acct.Email)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	now := time.Now().UTC().Truncate(time.Second)
 	headers := map[string]string{"Idempotency-Key": "status-create-test"}
-	created := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	created := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "incident", "title": "Elevated API errors", "impact": "degraded",
 		"components": []string{"api_console"}, "state": "investigating", "starts_at": now,
 		"message": "We are investigating elevated API errors.",
@@ -31,7 +32,7 @@ func TestAdminStatusCreateUpdateResolveAndList(t *testing.T) {
 		t.Fatalf("created event = %#v", event)
 	}
 
-	replay := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	replay := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "incident", "title": "Different retry body", "impact": "major_outage",
 		"components": []string{"networking"}, "state": "monitoring", "starts_at": now,
 		"message": "Different retry body.",
@@ -47,19 +48,19 @@ func TestAdminStatusCreateUpdateResolveAndList(t *testing.T) {
 		t.Fatalf("idempotent IDs = %q and %q", event.ID, replayEvent.ID)
 	}
 
-	updated := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents/"+event.ID+"/updates", map[string]any{
+	updated := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents/"+event.ID+"/updates", map[string]any{
 		"state": "resolved", "message": "API error rates have recovered.",
 	}, map[string]string{"Idempotency-Key": "status-resolve-test"})
 	if updated.Code != http.StatusOK {
 		t.Fatalf("resolve status=%d body=%s", updated.Code, updated.Body.String())
 	}
 
-	terminal := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents/"+event.ID+"/updates", map[string]any{
+	terminal := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents/"+event.ID+"/updates", map[string]any{
 		"state": "monitoring", "message": "Attempting to reopen.",
 	}, map[string]string{"Idempotency-Key": "status-reopen-test"})
-	assertProblem(t, terminal, http.StatusConflict, "status_terminal_event")
+	apidserver.AssertProblem(t, terminal, http.StatusConflict, "status_terminal_event")
 
-	listed := e.doAdmin(t, http.MethodGet, "/v1/admin/status/incidents", nil, nil)
+	listed := e.DoAdmin(t, http.MethodGet, "/v1/admin/status/incidents", nil, nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list status=%d body=%s", listed.Code, listed.Body.String())
 	}
@@ -73,10 +74,10 @@ func TestAdminStatusCreateUpdateResolveAndList(t *testing.T) {
 }
 
 func TestAdminStatusRerateAndCorrectionRoutes(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithAdminAllowlist(e.acct.Email)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	now := time.Now().UTC().Truncate(time.Second)
-	created := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	created := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "incident", "title": "Network eror", "impact": "degraded",
 		"components": []string{"networking"}, "state": "investigating", "starts_at": now,
 		"message": "We are investigatng.",
@@ -91,7 +92,7 @@ func TestAdminStatusRerateAndCorrectionRoutes(t *testing.T) {
 	originalUpdatedAt := event.UpdatedAt
 	originalPostedAt := event.Updates[0].PostedAt
 
-	rerated := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents/"+event.ID+"/updates", map[string]any{
+	rerated := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents/"+event.ID+"/updates", map[string]any{
 		"state": "identified", "message": "Deployment failures identified.",
 		"impact": "major_outage", "components": []string{"deployments"},
 	}, map[string]string{"Idempotency-Key": "status-correction-rerate"})
@@ -109,7 +110,7 @@ func TestAdminStatusRerateAndCorrectionRoutes(t *testing.T) {
 	}
 	reratingUpdatedAt := event.UpdatedAt
 
-	correctedTitle := e.doAdmin(t, http.MethodPatch, "/v1/admin/status/incidents/"+event.ID, map[string]any{
+	correctedTitle := e.DoAdmin(t, http.MethodPatch, "/v1/admin/status/incidents/"+event.ID, map[string]any{
 		"title": "Network error",
 	}, map[string]string{"Idempotency-Key": "status-correction-title"})
 	if correctedTitle.Code != http.StatusOK {
@@ -124,7 +125,7 @@ func TestAdminStatusRerateAndCorrectionRoutes(t *testing.T) {
 		t.Fatalf("corrected event metadata = %#v", event)
 	}
 	ratingUpdatedAt := event.UpdatedAt
-	correctedUpdate := e.doAdmin(t, http.MethodPatch, "/v1/admin/status/incidents/"+event.ID+"/updates/"+event.Updates[0].ID, map[string]any{
+	correctedUpdate := e.DoAdmin(t, http.MethodPatch, "/v1/admin/status/incidents/"+event.ID+"/updates/"+event.Updates[0].ID, map[string]any{
 		"message": "We are investigating.",
 	}, map[string]string{"Idempotency-Key": "status-correction-message"})
 	if correctedUpdate.Code != http.StatusOK {
@@ -139,23 +140,23 @@ func TestAdminStatusRerateAndCorrectionRoutes(t *testing.T) {
 }
 
 func TestAdminStatusRejectsInvalidComponentAndMissingAuth(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	e.s.WithAdminAllowlist(e.acct.Email)
+	e := apidserver.Setup(t, api.PlanPro)
+	(*e.S()).WithAdminAllowlist((*e.Acct()).Email)
 	now := time.Now().UTC()
-	bad := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	bad := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "incident", "title": "Bad mapping", "impact": "degraded",
 		"components": []string{"database"}, "state": "investigating", "starts_at": now,
 		"message": "This component is not public.",
 	}, nil)
-	assertProblem(t, bad, http.StatusBadRequest, "status_invalid_component")
-	invalidEvent := e.doAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	apidserver.AssertProblem(t, bad, http.StatusBadRequest, "status_invalid_component")
+	invalidEvent := e.DoAdmin(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "bogus", "title": "Bad event", "impact": "degraded",
 		"components": []string{"api_console"}, "state": "investigating", "starts_at": now,
 		"message": "This event kind is invalid.",
 	}, map[string]string{"Idempotency-Key": "status-invalid-kind"})
-	assertProblem(t, invalidEvent, http.StatusBadRequest, publicstatus.CodeInvalidEvent)
+	apidserver.AssertProblem(t, invalidEvent, http.StatusBadRequest, publicstatus.CodeInvalidEvent)
 
-	unauthenticated := e.do(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
+	unauthenticated := e.Do(t, http.MethodPost, "/v1/admin/status/incidents", map[string]any{
 		"kind": "incident", "title": "No session", "impact": "degraded",
 		"components": []string{"api_console"}, "state": "investigating", "starts_at": now,
 		"message": "Bearer keys cannot publish incidents.",
@@ -163,12 +164,12 @@ func TestAdminStatusRejectsInvalidComponentAndMissingAuth(t *testing.T) {
 	if unauthenticated.Code != http.StatusForbidden {
 		t.Fatalf("bearer mutation status=%d body=%s", unauthenticated.Code, unauthenticated.Body.String())
 	}
-	bearerList := e.do(t, http.MethodGet, "/v1/admin/status/incidents", nil, nil)
-	assertProblem(t, bearerList, http.StatusForbidden, api.CodeForbidden)
+	bearerList := e.Do(t, http.MethodGet, "/v1/admin/status/incidents", nil, nil)
+	apidserver.AssertProblem(t, bearerList, http.StatusForbidden, api.CodeForbidden)
 }
 
 func TestAdminStatusRoutesRequireOperatorAllowlist(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	paths := []struct {
 		method string
 		path   string
@@ -180,7 +181,7 @@ func TestAdminStatusRoutesRequireOperatorAllowlist(t *testing.T) {
 		{http.MethodPatch, "/v1/admin/status/incidents/11111111-1111-4111-8111-111111111111/updates/22222222-2222-4222-8222-222222222222"},
 	}
 	for _, route := range paths {
-		recorder := e.doAdmin(t, route.method, route.path, nil, nil)
-		assertProblem(t, recorder, http.StatusForbidden, "admin_required")
+		recorder := e.DoAdmin(t, route.method, route.path, nil, nil)
+		apidserver.AssertProblem(t, recorder, http.StatusForbidden, "admin_required")
 	}
 }

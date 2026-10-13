@@ -3,6 +3,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,13 @@ var ErrAppDeleted = errors.New("sched: app deleted")
 // &CoordInstance{} (empty fields) which the gRPC server happily
 // forwarded as a 200 with zero-valued Instance.
 var ErrAtCapacity = errors.New("sched: at capacity")
+
+// ErrNoRequestListener is the at-capacity refusal of a worker or job app: it
+// has no request listener, so no request can start it. It wraps ErrAtCapacity.
+// Without it the refusal crossed gRPC as "500 schedd operation failed" and a
+// visitor of a worker's URL got that after ~5 s on every request
+// (production-us hunt #9, H9-169).
+var ErrNoRequestListener = fmt.Errorf("%w: the app runs as a background worker or job and has no request listener", ErrAtCapacity)
 
 // CoordOutcome is the result of a coordinated wake. On success
 // Instance is non-nil and Err is nil. On failure Instance is nil and Err

@@ -18,8 +18,8 @@ authentication remains the application's responsibility.
 ## Scenario-scoped chaos
 
 Real-VM scenarios can inject bounded faults into Gregale-managed HTTP service
-calls and private TCP connections between workloads registered in the same test
-run. Rules are armed after
+calls, private service-name DNS lookups, and TCP connections between workloads
+registered in the same test run. Rules are armed after
 the selected warm, cold, or restored profile is prepared and before the
 scenario trigger when declared as a top-level plan. Staged scenarios can arm
 and clear plans between steps. Plans expire automatically, are removed with the
@@ -55,7 +55,7 @@ gregale chaos inject --scenario customer-export --target payment \
 ```
 
 `--target` and optional `--from` name workloads in the scenario. `--error`
-returns a synthetic 5xx response; `--latency` delays selected calls and then
+returns a synthetic 429 or 5xx response; `--latency` delays selected calls and then
 forwards them. Selection is deterministic for a supplied trace ID and seed.
 Reports include the installed rules and lease expiry, while service-call
 metrics and traces identify injected requests. Fault plans last from one second
@@ -65,9 +65,154 @@ declare at most 16 rules.
 HTTP faults act at Gregale's internal HTTP service proxy after normal
 identity, tenant, binding, and target authorization. They do not alter public
 HTTP or external calls. TCP faults use the private TCP service proxy described
-below. Chaos plans require the `real-vm` engine; local and simulated runs reject
-them. Application assertions decide whether retries, circuit breakers,
-rollbacks, and customer notifications match the expected policy.
+below. DNS faults apply only to `*.svc.gregale` lookups made by a verified
+member of the same scenario run; public DNS and `.internal` aliases keep their
+normal behavior. Chaos plans require the `real-vm` engine; local and simulated
+runs reject them. Application assertions decide whether retries, circuit
+breakers, rollbacks, and customer notifications match the expected policy.
+
+### HTTP rate limiting and Retry-After
+
+The existing `http_status` fault accepts 429 or 500–599. For 429 and 503,
+optional `retry_after` emits the standard delta-seconds `Retry-After` header:
+
+```yaml
+chaos:
+  duration: 30s
+  rules:
+    - to: inventory
+      kind: http_status
+      status_code: 429
+      retry_after: 1s
+      percent: 100
+      min_matches: 3
+```
+
+`retry_after` must be whole seconds between 1s and 30s. It is invalid for other
+statuses and for latency, TCP, or DNS faults. Omitting it emits no synthetic
+retry header. The API uses `retry_after_seconds`, an integer from 1 to 30.
+One-off experiments accept `--error 429 --retry-after 1s`. HTTP-date values,
+arbitrary response headers, and custom/malformed response bodies are not part
+of this parameter. The fault retains run isolation, selection, match evidence,
+expiry and cleanup, and only affects managed internal HTTP dependency calls.
+
+Updated API and gateway versions must be deployed before using this contract;
+an updated CLI alone cannot inject it on an older fleet. JSON/JUnit receipts
+retain the status and delay in the rule, and HTML shows both values.
+
+The [HTTP retry example](../examples/scenario-http-retry/README.md) verifies
+three attempts at most, two measured waits of at least one second, a controlled
+failure while rate limited, and first-attempt success after fault clear. It
+also tests success during retries, invalid headers, and deadline cancellation.
+
+### Malformed and truncated HTTP bodies
+
+Use `http_malformed_json` to return synthetic HTTP 200 with invalid JSON, or
+`http_truncated_body` to return synthetic HTTP 200 with fewer bytes than its
+declared `Content-Length`:
+
+```yaml
+chaos:
+  duration: 30s
+  rules:
+    - to: inventory
+      kind: http_truncated_body
+      percent: 100
+      min_matches: 3
+```
+
+These terminal faults use fixed small JSON prefixes and do not call the
+upstream dependency. They accept the existing `from`, `to`, `percent`, `seed`,
+and `min_matches` fields; status, delay, retry header, and TCP parameters must
+be omitted. HEAD requests skip body faults and produce no match evidence.
+HTTP/1 clients observe a short-body connection close; HTTP/2 clients detect a
+content-length mismatch when the stream finishes. Both faults retain normal
+scenario authorization, run isolation, expiry, metrics, and cleanup.
+
+The [HTTP body suite](../examples/scenario-http-retry/README.md#malformed-and-truncated-response-bodies)
+checks bounded read-only retries, controlled errors, body-read deadlines,
+positive matches, and recovery after clear. These faults do not certify
+idempotency of writes or simulate an upstream commit before losing its reply.
+Native execution requires updated API and gateway deployments. One-off
+experiments support `--malformed-json` and `--truncated-body`, mutually exclusive
+with the other fault selectors.
+
+### Lose an HTTP response after dependency execution
+
+`http_response_lost` forwards the authorized request through the normal route,
+wake and transport policy, drains a nonempty successful response, then makes
+its entity incomplete while retaining the upstream 2xx status:
+
+```yaml
+chaos:
+  duration: 30s
+  rules:
+    - to: payment
+      kind: http_response_lost
+      percent: 100
+      min_matches: 3
+```
+
+Unlike the synthetic body faults, the dependency actually executes. The fault
+adds no forwarding attempt and does not buffer the response body. Non-2xx,
+204, 205, empty responses, HEAD and upgrades pass through and produce no loss
+matches. Canceled requests are not counted as injections. An eligible response
+gets `Content-Length: 1` and zero bytes, so HTTP/1 and HTTP/2 clients detect an
+incomplete entity. Status, delay, retry-header and TCP parameters must be omitted.
+
+Selection is latched for each authorized request; already-selected requests
+can finish after clear. Clear and expiry stop new selections. Existing request
+budgets and cancellation govern upstream draining. Match evidence and metrics
+are recorded after draining an eligible response, not merely selecting a rule.
+Updated API and gateway deployments are required. One-off experiments accept
+`--response-lost`, mutually exclusive with other fault selectors.
+
+The [committed-write example](../examples/scenario-http-write/README.md) checks
+an independent durable provider ledger: one charge across retries with the same
+idempotency key and payload, conflicts that remain visible during the fault,
+and reconciliation without additional charges after clear. A successful HTTP
+response alone is not proof of a durable commit; the application must supply
+its own business evidence and idempotency contract before retrying writes.
+
+### Private service DNS faults
+
+DNS rules target the scenario workload named by the private service hostname.
+They are useful for checking how a caller handles a dependency name that stops
+resolving or resolves slowly:
+
+```yaml
+chaos:
+  duration: 2m
+  rules:
+    - from: checkout
+      to: cache
+      kind: dns_servfail
+      percent: 100
+      min_matches: 1
+```
+
+| Kind | Parameters | Behavior |
+| --- | --- | --- |
+| `dns_latency` | `latency: 250ms` | Delay a matching private DNS response, then answer normally. |
+| `dns_timeout` | No extra parameters | Drop a matching query so the guest resolver follows its normal timeout and retry behavior. |
+| `dns_servfail` | No extra parameters | Return DNS `SERVFAIL`. |
+| `dns_nxdomain` | No extra parameters | Return DNS `NXDOMAIN`. |
+
+`to` must name a workload declared in the scenario; optional `from` limits the
+fault to one caller. `percent` selects DNS queries, and seeded selection is
+available as for HTTP and TCP rules. A fault affects new lookups only: guest
+or library DNS caches can continue using answers resolved before the rule was
+armed. Use `min_matches` to require evidence that a lookup actually reached the
+resolver. Match counts are reported with the installed plan in JSON and HTML.
+
+One-off DNS experiments use the same run-scoped policy:
+
+```sh
+gregale chaos inject --scenario cache-resilience --target cache --dns-servfail --from checkout
+gregale chaos inject --scenario cache-resilience --target cache --dns-latency 250ms --percent 100
+gregale chaos inject --scenario cache-resilience --target cache --dns-timeout --duration 10s
+gregale chaos inject --scenario cache-resilience --target cache --dns-nxdomain --percent 100
+```
 
 ### TCP dependencies
 
@@ -168,8 +313,8 @@ scenario must prove the dependency was exercised:
 
 At the end of the scenario or staged step, Gregale records per-rule match
 counts in JSON and HTML reports and fails the scenario when a minimum is not
-met. A match means one HTTP request or one TCP connection selected for that
-rule; a TCP connection counts once even when the rule affects both directions.
+met. A match means one HTTP request, DNS query, or TCP connection selected for
+that rule; a TCP connection counts once even when the rule affects both directions.
 Counts are scoped to the run and plan generation and include gateway nodes
 across the run. The `GET /v1/dev/test-runs/{run_id}/chaos/matches` API returns
 the same evidence. Warm lifecycle evidence for a dependency with `tcp_ports`
@@ -208,14 +353,32 @@ TCP scenarios require private service TCP routing enabled on the test compute
 nodes: vmmd `service_tcp_enabled`, nftables `faas_service_tcp_enabled`, and the
 internal gateway's `service_tcp_listen` and `service_tcp_dns`. The runner does
 not enable these fleet settings. Ports 443, 10080 and 10081 are reserved for the
-HTTP mesh; relay listeners must use another port. This mechanism models
-established byte streams, not DNS failure, TCP handshake timeout, or packet
-loss. UDP is outside its scope.
+HTTP mesh; relay listeners must use another port. TCP faults model established
+byte streams, not SYN loss, kernel-level connection refusal, or packet loss.
+Private service DNS faults are handled separately by the node-local resolver;
+UDP application traffic is outside the TCP proxy's scope.
 
 ### Staged fault and recovery checks
 
+For a complete business-level example, use the
+[checkout resilience starter](../examples/scenario-checkout/README.md). It
+verifies a controlled checkout error within two seconds during a payment
+dependency timeout, bounded retries, catalog availability, recovery within ten
+seconds, and duplicate-order prevention. It combines existing staged faults,
+native JSON assertions, load budgets, and repository-owned assertion commands.
+The sample uses a stateful simulated payment fixture and persistent single-writer
+ledgers. Portable tests exercise lost acknowledgements and SIGKILL/restart
+recovery without duplicate charges or orders. Its README distinguishes process
+crash evidence from VM replacement and production payment guarantees.
+
+Its [concurrent customer batch](../examples/scenario-checkout/README.md#concurrent-customer-batch)
+adds six distinct payloads, simultaneous retries, per-key order/charge evidence,
+and conflict checks for idempotency-key reuse with a different payload. Portable
+tests cover an in-flight crash; the batch manifest covers managed native replacement.
+
 Use `steps` when one scenario needs to compare baseline behavior, behavior under
-a fault, and recovery in the same application process. The first step establishes
+a fault, and recovery in one isolated run. Workloads retain their processes
+unless a restart step is declared. The first step establishes
 the baseline. A later step can install a chaos plan, and a subsequent step uses
 `clear_chaos: true` to remove it before asserting recovery:
 
@@ -300,6 +463,131 @@ cannot combine with top-level `chaos`, `trigger`, `command`, `requests`,
 still expire on their own as a safety bound if the run stops before the clear
 step.
 
+#### Restart a staged workload
+
+A standalone `restart` step can cold-replace the primary workload (`app`) or a
+declared service after baseline. It uses the existing authenticated fresh app
+restart API, submits once, waits for a valid durable completion receipt, then
+polls readiness. It never restarts undeclared apps. A processing receipt alone
+does not prove application health or persistence.
+
+Declare read-only `GET` probes with successful 2xx expectations. At least one
+`storage_checks` probe must assert persisted JSON values; checks run both before
+submission and after readiness. Capture a meaningful storage identity and record
+from an earlier request rather than relying only on an unchanged zero count:
+
+```yaml
+- name: restart-checkout
+  restart:
+    workload: app
+    timeout: 1m
+    readiness:
+      name: checkout-ready
+      method: GET
+      path: /catalog
+      expect: {status: 200, json: {'/available': true}}
+    storage_checks:
+      - name: preserved-order-intent
+        method: GET
+        path: /durability
+        expect:
+          status: 200
+          json:
+            '/ledger_id': '${steps.ledger-before-restart.ledger_id}'
+            '/orders': 1
+            '/outage_state': pending
+```
+
+The checkout starter includes the preceding capture and the complete sequence.
+Fresh restart destroys live VM state and invalidates snapshots. `/tmp`, the
+writable layer, and process memory are not preserved. Use surviving external
+storage such as a database; the runner verifies the declared storage contract,
+not filesystem durability. The sample keeps its order ledger in the surviving
+payment fixture and restarts checkout only.
+
+`timeout` is required, between 1s and 5m, and covers preconditions, submission,
+processing, readiness, and storage verification together. Restart budgets and
+load scheduling windows must fit the scenario timeout. A restart cannot share a
+step with commands, HTTP journeys, load, fault installation, or fault clear.
+Restart probes cannot capture new values or mutate application state. Consumer
+`as` credentials are supported for primary-app probes; service probes cannot
+reuse that app's credentials. Active faults remain until explicit clear or
+expiry, including during restart. Failure or cancellation still runs fault and
+workload cleanup. Restart may finish after cancellation; an uncertain receipt
+never causes automatic resubmission.
+
+JSON, HTML, terminal, and JUnit output include target, wake ID, processing
+status, verified cold-boot method, readiness attempt count, duration, and before/after storage results.
+Persisted response values are omitted. This is a managed fresh replacement,
+not a timed SIGKILL primitive; portable starter tests separately cover SIGKILL
+at the ambiguous-charge boundary.
+
+An optional `restart.in_flight` starts one primary-app JSON write (POST, PUT,
+or PATCH) before replacement. Declare one to five read-only checkpoints on
+`app` or a declared service; each must be a successful GET with JSON assertions
+and no captures. Gregale polls until all checkpoints pass and the write remains
+pending, runs pre-restart storage checks, and checks again immediately before
+submitting the restart. A write that ends before submission fails the step.
+The background write always targets the primary app, including when replacing
+a service. Service checkpoints use the service URL without primary consumer
+credentials. References can use captures from preceding steps only.
+
+```yaml
+    in_flight:
+      request:
+        name: interrupted-write
+        method: POST
+        path: /checkout
+        headers: {idempotency-key: in-flight}
+        json: {customer: customer-one, sku: item-one, quantity: 1}
+        expect: {status: 200}
+      checkpoints:
+        - workload: payment
+          request:
+            name: provider-pending
+            method: GET
+            path: /checkpoints/in-flight
+            expect: {status: 200, json: {'/pending': true, '/committed': false}}
+```
+
+The restart timeout bounds the write, checkpoints, and all replacement probes.
+The original write's final response is diagnostic; it is expected to be
+interrupted and its declared expectation does not determine step success.
+Recovery assertions must replay and reconcile the business result. Gregale
+cancels and joins the background request on every return path. Reports record
+checkpoint attempts/results, pending-at-submission, verified replacement,
+joined cleanup, response status, and `request_ended`, `canceled_after_restart`,
+or `canceled_on_failure`. The last two mean Gregale canceled the request; they
+do not prove the replacement closed its socket. Raw bodies and payloads are
+omitted. Deterministic fixtures must hold the checkpoint until recovery;
+independent GET probes alone cannot atomically freeze an application.
+
+A restart-only scenario may use baseline, restart, and recovery without network
+chaos. It remains real-VM only. Every installed fault still needs explicit clear,
+and recovery must follow the last restart and fault clear. The HTTP write
+starter's `gregale-in-flight-test.yaml` provides a complete held-write example.
+The same starter's `gregale-restart-matrix-test.yaml` declares the
+`http-restart-matrix` suite: before durable acceptance, persisted pending intent,
+and committed charge before acknowledgement. Each scenario starts in an isolated
+workspace and uses the existing restart, suite, resource guard, and report
+contracts. The provider holds the selected checkpoint until matching business
+replay; conflicts cannot release it. Reports label the interruption point by
+scenario name. Run the complete suite without `--fail-fast` to collect every
+case; any failed or skipped case fails the suite. See the starter README for
+expected ledger counts, bounds, and portable/native evidence limits.
+
+
+
+The lifecycle profile describes the run's initial state. For a restarted service,
+only its verified planned restart wake IDs are exempted from the original-profile
+wake check. Other wakes still fail. Reports list planned restarts separately and
+do not claim `no_new_wake` for a service that was deliberately replaced.
+
+Use the [native checkout restart acceptance gate](scenario-restart-native-acceptance.md)
+to qualify this workflow on an actual fleet, including intentional failure,
+cancellation, and independent API cleanup verification. Portable harness checks
+do not replace that native execution.
+
 Use `load.relative` to compare a step's aggregate measurements with an earlier
 staged step that also has `load` configured. The optional `steps` map adds
 per-request comparisons: each entry maps a `baseline_step` HTTP name from the
@@ -324,6 +612,108 @@ include the attempt count, elapsed time, and each attempt's measured comparisons
 A retry window must exceed the load scheduling duration and fit within the
 scenario timeout; retrying is capped at 100 attempts and 100,000 HTTP steps. A
 `clear_chaos` step can stand on its own without a command or probe.
+
+### Timed fault phases during one load run
+
+Use `load.chaos_schedule` inside a staged step's `load` when traffic should
+continue while faults change. The phase durations must add up to the load
+duration (or the combined duration of its load stages). Start with a no-fault
+phase, end with a no-fault recovery phase, and separate fault phases with a
+no-fault phase. Each phase lasts at least one second; a schedule can contain at
+most 20 phases and run for at most 5 minutes. A later staged step can assert
+application recovery after the scheduled load:
+
+```yaml
+steps:
+  - name: baseline
+    requests:
+      - {name: baseline-probe, method: GET, path: /dependency-probe, expect: {status: 200}}
+  - name: continuous-resilience-load
+    requests:
+      - {name: dependency-probe, method: GET, path: /dependency-probe, expect: {status: 200}}
+    load:
+      vus: 5
+      duration: 60s
+      thresholds: {error_rate: 0.3}
+      chaos_schedule:
+        - name: baseline
+          duration: 10s
+          thresholds: {p95: 200ms, error_rate: 0.01, min_samples: 20}
+        - name: slow-cache
+          duration: 15s
+          thresholds: {p95: 1s, success_rate: 0.95, min_samples: 20}
+          rules:
+            - to: cache
+              kind: tcp_latency
+              port: 6379
+              direction: downstream
+              latency: 250ms
+              percent: 100
+              min_matches: 1
+        - name: clear-slow-cache
+          duration: 5s
+        - name: cache-unavailable
+          duration: 15s
+          rules:
+            - to: cache
+              kind: tcp_connect_refused
+              port: 6379
+              percent: 100
+              min_matches: 1
+        - name: recovery
+          duration: 15s
+          thresholds: {p95: 200ms, p99: 400ms, error_rate: 0.01, min_samples: 20}
+          recovery:
+            within: 10s
+            sustain: 5s
+            window: 1s
+            thresholds: {p95: 200ms, error_rate: 0.01, min_samples: 5}
+  - name: recovery-check
+    requests:
+      - {name: recovery-probe, method: GET, path: /dependency-probe, expect: {status: 200}}
+```
+
+Each phase replaces or clears the run-scoped plan while the load journeys keep
+running. Gregale clears faults before collecting each phase's match evidence;
+`min_matches` is checked independently for that phase. JSON and HTML reports
+include phase start and finish times, request counts, success and error rates,
+latency percentiles, and the phase's fault matches. Request metrics are assigned
+to the phase in which each request started. Control-plane changes and the
+gateway's policy refresh can add a small difference between planned and actual
+phase boundaries; reports include the actual timestamps. Timed chaos schedules
+require staged `real-vm` scenarios and cannot use `retry_until_passes`.
+
+Each phase can declare `thresholds` with `p95`, `p99`, `error_rate`,
+`success_rate`, and `min_samples`. These optional budgets apply to all HTTP
+requests started in that phase and are evaluated after the load finishes.
+Phase thresholds do not inherit the overall load thresholds; both sets must
+pass when configured. A phase with no samples fails any configured latency
+or rate budget, and `min_samples` can require enough evidence before accepting
+recovery. Any phase breach fails the scenario even if the overall load meets
+its budgets. JSON, HTML, and terminal output include each threshold's limit,
+observed value, and result; JUnit failures identify the phase and metric.
+
+A phase without rules immediately after a fault phase can add `recovery`.
+The recovery clock starts when the control API confirms the fault was cleared.
+`within` limits the time to the first healthy rolling window; `sustain` requires
+all subsequent checked windows to stay healthy for that duration. `window`
+defines the trailing request window. Checks run every window/10 (at least
+100ms), including the deadline and the end of the sustain interval. Recovery
+is measured at this check resolution, and cannot be observed before one full
+window has elapsed. Recovery windows count completed requests that started in the recovery phase,
+using their completion times and full latency. Pending requests contribute no
+healthy samples; their results enter later windows when they complete. Empty
+windows fail. Whole-phase budgets continue to group requests by start time.
+These recovery budgets are separate from whole-phase thresholds, so an initial
+period of slow recovery can be allowed without relaxing the final health budget.
+
+All three durations must be whole milliseconds from 100ms to 5m. `window`
+must not exceed `within`, and `within + sustain` must fit the phase duration.
+Recovery thresholds require a latency or rate budget and `min_samples >= 1`
+for every window. Recovery failures fail the scenario and appear in terminal,
+JSON, HTML, and JUnit output; JSON also records window size, check interval,
+number of windows checked, and the confirmed recovery time when successful.
+
 
 The runner clears faults on assertion or transport errors as part of cleanup.
 API clients can also clear an active run plan directly with
@@ -1463,3 +1853,2400 @@ status and body for retry assertions. Real platform reports label this path
 `POST /v1/apps/{slug}/park`. The API rejects that option for a production app.
 This keeps the test's destructive snapshot invalidation inside its expiring
 environment.
+
+### Repeated resilience runs
+
+A staged scenario with timed chaos recovery assertions can repeat the entire
+scenario and require a minimum pass rate:
+
+```yaml
+scenarios:
+  cache-resilience:
+    project: my-app
+    resilience:
+      runs: 10
+      min_pass_rate: 0.9
+    # services, steps and recovery assertions as in the timed chaos example
+```
+
+`runs` must be between 2 and 20. `min_pass_rate` is greater than 0 and at most 1;
+Gregale rounds the required successful run count up (0.9 requires 9 of 10).
+Each run gets a fresh application and service namespace, starts with the first
+step's HTTP baseline assertions, executes the complete staged scenario, and
+finishes fault and resource cleanup before the next run starts. All existing
+assertions, including recovery-time budgets, must pass for a run to count.
+Ordinary assertion failures are retained and the remaining runs continue.
+Cleanup failures stop the group, mark remaining runs skipped, and fail the
+group regardless of pass rate. Interruption and skipped runs also fail the
+group. `--fail-fast` applies to groups; `--repeat` repeats the complete group.
+The scenario timeout applies separately to each run. Preflight deployment and
+workload-minute estimates include every configured run.
+
+The scenario's final status and CI exit code use the required pass rate. JSON
+includes `resilience.history` with each run's IDs, timestamps, steps, load,
+errors, and cleanup evidence. Terminal and HTML output show pass rate and
+recovery-time p50/p95 per step and phase. Percentiles use confirmed successful
+recovery assertions, including those from runs that failed a later assertion;
+failed recovery assertions are excluded and sample counts are shown. JUnit
+has one case per group, with all individual run evidence in `system-out`, so
+an allowed failed run does not fail CI independently of the group budget.
+
+### Dependency fault matrices
+
+Add `resilience.fault_matrix` to repeat a staged scenario with different rules
+in a selected timed fault phase. This example replaces the `cache-unavailable`
+phase in the earlier `continuous-resilience-load` step:
+
+```yaml
+resilience:
+  runs: 10
+  min_pass_rate: 0.9
+  fault_matrix:
+    - name: latency
+      step: continuous-resilience-load
+      phase: cache-unavailable
+      rules:
+        - {to: cache, kind: tcp_latency, port: 6379, direction: downstream, latency: 250ms, percent: 100, min_matches: 1}
+    - name: bandwidth
+      step: continuous-resilience-load
+      phase: cache-unavailable
+      rules:
+        - {to: cache, kind: tcp_bandwidth, port: 6379, direction: downstream, rate_kib_per_second: 16, percent: 100, min_matches: 1}
+    - name: timeout
+      step: continuous-resilience-load
+      phase: cache-unavailable
+      rules:
+        - {to: cache, kind: tcp_connect_timeout, port: 6379, percent: 100, min_matches: 1}
+    - name: reset
+      step: continuous-resilience-load
+      phase: cache-unavailable
+      min_pass_rate: 1
+      recovery:
+        within: 5s
+        sustain: 5s
+        window: 1s
+        thresholds: {p95: 200ms, error_rate: 0.01, min_samples: 5}
+      rules:
+        - {to: cache, kind: tcp_reset, port: 6379, direction: downstream, reset_after: 100ms, percent: 100, min_matches: 1}
+```
+
+Matrices require 2–10 uniquely named cases. Each case names an existing fault
+phase immediately followed by a recovery assertion and supplies replacement
+`rules`; all other phases, assertions, and
+services remain part of that case. The template scenario must also be valid.
+Rules use the existing workload, TCP-port, duration, and match-count checks.
+A case inherits the resilience run count and minimum pass rate. Optional
+`min_pass_rate` replaces that case's pass-rate budget; optional `recovery`
+replaces the full recovery assertion immediately after its target phase.
+Each variant is validated before any resources are created.
+
+Cases run sequentially. Each case executes the configured number of fresh
+scenario runs and produces independent pass-rate and recovery p50/p95 results.
+The matrix passes only when every case passes; one case's good results cannot
+mask another case's failure. Assertion failures allow later cases to run;
+cleanup failure or interruption skips remaining cases and fails the matrix.
+`--repeat` repeats the whole matrix and `--fail-fast` applies to its final
+result. Resource estimates include cases × runs × profiles × CLI repeats.
+
+Terminal and HTML output show named case results. JSON stores case groups in
+`fault_matrix.cases`, with individual receipts under each case's
+`resilience.history`. JUnit uses one case for the matrix and includes all
+case and run evidence in `system-out`; any failed matrix case fails CI.
+
+### Baseline-relative recovery budgets
+
+Recovery assertions can derive their limits from the fault-free phase immediately
+before the fault. For example, require p95 to return to within 20% of normal:
+
+```yaml
+- name: recovery
+  duration: 15s
+  recovery:
+    within: 10s
+    sustain: 5s
+    window: 1s
+    thresholds: {min_samples: 5, error_rate: 0.01}
+    relative:
+      baseline_min_samples: 20
+      p95_increase_percent: 20
+```
+
+`relative` supports `p95_increase_percent`, `p99_increase_percent`,
+`error_rate_increase`, and `success_rate_drop`. Percent limits are between 0
+and 1000; rate changes are fractions between 0 and 1. Explicit zero requires
+no degradation. `baseline_min_samples` must be between 1 and 100000 and at
+least one relative metric must be set. `thresholds.min_samples` remains
+required for every recovery window. Absolute latency and rate budgets are
+optional when relative metrics are present; both sets must pass if configured.
+
+Only requests started in the baseline phase and completed before the fault
+begins contribute to its metrics. Requests overlapping the fault are excluded
+so injected slowness cannot relax the recovery budget. Too few completed
+baseline samples fail recovery. Relative latency budgets also require a
+positive baseline percentile. Each repeated run and fault-matrix case measures
+its own baseline; no baseline is shared across runs.
+
+Latency limits are baseline percentile × (1 + allowed percent / 100). Error-rate
+limits add the allowed fraction (capped at 1); success-rate limits subtract it
+(floored at 0). The same rolling-window, recovery deadline, and sustain rules
+apply. JSON retains the baseline phase and metrics plus the derived limits,
+observed values, and results at the confirming window (or final checked window
+on failure). Terminal and HTML reports show those comparisons. Scenario and
+JUnit failures identify the recovery phase and failed relative metrics.
+
+### Recovery regressions between CI runs
+
+Set a recovery regression budget on a resilience scenario:
+
+```yaml
+resilience:
+  runs: 10
+  min_pass_rate: 0.9
+  recovery_regression:
+    p95_increase_percent: 20
+    min_samples: 5
+  # optional fault_matrix cases
+```
+
+First record a successful run with this CLI, then compare a later run:
+
+```bash
+gregale test --scenario cache-resilience --profile warm --report previous.json
+gregale test --scenario cache-resilience --profile warm --recovery-baseline previous.json --report current.json --junit current.xml --html current.html
+```
+
+The saved report is selected explicitly; Gregale does not fetch CI artifacts or
+automatically choose a historical run. `--recovery-baseline` requires `real-vm`
+resilience scenarios declaring `recovery_regression`, and cannot be combined
+with `--baseline`, validation, or preflight. For suites, every selected member
+must satisfy those requirements. The budget alone permits recording a baseline;
+comparison runs only when the flag is supplied.
+
+`p95_increase_percent` allows 0–1000% (zero permits no increase).
+`min_samples` must be between 2 and the configured number of resilience runs.
+Every recovery phase in every matrix case must have that many confirmed
+recovery samples in both reports. Percentiles are recomputed from individual
+run evidence, including confirmed recoveries before a later assertion failure;
+failed or unconfirmed recovery assertions contribute no samples. Missing,
+incomplete, duplicate, or invalid recovery evidence is rejected.
+
+Reports must match scenario, engine, lifecycle profile, CLI repeat number, and
+named matrix cases. Each repeated group records a fingerprint of request
+assertions, chaos rules, timing, recovery budgets, declared TCP ports and
+scenario timeout. Changed experiment settings require a new baseline; application
+source code can change. Older reports without this metadata must be recorded
+again. Only previously successful groups with successful cleanup are accepted,
+and baseline validation happens before deployment. The baseline file is read
+only; output files cannot overwrite it.
+
+A recovery p95 above previous p95 × (1 + allowed percent / 100), or insufficient
+current samples, fails the scenario and CI. Comparisons are independent per
+matrix case, step, and phase. Current runs that fail execution or cleanup are
+marked `not_compared` and retain their original failure. JSON, terminal, and
+HTML reports show previous/current p95, sample counts, percentage change, limit,
+and result, plus the baseline report digest. JUnit failure messages identify
+the regressed case and phase and include full evidence in `system-out`.
+
+### Retry amplification during HTTP faults
+
+A timed HTTP fault phase can limit dependency traffic per named incoming load
+request. Add this to the fault phase alongside its `name` and `duration`:
+
+```yaml
+rules:
+  - from: app
+    to: inventory
+    kind: http_status
+    percent: 100
+    status_code: 503
+retry_amplification:
+  request: checkout
+  max_attempts_per_request: 3
+  min_requests: 20
+```
+
+`checkout` must name exactly one request or check in the load journey. Its request
+count includes successful and failed requests started during that phase; other
+journey steps do not contribute to the denominator. The numerator is the captured
+HTTP fault match count for the selected caller and dependency. Exactly one rule,
+100% coverage, and an explicit `from` workload are required. HTTP `latency` and
+`http_status` rules are supported. TCP connections and DNS lookups cannot measure
+HTTP request retries and are rejected for this assertion.
+
+This is an aggregate traffic ratio, not trace-level attribution. Background calls
+from the selected caller also contribute. Requests overlapping phase boundaries
+can contribute to different windows at ingress and at the dependency. Use long
+enough phases and sufficient samples for the workload. Gateway-internal retries
+that bypass fault evaluation are not included. A zero dependency count is allowed;
+use the rule's `min_matches` when the dependency must actually be exercised.
+
+Missing fault evidence or too few incoming samples fails the assertion. A ratio
+above the budget fails the run and CI. JSON, terminal, HTML, and JUnit reports
+retain the counts, ratio, budget, and failure reason independently for every run
+and matrix case.
+
+### TCP connection-attempt budgets
+
+A timed TCP fault phase can limit application connection attempts per named
+incoming load request:
+
+```yaml
+rules:
+  - from: app
+    to: cache
+    kind: tcp_connect_refused
+    port: 6379
+    percent: 100
+connection_attempts:
+  request: checkout
+  max_attempts_per_request: 3
+  min_requests: 20
+```
+
+Use exactly one TCP fault rule with an explicit caller, dependency, declared TCP
+port, and 100% coverage. All TCP fault kinds support this budget. `request` must
+name exactly one request or check in the phase's load journey. Its count includes
+successful and failed requests started in that phase; other load steps are
+excluded from the denominator.
+
+The gateway counts each authorized application connection reaching the TCP chaos
+path before forwarding. Injected connect refusals/timeouts, failed upstream dials,
+and idle connections are included. Reads, writes, and policy refreshes on pooled
+sockets do not increment this counter. Connections already open when the fault
+begins are excluded. The proxy's own retries across backend replicas still belong
+to one application connection attempt. Connections rejected before the chaos path
+(for example, authorization or session limits) are excluded.
+
+Counts are isolated by fault-plan generation, caller, dependency, and port. They
+are separate from fault-match counts: a socket can attempt a connection without
+exchanging any payload or experiencing a stream fault. Background connections
+from the selected caller also contribute; this is a phase-wide ratio, not
+trace-level attribution. Requests and connections overlapping phase boundaries
+can land in different windows.
+
+Too few incoming request samples, an exceeded budget, or incomplete attempt
+evidence fails the run and CI. The gateway must support connection-attempt
+recording. Missing counters, including a phase with no new connections, fail
+closed instead of being interpreted as zero. This makes these budgets suitable
+for exercises that create new connections; omit the budget when intentionally
+reusing an existing pool without reconnecting. JSON, terminal, HTML, and JUnit
+reports include the route, port, attempt/request counts, ratio, budget, and result
+for every run and fault-matrix case. Recovery-baseline fingerprints include the
+budget when configured.
+
+### Circuit-breaker activity assertions
+
+Add `circuit_breaker` to a timed fault phase to verify dependency traffic
+suppression, probe limits, and sustained traffic after the fault clears:
+
+```yaml
+load:
+  duration: 10s
+  rate: 40
+  vus: 2
+  chaos_schedule:
+    - name: baseline
+      duration: 2s
+    - name: dependency-outage
+      duration: 4s
+      rules:
+        - from: app
+          to: cache
+          kind: tcp_connect_refused
+          port: 6379
+          percent: 100
+      circuit_breaker:
+        counter_path: /test/cache-attempts
+        # as: tester  # optional declared consumer for the counter endpoint
+        request: checkout
+        min_requests: 5
+        stop_within: 2s
+        window: 1s
+        max_probes: 1
+        resume_within: 2s
+        resume_min_attempts: 5
+    - name: recovery
+      duration: 4s
+```
+
+`checkout` must name exactly one incoming request or check in the load journey.
+The fault phase requires one 100% rule with an explicit caller, between two
+fault-free phases. HTTP, TCP, and DNS faults can use this assertion. Existing
+staged-scenario baseline and subsequent recovery-step requirements still apply.
+
+The application must expose a counter endpoint returning HTTP 200 with a single
+JSON object, for example `{"attempts": 123}`. Count all application attempts to
+the selected dependency, including failed attempts and background probes. The
+counter must increase monotonically and cover the entire isolated run, across
+all replicas. It must continue recording after the fault clears. Reading the
+endpoint must not call the dependency or increment its counter. A run-scoped
+shared counter is appropriate; a different replica's process-local counter can
+reset or undercount and is unsuitable. Gregale does not derive this timeline
+from aggregate gateway fault-match counts.
+
+`counter_path` is a local absolute path on the application under test. Templates,
+fragments, and external URLs are rejected. `as` optionally uses a declared
+scenario consumer's credential. Redirects are refused. Responses are bounded to
+4 KiB and must contain only a nonnegative int64 `attempts` value. Counter values
+are held in memory; reports retain window deltas, not endpoint response bodies or
+credentials. Reads run separately from the load journey and are excluded from
+its request counts and latency measurements, though they add application traffic.
+
+Gregale samples every one-tenth of `window`, bounded to 100–250 ms. It evaluates
+rolling windows at each sample. Baseline windows must reach
+`resume_min_attempts`; the first fault window at or below `max_probes` must finish
+within `stop_within`. Every later fault window must remain within the probe
+budget. After clearing the fault, a window reaching `resume_min_attempts` must
+finish within `resume_within`, and every later complete recovery window must
+maintain that activity. Both suppression and resumption need confirmation for at
+least another complete window. `resume_min_attempts` must exceed `max_probes`.
+Choose the recovery activity threshold to represent normal traffic for your
+workload; Gregale does not infer it from the baseline.
+
+Every evaluated window must contain at least `min_requests` starts of the named
+incoming request, including failures. Paused load cannot appear to be a healthy
+open breaker. Baseline must fit a window plus a polling interval; fault and
+recovery phases must fit their deadline plus a sustained window. Durations are
+whole milliseconds from 1s to 5m, within the existing schedule limits.
+
+This checks observed traffic behavior, not the application's internal breaker
+state. Confirmation times are measured at the end of a complete observation
+window. Sampled windows can be slightly longer than `window`, and timestamps
+reflect receipt of the counter response; use budgets with measurement headroom.
+Background dependency attempts count toward probe limits. Request/counter windows
+crossing phase boundaries are excluded. Counter errors, resets, excessive sampling
+gaps, insufficient incoming traffic, incomplete phases, probe storms, and late or
+unstable recovery fail the run and CI.
+
+JSON, terminal, HTML, and JUnit reports show confirmation times, budgets, and
+per-window dependency/incoming counts. Existing resilience histories and fault
+matrices retain these results independently for each run. Combine these assertions
+with existing recovery SLO assertions when using resilience runs or fault matrices;
+recovery p95 regression comparisons still apply to the existing SLO recovery
+measurements. Workload fingerprints include configured circuit-breaker budgets.
+
+### Bulkhead isolation with per-endpoint phase budgets
+
+Use `step_thresholds` in a timed chaos phase to keep unrelated endpoints healthy
+while a dependency is impaired:
+
+```yaml
+- name: cache-slow
+  duration: 20s
+  rules:
+    - from: app
+      to: cache
+      kind: tcp_latency
+      port: 6379
+      percent: 100
+      latency: 500ms
+      min_matches: 1
+  step_thresholds:
+    health:
+      p95: 200ms
+      error_rate: 0.01
+      min_samples: 20
+    unrelated-search:
+      p95: 300ms
+      p99: 500ms
+      success_rate: 0.99
+      min_samples: 20
+```
+
+The keys name native HTTP requests or checks in the same staged load journey.
+Budgets support `p95`, `p99`, `error_rate`, `success_rate`, and `min_samples`.
+Each endpoint budget requires a positive `min_samples` and at least one latency
+or rate limit. Unknown names and invalid budgets are rejected before deployment.
+Budgets can be attached independently to baseline, fault, and recovery phases.
+Use the fault rule's `min_matches` to require evidence that the dependency was
+actually exercised under the fault.
+
+Metrics use only requests started in that phase for that named HTTP step, even
+when a response completes after the phase boundary. Rates follow existing load
+semantics: failed HTTP assertions contribute to `error_rate`, and passed
+assertions contribute to `success_rate`. No overall or other-phase budget is
+inherited. Aggregate phase, whole-load, whole-load endpoint, and per-phase
+endpoint budgets must all pass when configured. Adjust aggregate budgets to allow
+the intended degradation of the affected request without relaxing the protected
+endpoint's budgets.
+
+A healthy aggregate cannot hide a protected endpoint's latency or errors. Empty
+or undersampled endpoints fail their sample floor instead of appearing healthy.
+Requests within a journey execute sequentially and stop when a request fails.
+Place protected probes before an expected failing request, or give that request
+an appropriate response expectation, so probes can still run. Use enough VUs and
+suitable sample floors to exercise overlapping traffic. These assertions check observed
+endpoint isolation; they do not create independent per-endpoint traffic streams
+or identify a particular pool or worker as the cause of a failure.
+
+Terminal, JSON, HTML, and JUnit reports include endpoint samples, metrics, budgets,
+and outcomes. Failures name both the chaos phase and HTTP step and fail the run
+and CI. Resilience histories and fault-matrix cases retain independent results.
+Recovery-baseline fingerprints include configured `step_thresholds`; adding or
+changing the budgets requires recording a compatible baseline.
+
+### Independent concurrent load streams
+
+Use `load.streams` to keep health probes running while checkout calls wait on a slow dependency:
+
+```yaml
+load:
+  duration: 30s
+  streams:
+    - name: checkout-load
+      requests: [checkout]
+      rate: 20
+      vus: 20
+    - name: health-probes
+      requests: [health]
+      rate: 5
+      vus: 2
+  thresholds:
+    steps:
+      health:
+        p95: 200ms
+        error_rate: 0.01
+        min_samples: 100
+```
+
+`requests` selects named native requests or checks from this load step, in execution order. Every request must belong to exactly one stream. A stream executes its own sequential journey with private captures and unique iteration IDs; failure stops that journey, while the other streams continue. Captures produced by load requests can only be referenced later in the same stream. Captures supplied by an earlier staged step remain available.
+
+Each stream has its own arrival rate and VU admission limit. Rate counts journeys per second, so a journey containing multiple requests can generate more HTTP requests. A busy stream drops arrivals instead of borrowing another stream's capacity, and any dropped arrival fails the load run. Reports retain each stream's rate, capacity, scheduled arrivals, and drops, alongside the existing endpoint metrics and budgets.
+
+Streams share one duration, fault schedule, phase clock, and global HTTP-request limit. Existing `thresholds.steps` and phase `step_thresholds` apply to their named endpoints, so health can have independent latency, error, and sample budgets throughout baseline, fault, and recovery. Aggregate recovery budgets continue to include all streams; streams do not change recovery semantics.
+
+Declare 2–20 streams with positive rates and explicit VUs, totaling at most 50 VUs and 1000 journeys/s. The planned HTTP-request total must fit the 100,000 request limit. Streams require `duration`; top-level VUs, rate, iterations, pacing, and stages (and their CLI overrides) cannot be combined with streams. The duration override remains supported and must still agree with any fault schedule.
+
+### Per-endpoint recovery assertions
+
+Use `step_recovery` on a fault-free phase immediately after a fault to require each named request or check to recover independently. For example, in a 15-second recovery phase:
+
+```yaml
+- name: recovery
+  duration: 15s
+  step_recovery:
+    checkout:
+      within: 5s
+      sustain: 10s
+      window: 1s
+      thresholds:
+        p95: 200ms
+        error_rate: 0.01
+        min_samples: 10
+    health:
+      within: 2s
+      sustain: 3s
+      window: 1s
+      thresholds:
+        p95: 100ms
+        success_rate: 0.99
+        min_samples: 5
+```
+
+Every endpoint assertion must pass, along with any aggregate `recovery` assertion and other SLO budgets. Each has its own timing and thresholds; it does not inherit budgets from other endpoints or the aggregate. An endpoint needs a positive sample floor in **every rolling window**, plus a latency or rate budget. Healthy traffic from other streams cannot satisfy that floor or dilute endpoint errors. Use independent `load.streams` to keep protected probes running when another journey fails.
+
+The rolling-window semantics match aggregate recovery: only requests started in this recovery phase are eligible, and they contribute upon completion with their full latency. Empty or undersampled windows, pending requests, late recovery, and failures during the sustain period cannot confirm recovery. Recovery time is the end of the first healthy window in the sustained sequence, measured from the actual fault-clear acknowledgement. `window` must fit `within`, and `within + sustain` must fit the phase duration. Timing values must be whole milliseconds between 100ms and 5m.
+
+Each endpoint can also use the existing recovery `relative` budgets. Those compare only that endpoint's completed requests in the healthy phase immediately before the fault; overlapping requests and other endpoints cannot relax its baseline. Endpoint assertions alone qualify a scenario for repeated resilience runs and fault matrices. Existing matrix `recovery` overrides replace the aggregate assertion; endpoint assertions retain their declared budgets.
+
+Terminal, HTML, JSON, and JUnit reports identify each endpoint's result and recovery time. Repeated-run summaries and recovery-regression baselines track each endpoint separately, with their own confirmed-sample requirements. Changing endpoint recovery budgets changes the recovery workload fingerprint, so record a matching baseline.
+
+### Automatic recovery failure diagnostics
+
+When a real-VM run misses an aggregate or endpoint recovery assertion, Gregale automatically collects a diagnostic bundle **before destroying the isolated workloads**. No extra YAML is required. Failed assertions reference the bundle by `diagnostics_ref`; HTML reports link directly to it. JSON and JUnit retain the same bundle, and terminal output lists its identifier, workload excerpts, and collection errors.
+
+The bundle identifies the staged step, recovery phase, and endpoint, with request/failure counts and p95 latency for that recovery phase. It includes bounded fault-match evidence from the preceding phase. Log timestamps are restricted to a window around recovery deadlines (five seconds before and after, capped at the phase finish and collection time); multiple failed assertions share a bundle spanning their windows. The metrics summarize requests started in the recovery phase, rather than individual rolling-window requests.
+
+Application logs are fetched as a finite page with follow disabled. Collection shares the existing 15-second diagnostic deadline, allows at most two seconds per workload, and visits at most eight workloads. Each page is limited to 64 KiB of input and 20 excerpts, with 1 KiB per log line and 16 KiB of serialized excerpts per workload. The complete bundle is limited to 256 KiB; truncation, missing retained log history, and unavailable telemetry are reported explicitly. Only retained logs within the requested window can be captured; collection does not enable debug telemetry or log retention.
+
+Known operator, run, fixture, consumer, configured app-secret, and credential-header values are redacted. Credential- or request-body-labelled log lines and opaque credential-like values are redacted; request headers, bodies, and raw API error responses are excluded from the bundle. Redaction is best effort for arbitrary application-written logs, so applications should avoid logging secrets. Platform request metadata remains bounded, strips query strings, and excludes wake-trigger payloads.
+
+Diagnostic failures never replace the original test error, alter pass/fail status, or prevent the normal cleanup path. Healthy recovery assertions do not trigger log collection. Every repeated resilience run collects its own evidence; the bundle stays with that run's receipt.
+
+### Replaying a failed isolated run
+
+New real-VM failures include a versioned `replay` manifest in their JSON receipt.
+It identifies the scenario, lifecycle profile, matrix case, and SHA-256 of the
+effective configuration, including load streams, fault schedule, and recovery
+budgets. It stores no configuration or resolved credential values. Save the
+original run with `--report failed.json`, then select the failed leaf's `run_id`
+from the report (matrix cases contain resilience `history` entries):
+
+```sh
+gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --validate
+gregale test replay --from failed.json --run-id RUN_ID --manifest gregale-test.yaml --report replay.json --html replay.html
+```
+
+Replay verifies the original manifest's effective configuration before platform
+access, selects the original fault-matrix variant, and executes exactly one run
+in a fresh isolated environment. Secrets are resolved again by the normal runner;
+repetitions, matrix expansion, and historical regression comparisons are omitted.
+The replay receipt links to the original through `replay_of`. Normal cleanup and
+failure diagnostics still apply. Input reports and manifests cannot be overwritten
+by report outputs. Reports from before replay support cannot be replayed.
+
+This reproduces the declared configuration, not timing or external state. Keep
+application and service sources at the original revision: source contents,
+dependency versions, generated credentials, and platform state are not pinned by this
+manifest. Changed literal configuration (including literal secrets) is rejected;
+generated `${run.secret}` values, consumer keys, and resource references are recreated at replay time.
+Replay is currently available for failed real-VM leaf runs, not local/simulated
+runs or group-only regression failures.
+
+### Minimizing a recovery failure's fault rules
+
+`gregale test minimize` searches for fewer fault rules that repeatedly fail one
+selected recovery assertion. It accepts an original failed real-VM leaf run saved
+with replay support, including a selected fault-matrix case. Select aggregate
+recovery as `STEP/PHASE`, or a named endpoint as `STEP/PHASE/REQUEST`. The immediately
+preceding fault phase must contain 2–20 rules. Only that phase's rules are reduced;
+load streams, timing, thresholds, other phases, and application configuration stay
+as declared.
+
+```sh
+gregale test minimize --from failed.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery/checkout \
+  --max-runs 10 --max-workload-minutes 180 --validate
+
+gregale test minimize --from failed.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery/checkout \
+  --max-runs 10 --max-workload-minutes 180 \
+  --report minimized.json --html minimized.html
+```
+
+The original configuration must fail the selected assertion in two fresh isolated
+runs before reduction starts. Each candidate removes one rule and runs twice. Two
+matching failures accept the removal; two passing runs retain the rule. The search
+restarts after an accepted removal so earlier retained rules can be reconsidered.
+Every run uses the normal provisioning, cleanup, and failure diagnostics paths.
+
+The selected failure must have completed recovery windows and evidence that the
+preceding fault matched traffic. Interrupted loads, unavailable evidence, unrelated
+failures, mixed outcomes, or a cleanup failure stop the search as `inconclusive`.
+A cleanup failure prevents further runs. `--max-runs` includes all confirmations
+and is capped at 20. A positive `--max-workload-minutes` is mandatory; it reserves
+the normal timeout-based workload estimate before each two-run candidate. If a
+complete pair does not fit either remaining budget, the search stops without
+starting that pair. These are estimated workload-minutes, not a billing guarantee.
+
+Completed searches report `minimized` or `unchanged` and exit zero. Inconclusive
+searches exit nonzero and preserve the last confirmed result, if one exists. This
+is a diagnostic command: expected assertion failures in its trials do not make a
+completed search fail. `--report` is required for execution; JUnit and HTML outputs
+are optional. Reports include the target, original/remaining rule counts, budgets,
+all trial receipts, removal indices, and a `best_run_id` for the confirmed replay.
+
+```sh
+gregale test replay --from minimized.json --run-id BEST_RUN_ID \
+  --manifest gregale-test.yaml --validate
+
+gregale test replay --from minimized.json --run-id BEST_RUN_ID \
+  --manifest gregale-test.yaml --report reduced-replay.json
+```
+
+Reduced replay manifests use version 2. They reference removed rules by step,
+phase, and zero-based index in the original rule list, and verify both the original
+and reduced configuration hashes. They contain no rule bodies or secret values.
+Use the original manifest; even changes to removed rules are rejected. Older
+Gregale versions reject these manifests. A failure from an already reduced replay
+cannot be used for another rule-removal search; severity and recovery modes accept reduced replays.
+
+The result is minimal under valid individual removals within the selected phase,
+with at least one rule retained. Removing the last rule would change schedule and
+recovery semantics, so it is excluded. Invalid candidates are recorded without
+provisioning. The result does not establish the globally smallest combination or
+prove fault causality; two confirmations cannot eliminate all nondeterminism.
+Application sources and external state have the same limits as failure replay.
+
+### Minimizing HTTP or TCP latency
+
+Use `--mode latency` to reduce one `latency` or `tcp_latency` rule in the fault
+phase immediately before the selected recovery assertion. That phase may contain
+1–20 rules. `--rule-index` is required and refers to the zero-based index in the
+original manifest, including when earlier minimization removed other rules.
+Other fault settings, rules, load, and recovery budgets are preserved.
+
+```sh
+gregale test minimize --from minimized.json --run-id BEST_RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery/checkout \
+  --mode latency --rule-index 1 --resolution 1ms \
+  --max-runs 20 --max-workload-minutes 180 --report latency.json --html latency.html
+```
+
+The search confirms the starting failure twice, tries 1ms twice, then bisects the
+passing/failing interval until its width is at most `--resolution` (default 25ms).
+Latency and resolution must be whole milliseconds between 1ms and 30s. Every run
+must show that the selected rule matched traffic. The existing confirmation,
+cleanup, interruption, and budget limits apply. Mixed outcomes or budget exhaustion
+produce `inconclusive`, preserving the best confirmed replay.
+
+Reports include starting and mildest confirmed tested latency, any tested passing
+lower bound, resolution, and all candidate receipts. This search assumes latency
+severity is useful to bisect; it does not establish monotonic behavior, a global
+minimum, or that every smaller latency is safe. Replay manifests with latency
+changes and optional removals use version 3; inherited bandwidth changes require
+version 4, version 5 when percentage changes are inherited, or version 6 when
+recovery deadline changes are inherited. They retain original rule indices and verify both original and reduced
+configuration hashes. A replay supports at most
+20 latency overrides; replacing an existing override uses no additional slot.
+Use the original manifest and `best_run_id` with `gregale test replay`; older binaries reject version 3.
+
+### Minimizing TCP bandwidth restrictions
+
+Use `--mode bandwidth` to increase the allowed rate of one `tcp_bandwidth` rule
+until the selected recovery failure no longer reproduces. Select its zero-based
+index in the original manifest with `--rule-index`, including after earlier rule
+removals. The immediately preceding fault phase may contain 1–20 rules. Other
+rules, direction, traffic percentage, timing, load, and recovery budgets remain
+unchanged; inherited latency and bandwidth reductions are preserved.
+
+```sh
+gregale test minimize --from failed.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery/checkout \
+  --mode bandwidth --rule-index 1 --max-rate-kib-per-second 1024 \
+  --rate-resolution-kib-per-second 16 \
+  --max-runs 20 --max-workload-minutes 180 \
+  --report bandwidth.json --html bandwidth.html
+```
+
+`--max-rate-kib-per-second` is required, must exceed the starting rate, and is
+bounded at 1,000,000 KiB/s. `--rate-resolution-kib-per-second` defaults to 1 and
+must be between 1 and 1,000,000. These are integer KiB/s (1 KiB = 1024 bytes);
+`--resolution` applies only to latency mode. Add `--validate` instead of report
+outputs to check configuration and budgets without credentials or provisioning.
+
+The starting failure is confirmed twice. The search then tests the ceiling twice;
+if it still fails, that is the highest confirmed tested rate within the requested
+range. If it passes, the search bisects the failing/passing interval until its width
+is at most the rate resolution. Each candidate requires two agreeing runs and
+positive match evidence for the selected rule. The existing run and workload-minute
+budgets include all confirmations. Flaky results, unrelated failures, unavailable
+evidence, cancellation, cleanup failure, or exhausted budgets produce
+`inconclusive` and preserve the best confirmed replay; cleanup failure prevents
+further runs.
+
+JSON, HTML, JUnit, and terminal reports include the highest confirmed tested rate,
+starting rate, ceiling, resolution, and any tested passing upper bound. This is
+bounded tested evidence; the search does not prove monotonic behavior, a global
+boundary, or that every higher bandwidth is safe. Replay manifests containing
+bandwidth changes use version 4, version 5 when percentage changes are inherited,
+or version 6 when recovery deadline changes are inherited, and verify original and reduced hashes. Each
+replay supports up to 20 bandwidth overrides alongside up to 20 latency overrides;
+replacing an existing override consumes no extra slot. Use the original manifest
+and `best_run_id` with `gregale test replay`; older binaries reject version 4.
+
+### Minimizing a fault's selection percentage
+
+Use `--mode percent` to lower one selected fault rule's configured percentage,
+while preserving its kind, seed, severity, direction, load, and recovery budgets.
+Select the zero-based index in the original manifest with `--rule-index`; for a
+fault-matrix failure, use the selected case's rule order. Earlier rule removals and latency, bandwidth, or percentage reductions are preserved.
+The immediately preceding fault phase may contain 1–20 rules. All supported HTTP,
+TCP, and DNS fault kinds can use percentage minimization.
+
+```sh
+gregale test minimize --from failed.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery/checkout \
+  --mode percent --rule-index 1 --percent-resolution 1 \
+  --max-runs 20 --max-workload-minutes 180 \
+  --report percent.json --html percent.html
+```
+
+`--percent-resolution` defaults to 1 and must be an integer from 1 to 100
+percentage points. The search confirms the starting failure twice, tests 1% twice,
+and then bisects a passing/failing interval until its width is at most the chosen
+resolution. A starting rule already at 1% needs only the two confirmations and
+reports `unchanged`. Zero percent is excluded because disabling the rule changes
+fault participation. Only percentage-specific flags apply in this mode; latency
+and bandwidth resolution flags are rejected. Use `--validate` instead of report
+outputs for offline validation without provisioning.
+
+Each candidate must complete two agreeing runs and show positive match evidence
+for the selected rule. A candidate that matches no events is `inconclusive`, not
+evidence that the application tolerates that percentage. The existing run and
+workload-minute budgets reserve complete pairs and include the starting
+confirmations. Mixed outcomes, unrelated failures, missing evidence, cancellation,
+cleanup failure, or exhausted budgets stop the search as `inconclusive`, retaining
+the last confirmed result. Cleanup failure prevents further runs.
+
+Reports show starting and mildest confirmed tested percentage, resolution in
+percentage points, any tested passing lower bound, and all trial receipts. The
+configured percentage governs eligible HTTP requests, TCP connections or connection
+attempts, or DNS queries according to the fault kind. It is not a measured fraction
+of bytes or all application traffic; finite samples, pooling, and caching affect
+observed matches. The selected seed is preserved, but fresh runs can still differ.
+The result does not prove monotonic behavior, a global minimum, fault causality, or
+that every smaller percentage is safe.
+
+Replay manifests containing percentage changes use version 5, or version 6 when
+recovery deadline changes are inherited. They retain original rule indices and other
+reductions, and verify original and reduced configuration
+hashes. Each replay supports up to 20 percentage overrides in addition to the
+existing latency and bandwidth limits; replacing an override consumes no extra
+slot. Use the original manifest and `best_run_id` with `gregale test replay`.
+Older binaries reject version 5.
+
+### Finding a passing recovery deadline
+
+Use `--mode recovery` to find the shortest confirmed tested deadline for one
+selected recovery assertion after a reproducible real-VM failure. Select aggregate
+recovery with `STEP/PHASE`, or a named endpoint with `STEP/PHASE/REQUEST`. The
+immediately preceding fault phase may contain 1–20 rules. All fault settings,
+load, phase durations, sustain time, observation window, relative baselines,
+thresholds, and other recovery assertions remain fixed. Earlier reductions are
+preserved. This mode does not require `--rule-index`.
+
+```sh
+gregale test minimize --from failed.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery/checkout \
+  --mode recovery --max-recovery-within 10s --recovery-resolution 100ms \
+  --max-runs 20 --max-workload-minutes 180 \
+  --report deadline.json --html deadline.html
+```
+
+`--max-recovery-within` is required and must exceed the starting failed deadline.
+It must be whole milliseconds from 100ms to 5m, and the deadline plus existing
+sustain time must fit inside the existing recovery phase. Gregale rejects ceilings
+that would require longer load or phase durations. `--recovery-resolution` defaults
+to 25ms and must be whole milliseconds from 1ms to 5m. Severity-specific flags are
+rejected in this mode. Use `--validate` instead of report outputs to check selection
+and budgets offline.
+
+The starting deadline must fail in two fresh runs. Gregale then tests the ceiling
+in two runs. If it passes twice, the search bisects the failing/passing interval
+until its width is at most the resolution, keeping the shortest deadline that
+passes twice. If the ceiling fails twice, no passing deadline has been established
+and the search is `inconclusive`. Each run must complete the fault and recovery
+phases with match evidence for the fixed fault configuration. Other failures,
+mixed outcomes, missing or mismatched deadline evidence, cancellation, cleanup
+failure, or exhausted budgets also produce `inconclusive`. Complete confirmation
+pairs count toward the existing run and workload-minute limits. A confirmed
+passing result survives a later inconclusive stop; cleanup failure prevents
+further runs.
+
+Reports include the starting failed deadline, shortest confirmed passing deadline
+when found, tested failing bound and run ID, ceiling, resolution, and all trials.
+`best_run_id` identifies a passing trial, so replay can verify the successful
+recovery budget. Until a passing pair is confirmed, there is no best passing run
+or replay descriptor. `recovery.failed_run_id` identifies a confirmed failed trial
+that can also be replayed. Passing deadline trials carry replay descriptors;
+ordinary passing scenario runs remain outside this replay selection.
+
+```sh
+gregale test replay --from deadline.json --run-id BEST_RUN_ID \
+  --manifest gregale-test.yaml --validate
+```
+
+Deadline replay manifests use version 6, verify original and changed configuration
+hashes, and support up to 20 deadline overrides keyed by step, phase, and optional
+request. Endpoint edits copy their budget without changing aggregate or other
+endpoint budgets. Use the original manifest; older binaries reject version 6.
+Successful deadline replays retain their descriptor for subsequent replay.
+
+`within` governs when a sustained healthy interval must begin according to the
+configured observation windows; sustain time still has to complete afterward.
+The result is a tested budget boundary within the requested range, not an exact
+recovery duration or a guarantee for future runs. It does not prove monotonic
+behavior or that every longer deadline will pass. Application sources and external
+state have the existing replay limitations.
+
+### Checking that recovery stays stable
+
+Add optional `stability` to an aggregate `recovery` budget or a named
+`step_recovery` budget to observe the application after its first sustained
+recovery. For example, a clear phase immediately following a fault phase can use:
+
+```yaml
+- name: recovery
+  duration: 25s
+  recovery:
+    within: 10s
+    sustain: 2s
+    stability: 10s
+    window: 1s
+    thresholds:
+      p95: 200ms
+      error_rate: 0.01
+      min_samples: 10
+```
+
+Gregale first finds a healthy rolling window starting by `within` and confirms
+that it stays healthy for `sustain`. It then checks the same absolute thresholds,
+relative baseline limits, and minimum completed sample count for `stability`.
+The first unhealthy window fails the assertion, even if traffic later becomes
+healthy again. Named endpoint budgets observe only that endpoint's traffic;
+healthy traffic to another endpoint cannot mask a relapse.
+
+`stability` must be a whole-millisecond duration from 100ms to 5m.
+`within + sustain + stability` must fit inside the phase duration. Deadline
+minimization and replay overrides also enforce this bound. Omitting `stability`
+preserves the previous behavior and replay fingerprint. Changing it changes the
+configuration fingerprint and requires a matching manifest for replay.
+
+JSON and JUnit evidence include `recovery.stability` (or the corresponding
+endpoint recovery): requested `duration_ms`, observation `started_ms`,
+`observed_ms`, `windows_checked`, `passed`, and optional `relapse_ms`.
+Times are relative to the acknowledged start of the clear phase. Terminal and
+HTML reports show the observation and relapse; failure diagnostics collect their
+bounded log window around the detected relapse. An incomplete observation fails,
+and initial recovery can remain recorded while the overall assertion fails.
+A stability relapse is distinct from a missed recovery deadline and is not a
+valid starting failure for deadline or fault minimization.
+
+Checks use the existing rolling window cadence (window / 10, at least 100ms),
+including the exact observation endpoint. This detects unhealthy sampled windows;
+it does not guarantee that every brief event between checks will be observed.
+Existing phase load and request budgets still apply; increase the clear phase
+and overall load duration if the observation needs more time.
+
+### Minimizing the observation needed to reproduce a relapse
+
+Use `--mode stability` with a saved real-VM stability failure to find a shorter
+observation period that still detects the selected relapse:
+
+```sh
+gregale test minimize --from failed.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery \
+  --mode stability --stability-resolution 25ms \
+  --max-runs 20 --max-workload-minutes 180 \
+  --report stability-minimized.json --html stability-minimized.html
+```
+
+Use `STEP/PHASE/REQUEST` to select a named endpoint budget. The selected budget
+must declare `stability`; the input must show completed initial recovery followed
+by an unhealthy stability window. A missed recovery deadline, unavailable
+baseline, incomplete observation, or unrelated failure cannot start this search.
+`--validate` checks the manifest, saved evidence, sources and budgets without
+provisioning. `--stability-resolution` defaults to 25ms and accepts whole
+milliseconds from 1ms to 5m. Rule-index and other mode-specific flags are rejected.
+
+Gregale confirms the original relapse in two fresh isolated runs, then tests the
+100ms minimum observation in two runs. If the minimum passes twice, it bisects
+between that passing interval and the confirmed failing interval until the gap
+is within the requested resolution. Every candidate needs two matching outcomes.
+A confirmed relapse replaces the best failing result; a confirmed healthy
+observation updates the tested passing bound. If the original is already 100ms,
+its confirmation completes the search without another candidate.
+
+Fault rules, traffic, seed, deadlines, sustain times, windows, thresholds,
+relative baselines and other recovery assertions remain fixed. The phase and
+load durations also remain fixed: this minimizes the assertion's observation
+period, not VM runtime or billing. Prior rule removals, severity edits and
+recovery overrides are preserved. All trials use the existing fresh provisioning,
+cleanup and diagnostics workflow and complete-pair run/workload reservations.
+
+Mixed outcomes, interruption, cleanup failure, a different failure, unmatched
+faults, inconsistent evidence or exhausted budgets make the search inconclusive.
+Cleanup failure stops further runs. The report retains the most recent confirmed
+relapse, including the original if no shorter interval was confirmed.
+`minimization.stability` records `before_ms`, `best_ms`, `resolution_ms`, and the
+optional tested `passed_below_ms`; `best_run_id` points to a confirmed failing
+leaf. A completed search has a passing command result even though its reproducer
+fails; an inconclusive search has a failing result.
+
+Replay version 7 adds `stability` to target-based `recovery_overrides`; an entry
+can preserve a deadline `within` and edit `stability` together. At most 20 distinct
+recovery targets can be overridden. The original and reduced configuration
+fingerprints are checked. Versions 1–6 remain supported. Failed trials and
+passing recovery configuration trials are replayable from the saved report with
+the original manifest; the best run identifies the confirmed relapse result.
+
+The result is the shortest confirmed interval among the tested candidates within
+this bounded search. It is not a guarantee of a global minimum, repeatability on
+every future run, or monotonic behavior. The existing rolling-window cadence
+still determines when a relapse is detected.
+
+### Sweeping dependency degradation
+
+Declare `resilience.fault_sweep` to repeat a scenario at a bounded list of settings
+for one existing fault rule or the duration of a whole fault phase. For example, add this to a staged scenario with a
+fault phase named `fault` in step `load`, immediately followed by aggregate or
+endpoint recovery assertions:
+
+```yaml
+resilience:
+  runs: 2
+  min_pass_rate: 1
+  fault_sweep:
+    step: load
+    phase: fault
+    rule_index: 0
+    mode: latency
+    values: ["10ms", "100ms", "500ms", "1s"]
+    max_runs: 8
+    max_workload_minutes: 180
+```
+
+Run and save the results with the existing test command:
+
+```sh
+gregale test --manifest gregale-test.yaml --scenario checkout --profile cold \
+  --max-workload-minutes 180 --report sweep.json --html sweep.html
+```
+
+`--validate` checks the manifest and sources without provisioning. `--preflight`
+shows the full deployment and workload-minute estimates. `rule_index` is the
+explicit zero-based index in the selected phase's original rule list for severity
+modes. Omit it for `duration`.
+
+Supported modes:
+
+| Mode | Selected rule | Values |
+| --- | --- | --- |
+| `latency` | HTTP `latency` or `tcp_latency` | Whole-millisecond durations from 1ms to 30s |
+| `bandwidth` | `tcp_bandwidth` | Integer allowed rates from 1 to 1000000 KiB/s, such as `["100", "10", "1"]` |
+| `percent` | Any supported fault rule | Integer selection percentages from 1 to 100, such as `["10", "50", "100"]` |
+| `duration` | Whole selected fault phase; omit `rule_index` | Whole-millisecond durations from 1s to 5m |
+
+Provide 2–10 distinct values. Equivalent values such as `1s` and `1000ms` count
+as duplicates and are rejected. Settings execute in the declared order; latency
+and percentage can increase or decrease, and lower bandwidth rates impose
+stronger restrictions. For severity modes, the selected rule's other fields, including seed and
+match budgets, stay fixed. Other fault rules, traffic, phase durations, recovery
+deadlines, sustain and stability intervals, endpoint budgets and relative
+baselines stay fixed as well. Sweeps cannot be combined with `fault_matrix`.
+
+To test how long the application tolerates an outage, keep the rules fixed and
+sweep the fault phase duration:
+
+```yaml
+resilience:
+  runs: 2
+  min_pass_rate: 1
+  fault_sweep:
+    step: load
+    phase: fault
+    mode: duration
+    values: ["1s", "5s", "15s", "30s"]
+    max_runs: 8
+    max_workload_minutes: 180
+```
+
+Duration mode changes all rules' exposure time together. It requires a load with
+an explicit `duration` and no `stages`. The total load duration increases or
+decreases by the change in fault duration; healthy and recovery phase durations,
+traffic rate/concurrency, rule severity, seeds, recovery deadlines and budgets
+stay fixed. Longer cases therefore generate more traffic. Every resulting load
+must fit the existing five-minute load limit, request limits and scenario timeout.
+Validation rejects the whole sweep if any case exceeds these limits. Duration
+cases support the same recovery/stability evidence, saved-baseline comparisons
+and version 8 replay as severity cases. Their JSON sweep metadata identifies the
+whole phase using `rule.index: -1`.
+
+Each setting uses `resilience.runs` fresh isolated runs and the same
+`min_pass_rate`. The required passing count is rounded up. Every setting must
+meet that count for the overall sweep to pass. Ordinary assertion failures do
+not stop later settings; cleanup failure or cancellation stops further runs and
+records remaining work as skipped. Reports retain the individual failures and
+recovery/stability evidence even when the configured pass rate tolerates them.
+
+Both sweep limits are required. `max_runs` must be 2–20 and cover
+`number of values × resilience.runs`. `max_workload_minutes` must be positive
+and cover the existing conservative estimate based on scenario timeout and all
+workloads for the entire sweep. These manifest limits apply to one full sweep
+for one lifecycle profile and outer attempt. Additional profiles, `--repeat`, or
+suite entries each run another sweep. Use the command's
+`--max-workload-minutes` guard to cap the combined command estimate.
+
+Sweeps use the existing matrix report structure. Each generated case includes
+`sweep` metadata with the selected rule, mode and normalized value, its pass rate,
+recovery summaries and full repeated-run history. The root `fault_matrix.sweep`
+records the declared limits and values. Terminal output lists settings and their
+results; HTML includes a settings table; JSON and JUnit preserve detailed evidence.
+The sweep reports each tested point and does not infer a monotonic or exact
+failure boundary between them.
+
+Replay version 8 records the sweep setting and generated case identity. Both
+passing and failing isolated sweep runs can be selected by run ID from the saved
+report and replayed once against the original manifest. Changing that setting,
+its case identity, or the effective scenario configuration rejects replay.
+Versions 1–7 remain supported. Existing minimization modes preserve the sweep
+identity and can minimize a compatible sweep failure. Replay does not rerun the
+whole sweep, and the existing source/environment replay limitations still apply.
+
+### Comparing a sweep with a saved baseline
+
+Add `resilience.sweep_regression` alongside `fault_sweep`:
+
+```yaml
+resilience:
+  runs: 4
+  min_pass_rate: 0.75
+  fault_sweep:
+    step: load
+    phase: fault
+    rule_index: 0
+    mode: latency
+    values: ["10ms", "100ms", "500ms"]
+    max_runs: 12
+    max_workload_minutes: 180
+  sweep_regression:
+    max_pass_rate_drop: 0.25
+    recovery:
+      p95_increase_percent: 20
+      min_samples: 2
+```
+
+First run the sweep without a baseline flag and save its JSON report. Then
+compare a later run with the same workload and settings:
+
+```sh
+gregale test --scenario checkout --profile cold --report before.json
+
+gregale test --scenario checkout --profile cold --sweep-baseline before.json \
+  --report after.json --html after.html --junit after.xml
+```
+
+`max_pass_rate_drop` is a fraction from 0 to 1; `0.25` permits a drop of 25
+percentage points. Omit it to permit no drop. Each setting must also retain its
+previous passing status under the unchanged `min_pass_rate`: an allowed drop
+does not permit a formerly passing setting to become failing. Improvements pass
+these comparisons. The overall command still fails when current sweep
+assertions fail, even if the comparison finds no regression against a baseline
+with failing settings.
+
+The optional `recovery` block compares p95 recovery times for every aggregate
+and named endpoint recovery assertion at each setting. The increase limit is
+0–1000 percent and `min_samples` must be 2 through `resilience.runs`. Samples are
+recomputed from individually confirmed passing recovery evidence, including
+stability validation when configured. A shortage in the baseline rejects the
+comparison before provisioning; a shortage in the current report fails the
+comparison. Omitting `recovery` compares only setting outcomes and pass rates.
+
+`--sweep-baseline` requires real-VM execution and a configured sweep regression
+policy. It cannot be combined with `--baseline`, `--recovery-baseline`,
+`--validate`, or `--preflight`. Normal validation still checks the policy without
+reading a baseline. Suites support the same flag; every selected plan must be a
+configured sweep. Repeated outer attempts and lifecycle profiles each require a
+matching baseline row. The existing sweep and command workload budgets remain
+in force; comparison itself provisions no additional runs.
+
+A completed baseline may contain failing settings. It must have matching
+scenario, engine, profile, outer attempt, setting identities, repeated-run count,
+pass policy, request templates, fault rules, schedules, recovery budgets, TCP
+ports and timeout. Application source changes are permitted. Settings cannot be
+added, removed or reordered while comparing this baseline; record a matching
+baseline when the workload changes.
+
+The reader uses the existing bounded JSON baseline format (64 MiB maximum) and
+rejects duplicate root identities, missing settings, incompatible workload
+fingerprints, incomplete histories, duplicate attempts or run IDs, skipped runs,
+cleanup failures, and summaries inconsistent with leaf outcomes. A baseline
+containing an unsuccessful prior regression comparison is also rejected. Report
+outputs cannot overwrite the baseline file.
+
+`sweep_regression` evidence includes the baseline report digest, per-setting
+before/after passing counts, drop and allowance, lost passing status, and optional
+recovery comparisons with confirmed sample counts. Terminal, HTML, JSON and
+JUnit reports expose the results. Failed comparisons produce a failing command
+result while retaining current assertion errors and run/replay evidence. Plans
+skipped by suite fail-fast carry `not_compared` evidence. These checks compare
+observed repeated runs; they do not establish statistical significance or infer
+a tolerance boundary between tested values.
+
+### Minimizing the outage duration that reproduces a recovery failure
+
+After a scenario or duration sweep fails its recovery deadline, use the isolated
+run ID to search for a shorter outage that still reproduces that assertion:
+
+```sh
+gregale test minimize --from sweep.json --run-id RUN_ID \
+  --manifest gregale-test.yaml --assertion load/recovery \
+  --mode duration --duration-resolution 100ms \
+  --max-runs 20 --max-workload-minutes 180 \
+  --report duration-minimized.json --html duration-minimized.html
+```
+
+Use `STEP/RECOVERY_PHASE/REQUEST` for an endpoint recovery assertion. The selected
+fault phase is the one immediately before that recovery phase. This mode targets
+all its fault rules together and does not accept `--rule-index`. Add `--validate`
+and omit report flags to check the selection, sources and budgets without
+provisioning.
+
+The load must have an explicit fixed `duration` and no `stages`. The search keeps
+rule severity, selection percentages, seeds, other phases, traffic rate and
+concurrency, recovery deadlines, sustain/stability intervals and endpoint budgets
+fixed. It shortens the total load duration by the same amount as the selected
+fault phase, so shorter outages generate less traffic. Candidate loads pass the
+normal scenario, scheduling and request-limit validation.
+
+The original failure must reproduce in two fresh isolated runs. The search then
+tests the 1s floor and bisects between confirmed passing and failing durations
+until their gap fits `--duration-resolution` (default 100ms; whole milliseconds
+from 1ms to 5m). Each candidate needs two agreeing runs with completed, matched
+fault and recovery evidence. This reports the shortest **confirmed tested**
+outage, not a proven global minimum; application behavior can be nonmonotonic.
+
+`--max-runs` includes the original confirmations and all candidate runs. A run
+pair starts only if both runs fit the run and conservative workload-minute
+budgets. Cleanup failure, cancellation, unrelated/incomplete evidence or disagreeing
+runs stops the search. An inconclusive search preserves the best confirmed
+failing run and replay configuration found so far.
+
+Reports include `minimization.duration` with the step, fault phase, starting and
+best duration, resolution and tested passing bound, plus every confirmation run.
+Replay version 9 saves `duration_overrides` and fingerprints the adjusted phase
+and load durations. Both passing and failing duration trials can be replayed
+once by run ID using the original manifest. Earlier rule removals, severity and
+recovery edits, and sweep case identity are preserved. Versions 1–8 remain
+supported; existing source/environment replay limitations still apply.
+
+### Repeating dependency outages in one run
+
+Add `load.outage_cycles` to a staged load with a three-phase healthy → fault →
+recovery schedule. The first healthy phase runs once; the fault and recovery
+phases repeat within the same application deployment:
+
+```yaml
+# Inside a staged load step with a declared request named checkout:
+load:
+  vus: 4
+  duration: 16s             # duration of the single-cycle template
+  pacing: 100ms
+  thresholds:
+    error_rate: 1           # allow expected errors during injected faults
+  outage_cycles:
+    count: 5
+    max_p95_increase_percent: 20       # optional, compared with cycle 1
+    max_error_rate_increase: 0.02      # optional, absolute fraction (2 points)
+    max_recovery_increase_percent: 25  # optional, each assertion vs cycle 1
+  chaos_schedule:
+    - name: healthy
+      duration: 1s
+    - name: fault
+      duration: 5s
+      rules:
+        - from: app
+          to: database
+          kind: tcp_timeout
+          port: 5432
+          percent: 100
+          min_matches: 1
+    - name: recovery
+      duration: 10s
+      recovery:
+        within: 5s
+        sustain: 1s
+        window: 1s
+        thresholds:
+          error_rate: 0
+          min_samples: 5
+```
+
+This expands to 76 seconds of traffic: 1s healthy, followed by five pairs of
+5s fault and 10s recovery. Set the scenario `timeout` to cover the expanded load
+and all other staged load windows; for example, `2m` when the other steps fit.
+`gregale test --validate` and `--preflight` check the expanded schedule before
+provisioning. Existing run and workload-minute guards still apply.
+
+`count` must be 2–9. The template needs an explicit fixed load `duration`, exactly
+three phases, and aggregate or endpoint recovery assertions in the final phase.
+Load `stages` are unsupported. Expanded schedules have at most 19 phases and must
+fit the five-minute load limit, HTTP request limits and scenario timeout. A
+malformed single-cycle template is rejected before expansion.
+
+Every cycle reinstalls the same fault rules and retains phase SLOs, recovery
+budgets, stability observations, endpoint assertions, retry amplification,
+connection-attempt and circuit-breaker budgets. `min_matches` applies separately
+to each fault installation. Seed values stay fixed. Traffic rate/concurrency
+stays fixed, so more cycles produce more traffic. Each cycle's recovery time and
+stability evidence remain in its recovery phase. Relative recovery uses the
+immediately preceding fault-free phase as usual; after cycle 1, that phase is the
+previous cycle's recovery phase.
+
+Optional trend limits compare each later fault phase with cycle 1's fault phase,
+and each later recovery phase with cycle 1's recovery phase. P95 increase is a
+percentage from 0–1000; error-rate increase is an absolute fraction from 0–1.
+Equality passes. Comparisons require request samples in both phases and latency
+samples for p95. Missing samples fail the comparison. These whole-phase metrics
+include the recovery transient and are separate from recovery's healthy-window
+assertions. Omit the limits to collect metrics without imposing trend checks.
+
+Ordinary recovery or SLO failures do not stop later cycles. Schedule failure or
+cancellation stops execution, clears the active fault through the existing cleanup
+path and reports unfinished cycles as incomplete. The load fails if any cycle
+budget, trend check or schedule fails; existing whole-load and baseline assertions
+also remain independent requirements.
+
+Terminal and HTML reports show a cycle summary and the first failed or incomplete
+cycle. JSON and JUnit retain `load.outage_cycles`, all phase metrics, recovery
+results and optional trend checks. The first cycle keeps the template phase names;
+later phases use names such as `fault-cycle-2` and `recovery-cycle-2`, with a
+one-based `cycle` field in phase evidence.
+
+Replay pins the expanded schedule, count, durations, rules and trend budgets and
+reruns the complete isolated scenario. Use the failed run ID with the original
+manifest; editing cycle settings rejects replay. Existing minimization can target
+an assertion such as `load/recovery-cycle-2` while retaining the preceding cycles.
+A fault matrix or sweep targeting `fault` edits that named phase in cycle 1;
+other cycles retain their rules. Use template changes to vary all cycles together.
+
+### Checking recovery degradation across outage cycles
+
+Set `load.outage_cycles.max_recovery_increase_percent` to require that each
+recovery assertion stays within a tolerance of its own cycle 1 recovery time:
+
+```yaml
+outage_cycles:
+  count: 5
+  max_recovery_increase_percent: 25
+```
+
+For a cycle 1 recovery of 200ms, a later recovery must complete in at most 250ms.
+Equality passes. The tolerance is a finite percentage from 0–1000; `0` allows no
+increase. Omit the setting to retain the existing per-cycle assertions without
+recovery-time comparisons.
+
+Aggregate recovery and every declared endpoint recovery are compared separately.
+An endpoint uses that same endpoint in cycle 1, never the aggregate or another
+endpoint. All later cycles keep cycle 1 as the reference; the baseline does not
+move after a slower cycle. Comparisons use each isolated run's own measured
+recovery times, rather than percentiles across repeated runs.
+
+Cycle 1 must have confirmed recovery evidence. Missing, failed, nonfinite,
+nonpositive or out-of-budget recovery times fail the comparison. Evidence must
+match the declared deadline, sustain and window, and any configured stability
+observation must have completed successfully. Incomplete or cancelled cycles
+cannot pass. Existing recovery deadlines and other phase budgets still apply
+independently; a tolerance does not relax those assertions.
+
+Each cycle records `recovery_checks` with the endpoint name (empty for aggregate),
+cycle 1 and current recovery times, allowed limit, tolerance and result. Unconfirmed
+times are omitted and accompanied by an error. Terminal and HTML reports show
+these values; JSON and JUnit retain the detailed evidence. The cycle summary's
+`first_recovery_failed_cycle` identifies the first failed recovery comparison,
+including cycle 1 when its baseline is unconfirmed. This is separate from
+`first_failed_cycle`, which may identify a different SLO or fault-budget failure.
+
+Replay preserves the tolerance and complete cycle schedule. Changing the
+comparison setting rejects replay through the existing configuration fingerprint.
+
+### Seeded fault campaigns
+
+Use `load.fault_campaign` on a staged load step to sample a reproducible sequence
+of TCP outages for one dependency. The healthy/fault/recovery template runs its
+healthy baseline once, then repeats a sampled fault followed by the template's
+recovery phase. Existing aggregate and endpoint SLOs, recovery, stability, and
+fault-match budgets remain active for every phase.
+
+```yaml
+load:
+  vus: 5
+  duration: 3s                 # duration of the single-cycle template
+  thresholds:
+    error_rate: 1              # allow expected failures during outages
+  fault_campaign:
+    seed: 42                   # required; explicit zero is also valid
+    count: 5                   # 2..9 outages in one isolated run
+    max_duration: 30s          # required cap, including baseline and recoveries
+    choices:                   # 2..16 bounded alternatives
+      - duration: 1s
+        rule: {to: cache, port: 6379, kind: tcp_latency, percent: 100, latency: 200ms, min_matches: 1}
+      - duration: 2s
+        rule: {to: cache, port: 6379, kind: tcp_timeout, percent: 100, min_matches: 1}
+      - duration: 1s
+        rule: {to: cache, port: 6379, kind: tcp_reset, percent: 100, min_matches: 1}
+  chaos_schedule:
+    - name: healthy
+      duration: 1s
+    - name: fault
+      duration: 1s
+      rules:
+        - {to: cache, port: 6379, kind: tcp_latency, percent: 100, latency: 200ms, min_matches: 1}
+    - name: recovery
+      duration: 1s
+      recovery:
+        within: 500ms
+        sustain: 200ms
+        window: 200ms
+        thresholds: {error_rate: 0, min_samples: 1}
+```
+
+All alternatives must use the template's same `from`, `to`, and TCP port. Supported
+kinds are `tcp_latency`, `tcp_bandwidth`, `tcp_timeout`, `tcp_reset`,
+`tcp_connect_timeout`, and `tcp_connect_refused`. Each choice must pass the usual
+fault validation, even if it is not selected. Fault durations and `max_duration`
+use whole milliseconds between 1s and 5m. A generated schedule exceeding the cap
+is rejected before execution; it is never truncated. Existing scenario timeout,
+request, and workload limits still apply. Campaigns require a fixed-duration
+three-phase template with one fault rule and recovery assertions, and cannot be
+combined with `outage_cycles` on that load step.
+
+`splitmix64-v1` draws a choice with replacement for each outage, followed by a
+separate rule seed for its percentage-based fault decisions. Choices can repeat;
+a campaign does not guarantee coverage of every alternative. The generator
+replaces any seed on the selected choice rule. The same campaign input recreates
+the same ordered faults, durations, and rule seeds. This reproduces the fault
+schedule; application timing and responses can still vary across runs.
+
+The outage-cycle summary reports completion and the first failed or incomplete
+cycle. Its `campaign` evidence includes the seed, algorithm, and complete planned
+schedule, including each rule's severity and seed. JSON and JUnit retain this
+schedule; terminal and HTML reports identify the campaign, and HTML lists its
+phases. Replay regenerates the schedule from the source manifest and pins both
+campaign inputs and the expanded schedule through the configuration fingerprint.
+Changing the seed, choices, count, cap, or recovery assertions rejects replay.
+
+To minimize the history leading to a failed later recovery, use the existing
+`gregale test minimize --mode rules --assertion load/recovery-cycle-3` flow. For
+campaigns it tries removing earlier fault events, retaining the fault immediately
+before the selected recovery and all phase timing and assertions. Removed events
+become fault-free windows, so replay preserves the original timeline without
+redrawing the campaign. Candidates must satisfy validation and reproduce the
+selected failure twice; cleanup failures, cancellation, or missing evidence stay
+inconclusive. A completed search establishes constrained single-removal
+minimality, rather than a globally shortest sequence. Existing duration and
+severity minimization can reduce the retained triggering fault, using the same
+run and workload-minute limits.
+
+### Campaign coverage across multiple seeds
+
+Add `resilience.campaign_coverage` to run an explicit seed list against an existing
+staged `load.fault_campaign`. Each seed runs in its own isolated deployment. The
+campaign's fault choices, recovery assertions, and workload stay fixed; the seed
+changes the ordered fault choices, durations, and rule seeds.
+
+```yaml
+# Scenario-level settings, alongside the existing staged steps and services:
+timeout: 1m
+resilience:
+  runs: 1                     # isolated runs per seed; 1..20 for coverage
+  min_pass_rate: 1             # every run must pass for each seed
+  campaign_coverage:
+    step: load                # staged load step declaring fault_campaign
+    seeds: [42, 43, 44]        # 2..10 distinct uint64 seeds; zero is valid
+    max_runs: 3               # 2..20, covering seeds × runs × profiles × repeat
+    max_workload_minutes: 12  # e.g. app + 3 services, 3 runs, 1-minute timeout
+```
+
+Run this example with `--profile cold --repeat 1`; its three-run cap would reject
+`--profile all`. Both caps cover the selected scenario's profiles and outer
+attempts in the command, including when it is a suite member. Workload-minute
+estimates use the scenario timeout and app plus service count, rather than only
+load duration. A command-level `--max-workload-minutes` can impose an additional
+limit, including a combined suite budget. Validation checks every selected seed's
+expanded schedule and campaign duration cap before any deployment. Coverage
+cannot be combined with `fault_matrix` or `fault_sweep` on the same scenario.
+The load's original `fault_campaign.seed` remains required as its template seed;
+coverage executes the seeds in the explicit list, in declaration order.
+
+Ordinary assertion failures do not stop later seeds. Cancellation and cleanup
+failures stop further execution and mark remaining runs or seeds skipped. Each
+seed must independently meet `resilience.min_pass_rate`; successful seeds do not
+compensate for a failing seed. With `runs: 2` and `min_pass_rate: 0.5`, a seed can
+pass despite one failed run, and that run's failure is still shown in the summary.
+Use `min_pass_rate: 1` to require all runs to pass.
+
+The fault-matrix report's `campaign_coverage` summary shows per-choice and
+per-seed results in JSON, JUnit, terminal, and HTML output. Choices use zero-based
+indices from the source list, so even duplicate alternatives remain distinct.
+Coverage counts fault events across the planned isolated runs:
+
+- `planned`: events selected by the deterministic schedules, including skipped
+  runs and phases that were never reached.
+- `installed`: observed fault windows with start/end timestamps, the expected
+  cycle identity, and one installed rule matching the exact generated rule.
+- `exercised`: installed events with a positive match count for that same rule.
+
+An installed fault with no traffic matches does not count as exercised. Missing
+or mismatched evidence and skipped runs contribute no observed coverage. A failed
+or subsequently cancelled run can retain coverage from fault windows already
+observed and closed. These counts describe which choices ran against traffic;
+they are not a coverage percentage of all possible fault orders and do not imply
+that every choice must be exercised for the scenario to pass unless coverage
+requirements are declared.
+
+Each seed row includes pass/fail/skip counts and isolated run IDs. Failed runs
+show the first failed or incomplete outage cycle and recorded aggregate or
+endpoint recovery failures. Full cycle evidence and generated schedules remain
+in the nested run receipts.
+
+Replay a failed leaf run with the existing `gregale test replay --from REPORT.json
+--run-id RUN_ID --manifest MANIFEST.yaml` command. Replay selects the named
+`campaign-seed-N` case, reproduces its exact schedule, and runs that seed once.
+Removing that seed or changing the selected campaign configuration rejects
+replay. Other seeds' membership, order, and run policy do not affect the isolated
+replay fingerprint. Existing minimization modes work on that leaf run; sequence
+minimization retains the seed case identity and does not redraw removed faults.
+
+
+### Requiring fault-choice coverage
+
+Set `resilience.campaign_coverage.min_exercised` to require a minimum number of
+exercised fault events for specific choices. Keys are zero-based indices in the
+load's `fault_campaign.choices` list; values are positive integer event counts.
+
+```yaml
+resilience:
+  runs: 1
+  min_pass_rate: 1
+  campaign_coverage:
+    step: load
+    seeds: [42, 43, 44]
+    max_runs: 3
+    max_workload_minutes: 12
+    min_exercised:
+      0: 2   # choice 0 must match traffic in at least two fault windows
+      1: 2   # choice 1 must also match traffic in at least two fault windows
+```
+
+A coverage requirement applies to the complete seed batch for one lifecycle
+profile and one outer attempt. It combines that batch's seeds and repeated runs;
+another profile or outer attempt cannot compensate for missing coverage. A choice
+counts once per isolated run's fault window when the expected rule was installed
+and its match evidence confirms traffic. Multiple traffic matches in one window
+still count as one event. Missing, mismatched, duplicated, or skipped event
+records cannot satisfy a target. Counts can include closed fault windows from a
+run whose later SLO or cleanup failed; those failures still fail the scenario
+independently.
+
+Equality passes. Choices without an entry remain optional. An installed rule with
+zero matches, or a required choice never selected by the seed schedules, fails
+its requirement. The campaign fails when any declared target is missed, even if
+every seed passes its SLO policy or `min_pass_rate` tolerates individual failures.
+The command returns a failing exit status for CI. Requirements do not add runs
+or redraw schedules, and existing run and workload caps remain in force.
+
+Validation rejects unknown or negative choice indices, nonpositive minima, and
+minima greater than the batch's total fault slots (`count × seeds × runs`). A
+minimum can exceed the number of times a particular choice was actually selected;
+that produces an explicit coverage failure after execution so the report shows
+which targets were missed. Omit `min_exercised`, or use an empty mapping, to retain
+count-only coverage and existing replay fingerprints.
+
+Each configured choice records `min_exercised` and `requirement_status` beside
+its planned, installed, and exercised counts. The batch adds
+`requirements_status` and `requirements_error`. Terminal, HTML, JSON, and JUnit
+reports identify every missed choice and its actual and required event counts.
+Seed pass/fail counts continue to describe SLO results, so a batch can show all
+seeds passed while its coverage requirement and overall status are failed.
+Existing SLO, cancellation, and cleanup errors remain in the report.
+
+A failed batch with requirements gets its own campaign run ID and replay manifest
+version 10 (`campaign_coverage: true`). Select that campaign ID with the existing
+`gregale test replay` command to rerun the whole seed batch once for its original
+profile. The replay fingerprints the complete campaign configuration, including
+seed order, repeated runs, SLO policy, coverage targets, and resource limits.
+Changing or removing a target, altering seeds or run policy, or supplying partial
+fault edits rejects this replay. The batch replay descriptor is kept separate
+from each isolated run's descriptor.
+
+Failed leaf run IDs remain available for isolated SLO replay and minimization.
+Their fingerprints and generated campaign evidence retain the inherited coverage
+requirements, so changing the targets also rejects leaf replay. An isolated leaf
+replay runs that seed once and does not reevaluate the aggregate coverage gate;
+use the campaign ID to reproduce a coverage failure. Existing replay versions
+1–9 remain supported for isolated configurations.
+
+### Automatic seed selection for campaign coverage
+
+Replace an explicit `seeds` list with a bounded `seed_search` to select reproducible
+campaigns that meet planned choice targets:
+
+```yaml
+resilience:
+  runs: 1
+  min_pass_rate: 1
+  campaign_coverage:
+    step: load
+    seed_search:
+      start_seed: 42
+      max_candidates: 100
+      max_seeds: 4
+    min_exercised:
+      0: 2
+      1: 2
+    max_runs: 4
+    max_workload_minutes: 16
+```
+
+Keep the staged `load.fault_campaign` template and its explicit template seed as
+in the examples above. `seed_search` and explicit `seeds` are mutually exclusive;
+search requires nonempty `min_exercised`. Candidates are consecutive unsigned
+64-bit seeds beginning at `start_seed`. The range must not overflow.
+`max_candidates` is 2..10000; `max_seeds` is 2..10. `max_runs` must cover
+`max_seeds * runs`, and the existing workload cap applies to the selected batch
+across profiles and attempts.
+
+Selection uses the existing SplitMix64 campaign generator. It keeps the first two
+valid candidates, then candidates that add coverage for a still unmet target.
+Invalid schedules are skipped. Repeated runs contribute to planned event counts.
+The search stops when all targets have enough planned events and at least two
+seeds are selected. If the candidate or seed limit is reached first, validation
+fails before provisioning. This bounded greedy search does not guarantee the
+smallest seed list or that another combination within the range would fail.
+
+Run `gregale test --validate --scenario NAME` to preview the selected seeds,
+number of candidates examined, and planned event counts by zero-based choice
+index. JSON validation includes `campaign_seed_selection`. Execution reports
+include the same preview under `fault_matrix.campaign_coverage.seed_selection`,
+with terminal and HTML summaries. Planned coverage does not prove traffic matched
+any fault: the existing installed/exercised evidence and `min_exercised` gate
+still determine the outcome.
+
+Aggregate version-10 replay pins the search configuration, selected seeds and
+planned counts along with the rest of the campaign policy. Replay deterministically
+recreates the same selection and rejects changed search settings. Isolated seed
+replay continues to pin that seed's exact schedule and coverage requirements.
+
+### Selecting additional seeds from a previous campaign report
+
+Add `from_report` and an explicit root `run_id` to `seed_search` to target gaps
+observed in one prior campaign batch:
+
+```yaml
+resilience:
+  runs: 1
+  min_pass_rate: 1
+  campaign_coverage:
+    step: load
+    seed_search:
+      start_seed: 42
+      max_candidates: 100
+      max_seeds: 4
+      from_report: reports/previous-campaign.json
+      run_id: "ROOT_RUN_ID_FROM_PREVIOUS_REPORT"
+    min_exercised:
+      0: 2
+      1: 2
+    max_runs: 4
+    max_workload_minutes: 16
+```
+
+The report path is relative to the manifest directory. Use a JSON report from
+`--report` and select a campaign root run ID, rather than an isolated seed run.
+Run `gregale test --scenario NAME --validate` to preview prior observed event
+counts, remaining targets, excluded prior seeds, and selected additional seeds.
+When executing, choose the same profile as the prior run, for example
+`--profile cold`. A guided batch applies to that one profile; `--profile all`
+is rejected. Suite members must also use the matching profile.
+
+Gregale recomputes observed coverage from the root's complete, uniquely identified
+leaf history. The prior load steps, TCP ports and timeout must match the current
+seed-specific workload fingerprint; any present leaf replay descriptor must also
+match the current configuration. Choices, durations, rules, seed identity and
+summary counts are checked. Older passing leaves without replay descriptors can
+be used when their group workload fingerprint and seed metadata match. New
+campaign reports preserve replay descriptors for passing seed leaves too.
+Reports with skipped or missing leaves, duplicate identities, cleanup failures,
+changed workloads or inconsistent summaries are rejected before provisioning.
+An ordinary SLO failure or a coverage-gate failure may still supply useful
+observed coverage if all leaves completed and cleanup succeeded.
+
+For each requested choice, the new batch must exercise
+`max(0, requested minimum - prior observed events)` fault windows. Previously
+satisfied choices are optional in the new batch. Original targets and prior
+counts remain visible in guidance metadata; the new batch's installed/exercised
+counts describe only its own runs. This uses one selected prior batch and does
+not recursively add observations from earlier reports referenced by that batch.
+If every target is already satisfied, validation reports that no additional
+coverage is needed and does not provision workloads.
+
+Seeds from the selected prior batch are excluded. Excluded seeds still consume
+candidate attempts, so the search remains bounded. Existing candidate, seed,
+run and workload limits apply to the additional batch; insufficient search space
+or capacity fails validation. Planned coverage still does not guarantee that
+traffic reaches the selected dependency faults.
+
+Terminal, JSON, HTML and JUnit evidence retain the guidance run ID, report SHA256,
+prior observed counts, original targets and remaining targets. Aggregate replay
+pins this guidance and the deterministic selection, and requires the original
+report with identical bytes. Changing or removing the report invalidates replay.
+New report outputs cannot overwrite the guidance file, including through a
+hard-link alias.
+
+### Cumulative coverage across campaign batches
+
+Use `seed_search.reports` to select 2..10 compatible prior campaign roots and
+close remaining coverage gaps across their combined observed events:
+
+```yaml
+resilience:
+  runs: 1
+  min_pass_rate: 1
+  campaign_coverage:
+    step: load
+    seed_search:
+      start_seed: 42
+      max_candidates: 200
+      max_seeds: 4
+      reports:
+        - from_report: reports/batch-1.json
+          run_id: "FIRST_ROOT_RUN_ID"
+        - from_report: reports/batch-2.json
+          run_id: "SECOND_ROOT_RUN_ID"
+    min_exercised:
+      0: 6
+      1: 4
+    max_runs: 4
+    max_workload_minutes: 16
+```
+
+Each report path is relative to the manifest directory. The existing single-batch
+`from_report` / `run_id` form remains supported; do not combine it with `reports`.
+An empty or one-element `reports` list is rejected. You may select distinct root
+run IDs from the same JSON file.
+
+Every selected batch must have the same scenario and profile, compatible
+seed-specific workloads, complete leaf history and clean cleanup, using the
+same evidence checks as single-report guidance. Root and leaf run IDs must be
+unique across all selected batches. Repeating a root, including a copied report
+under another filename, or overlapping leaf identities fails validation before
+provisioning. Separate real executions of the same seed with distinct run IDs
+are independent observations and can contribute coverage.
+
+Coverage is recomputed from each selected batch's own leaves and summed by choice.
+Nested guidance metadata never contributes additional events. To include earlier
+batches, list their roots explicitly. The next batch must exercise
+`max(0, requested minimum - cumulative observed events)` windows for each choice.
+Its installed and exercised counts still describe only that new batch; prior
+observations do not replace its traffic-match gate. If all targets are already
+met, validation stops without provisioning.
+
+Previously tried seeds are excluded using a sorted, unique union from every
+selected batch. Excluded candidates still consume search attempts. The existing
+candidate, seed, run and workload limits bound the follow-up batch. Execute with
+the shared profile, such as `--profile cold`; mixed profiles and `--profile all`
+are rejected.
+
+`gregale test --scenario NAME --validate` previews cumulative coverage, remaining
+targets and each contributing batch's run ID, observed counts, seeds and report
+SHA256. JSON validation and execution evidence include these records in
+`seed_selection.guidance.contributions`. Terminal, HTML and JUnit reports retain
+the same provenance, showing which batch exercised each fault choice.
+
+Aggregate version-10 replay pins the ordered input list, every report fingerprint,
+combined observations, remaining targets and selected seeds. Keep every original
+report with identical bytes; changing, removing or reordering an input invalidates
+aggregate replay. Output reports cannot overwrite any contributing input,
+including hard-link aliases.
+
+### Campaign coverage regression checks for CI
+
+Add `campaign_coverage.regression` to compare the current batch with a completed
+baseline campaign and detect choices that silently stop matching traffic:
+
+```yaml
+resilience:
+  runs: 1
+  min_pass_rate: 1
+  campaign_coverage:
+    step: load
+    seeds: [42, 43, 44]
+    max_runs: 3
+    max_workload_minutes: 12
+    regression:
+      from_report: reports/coverage-baseline.json
+      run_id: "BASELINE_ROOT_RUN_ID"
+      min_exercised_rate: 0.8
+```
+
+Use a JSON `--report` file and an explicit campaign root run ID. The path is
+relative to the manifest directory. `gregale test --scenario NAME --validate`
+checks the baseline locally and previews its run ID, profile, fingerprint and
+minimum rate. Execute with the same profile, such as `--profile cold`.
+
+The baseline must have identical ordered seeds, repetitions per seed, choice
+definitions and compatible seed-specific workloads. Gregale applies the existing
+guidance evidence checks: complete uniquely identified leaf history, matching
+workload fingerprints and any leaf replay descriptors, clean cleanup, and summary
+counts that agree with recomputed installed/exercised evidence. Skipped,
+interrupted, duplicate, incompatible or corrupt histories fail validation before
+provisioning. A baseline whose SLOs failed can still be used when its history
+completed and cleanup succeeded. Application code can change between runs;
+configuration compatibility remains required.
+
+Each choice's exercised-event rate is `exercised fault windows / planned fault
+windows`, across the batch's seeds and repetitions. This measures how often
+scheduled faults actually matched dependency traffic, rather than the number of
+individual TCP matches or the campaign's SLO pass rate. A choice that had positive
+baseline exercise and now has zero fails the regression check. Every planned
+choice must also meet `min_exercised_rate`, a finite value from 0 to 1. Equality
+passes. The default zero rate still detects complete loss of a previously
+exercised choice. Choices with no planned events are reported as `not_planned`.
+A partial drop above the configured absolute floor passes unless a per-choice
+coverage-drop tolerance is configured as described below.
+
+Regression checks can run without `min_exercised`, or alongside it. A regression
+fails the root campaign and CI exit status even if every seed passes its SLOs.
+Passing the comparison never clears SLO, cancellation, cleanup or coverage-target
+failures. Follow-up guidance usually selects different seeds, so it is suitable
+for closing gaps; regression comparisons require a matching campaign schedule.
+
+Terminal, HTML, JSON and JUnit reports retain the baseline run ID and SHA256,
+per-choice planned counts, baseline/current exercised counts and rates, complete
+coverage-loss flags, and failure reasons. JSON evidence is under
+`fault_matrix.campaign_coverage.regression`; JSON validation includes
+`campaign_coverage_regression`.
+
+Failed regression campaigns receive a root run ID and a full version-10 campaign
+replay descriptor, including when no `min_exercised` gate is configured. Aggregate
+replay pins the regression policy and baseline fingerprint and reruns the complete
+campaign. Changing or removing the policy or baseline invalidates replay. Keep
+the original baseline report with identical bytes. New report outputs cannot
+overwrite the baseline file or a hard-link alias. Isolated seed replay remains
+available for seed-level failures and does not evaluate the aggregate comparison.
+
+### Per-choice coverage-drop tolerances
+
+Extend a campaign regression policy with `max_drop_percentage_points` and
+`min_planned_events` to detect partial deterioration above the absolute rate floor:
+
+```yaml
+regression:
+  from_report: reports/coverage-baseline.json
+  run_id: "BASELINE_ROOT_RUN_ID"
+  min_exercised_rate: 0.5
+  max_drop_percentage_points:
+    0: 20
+    1: 10
+  min_planned_events: 5
+```
+
+The map uses zero-based fault-choice indices and finite allowances from 0 to 100.
+A drop from 90% exercised to 60% is **30 percentage points**. A choice with a
+20-point allowance fails that comparison even though its 60% rate remains above
+the 50% absolute floor. Equality with the allowance passes. Zero permits no drop;
+improvements have a negative reported drop and pass the tolerance check.
+Allowances apply only to explicitly listed choices. Omitting the map preserves the
+existing regression policy and replay fingerprints.
+
+`min_planned_events` is required when drop allowances are configured and must be
+2..180. Each listed choice must have at least that many planned fault windows in
+the baseline and current campaign. Existing compatibility checks require identical
+ordered seeds and repetition counts, so planned counts match. Too few events,
+including an unplanned listed choice, fails validation before provisioning.
+Declaring a sample minimum without any allowances is invalid. This is a minimum
+count of scheduled fault windows, not TCP matches, requests, or a statistical
+confidence guarantee. Increase the number of seeds or repetitions within the
+existing run and workload caps when necessary, and create a compatible baseline.
+
+The drop is calculated directly from event counts as
+`100 * (baseline exercised - current exercised) / planned`, which avoids
+subtracting two rounded display rates. Complete coverage loss and the absolute
+minimum rate still fail independently; a generous drop tolerance cannot disable
+those checks. A canceled or incomplete campaign still fails through its existing
+execution checks.
+
+Validation previews show per-choice allowances and the sample minimum. Terminal,
+HTML, JSON and JUnit evidence show baseline and current rates, signed drop,
+allowance and the drop check result. Configured zero allowances remain visible.
+JSON choice evidence adds `drop_percentage_points`,
+`max_drop_percentage_points` and `drop_status`; the regression summary adds
+`min_planned_events`.
+
+A failed tolerance check fails the root campaign and CI exit status even when
+seed SLOs and the absolute rate floor pass. Version-10 aggregate replay pins both
+the allowance map and sample minimum together with the existing baseline
+fingerprint. Changing, removing or relaxing either setting invalidates replay.
+
+### Offline campaign coverage trends
+
+Render exercised-event rates across application versions without logging in or
+provisioning workloads:
+
+```sh
+gregale test coverage-trend --manifest gregale-test.yaml --scenario checkout \
+  --config coverage-trend.yaml --html coverage-trend.html
+```
+
+The configuration explicitly orders two to ten campaign roots. Report paths are
+relative to this configuration file. Labels can identify application versions;
+Gregale does not infer versions from report timestamps.
+
+```yaml
+reports:
+  - from_report: reports/v1.json
+    run_id: V1_CAMPAIGN_ROOT_ID
+    label: v1.0
+  - from_report: reports/v2.json
+    run_id: V2_CAMPAIGN_ROOT_ID
+    label: v1.1
+  - from_report: reports/v3.json
+    run_id: V3_CAMPAIGN_ROOT_ID
+    label: v1.2
+min_exercised_rate: 0.5
+max_drop_percentage_points:
+  0: 20
+min_planned_events: 5
+```
+
+All points must have the same scenario, profile, workload, fault choices, ordered
+seeds, and repetitions. Use the matching campaign manifest. Complete raw history
+with clean cleanup is required; skipped, incomplete, overlapping, and inconsistent
+history is rejected. Separate executions of the same seeds count independently.
+Each report is fingerprinted, and each chart point links to its run ID, report
+SHA256, counts, and findings. Labels are escaped when rendered.
+
+Every point compares with the **first point**, so gradual drops stay visible.
+Previously exercised choices losing all matches are marked as failures. Optional
+minimum rates and per-choice drop allowances follow the campaign regression
+rules, including equality passing, zero allowances, and minimum planned-event
+counts. An unplanned choice has no rate or chart point. Rates measure exercised
+fault events, not application SLO success or statistical confidence.
+
+This command returns zero when it successfully renders a valid trend, even when
+points show tolerance breaches. Invalid inputs or output errors return nonzero.
+Use campaign regression gates for CI enforcement. The output cannot overwrite
+an input report, manifest, or trend configuration, including through hard links.
+
+### Offline recovery performance trends
+
+Compare recovery behavior across application versions using compatible campaign
+reports, without logging in or provisioning workloads:
+
+```sh
+gregale test recovery-trend --manifest gregale-test.yaml --scenario checkout \
+  --config recovery-trend.yaml --html recovery-trend.html
+```
+
+Use the same ordered `reports` entries as coverage trends, with optional recovery
+settings:
+
+```yaml
+reports:
+  - from_report: reports/v1.json
+    run_id: V1_CAMPAIGN_ROOT_ID
+    label: v1.0
+  - from_report: reports/v2.json
+    run_id: V2_CAMPAIGN_ROOT_ID
+    label: v1.1
+recovery:
+  min_samples: 10
+  max_recovery_increase_percent: 20
+  max_p95_increase_percent: 15
+  max_error_rate_increase: 0.02
+```
+
+The command applies the coverage trend compatibility, raw-history, fingerprint,
+input ordering, and overwrite protections. It creates three charts per fault
+choice and configured recovery target: confirmed recovery time in milliseconds,
+recovery-phase p95 latency in milliseconds, and recovery-phase error rate. Each
+point shows the **maximum** across all planned events for that choice and target.
+Phase p95 values are not combined into a pooled percentile. Aggregate recovery
+and named endpoint recovery use their own metrics and confirmation evidence.
+
+Configured tolerances compare each point with the **first point**. Recovery and
+p95 tolerances are relative percentages from 0 to 1000; error-rate tolerance is
+an absolute increase from 0 to 1 (`0.02` means two percentage points). Equality
+passes, improvements pass, and explicit zero permits no increase. A zero baseline
+permits no positive increase for relative tolerances. Omitted tolerances disable
+that metric's comparison; omitted `recovery` settings default to one minimum
+sample and no tolerance comparisons. If `recovery` is supplied, `min_samples`
+is required and must be from 1 to Gregale's per-run request limit.
+
+Every planned fault event must be exercised. Missing exercise invalidates that
+choice's measurements, rather than silently selecting only exercised events.
+Unconfirmed recovery, including failed stability observation, produces a recovery
+time gap. Missing or inconsistent sample counts and rates produce metric gaps.
+Each recovery phase or endpoint must meet `min_samples`; p95 also requires that
+many latency samples. Missing evidence remains a visible failure finding even
+without configured tolerances. Unplanned choices have no chart point. These
+charts describe reported observations and do not establish statistical confidence.
+
+Chart points link to run IDs, report SHA256 fingerprints, findings, and leaf-run
+recovery phases. Rendering a valid report returns zero even when it contains
+regressions; malformed history and output errors return nonzero. Use execution
+regression gates when CI must fail on a regression. Recovery settings are accepted
+by `recovery-trend`; `coverage-trend` rejects them.
+
+### Campaign recovery regression gates for CI
+
+Configure `resilience.campaign_coverage.recovery_regression` to fail campaign
+execution when recovery deteriorates against a saved campaign baseline:
+
+```yaml
+resilience:
+  runs: 1
+  min_pass_rate: 1
+  campaign_coverage:
+    step: load
+    seeds: [42, 43, 44]
+    max_runs: 3
+    max_workload_minutes: 12
+    recovery_regression:
+      from_report: reports/recovery-baseline.json
+      run_id: BASELINE_CAMPAIGN_ROOT_ID
+      checks:
+        - choice: 0
+          limits:
+            min_samples: 5
+            max_recovery_increase_percent: 20
+            max_p95_increase_percent: 15
+            max_error_rate_increase: 0.02
+        - choice: 1
+          request: checkout
+          limits:
+            min_samples: 5
+            max_recovery_increase_percent: 0
+```
+
+Choice indices are zero-based. Omit `request` for aggregate recovery, or name an
+endpoint with a configured `step_recovery` assertion. Configure one to 32 unique
+choice/target checks, each with at least one tolerance and a required
+`min_samples` from 1 to Gregale's per-run request limit. Report paths are relative
+to the manifest. Baselines must match the scenario, profile, workload, fault
+choices, ordered seeds, and repetitions. Baseline history is recomputed and
+validated before provisioning, and cannot be overwritten by report outputs.
+
+For every selected choice/target, the baseline must exercise every planned fault
+event and provide confirmed recovery (including configured stability), valid
+recovery-phase p95 samples, and consistent error-rate samples. Every event must
+meet its check's sample minimum. Unplanned choices and unusable baselines are
+rejected before execution. Endpoint checks use their own confirmation and
+metrics; aggregate metrics cannot replace missing endpoint evidence.
+
+Execution uses the same worst-observed metrics as recovery trends: maximum
+confirmed recovery time, maximum recovery-phase p95, and maximum recovery-phase
+error rate across all planned events for each selected choice/target. It does
+not pool p95 values. Recovery and p95 tolerances allow relative increases from
+0 to 1000 percent; error-rate tolerance allows an absolute increase from 0 to 1.
+Equality and improvements pass; explicit zero permits no increase. Omitted
+metric tolerances disable that metric's increase comparison. Complete confirmed
+recovery and valid samples for all three metrics are still required for selected
+targets. Missing exercise, confirmation, samples, or complete campaign history
+fails the gate instead of being treated as an improvement.
+
+A failed gate makes the campaign root fail and returns a nonzero test exit code,
+even when every seed group passes its load SLO. Existing SLO, coverage, cleanup,
+and cancellation failures remain independent. JSON, JUnit, terminal, and HTML
+reports include baseline identity, SHA256, limits, baseline/current measurements,
+findings, and affected leaf-run recovery phases. `--validate` previews the pinned
+baseline and checks without provisioning.
+
+Failed aggregate replay retains all seeds and repetitions and pins the complete
+gate policy, baseline fingerprint, and validated baseline measurements. Changing
+or removing the gate, its limits, sample minima, or baseline report bytes requires
+fresh validation and cannot silently change a saved replay. Isolated leaf replay
+continues to replay one seed; aggregate gates are evaluated by the aggregate run.
+
+### Pending requests during recovery
+
+Aggregate `recovery` and endpoint `step_recovery` assertions accept an optional
+`max_pending_age`. For example:
+
+```yaml
+recovery:
+  within: 5s
+  sustain: 2s
+  window: 1s
+  max_pending_age: 500ms
+  thresholds: {p95: 200ms, error_rate: 0.01, min_samples: 5}
+```
+
+A rolling window is unhealthy if any HTTP request started in this load
+step is still pending longer than this budget, even when other completed
+requests meet every latency and error-rate threshold. A completed request
+ceases to count as pending; its full latency and result enter the usual
+completion window. Endpoint assertions count only that endpoint's requests.
+The age budget must be a whole number of milliseconds between 1ms and 5m.
+Requests still in flight from earlier phases count against the pending age
+budget; their completions do not enter recovery latency or error-rate windows.
+This is an HTTP client observation, not a count of background jobs inside the app.
+
+JSON receipts and JUnit system-out include `max_pending_age_ms`,
+`overdue_requests`, and the evaluated window's `thresholds`. HTML displays
+these measurements. These are the last evaluated window, rather than an
+aggregate across the phase; sustained recovery and optional stability still
+require every checked window in their intervals to be healthy. Omitting
+`max_pending_age` preserves the existing completion-based behavior.
+
+
+The HTTP write starter also provides `gregale-dependency-restart-test.yaml` and
+its `http-dependency-restart` suite. It replaces the payment service with a
+Postgres-backed pending or committed write while the primary caller stays alive.
+An externally migrated, disposable Postgres runtime connection is required;
+VM-local storage is not used for the durable ledger. Its cleanup removes only
+the run namespace. See the starter README for role separation, reachability,
+reconciliation assertions, and the real Postgres portable acceptance target.
+
+Workload `secrets` may use `${env.NAME}` with an uppercase environment variable
+name. `--validate` checks reference syntax without reading the value. Preflight
+checks that each required environment reference exists and is nonempty; results
+contain only workload/variable names. Execution resolves it from the runner's
+environment and uses the existing sealed-secret API. A missing/empty reference
+fails rather than falling back to a literal or another credential. Keep runtime
+credentials separate from migration credentials and supply them securely.
+
+### Reusable route assertion profiles
+
+Declare `assertion_profiles` at the manifest root and reference their names with
+`assertions` on a load chaos phase. Profiles can be reused across phases and
+scenarios in the same manifest:
+
+```yaml
+version: 1
+assertion_profiles:
+  inventory-stays-healthy:
+    healthy_routes:
+      inventory-read: {p95: 750ms, error_rate: 0, min_samples: 3}
+  payment-recovers:
+    recovery_deadlines:
+      payment-read:
+        within: 4s
+        sustain: 1s
+        window: 1s
+        thresholds: {p95: 750ms, error_rate: 0, min_samples: 1}
+# Within a staged step's load:
+# chaos_schedule:
+#   - name: payment-outage
+#     duration: 4s
+#     assertions: [inventory-stays-healthy]
+#     rules: [{to: payment, kind: http_status, status_code: 503, percent: 100}]
+#   - name: recovery
+#     duration: 6s
+#     assertions: [inventory-stays-healthy, payment-recovers]
+```
+
+Route keys are the names of HTTP requests declared in that load step, rather
+than URL paths. A healthy-route profile requires a latency limit (`p95` or
+`p99`), an explicit success/error rate budget, and positive `min_samples`.
+These budgets apply independently to each route in each referenced phase;
+healthy traffic cannot hide behind aggregate measurements of other routes.
+
+Recovery profiles use the existing endpoint recovery evaluator. They require a
+fault-free phase immediately following a fault, and `within + sustain + stability`
+(if supplied) must fit its duration. `min_samples` is evaluated per recovery
+window. Recovery must meet the request expectations and configured window
+budgets; an empty window cannot pass. Existing `relative`, `max_pending_age`,
+and `stability` settings remain available in each recovery budget.
+
+Unknown or repeated profile references, undeclared request names, and overlapping
+budgets from inline `step_thresholds`/`step_recovery` or another profile fail
+validation. Profiles do not silently override one another. Up to 100 profiles
+may be declared, with up to 100 route budgets of each kind per profile.
+
+JSON and JUnit's embedded receipt retain each phase's `assertions` names alongside
+per-route measured samples, percentiles, threshold verdicts and recovery timing.
+HTML and terminal reports show the profile names and existing measured results.
+Replay fingerprints bind the expanded limits of profiles used by the scenario.
+The [complete reference manifest](../examples/scenario-http-write/gregale-assertions-test.yaml)
+uses the two-dependency fixture; the same profile syntax works with your own
+application and HTTP request names. Its sealed native fixture requirements are
+listed in the [native acceptance guide](scenario-restart-native-acceptance.md).
+
+### Reusable dependency-attempt limits
+
+An assertion profile can also limit the average number of dependency attempts
+per named incoming request during one fault phase:
+
+```yaml
+assertion_profiles:
+  payment-retry-limit:
+    dependency_attempts:
+      request: payment-read
+      max_attempts_per_request: 2
+      min_requests: 3
+  connection-limit:
+    connection_attempts:
+      request: dependency-probe
+      max_attempts_per_request: 2
+      min_requests: 3
+```
+
+Reference `payment-retry-limit` in a phase's `assertions` alongside its healthy
+route profile. HTTP `dependency_attempts` expands into `retry_amplification` and
+requires exactly one 100% `latency` or `http_status` rule with an explicit `from`
+workload. Its rule-match counter measures all HTTP calls from that workload to
+the rule's dependency, including retries. Select a named incoming request that
+accounts for that dependency traffic; other incoming routes do not increase its
+denominator. Background calls or other routes using the same dependency still
+contribute to the dependency counter.
+
+TCP `connection_attempts` requires exactly one 100% TCP rule, an explicit `from`
+and a valid declared port. It uses the dedicated connection-attempt counter,
+including connections that fail before a data-plane fault matches. Ordinary TCP
+fault-match counts cannot substitute for connection attempts. Gateways without
+this counter fail the assertion with an evidence-unavailable error.
+
+These are phase-wide ratios, not individually traced per-request retry limits.
+`min_requests` must be positive, and `max_attempts_per_request` must be finite,
+greater than zero and at most 1000. Empty incoming samples and missing or
+incomplete captures fail rather than reporting zero amplification as a pass.
+A profile cannot combine HTTP and TCP attempt limits, because they need different
+rules. Profiles also cannot overwrite inline `retry_amplification` or
+`connection_attempts`, or another profile's attempt budget.
+
+Reports retain the profile name, named request, dependency source/target, TCP
+port when applicable, incoming request count, observed attempts, ratio, limit,
+and verdict. Replay fingerprints include the effective attempt budget. The
+[HTTP reference](../examples/scenario-http-write/gregale-assertions-test.yaml)
+combines retry limits with isolation and recovery checks; the
+[TCP reference](../examples/scenario-checkout/gregale-connection-assertions-test.yaml)
+uses the existing echo/probe fixture and also checks responsiveness and recovery.
+
+### Per-request retry limits
+
+Opt into strict HTTP attribution when an average can hide retry outliers:
+
+```yaml
+assertion_profiles:
+  strict-retry-limit:
+    dependency_attempts:
+      request: dependency-read
+      per_request: true
+      max_attempts_per_request: 2
+      min_requests: 3
+```
+
+Nine requests making one attempt and one making eleven have an average of two.
+The average budget passes; this strict profile fails with one violating request.
+Reports include the attempt distribution, maximum, correlated/request counts,
+uncorrelated attempts, overflow and up to 100 violating request IDs.
+
+Each selected request receives `X-Gregale-Test-Request-ID`. Your application must
+forward that header on every selected dependency call, including retries, and
+return `X-Gregale-Test-Dependency-Attempts` with its final attempt count. Count
+attempted calls even if they fail, and settle all selected outgoing work before
+sending the completion receipt. For example, in a Node HTTP handler:
+
+```js
+const id = request.headers["x-gregale-test-request-id"];
+let attempts = 0;
+const callDependency = async () => {
+  attempts++;
+  return fetch(dependencyURL, {
+    headers: id ? { "x-gregale-test-request-id": id } : {},
+  });
+};
+// Await calls and retries through callDependency, then finish the response:
+if (id) response.setHeader("x-gregale-test-dependency-attempts", String(attempts));
+```
+
+The receipt alone cannot pass the assertion: Gregale verifies each count against
+independent gateway records and verifies their total against the rule's HTTP
+matches. Missing propagation, stale IDs, absent or invalid receipts, missing or
+late counters and unexplained calls fail. Requests acknowledging zero attempts
+are covered when the phase also has independent gateway correlation evidence;
+a wholly inactive dependency phase cannot establish support.
+
+Strict limits are positive integers and apply to one fully counted HTTP
+latency/status rule with an explicit source. TCP `connection_attempts` remains
+an average assertion. There is a fixed capacity of 1,024 selected incoming
+requests per strict phase; overflow fails instead of silently sampling.
+Fault-plan changes pause dispatch and drain in-flight requests to preserve
+phase attribution. Actual phase timings remain recorded. IDs are run/phase
+scoped; production tracing headers and Prometheus labels remain unchanged.
+
+The [complete strict example](../examples/scenario-http-write/gregale-per-request-attempts-test.yaml)
+uses the instrumented retry fixture. SDK chaos-rule models also expose the
+optional `correlation_scope` wire field. Ordinary manifests do not enable it.
+Native execution requires a gateway with correlation-counter support; portable
+HTTP tests prove that outliers fail even while the average passes, and that
+missing completion or propagation evidence cannot pass.
+
+### TCP faults in declaration order
+
+Use `load.fault_campaign.order: declared` to execute every choice exactly once
+in the order listed. Set `count` to the number of choices (2–9); retain an explicit
+`seed` and `max_duration`. Omitting `order` keeps seeded choice selection. All
+choices target the same source, dependency and declared TCP port.
+
+The [TCP campaign example](../examples/scenario-checkout/gregale-tcp-campaign-test.yaml)
+runs latency, bandwidth, timeout and reset in sequence. Its three-phase template
+expands into a 26-second campaign: two seconds of baseline, then four cycles of
+two-second faults and four-second recovery windows. Each fault applies a reusable
+connection-attempt limit and healthy-route budget; each recovery requires the
+named dependency probe to recover within one second and remain healthy for one
+second. The 16 KiB echo fixture makes a 1 KiB/s bandwidth restriction exceed the
+probe's 250 ms deadline.
+
+```sh
+gregale test --manifest examples/scenario-checkout/gregale-tcp-campaign-test.yaml \
+  --suite tcp-campaign --validate
+gregale test --manifest examples/scenario-checkout/gregale-tcp-campaign-test.yaml \
+  --suite tcp-campaign --report results.json --junit results.xml --html results.html
+```
+
+Reports include `declared-splitmix64-v1`, the expanded schedule, per-cycle
+`fault_kind`, connection ratios, health budgets, recovery verdicts, and the first
+failed cycle. A connection-budget failure identifies its phase and cause. Missing
+gateway attempt counters fail the test. JSON and JUnit preserve measured evidence;
+HTML and terminal output show each fault alongside its cycle verdict. Replay binds
+the declared order and effective assertions and retains minimized schedules.
+
+These connection limits are phase-wide ratios. Use the same template with your
+application and database, Redis or another declared TCP service; the echo fixture
+does not certify any database protocol or client library. The platform performs
+normal isolated workload cleanup and records its result. Local tests do not replace
+native acceptance on the designated KVM host.
+
+### Detect retained TCP connections
+
+A staged TCP schedule can add `load.connection_leaks`:
+
+```yaml
+connection_leaks:
+  path: /connections
+  within: 1s
+  sustain: 1s
+  max_extra: 2
+```
+
+The side-effect-free application endpoint must return HTTP 200 and one JSON
+object, for example:
+
+```json
+{"instance_id":"01234567-89ab-4cde-8fab-0123456789ab","active_connections":0}
+```
+
+Report an integer count of client connections in the tested dependency scope,
+including retained idle sockets. The UUID identifies the observed application
+instance and must change when it is replaced. You may specify `as` to use an
+existing declared consumer credential. Gregale does not export credentials or
+observation response bodies.
+
+Warm legitimate connection pools before the load step. Gregale uses the minimum
+observed count in the initial baseline, then compares every recovery with that
+same value. `max_extra` allows expected in-flight connections during recovery;
+for example, two dependency VUs can use an allowance of two. Every recovery must
+return within budget by `within`, sustain that state for `sustain`, and remain
+within budget through the end of the sampled window. A later cycle cannot replace
+the original baseline with a higher count.
+
+After load workers and fault-plan cleanup finish, a separate check requires the
+original baseline with **no extra allowance**. It also runs after cancellation,
+using an independent timeout bounded by `within + sustain + 500ms`. The interrupted
+campaign remains failed; reports distinguish its post-drain cleanup result.
+Retained sockets fail this check even when they fit the recovery allowance.
+
+The observation interval is 100 ms. Requests time out after 250 ms, responses are
+limited to 4 KiB, and at most 4096 observations are retained. `within` and `sustain`
+are whole-millisecond durations from 300 ms to five seconds. Baseline must last
+at least 500 ms; every recovery must fit both budgets plus two polling intervals.
+Missing fields, negative/fractional counts, missing observations, sparse windows,
+changed instance identities and renewed leaks fail the assertion.
+
+Reports include the application source, stable identity, original baseline,
+sampled peak, recovery limits and deadlines, remaining connections, first failed
+resource cycle, and post-drain result. These are application-reported samples;
+a peak between polls can be missed. Use one stable instance or an observation
+endpoint that aggregates all relevant instances under an appropriate stable
+identity. The [TCP campaign example](../examples/scenario-checkout/gregale-tcp-campaign-test.yaml)
+tracks actual outgoing sockets until their close events and cancels probes when
+incoming clients disconnect. Native VM qualification remains a separate gate.
+
+### Exercise connection-pool exhaustion
+
+Use `load.pool_exhaustion` alongside healthy-route and dependency recovery
+assertions in a staged TCP fault/recovery schedule:
+
+```yaml
+pool_exhaustion:
+  path: /pool-status
+  capacity: 2
+  max_queue: 2
+  max_wait: 300ms
+  min_queued_requests: 3
+  within: 1s
+  sustain: 1s
+  window: 1s
+  min_completions: 5
+```
+
+The [pool exhaustion example](../examples/scenario-checkout/gregale-pool-exhaustion-test.yaml)
+stalls the dependency while eight caller VUs compete for two permits and two
+queued slots. It checks responsive health, bounded connection attempts, socket
+release, and successful throughput after recovery. The fixture uses real TCP
+connections and returns each permit after an attempt; it does not model idle
+connection reuse or a particular database driver.
+
+The side-effect-free observation endpoint must return HTTP 200 and one JSON
+object containing these fields:
+
+```json
+{
+  "instance_id": "01234567-89ab-4cde-8fab-0123456789ab",
+  "capacity": 2,
+  "active": 0,
+  "queued": 0,
+  "peak_active": 2,
+  "peak_queued": 2,
+  "waiters_created": 20,
+  "waiters_finished": 20,
+  "waiters_cancelled": 2,
+  "waiters_timed_out": 10,
+  "max_wait_ms": 205,
+  "completed": 100
+}
+```
+
+`active` counts held pool permits; `queued` counts callers waiting for a permit.
+All numeric fields are required nonnegative integers. `waiters_finished` includes
+acquired, cancelled and timed-out waiters, so `waiters_created - waiters_finished`
+must equal `queued`. Peaks, waiter counters, maximum wait and completion counts
+are cumulative for the same pool instance and must not reset. `completed` counts
+successful dependency operations only. The UUID must change when that observed
+instance is replaced. You may specify `as` for a declared consumer credential.
+
+Every fault must show at least `min_queued_requests` new waiters between its first
+and last observations, and a full-capacity peak. A quiet pool cannot pass as an
+exhausted pool. Queue depth and completed wait times must remain within budget;
+cumulative high-water marks preserve violations that occur between polls.
+
+Every recovery must restore `min_completions` successful operations per `window`
+within the deadline and sustain that throughput, without a later failed window.
+Windows slightly wider than requested require proportionally more completions.
+Existing named-route recovery assertions independently check HTTP success and
+latency. Missing fields, inconsistent accounting, sparse samples, identity changes,
+and decreasing counters fail the test.
+
+After load or cancellation, an independent bounded check requires all active
+permits and queued waiters to drain. Optional `min_cancelled_waiters` requires
+that many additional cancelled waiters compared with the initial baseline. This
+is useful when a scenario deliberately cancels queued callers; omit it for runs
+that do not arrange that cancellation. The interrupted campaign remains failed,
+with its post-drain result reported separately.
+
+Reports retain the budget, baseline, peaks, maximum wait, actual completion
+windows, first failed pool cycle and post-drain waiter accounting. These counts
+are application-reported and must describe the same dependency scope. Local
+fixture and real-stream tests do not qualify routing on the native VM platform.
+
+### Bound the complete application response
+
+Declare `request_deadlines` in a timed phase or reusable assertion profile:
+
+```yaml
+assertion_profiles:
+  application-timeout:
+    request_deadlines:
+      dependency-probe:
+        within: 750ms
+        min_samples: 3
+        expect:
+          status: 504
+          content_type: application/json
+          json: {'/error': deadline_exceeded, '/retryable': true}
+```
+
+Each name must select exactly one HTTP request in that staged load. `within` is a
+whole-millisecond duration from 1 ms to 30 seconds. It covers request preparation,
+HTTP dispatch and complete response-body consumption, including network overhead.
+Every selected response must meet the deadline and its response contract; a good
+p95 cannot hide an outlier. Requests aborted by Gregale's client fail the contract,
+even if they received the expected status before their body stalled.
+
+An optional phase-local `expect` replaces that request's status/content-type/JSON
+contract only in that phase. Omit it to retain the original success expectation.
+Deadline profiles cannot overwrite another profile or inline budget for the same
+route. Referenced profiles and effective budgets are retained in replay evidence.
+
+With request-deadline assertions enabled, the runner drains admitted load HTTP
+requests before transitioning phases. This prevents clearing a dependency fault
+while its expected timeout response is still in flight. The bounded drain can
+shorten the following scheduled recovery window; actual boundaries are reported.
+Allow enough time for the deadline, recovery and sustained healthy observations.
+
+The [application deadline example](../examples/scenario-checkout/gregale-request-deadlines-test.yaml)
+uses a single 500 ms application timer across connection acquisition and dependency
+I/O, with a 750 ms client-observed budget. It verifies a complete HTTP 504 timeout
+response during a TCP stall, responsive health, successful responses after recovery,
+and a return to the original socket baseline after workers finish. Client
+cancellation closes that request's dependency socket and retires its timers.
+
+Reports include the measured maximum, deadline, named request sample count,
+response failures, expected status and verdict. Use the existing connection-leak
+or pool-drain checks to independently observe downstream resources after load or
+cancellation. These checks use application-reported counters and do not replace
+native VM qualification or certify arbitrary multi-service workflow deadlines.

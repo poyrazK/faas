@@ -62,6 +62,13 @@ type OutboundIntegrationOffer struct {
 	AIMonthlyCostLimitMillicents *int64 `json:"ai_monthly_cost_limit_millicents"`
 	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool `json:"ai_request_log_enabled"`
+	// Per-end-user UTC-day limits (ADR-994).
+	AIUserDailyTokenLimit          *int64 `json:"ai_user_daily_token_limit"`
+	AIUserDailyCostLimitMillicents *int64 `json:"ai_user_daily_cost_limit_millicents"`
+	// AIRequestLogContent captures logged calls' bodies (ADR-996).
+	AIRequestLogContent bool `json:"ai_request_log_content"`
+	// AIContentPolicy is the integration's content guardrails (ADR-997).
+	AIContentPolicy OutboundAIContentPolicy `json:"ai_content_policy"`
 }
 
 // Outbound AI providers select the credential handling and the response
@@ -106,15 +113,23 @@ type PutOutboundAIPolicyRequest struct {
 	DailyTokenLimit            *int64 `json:"daily_token_limit"`
 	DailyCostLimitMillicents   *int64 `json:"daily_cost_limit_millicents"`
 	MonthlyCostLimitMillicents *int64 `json:"monthly_cost_limit_millicents"`
-	// RequestLogEnabled stores per-call metadata, never content (ADR-991).
+	// RequestLogEnabled stores per-call metadata (ADR-991).
 	RequestLogEnabled bool `json:"request_log_enabled"`
+	// RequestLogContent also keeps the start of each logged call's request
+	// and response bodies; it requires the request log (ADR-996).
+	RequestLogContent bool `json:"request_log_content,omitempty"`
+	// UserDailyTokenLimit and UserDailyCostLimitMillicents cap each end
+	// user named by X-Gregale-AI-User per UTC day (ADR-994).
+	UserDailyTokenLimit          *int64 `json:"user_daily_token_limit,omitempty"`
+	UserDailyCostLimitMillicents *int64 `json:"user_daily_cost_limit_millicents,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
 func (r PutOutboundAIPolicyRequest) Valid() bool {
 	return ValidOutboundAIPolicy(r.AIProvider, r.DailyTokenLimit) &&
 		ValidOutboundAICostLimits(r.AIProvider, r.DailyCostLimitMillicents, r.MonthlyCostLimitMillicents) &&
-		(!r.RequestLogEnabled || r.AIProvider != "")
+		ValidOutboundAIUserLimits(r.AIProvider, r.UserDailyTokenLimit, r.UserDailyCostLimitMillicents) &&
+		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled)
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is
@@ -133,6 +148,11 @@ type OutboundAIUsageItem struct {
 	// CostMillicents is priced from the price list effective at each call,
 	// rounded up per call; zero without a price list (ADR-990).
 	CostMillicents int64 `json:"cost_millicents"`
+	// Media usage (ADR-997): images billed per image, seconds of
+	// transcribed audio and characters of synthesized speech.
+	Images       int64 `json:"images"`
+	AudioSeconds int64 `json:"audio_seconds"`
+	Characters   int64 `json:"characters"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

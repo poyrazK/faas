@@ -1,5 +1,5 @@
 // adr: 712
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -19,7 +19,7 @@ func TestDurableEntityAPIStorageCapPreservesAuthorizedReceiptReplay(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.s.durable.Engine = engine
+	(*e.s.Durable()).Engine = engine
 	replayed := entityAPIResult(t, e.do(t, http.MethodPost, path, entityRequest("original"), nil))
 	if !replayed.Replayed || replayed.Version != first.Version || dispatch.calls.Load() != 1 {
 		t.Fatal("cap suppressed replay", replayed)

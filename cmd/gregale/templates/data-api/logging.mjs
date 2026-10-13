@@ -3,6 +3,7 @@ import { randomUUID, createHash } from 'node:crypto'
 const trace = Symbol('requestTrace')
 const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
+  'data_api_refresh_paused', 'data_api_refresh_unavailable',
   'request_too_large', 'query_timeout', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error'])
 
 function route(url) {
@@ -17,7 +18,7 @@ function route(url) {
 function outcome(code, status) {
   if (code === 'token_required' || code === 'token_invalid') return 'authentication_failed'
   if (code === 'query_timeout') return 'query_timeout'
-  if (code === 'data_api_unavailable' || code === 'serving_contract_unavailable') return 'unavailable'
+  if (code === 'data_api_unavailable' || code === 'data_api_refresh_unavailable' || code === 'serving_contract_unavailable') return 'unavailable'
   if (code === 'upstream_error') return 'upstream_error'
   return status >= 400 ? 'rejected' : 'completed'
 }

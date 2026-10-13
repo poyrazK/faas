@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // IAM-5 (issue #189) handler tests. The createKey / listKeys /
 // deleteKey / rotateKey / graceWindow endpoints are exercised
@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -34,10 +35,10 @@ import (
 // expires_at=now+365d default for non-admin scopes. Admin
 // scopes (the legacy "admin" entry) keep nil expiry.
 func TestHandlers_CreateKey_NonAdminGetsExpiry(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	body := api.CreateKeyRequest{Label: "ci-deploy", Scopes: []string{api.ScopeAppsRead}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/keys: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -65,10 +66,10 @@ func TestHandlers_CreateKey_NonAdminGetsExpiry(t *testing.T) {
 // "admin = never expires" legacy semantics. A key with
 // scopes=["admin"] returns ExpiresAt="".
 func TestHandlers_CreateKey_AdminHasNoExpiry(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	body := api.CreateKeyRequest{Label: "admin-key", Scopes: []string{api.ScopeAdmin}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/keys: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -86,7 +87,7 @@ func TestHandlers_CreateKey_AdminHasNoExpiry(t *testing.T) {
 // hit. Hobby=10; setup() seeds 1 admin key, so 8 more mints
 // fill the cap and the 9th additional mint rejects.
 func TestHandlers_CreateKey_RejectsAtQuota(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	// Mint 8 more (1 setup + 8 = 9, one slot left).
 	for i := 0; i < 8; i++ {
@@ -94,20 +95,20 @@ func TestHandlers_CreateKey_RejectsAtQuota(t *testing.T) {
 			Label:  "k",
 			Scopes: []string{api.ScopeAppsRead},
 		}
-		rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+		rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("seed #%d: code=%d body=%s", i, rec.Code, rec.Body.String())
 		}
 	}
 	// 9th additional mint: count=9 < cap=10 → 201.
 	body := api.CreateKeyRequest{Label: "fill", Scopes: []string{api.ScopeAppsRead}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("9th additional mint: code=%d body=%s, want 201", rec.Code, rec.Body.String())
 	}
 	// 10th additional mint: count=10 == cap=10 → 409.
 	body = api.CreateKeyRequest{Label: "over", Scopes: []string{api.ScopeAppsRead}}
-	rec = e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("10th additional mint: code=%d body=%s, want 409", rec.Code, rec.Body.String())
 	}
@@ -121,10 +122,10 @@ func TestHandlers_CreateKey_RejectsAtQuota(t *testing.T) {
 // the row stays for audit lineage. Repeated DELETE is 204
 // no-op (idempotent).
 func TestHandlers_DeleteKey_SoftRevokesAndIdempotent(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	body := api.CreateKeyRequest{Label: "k", Scopes: []string{api.ScopeAppsRead}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -134,13 +135,13 @@ func TestHandlers_DeleteKey_SoftRevokesAndIdempotent(t *testing.T) {
 	}
 
 	// First delete: 204.
-	rec = e.do(t, http.MethodDelete, "/v1/keys/"+created.ID, nil, nil)
+	rec = e.Do(t, http.MethodDelete, "/v1/keys/"+created.ID, nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("first delete: code=%d body=%s, want 204", rec.Code, rec.Body.String())
 	}
 
 	// List and confirm the row is in status='revoked'.
-	rec = e.do(t, http.MethodGet, "/v1/keys", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/keys", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -164,7 +165,7 @@ func TestHandlers_DeleteKey_SoftRevokesAndIdempotent(t *testing.T) {
 	}
 
 	// Second delete: idempotent 204.
-	rec = e.do(t, http.MethodDelete, "/v1/keys/"+created.ID, nil, nil)
+	rec = e.Do(t, http.MethodDelete, "/v1/keys/"+created.ID, nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("second delete: code=%d, want 204 (idempotent)", rec.Code)
 	}
@@ -173,8 +174,8 @@ func TestHandlers_DeleteKey_SoftRevokesAndIdempotent(t *testing.T) {
 // TestHandlers_DeleteKey_404ForMissing pins the not-found
 // path. A delete on a non-existent key id returns 404.
 func TestHandlers_DeleteKey_404ForMissing(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	rec := e.do(t, http.MethodDelete, "/v1/keys/00000000000000000000000000000000", nil, nil)
+	e := apidserver.Setup(t, api.PlanHobby)
+	rec := e.Do(t, http.MethodDelete, "/v1/keys/00000000000000000000000000000000", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("missing delete: code=%d, want 404", rec.Code)
 	}
@@ -184,11 +185,11 @@ func TestHandlers_DeleteKey_404ForMissing(t *testing.T) {
 // primitive with no per-account override: old key gets
 // status='grace' and expires_at=now+7d (plan default).
 func TestHandlers_RotateKey_GraceDefault(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	// Mint a key.
 	body := api.CreateKeyRequest{Label: "ci", Scopes: []string{api.ScopeAppsRead}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -198,7 +199,7 @@ func TestHandlers_RotateKey_GraceDefault(t *testing.T) {
 	}
 
 	// Rotate.
-	rec = e.do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -232,7 +233,7 @@ func TestHandlers_RotateKey_GraceDefault(t *testing.T) {
 	}
 
 	// Old key now in status='grace' (per the listKeys response).
-	rec = e.do(t, http.MethodGet, "/v1/keys", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/keys", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list: code=%d", rec.Code)
 	}
@@ -254,19 +255,19 @@ func TestHandlers_RotateKey_GraceDefault(t *testing.T) {
 // admin PATCH; rotate; the old key's expires_at should be
 // ~14d out, not 7d.
 func TestHandlers_RotateKey_AccountOverride(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	// Set override to 14 days.
 	d14 := 14
 	patchBody := api.SetGraceWindowRequest{Days: &d14}
-	rec := e.do(t, http.MethodPatch, "/v1/account/keys/grace_window_days", patchBody, nil)
+	rec := e.Do(t, http.MethodPatch, "/v1/account/keys/grace_window_days", patchBody, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set grace: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	// Mint a key.
 	body := api.CreateKeyRequest{Label: "ci", Scopes: []string{api.ScopeAppsRead}}
-	rec = e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("setup mint: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -274,7 +275,7 @@ func TestHandlers_RotateKey_AccountOverride(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &old)
 
 	// Rotate.
-	rec = e.do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -291,19 +292,19 @@ func TestHandlers_RotateKey_AccountOverride(t *testing.T) {
 // old key flips to status='revoked' (terminal) and the
 // expires_at is "now" (within seconds).
 func TestHandlers_RotateKey_Atomic(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	// Set override to 0 (atomic).
 	d0 := 0
 	patchBody := api.SetGraceWindowRequest{Days: &d0}
-	rec := e.do(t, http.MethodPatch, "/v1/account/keys/grace_window_days", patchBody, nil)
+	rec := e.Do(t, http.MethodPatch, "/v1/account/keys/grace_window_days", patchBody, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set grace=0: code=%d", rec.Code)
 	}
 
 	// Mint a key.
 	body := api.CreateKeyRequest{Label: "ci", Scopes: []string{api.ScopeAppsRead}}
-	rec = e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("setup mint: code=%d", rec.Code)
 	}
@@ -311,7 +312,7 @@ func TestHandlers_RotateKey_Atomic(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &old)
 
 	// Rotate.
-	rec = e.do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -326,10 +327,10 @@ func TestHandlers_RotateKey_Atomic(t *testing.T) {
 // TestHandlers_RotateKey_RejectsRevoked pins the early-return
 // on an already-revoked predecessor.
 func TestHandlers_RotateKey_RejectsRevoked(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	body := api.CreateKeyRequest{Label: "ci", Scopes: []string{api.ScopeAppsRead}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("setup: code=%d", rec.Code)
 	}
@@ -337,13 +338,13 @@ func TestHandlers_RotateKey_RejectsRevoked(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &old)
 
 	// Revoke.
-	rec = e.do(t, http.MethodDelete, "/v1/keys/"+old.ID, nil, nil)
+	rec = e.Do(t, http.MethodDelete, "/v1/keys/"+old.ID, nil, nil)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("revoke: code=%d", rec.Code)
 	}
 
 	// Rotate — should 404 ("key already revoked").
-	rec = e.do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("rotate revoked: code=%d, want 404", rec.Code)
 	}
@@ -354,10 +355,10 @@ func TestHandlers_RotateKey_RejectsRevoked(t *testing.T) {
 // and the plan default; PATCH writes the override and the
 // next GET reflects it.
 func TestHandlers_GetGraceWindow_RoundTrip(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	// Default state: no override.
-	rec := e.do(t, http.MethodGet, "/v1/account/keys/grace_window_days", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/account/keys/grace_window_days", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get: code=%d", rec.Code)
 	}
@@ -372,14 +373,14 @@ func TestHandlers_GetGraceWindow_RoundTrip(t *testing.T) {
 
 	// PATCH 14.
 	d14 := 14
-	rec = e.do(t, http.MethodPatch, "/v1/account/keys/grace_window_days",
+	rec = e.Do(t, http.MethodPatch, "/v1/account/keys/grace_window_days",
 		api.SetGraceWindowRequest{Days: &d14}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
 	// GET reflects.
-	rec = e.do(t, http.MethodGet, "/v1/account/keys/grace_window_days", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/account/keys/grace_window_days", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get-after: code=%d", rec.Code)
 	}
@@ -390,12 +391,12 @@ func TestHandlers_GetGraceWindow_RoundTrip(t *testing.T) {
 	}
 
 	// PATCH nil → cleared.
-	rec = e.do(t, http.MethodPatch, "/v1/account/keys/grace_window_days",
+	rec = e.Do(t, http.MethodPatch, "/v1/account/keys/grace_window_days",
 		api.SetGraceWindowRequest{Days: nil}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch nil: code=%d", rec.Code)
 	}
-	rec = e.do(t, http.MethodGet, "/v1/account/keys/grace_window_days", nil, nil)
+	rec = e.Do(t, http.MethodGet, "/v1/account/keys/grace_window_days", nil, nil)
 	_ = json.Unmarshal(rec.Body.Bytes(), &got2)
 	if got2.Days != nil {
 		t.Errorf("post-clear Days: got %v, want nil", got2.Days)
@@ -407,10 +408,10 @@ func TestHandlers_GetGraceWindow_RoundTrip(t *testing.T) {
 // and would silently pass the SQL CHECK if we sent it via
 // the store directly.
 func TestHandlers_SetGraceWindow_RejectsNegative(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	dn := -1
-	rec := e.do(t, http.MethodPatch, "/v1/account/keys/grace_window_days",
+	rec := e.Do(t, http.MethodPatch, "/v1/account/keys/grace_window_days",
 		api.SetGraceWindowRequest{Days: &dn}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("negative days: code=%d, want 400", rec.Code)
@@ -424,24 +425,24 @@ func TestHandlers_SetGraceWindow_RejectsNegative(t *testing.T) {
 // old_key_expires_at} is recorded for the dashboard's
 // per-key history.
 func TestHandlers_KeyRotationAuditEmitted(t *testing.T) {
-	e := setup(t, api.PlanHobby)
+	e := apidserver.Setup(t, api.PlanHobby)
 
 	body := api.CreateKeyRequest{Label: "ci", Scopes: []string{api.ScopeAppsRead}}
-	rec := e.do(t, http.MethodPost, "/v1/keys", body, nil)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", body, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("setup: code=%d", rec.Code)
 	}
 	var old api.APIKeyResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &old)
 
-	rec = e.do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
+	rec = e.Do(t, http.MethodPost, "/v1/keys/"+old.ID+"/rotate", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate: code=%d", rec.Code)
 	}
 	var resp api.RotateKeyResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 
-	rows, err := e.store.ListEvents(context.Background(), e.acct.ID, 0)
+	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 0)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}

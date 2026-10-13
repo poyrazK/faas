@@ -68,6 +68,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         return readiness(res, readyPort, { version: 1, fingerprint: servingFingerprint, ...(gate ? { refresh_protocol: 1, refresh_paused: gate.paused, refresh_verified: gate.owns_pause === true, refresh_fingerprint: gate.fingerprint } : {}) })
       } catch { return problem(res, 503, 'data_api_refresh_unavailable') }
     }
+    if (!await admitRefreshRequest(config, req, res)) return
     try {
       // Only the binding login may become the SQL role. External role claims
       // cannot select an administrator, owner or another application's role.
@@ -85,6 +86,26 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       proxy(req, res, internal, upstreamPort, config, guarded ? `/__gregale/contract/${guarded[1]}/rest/v1` : '/rest/v1')
     } catch { problem(res, 503, 'data_api_unavailable') }
   })
+}
+
+// A deliberate pause is an admission decision, not an engine failure.
+// PostgREST recovers its pool/schema cache for HTTP 503 responses, so block
+// known paused traffic here. Its SQL pre-request hook still fences races.
+async function admitRefreshRequest(config, req, res) {
+  if (!config.coordinatedRefresh) return true
+  try {
+    if (typeof config.refreshStatus !== 'function') throw new Error('Refresh reader unavailable')
+    const gate = await config.refreshStatus(req.headers['x-gregale-refresh-token'])
+    if (!gate || typeof gate.paused !== 'boolean' || !/^[a-f0-9]{64}$/.test(gate.fingerprint ?? '')) throw new Error('Invalid refresh state')
+    if (gate.paused && gate.owns_pause !== true) {
+      problem(res, 503, 'data_api_refresh_paused')
+      return false
+    }
+    return true
+  } catch {
+    problem(res, 503, 'data_api_refresh_unavailable')
+    return false
+  }
 }
 
 function problem(res, status, code) {

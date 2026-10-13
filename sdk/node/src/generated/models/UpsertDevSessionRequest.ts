@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DevBucketRequest } from './DevBucketRequest.js';
 import type { DevPostgresRequest } from './DevPostgresRequest.js';
+import type { DevWatch } from './DevWatch.js';
 /**
  * Application shape and opaque local identity for a CLI-managed developer environment.
  */
@@ -15,8 +17,13 @@ export type UpsertDevSessionRequest = {
   workspace_id?: string;
   postgres?: DevPostgresRequest;
   /**
+   * Explicitly provision private workspace buckets and bindings. Requires storage:manage or admin in addition to developer session authorization. Omission preserves existing resources. Repeating a revoked binding returns conflict.
+   */
+  buckets?: Array<DevBucketRequest>;
+  /**
    * How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
    */
   lease_seconds?: number;
+  watch?: DevWatch;
 };
 

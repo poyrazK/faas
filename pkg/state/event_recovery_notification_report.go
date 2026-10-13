@@ -29,7 +29,7 @@ type recoveryNotificationEvidence struct {
 	Truncated  map[string]bool
 }
 
-var recoveryNotificationEvents = []string{"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished"}
+var recoveryNotificationEvents = []string{"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished", "event_recovery.execution_attention"}
 
 func recoveryNotificationEventID(job, event string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale:event-recovery:"+job+":"+event[len("event_recovery."):])).String()
@@ -49,10 +49,12 @@ func validateRecoveryNotificationReceipts(job string, receipts map[string]recove
 		seen := map[string]bool{}
 		for _, id := range receipt.RecipientWebhookIDs {
 			parsed, err := uuid.Parse(id)
-			if err != nil || parsed.String() != id || seen[id] {
+			// Memory webhook IDs may use the equivalent compact UUID form.
+			// Deduplicate by UUID identity, not its textual representation.
+			if err != nil || seen[parsed.String()] {
 				return fmt.Errorf("invalid recovery notification receiver identity")
 			}
-			seen[id] = true
+			seen[parsed.String()] = true
 		}
 	}
 	return nil
@@ -90,7 +92,7 @@ func recoveryNotificationReport(job api.EventRecoveryJob, slug string, execution
 	}
 	out.Notifications = append(out.Notifications, admission)
 	execution := api.EventRecoveryNotification{Kind: "execution", Event: "event_recovery.execution_finished", CaptureStatus: "pending", EvidenceSource: "unavailable", AcknowledgementStatus: "unacknowledged", Receivers: []api.EventRecoveryNotificationReceiver{}}
-	if job.Selection.Mode != "execution" || (job.State == "completed" || job.State == "cancelled") && job.QueuedCount == 0 || executionCaptured && job.ExecutionFinishedAt == nil {
+	if (job.Selection.Mode != "execution" && job.Selection.Mode != "workflow") || (job.State == "completed" || job.State == "cancelled") && job.QueuedCount == 0 || executionCaptured && job.ExecutionFinishedAt == nil {
 		execution.CaptureStatus = "not_applicable"
 		execution.AcknowledgementStatus = "not_applicable"
 	} else {
@@ -102,6 +104,10 @@ func recoveryNotificationReport(job api.EventRecoveryJob, slug string, execution
 		execution = observeRecoveryNotification(job.ID, slug, execution, evidence)
 	}
 	out.Notifications = append(out.Notifications, execution)
+	if _, captured := evidence.Receipts["event_recovery.execution_attention"]; captured {
+		attention := api.EventRecoveryNotification{Kind: "attention", Event: "event_recovery.execution_attention", CaptureStatus: "captured", EvidenceSource: "capture_snapshot", AcknowledgementStatus: "unknown", Receivers: []api.EventRecoveryNotificationReceiver{}}
+		out.Notifications = append(out.Notifications, observeRecoveryNotification(job.ID, slug, attention, evidence))
+	}
 	return out, nil
 }
 

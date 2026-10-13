@@ -4163,7 +4163,7 @@ func (s *server) deleteCron(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	if err := s.store.DeleteCron(r.Context(), id, c.AppID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete cron"))
+		api.WriteProblem(w, customerCapacityProblem(s.log, "delete cron", "Briefly at capacity", "could not delete cron", "Retry the delete; each attempt keeps the history it has already detached.", err))
 		return
 	}
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"deleted","cron":"`+id+`"}`)

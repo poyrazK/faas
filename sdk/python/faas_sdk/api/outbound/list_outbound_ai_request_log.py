@@ -96,8 +96,8 @@ def sync_detailed(
 ) -> Response[OutboundAIRequestLogList | Problem]:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):
@@ -134,8 +134,8 @@ def sync(
 ) -> OutboundAIRequestLogList | Problem | None:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):
@@ -167,8 +167,8 @@ async def asyncio_detailed(
 ) -> Response[OutboundAIRequestLogList | Problem]:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):
@@ -203,8 +203,8 @@ async def asyncio(
 ) -> OutboundAIRequestLogList | Problem | None:
     """Page the opt-in AI request log.
 
-     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata
-    only.
+     Requires MFA and read scope (ADR-991). Newest first; rows are kept for 7 days and hold metadata.
+    content_captured marks calls whose bodies were captured (ADR-996).
 
     Args:
         integration (UUID):

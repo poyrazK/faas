@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardHandler_AppLogs(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -110,7 +111,7 @@ func TestParseAppLogsPath(t *testing.T) {
 		{path: "logs-app", ok: false},
 		{path: "logs-app/deployments/dep-1", ok: false},
 	} {
-		got, ok := parseAppLogsPath(tc.path)
+		got, ok := apidserver.ParseAppLogsPath(tc.path)
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("parseAppLogsPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 		}

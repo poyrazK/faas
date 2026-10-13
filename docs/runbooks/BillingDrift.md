@@ -15,8 +15,9 @@ not healthy. Emitted by
 `pkg/billing/reconciler`, which runs on a 6 h meterd cron tick
 (default `FAAS_RECONCILE_INTERVAL`).
 
-Severity: `page` (fleet-wide) and `warn` (per-account). The page
-severity fires on `> 0.5%` fleet-wide drift for `> 1h` — a real
+Severity: `warn` (fleet-wide and per-account; ADR-1236 demoted the
+fleet-wide page, since drift waits safely for business hours). The
+fleet-wide alert fires on `> 0.5%` fleet-wide drift for `> 1h` — a real
 Polar, Paddle, or Stripe outage has the potential to silently lose
 invoices. The per-account `warn` alert catches single-customer
 drift early so an operator can investigate before the customer

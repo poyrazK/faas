@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,9 +21,9 @@ func wafEdgeRuleRequest(action string) api.CreateEdgeRuleRequest {
 }
 
 func TestCreateEdgeRuleWAFStoresEffectiveDefaults(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "waf-defaults")
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(`{"exclude_rule_ids":[942100,920350]}`), nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "waf-defaults")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(`{"exclude_rule_ids":[942100,920350]}`), nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
 	}
@@ -52,9 +53,9 @@ func TestCreateEdgeRuleWAFRejections(t *testing.T) {
 		{name: "body cap too large", plan: api.PlanPro, action: `{"inspect_body_bytes":65537}`, wantCode: api.CodeValidation},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, tc.plan)
-			slug := mustSeedEdgeRuleApp(t, e, "waf-reject")
-			rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(tc.action), nil)
+			e := apidserver.Setup(t, tc.plan)
+			slug := apidserver.MustSeedEdgeRuleApp(t, e, "waf-reject")
+			rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(tc.action), nil)
 			if rec.Code == http.StatusCreated || !strings.Contains(rec.Body.String(), `"code":"`+tc.wantCode+`"`) {
 				t.Fatalf("status = %d, body = %s; want code %s", rec.Code, rec.Body.String(), tc.wantCode)
 			}
@@ -63,9 +64,9 @@ func TestCreateEdgeRuleWAFRejections(t *testing.T) {
 }
 
 func TestCreateEdgeRuleWAFBlockMode(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	slug := mustSeedEdgeRuleApp(t, e, "waf-block")
-	rec := e.do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(`{"mode":"block"}`), nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	slug := apidserver.MustSeedEdgeRuleApp(t, e, "waf-block")
+	rec := e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/edge-rules", wafEdgeRuleRequest(`{"mode":"block"}`), nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
 	}

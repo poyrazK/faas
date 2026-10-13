@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,25 @@ import (
 // errTranslationUnsupported marks an OpenAI request the translation layer
 // cannot express for the target provider (ADR-991).
 var errTranslationUnsupported = errors.New("outbound AI translation: unsupported request")
+
+// translationRefusal is an unsupported request with a reason the caller
+// sees in the problem detail (ADR-995).
+type translationRefusal struct{ reason string }
+
+func (e translationRefusal) Error() string        { return "outbound AI translation: " + e.reason }
+func (e translationRefusal) Is(target error) bool { return target == errTranslationUnsupported }
+
+func refuseTranslation(reason string) error { return translationRefusal{reason: reason} }
+
+// translationRefusalDetail is the caller-facing reason of a translation
+// error, or a generic one.
+func translationRefusalDetail(err error) string {
+	var refusal translationRefusal
+	if errors.As(err, &refusal) {
+		return refusal.reason
+	}
+	return "The request cannot be translated for this route's targets"
+}
 
 // openAIChatRequest is the OpenAI chat-completions subset routes translate.
 type openAIChatRequest struct {
@@ -30,6 +50,57 @@ type openAIChatRequest struct {
 	StreamOptions       *openAIStreamUsage `json:"stream_options"`
 	N                   *int               `json:"n"`
 	User                string             `json:"user"`
+	ResponseFormat      json.RawMessage    `json:"response_format"`
+}
+
+// openAIResponseFormat is a chat request's response_format (ADR-995):
+// kind is "" or "text" for plain text, "json_object" or "json_schema".
+type openAIResponseFormat struct {
+	kind, name, description string
+	schema                  json.RawMessage
+}
+
+func parseOpenAIResponseFormat(raw json.RawMessage) (openAIResponseFormat, error) {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return openAIResponseFormat{}, nil
+	}
+	var format struct {
+		Type       string `json:"type"`
+		JSONSchema *struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			Schema      json.RawMessage `json:"schema"`
+		} `json:"json_schema"`
+	}
+	if json.Unmarshal(raw, &format) != nil {
+		return openAIResponseFormat{}, refuseTranslation("response_format must be an object")
+	}
+	switch format.Type {
+	case "text", "json_object":
+		return openAIResponseFormat{kind: format.Type}, nil
+	case "json_schema":
+		if format.JSONSchema == nil || !isJSONObject(format.JSONSchema.Schema) {
+			return openAIResponseFormat{}, refuseTranslation("response_format json_schema needs json_schema.schema as an object")
+		}
+		name := format.JSONSchema.Name
+		if name == "" {
+			name = "response"
+		}
+		return openAIResponseFormat{kind: format.Type, name: name, description: format.JSONSchema.Description,
+			schema: format.JSONSchema.Schema}, nil
+	}
+	return openAIResponseFormat{}, refuseTranslation(fmt.Sprintf("response_format type %q is not supported", format.Type))
+}
+
+func isJSONObject(raw json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	return json.Unmarshal(raw, &object) == nil && object != nil
+}
+
+// errJSONObjectNeedsSchema refuses json_object for providers whose
+// structured output always needs a schema.
+func errJSONObjectNeedsSchema(provider string) error {
+	return refuseTranslation(provider + " targets need response_format json_schema; json_object has no schema to enforce")
 }
 
 type openAIStreamUsage struct {
@@ -58,7 +129,48 @@ type openAITool struct {
 		Name        string          `json:"name"`
 		Description string          `json:"description,omitempty"`
 		Parameters  json.RawMessage `json:"parameters,omitempty"`
+		// Strict asks for schema-valid arguments; Anthropic and Bedrock
+		// honor it per tool (ADR-996).
+		Strict *bool `json:"strict,omitempty"`
 	} `json:"function"`
+}
+
+// claudeModelsWithoutForcedToolChoice are the Claude models that refuse
+// tool_choice "any" and "tool" with a 400 (ADR-996). Older and other Claude
+// models accept forced tool use.
+var claudeModelsWithoutForcedToolChoice = []string{"claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5-5", "claude-sonnet-5-5"}
+
+// claudeRejectsForcedToolChoice reports whether a target model, as an
+// Anthropic, Vertex or Bedrock ID (with an "anthropic." prefix, a regional
+// inference-profile prefix, an ARN, a version suffix or an @date), is one of
+// claudeModelsWithoutForcedToolChoice.
+func claudeRejectsForcedToolChoice(model string) bool {
+	name := strings.ToLower(model)
+	if index := strings.LastIndex(name, "/"); index >= 0 {
+		name = name[index+1:]
+	}
+	if index := strings.Index(name, "anthropic."); index >= 0 {
+		name = name[index+len("anthropic."):]
+	}
+	for _, family := range claudeModelsWithoutForcedToolChoice {
+		if name == family {
+			return true
+		}
+		if rest, ok := strings.CutPrefix(name, family); ok && (rest[0] == '-' || rest[0] == '@' || rest[0] == ':') {
+			return true
+		}
+	}
+	return false
+}
+
+// forcedToolInstruction is the system-prompt sentence that stands in for a
+// forced tool choice on models that refuse one; it steers, it does not
+// guarantee a call.
+func forcedToolInstruction(mode, name string) string {
+	if mode == "function" {
+		return fmt.Sprintf("Answer by calling the %s tool.", name)
+	}
+	return "Answer by calling one of the provided tools."
 }
 
 type openAIPart struct {
@@ -78,9 +190,17 @@ type routeTranslation struct {
 	translator     aiResponseTranslator
 }
 
-// translateRouteRequest rewrites an OpenAI chat-completions body for one
-// target of an openai-format route.
-func translateRouteRequest(provider, providerPath, rawQuery string, body []byte, model string) (routeTranslation, error) {
+// translateRouteRequest rewrites an openai-format route's request for one
+// target: chat completions (ADR-991), embeddings (ADR-995) or Responses API
+// requests (ADR-996). providerPath and the returned path are escaped paths.
+func translateRouteRequest(integration Integration, providerPath, rawQuery string, body []byte, model string) (routeTranslation, error) {
+	switch {
+	case strings.HasSuffix(providerPath, "/embeddings"):
+		return translateEmbeddingsRequest(integration, providerPath, rawQuery, body, model)
+	case strings.HasSuffix(providerPath, "/responses"):
+		return translateResponsesRequest(integration, providerPath, rawQuery, body, model)
+	}
+	provider := integration.AIProvider
 	switch provider {
 	case api.OutboundAIProviderOpenAI:
 		if model != "" {
@@ -99,23 +219,41 @@ func translateRouteRequest(provider, providerPath, rawQuery string, body []byte,
 		return routeTranslation{path: "/openai/v1/chat/completions", body: rewritten}, nil
 	}
 	var request openAIChatRequest
-	if json.Unmarshal(body, &request) != nil || len(request.Messages) == 0 || model == "" {
+	if json.Unmarshal(body, &request) != nil {
+		return routeTranslation{}, errTranslationUnsupported
+	}
+	return translateChatRequest(integration, request, model)
+}
+
+// translateChatRequest translates a parsed chat-completions request for a
+// non-OpenAI target.
+func translateChatRequest(integration Integration, request openAIChatRequest, model string) (routeTranslation, error) {
+	provider := integration.AIProvider
+	if len(request.Messages) == 0 || model == "" {
 		return routeTranslation{}, errTranslationUnsupported
 	}
 	if request.N != nil && *request.N > 1 {
-		return routeTranslation{}, errTranslationUnsupported
+		return routeTranslation{}, refuseTranslation("n above 1 is not supported for translated targets")
+	}
+	format, err := parseOpenAIResponseFormat(request.ResponseFormat)
+	if err != nil {
+		return routeTranslation{}, err
 	}
 	includeUsage := request.StreamOptions != nil && request.StreamOptions.IncludeUsage
 	switch provider {
 	case api.OutboundAIProviderAnthropic:
-		translated, err := openAIToAnthropic(request, model)
+		fields, err := openAIToAnthropic(request, model, format)
 		if err != nil {
 			return routeTranslation{}, err
+		}
+		translated, err := json.Marshal(fields)
+		if err != nil {
+			return routeTranslation{}, errTranslationUnsupported
 		}
 		return routeTranslation{path: "/v1/messages", body: translated,
 			translator: newAnthropicTranslator(request.Stream, includeUsage)}, nil
 	case api.OutboundAIProviderGemini:
-		translated, err := openAIToGemini(request)
+		translated, err := openAIToGemini(request, format)
 		if err != nil {
 			return routeTranslation{}, err
 		}
@@ -125,8 +263,72 @@ func translateRouteRequest(provider, providerPath, rawQuery string, body []byte,
 		}
 		return routeTranslation{path: "/v1beta/models/" + url.PathEscape(model) + verb, rawQuery: query, body: translated,
 			translator: newGeminiTranslator(request.Stream, includeUsage, model)}, nil
+	case api.OutboundAIProviderVertex:
+		return translateVertexChat(integration, request, format, model, includeUsage)
+	case api.OutboundAIProviderBedrock:
+		return translateBedrockChat(request, format, model, includeUsage)
 	}
 	return routeTranslation{}, errTranslationUnsupported
+}
+
+// vertexPublisherModel splits a Vertex target model into its publisher and
+// model: an "anthropic/" or "google/" prefix names the publisher, and
+// otherwise a "claude" model is Anthropic's and anything else Google's.
+func vertexPublisherModel(model string) (publisher, name string) {
+	if rest, ok := strings.CutPrefix(model, "anthropic/"); ok {
+		return "anthropic", rest
+	}
+	if rest, ok := strings.CutPrefix(model, "google/"); ok {
+		return "google", rest
+	}
+	if strings.HasPrefix(model, "claude") {
+		return "anthropic", model
+	}
+	return "google", model
+}
+
+// translateVertexChat sends chat completions to Claude (rawPredict) or
+// Gemini (generateContent) on Vertex AI under the integration's one
+// project and location (ADR-995).
+func translateVertexChat(integration Integration, request openAIChatRequest, format openAIResponseFormat, model string,
+	includeUsage bool) (routeTranslation, error) {
+	base, ok := api.OutboundVertexBasePath(integration.AllowedPathPrefixes)
+	if !ok {
+		return routeTranslation{}, refuseTranslation("the Vertex integration's allowed path prefixes must name one /v1/projects/{project}/locations/{location}")
+	}
+	publisher, name := vertexPublisherModel(model)
+	if name == "" {
+		return routeTranslation{}, errTranslationUnsupported
+	}
+	modelPath := base + "/publishers/" + publisher + "/models/" + url.PathEscape(name)
+	if publisher == "anthropic" {
+		fields, err := openAIToAnthropic(request, name, format)
+		if err != nil {
+			return routeTranslation{}, err
+		}
+		// Vertex names the model in the path and the API version in the body.
+		delete(fields, "model")
+		fields["anthropic_version"] = api.OutboundVertexAnthropicVersion
+		translated, err := json.Marshal(fields)
+		if err != nil {
+			return routeTranslation{}, errTranslationUnsupported
+		}
+		verb := ":rawPredict"
+		if request.Stream {
+			verb = ":streamRawPredict"
+		}
+		return routeTranslation{path: modelPath + verb, body: translated, translator: newAnthropicTranslator(request.Stream, includeUsage)}, nil
+	}
+	translated, err := openAIToGemini(request, format)
+	if err != nil {
+		return routeTranslation{}, err
+	}
+	verb, query := ":generateContent", ""
+	if request.Stream {
+		verb, query = ":streamGenerateContent", "alt=sse"
+	}
+	return routeTranslation{path: modelPath + verb, rawQuery: query, body: translated,
+		translator: newGeminiTranslator(request.Stream, includeUsage, name)}, nil
 }
 
 // openAIContentParts reads a message content: a string, an array of parts
@@ -232,8 +434,8 @@ type anthropicMessage struct {
 	Content []anthropicBlock `json:"content"`
 }
 
-// openAIToAnthropic maps a chat-completions request to the Messages API.
-func openAIToAnthropic(request openAIChatRequest, model string) ([]byte, error) {
+// openAIToAnthropic maps a chat-completions request to Messages API fields.
+func openAIToAnthropic(request openAIChatRequest, model string, format openAIResponseFormat) (map[string]any, error) {
 	var system []string
 	var messages []anthropicMessage
 	appendBlocks := func(role string, blocks []anthropicBlock) {
@@ -275,6 +477,10 @@ func openAIToAnthropic(request openAIChatRequest, model string) ([]byte, error) 
 		}
 	}
 	out := map[string]any{"model": model, "messages": messages, "max_tokens": openAIOutputCeiling(request)}
+	choice, instruction := anthropicToolChoice(request, model)
+	if instruction != "" {
+		system = append(system, instruction)
+	}
 	if len(system) > 0 {
 		out["system"] = strings.Join(system, "\n\n")
 	}
@@ -304,14 +510,24 @@ func openAIToAnthropic(request openAIChatRequest, model string) ([]byte, error) 
 			if tool.Function.Description != "" {
 				entry["description"] = tool.Function.Description
 			}
+			if tool.Function.Strict != nil && *tool.Function.Strict {
+				entry["strict"] = true
+			}
 			tools = append(tools, entry)
 		}
 		out["tools"] = tools
 	}
-	if choice := anthropicToolChoice(request); choice != nil {
+	if choice != nil {
 		out["tool_choice"] = choice
 	}
-	return json.Marshal(out)
+	// ADR-995: structured output always takes a schema.
+	switch format.kind {
+	case "json_schema":
+		out["output_config"] = map[string]any{"format": map[string]any{"type": "json_schema", "schema": format.schema}}
+	case "json_object":
+		return nil, errJSONObjectNeedsSchema("Anthropic")
+	}
+	return out, nil
 }
 
 func anthropicContentBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
@@ -344,8 +560,15 @@ func anthropicContentBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
 	return blocks, nil
 }
 
-func anthropicToolChoice(request openAIChatRequest) map[string]any {
+// anthropicToolChoice maps tool_choice. For a model that refuses forced
+// tool use (ADR-996) a forced choice becomes "auto" plus an instruction for
+// the system prompt.
+func anthropicToolChoice(request openAIChatRequest, model string) (map[string]any, string) {
 	mode, name := openAIToolChoice(request.ToolChoice)
+	instruction := ""
+	if (mode == "required" || mode == "function") && claudeRejectsForcedToolChoice(model) {
+		instruction, mode = forcedToolInstruction(mode, name), "auto"
+	}
 	var choice map[string]any
 	switch mode {
 	case "auto":
@@ -365,7 +588,7 @@ func anthropicToolChoice(request openAIChatRequest) map[string]any {
 			choice["disable_parallel_tool_use"] = true
 		}
 	}
-	return choice
+	return choice, instruction
 }
 
 type geminiPart = map[string]any
@@ -376,7 +599,7 @@ type geminiContent struct {
 }
 
 // openAIToGemini maps a chat-completions request to generateContent.
-func openAIToGemini(request openAIChatRequest) ([]byte, error) {
+func openAIToGemini(request openAIChatRequest, format openAIResponseFormat) ([]byte, error) {
 	var system []string
 	var contents []geminiContent
 	toolNames := map[string]string{}
@@ -440,6 +663,14 @@ func openAIToGemini(request openAIChatRequest) ([]byte, error) {
 	}
 	if stops := openAIStopSequences(request.Stop); len(stops) > 0 {
 		generation["stopSequences"] = stops
+	}
+	// ADR-995: JSON mode, with the caller's JSON Schema when it has one.
+	switch format.kind {
+	case "json_object":
+		generation["responseMimeType"] = "application/json"
+	case "json_schema":
+		generation["responseMimeType"] = "application/json"
+		generation["responseJsonSchema"] = format.schema
 	}
 	out := map[string]any{"contents": contents, "generationConfig": generation}
 	if len(system) > 0 {

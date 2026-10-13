@@ -23,7 +23,7 @@
 //     `bootstrap with ...` hint so the operator gets the exact
 //     one-liner they need to run.
 
-package apidserver
+package apidserver_test
 
 import (
 	"os"
@@ -31,6 +31,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestLoadHostHMACKey_OK_400(t *testing.T) {
@@ -40,7 +42,7 @@ func TestLoadHostHMACKey_OK_400(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	got, err := loadHostHMACKey(path)
+	got, err := apidserver.LoadHostHMACKey(path)
 	if err != nil {
 		t.Fatalf("loadHostHMACKey: %v", err)
 	}
@@ -57,7 +59,7 @@ func TestLoadHostHMACKey_OK_400(t *testing.T) {
 	// Copy semantics: mutating the returned slice must not affect
 	// a subsequent call's result.
 	got[0] = 0xAB
-	got2, err := loadHostHMACKey(path)
+	got2, err := apidserver.LoadHostHMACKey(path)
 	if err != nil {
 		t.Fatalf("loadHostHMACKey (2): %v", err)
 	}
@@ -73,7 +75,7 @@ func TestLoadHostHMACKey_OK_440(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	if _, err := loadHostHMACKey(path); err != nil {
+	if _, err := apidserver.LoadHostHMACKey(path); err != nil {
 		t.Errorf("loadHostHMACKey (0o440): %v (the systemd-credentials posture MUST be accepted; the perm check accepts 0o400 OR 0o440 only)", err)
 	}
 }
@@ -86,7 +88,7 @@ func TestLoadHostHMACKey_RejectsPermissiveMode(t *testing.T) {
 			if err := os.WriteFile(path, make([]byte, 32), mode); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			_, err := loadHostHMACKey(path)
+			_, err := apidserver.LoadHostHMACKey(path)
 			if err == nil {
 				t.Errorf("mode 0o%o accepted; MUST be rejected (permissive mode lets a non-root reader compute value_hash)", mode)
 				return
@@ -106,7 +108,7 @@ func TestLoadHostHMACKey_RejectsWrongLength(t *testing.T) {
 			if err := os.WriteFile(path, make([]byte, n), 0o400); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			_, err := loadHostHMACKey(path)
+			_, err := apidserver.LoadHostHMACKey(path)
 			if err == nil {
 				t.Errorf("len=%d accepted; MUST be rejected (the per-host HMAC key is exactly 32 bytes by contract)", n)
 				return
@@ -122,7 +124,7 @@ func TestLoadHostHMACKey_RejectsMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "host.hmac.key")
 
-	_, err := loadHostHMACKey(path)
+	_, err := apidserver.LoadHostHMACKey(path)
 	if err == nil {
 		t.Fatal("missing file accepted; MUST be rejected (the apid must not start without the per-host HMAC key)")
 	}

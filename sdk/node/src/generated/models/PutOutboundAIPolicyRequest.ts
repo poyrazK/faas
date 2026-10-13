@@ -14,5 +14,17 @@ export type PutOutboundAIPolicyRequest = {
    * Log per-call metadata (caller, route, model, status, tokens, cost, timing) for 7 days (ADR-991). Requires ai_provider.
    */
   request_log_enabled?: boolean;
+  /**
+   * Also keep the first 32 KiB of each logged call's request and response bodies, never headers, for 3 days and at most 1,000 calls per UTC day (ADR-996). Requires request_log_enabled.
+   */
+  request_log_content?: boolean;
+  /**
+   * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+   */
+  user_daily_token_limit?: number | null;
+  /**
+   * Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+   */
+  user_daily_cost_limit_millicents?: number | null;
 };
 

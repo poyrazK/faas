@@ -69,6 +69,17 @@ prefix="$(new_case prefix)"
 touch "$prefix/001-alpha.md" "$prefix/README.md" "$prefix/adr-127-pr-d.md"
 run "files without a numeric prefix carry no number" 0 "$prefix" "$test_root/empty-baseline.txt"
 
+# --- numbers beyond 999 participate in the same ratchet -------------------
+large="$(new_case large)"
+touch "$large/999-last.md" "$large/1000-next.md" "$large/1001-after.md"
+run "three and four digit numbers remain distinct" 0 "$large" "$test_root/empty-baseline.txt"
+touch "$large/1000-collision.md"
+run "an unbaselined four digit duplicate fails" 1 "$large" "$test_root/empty-baseline.txt"
+printf '1000\n' > "$test_root/baseline-1000.txt"
+run "a four digit duplicate held at the baseline passes" 0 "$large" "$test_root/baseline-1000.txt"
+rm "$large/1000-collision.md"
+run "a stale four digit baseline fails" 1 "$large" "$test_root/baseline-1000.txt"
+
 # --- fail closed on a missing baseline -----------------------------------
 run "a missing baseline file fails closed" 1 "$clean" "$test_root/does-not-exist.txt"
 
@@ -78,6 +89,12 @@ run "an ADR directory with no numbered files fails closed" 1 "$empty" "$test_roo
 
 # --- fail closed on a missing directory ----------------------------------
 run "a missing ADR directory fails closed" 1 "$test_root/absent" "$test_root/empty-baseline.txt"
+
+four="$(new_case four-digit)"
+touch "$four/1000-alpha.md" "$four/1001-beta.md"
+run "four-digit ADR numbers pass" 0 "$four" "$test_root/empty-baseline.txt"
+touch "$four/1000-duplicate.md"
+run "four-digit ADR duplicates fail" 1 "$four" "$test_root/empty-baseline.txt"
 
 if ((failures > 0)); then
   echo "check_adr_number_uniqueness_test: $failures case(s) failed" >&2

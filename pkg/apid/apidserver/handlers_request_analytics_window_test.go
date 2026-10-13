@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http/httptest"
@@ -7,13 +7,15 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestNullableAnalyticsInt(t *testing.T) {
-	if got := nullableAnalyticsInt(pgtype.Int4{}); got != nil {
+	if got := apidserver.NullableAnalyticsInt(pgtype.Int4{}); got != nil {
 		t.Fatalf("missing evidence = %v, want nil", *got)
 	}
-	got := nullableAnalyticsInt(pgtype.Int4{Int32: 212, Valid: true})
+	got := apidserver.NullableAnalyticsInt(pgtype.Int4{Int32: 212, Valid: true})
 	if got == nil || *got != 212 {
 		t.Fatalf("present evidence = %v, want 212", got)
 	}
@@ -77,7 +79,7 @@ func TestParseRequestAnalyticsWindow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "/v1/apps/demo/analytics"+tt.query, nil)
-			got, err := parseRequestAnalyticsWindow(r, now, tt.retention)
+			got, err := apidserver.ParseRequestAnalyticsWindow(r, now, tt.retention)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error")
@@ -93,7 +95,7 @@ func TestParseRequestAnalyticsWindow(t *testing.T) {
 			if got.Since != tt.wantUntil.Sub(tt.wantFrom) {
 				t.Fatalf("since duration = %s, want %s", got.Since, tt.wantUntil.Sub(tt.wantFrom))
 			}
-			if gotSince := echoDebugSince(got.RequestedSince, got.Since); gotSince != tt.wantSince {
+			if gotSince := apidserver.EchoDebugSince(got.RequestedSince, got.Since); gotSince != tt.wantSince {
 				t.Fatalf("since echo = %q, want %q", gotSince, tt.wantSince)
 			}
 			if got.WindowClamped != tt.wantClamp {
@@ -117,11 +119,11 @@ func TestParseRequestAnalyticsRouteFilter(t *testing.T) {
 		{name: "missing method", route: "/users", wantErr: true},
 		{name: "missing route", method: "GET", wantErr: true},
 		{name: "unsupported method", route: "/users", method: "TRACE", wantErr: true},
-		{name: "route too long", route: strings.Repeat("x", requestAnalyticsRouteMaxLength+1), method: "GET", wantErr: true},
+		{name: "route too long", route: strings.Repeat("x", apidserver.RequestAnalyticsRouteMaxLength+1), method: "GET", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotRoute, gotMethod, err := parseRequestAnalyticsRouteFilter(tt.route, tt.method)
+			gotRoute, gotMethod, err := apidserver.ParseRequestAnalyticsRouteFilter(tt.route, tt.method)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error")
@@ -140,15 +142,15 @@ func TestParseRequestAnalyticsRouteFilter(t *testing.T) {
 
 func TestParseRequestAnalyticsGroupBy(t *testing.T) {
 	for _, value := range []string{"route", "country", "referrer_host", "ua_family", "status", "consumer_id"} {
-		got, err := parseRequestAnalyticsGroupBy(value, "")
+		got, err := apidserver.ParseRequestAnalyticsGroupBy(value, "")
 		if err != nil || got != value {
 			t.Fatalf("group_by %q = %q, %v", value, got, err)
 		}
 	}
-	if got, err := parseRequestAnalyticsGroupBy("", "route"); err != nil || got != "route" {
+	if got, err := apidserver.ParseRequestAnalyticsGroupBy("", "route"); err != nil || got != "route" {
 		t.Fatalf("default group_by = %q, %v", got, err)
 	}
-	if _, err := parseRequestAnalyticsGroupBy("ip", ""); err == nil {
+	if _, err := apidserver.ParseRequestAnalyticsGroupBy("ip", ""); err == nil {
 		t.Fatal("unsupported group_by accepted")
 	}
 }

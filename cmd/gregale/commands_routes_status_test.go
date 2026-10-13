@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -50,6 +51,10 @@ func routeStatusTestServer(t *testing.T, telemetryErr bool) *httptest.Server {
 			writeJSONTest(w, api.RouteMonitorReport{Routes: []api.RouteMonitorFinding{{Route: api.RouteMonitorRoute{Method: "POST", Path: "/checkout"}, Status: "healthy"}}})
 		case "/v1/apps/demo/route-monitor/incidents":
 			writeJSONTest(w, api.RouteMonitorIncidentPage{Incidents: []api.RouteMonitorIncident{}})
+		case "/v1/apps/demo/routes/advice":
+			writeJSONTest(w, api.RouteAdviceResponse{Slug: "demo", Suggestions: []api.RouteAdviceSuggestion{
+				{ID: "a1", Kind: api.RouteAdviceKindCache, Method: "GET", Route: "/debug", Title: "Cache GET /debug"},
+			}})
 		case "/v1/apps/demo/route-requirements":
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusNotFound)
@@ -93,6 +98,9 @@ func TestRoutesStatusCLIJoinsReadOnlySources(t *testing.T) {
 	}
 	if s.Summary.Unprotected != 1 || len(s.Unavailable) != 0 {
 		t.Fatalf("summary = %+v unavailable = %v (a missing requirements file is not an error)", s.Summary, s.Unavailable)
+	}
+	if s.Summary.Advice != 1 || !slices.Contains(s.Routes[1].Gaps, routestatus.GapAdviceAvailable) {
+		t.Fatalf("advice summary = %d, /debug gaps = %v", s.Summary.Advice, s.Routes[1].Gaps)
 	}
 }
 

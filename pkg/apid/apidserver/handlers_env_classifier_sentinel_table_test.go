@@ -23,24 +23,26 @@
 // pins the table directly so a future refactor that drifts the
 // closed-vocab trips the gate silently otherwise.
 
-package apidserver
+package apidserver_test
 
 import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestErrEnvClassifier_Sentinels(t *testing.T) {
 	cases := []struct {
 		name           string
-		sentinel       *errEnvClassifier
+		sentinel       *apidserver.ErrEnvClassifier
 		wantKind       string
 		wantSilentSkip bool // silent_skip = (Kind == "host_hash_failed")
 	}{
 		{
 			name:     "uuid_parse",
-			sentinel: errClassifierUUIDParse,
+			sentinel: (*apidserver.ErrClassifierUUIDParse),
 			wantKind: "uuid_parse",
 			// silent_skip = (Kind != insert_data_upstream).
 			// uuid_parse fails BEFORE InsertDataUpstream
@@ -49,13 +51,13 @@ func TestErrEnvClassifier_Sentinels(t *testing.T) {
 		},
 		{
 			name:           "host_hash_failed",
-			sentinel:       errClassifierHostHashFailed,
+			sentinel:       (*apidserver.ErrClassifierHostHashFailed),
 			wantKind:       "host_hash_failed",
 			wantSilentSkip: true,
 		},
 		{
 			name:     "insert_data_upstream",
-			sentinel: errClassifierInsert,
+			sentinel: (*apidserver.ErrClassifierInsert),
 			wantKind: "insert_data_upstream",
 			// INSERT was attempted (runEnvClassifier L691
 			// returns the error from InsertDataUpstream).
@@ -64,14 +66,14 @@ func TestErrEnvClassifier_Sentinels(t *testing.T) {
 		},
 		{
 			name:     "port_out_of_range",
-			sentinel: errClassifierPortRange,
+			sentinel: (*apidserver.ErrClassifierPortRange),
 			wantKind: "port_out_of_range",
 			// Bounds check at L666 trips BEFORE INSERT.
 			wantSilentSkip: true,
 		},
 		{
 			name:     "classifier_internal",
-			sentinel: errClassifierInternal,
+			sentinel: (*apidserver.ErrClassifierInternal),
 			wantKind: "classifier_internal",
 			// Both L610 (classifier.Run) and L634
 			// (CountDataUpstreamsByApp) bail BEFORE INSERT.
@@ -91,7 +93,7 @@ func TestErrEnvClassifier_Sentinels(t *testing.T) {
 			}
 			// errors.As on the sentinel must succeed against
 			// the *errEnvClassifier target.
-			var ec *errEnvClassifier
+			var ec *apidserver.ErrEnvClassifier
 			if !errors.As(tc.sentinel, &ec) {
 				t.Errorf("errors.As(sentinel, &*errEnvClassifier) = false")
 			}
@@ -103,7 +105,7 @@ func TestErrEnvClassifier_Sentinels(t *testing.T) {
 			// InsertDataUpstream was attempted. Only
 			// insert_data_upstream is the post-INSERT
 			// failure case.
-			gotSilentSkip := ec.Kind != errClassifierInsert.Kind
+			gotSilentSkip := ec.Kind != (*apidserver.ErrClassifierInsert).Kind
 			if gotSilentSkip != tc.wantSilentSkip {
 				t.Errorf("silent_skip dispatch = %v, want %v (Kind=%q)",
 					gotSilentSkip, tc.wantSilentSkip, ec.Kind)
@@ -118,8 +120,8 @@ func TestErrEnvClassifier_Sentinels(t *testing.T) {
 // concrete cause (e.g. uuid.Parse, sql.ErrConnDone).
 func TestErrEnvClassifier_WrapWithInner(t *testing.T) {
 	inner := errors.New("pgx: conn closed")
-	wrapped := &errEnvClassifier{
-		Kind: errClassifierInternal.Kind,
+	wrapped := &apidserver.ErrEnvClassifier{
+		Kind: (*apidserver.ErrClassifierInternal).Kind,
 		Err:  inner,
 	}
 	if !errors.Is(wrapped, inner) {
@@ -150,7 +152,7 @@ func TestClassifierFailureMetricReason(t *testing.T) {
 	}
 	for errorClass, want := range cases {
 		t.Run(errorClass, func(t *testing.T) {
-			if got := classifierFailureMetricReason(errorClass); got != want {
+			if got := apidserver.ClassifierFailureMetricReason(errorClass); got != want {
 				t.Fatalf("classifierFailureMetricReason(%q) = %q, want %q", errorClass, got, want)
 			}
 		})

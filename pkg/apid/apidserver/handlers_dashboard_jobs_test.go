@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -45,7 +46,7 @@ func TestDashboardScheduledJobPolicyAndOccurrenceHistory(t *testing.T) {
 		}
 	}
 
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardJobSchedulePolicyAction, acct.ID, dashboardJobSchedulePolicyCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardJobSchedulePolicyAction, acct.ID, apidserver.DashboardJobSchedulePolicyCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
@@ -53,8 +54,8 @@ func TestDashboardScheduledJobPolicyAndOccurrenceHistory(t *testing.T) {
 		middleware.FormFieldName: token, "overlap": "skip", "start_deadline_seconds": "120", "missed_runs": "coalesce_latest",
 		"failure_rules_json": `{"version":1,"rules":[{"exit_codes":[65],"action":"fail_partition"}],"unmatched_failure":"retry","uncertain_outcome":"hold"}`,
 	}
-	response := dashboardPOST(t, h, sessionCookie, "/dashboard/jobs/nightly-sync/policy", form,
-		&http.Cookie{Name: dashboardJobSchedulePolicyCookie, Value: token})
+	response := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/jobs/nightly-sync/policy", form,
+		&http.Cookie{Name: apidserver.DashboardJobSchedulePolicyCookie, Value: token})
 	if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "scheduled_work=updated") {
 		t.Fatalf("POST policy = %d, location %q, body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
@@ -91,17 +92,17 @@ func TestDashboardScheduledJobPolicyAndOccurrenceHistory(t *testing.T) {
 	if !strings.Contains(page.Body.String(), "Replay failed partitions") {
 		t.Fatalf("jobs page did not expose the failed-partition replay action:\n%s", page.Body.String())
 	}
-	replayToken, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardReplayFailedAction, acct.ID, dashboardReplayFailedCSRFCookie)
+	replayToken, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardReplayFailedAction, acct.ID, apidserver.DashboardReplayFailedCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed replay: %v", err)
 	}
-	replay := dashboardPOST(t, h, sessionCookie, "/dashboard/jobs/replay-sync/runs/"+failedRun.ID+"/replay-failed",
-		map[string]string{middleware.FormFieldName: replayToken}, &http.Cookie{Name: dashboardReplayFailedCSRFCookie, Value: replayToken})
+	replay := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/jobs/replay-sync/runs/"+failedRun.ID+"/replay-failed",
+		map[string]string{middleware.FormFieldName: replayToken}, &http.Cookie{Name: apidserver.DashboardReplayFailedCSRFCookie, Value: replayToken})
 	if replay.Code != http.StatusSeeOther || !strings.Contains(replay.Header().Get("Location"), "scheduled_work=replayed") {
 		t.Fatalf("POST replay failed partitions = %d, location %q, body=%s", replay.Code, replay.Header().Get("Location"), replay.Body.String())
 	}
-	replayAgain := dashboardPOST(t, h, sessionCookie, "/dashboard/jobs/replay-sync/runs/"+failedRun.ID+"/replay-failed",
-		map[string]string{middleware.FormFieldName: replayToken}, &http.Cookie{Name: dashboardReplayFailedCSRFCookie, Value: replayToken})
+	replayAgain := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/jobs/replay-sync/runs/"+failedRun.ID+"/replay-failed",
+		map[string]string{middleware.FormFieldName: replayToken}, &http.Cookie{Name: apidserver.DashboardReplayFailedCSRFCookie, Value: replayToken})
 	if replayAgain.Code != http.StatusSeeOther || !strings.Contains(replayAgain.Header().Get("Location"), "scheduled_work=replayed") {
 		t.Fatalf("duplicate replay = %d, location %q, body=%s", replayAgain.Code, replayAgain.Header().Get("Location"), replayAgain.Body.String())
 	}
@@ -130,8 +131,8 @@ func TestDashboardScheduledJobPolicyAndOccurrenceHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create foreign job: %v", err)
 	}
-	blocked := dashboardPOST(t, h, sessionCookie, "/dashboard/jobs/foreign-sync/policy", form,
-		&http.Cookie{Name: dashboardJobSchedulePolicyCookie, Value: token})
+	blocked := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/jobs/foreign-sync/policy", form,
+		&http.Cookie{Name: apidserver.DashboardJobSchedulePolicyCookie, Value: token})
 	if blocked.Code != http.StatusSeeOther || !strings.Contains(blocked.Header().Get("Location"), "scheduled_work=error") {
 		t.Fatalf("cross-account policy update = %d, location %q", blocked.Code, blocked.Header().Get("Location"))
 	}
@@ -151,7 +152,7 @@ func dashboardGET(t *testing.T, h http.Handler, sid *http.Cookie, path string) *
 }
 
 func TestDashboardHandler_JobsQueues(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -244,13 +245,13 @@ func TestDashboardHandler_JobsQueues(t *testing.T) {
 	if appQueueRec.Code != http.StatusOK || strings.Contains(appQueueRec.Body.String(), "Recent async invocations") {
 		t.Fatalf("per-app queue page unexpectedly rendered account history: status=%d\n%s", appQueueRec.Code, appQueueRec.Body.String())
 	}
-	if cookie := findDashboardCookie(rec.Result().Cookies(), dashboardJobsCSRFCookie); cookie == nil || cookie.Value == "" {
-		t.Fatalf("GET jobs: missing %s cookie", dashboardJobsCSRFCookie)
+	if cookie := apidserver.FindDashboardCookie(rec.Result().Cookies(), apidserver.DashboardJobsCSRFCookie); cookie == nil || cookie.Value == "" {
+		t.Fatalf("GET jobs: missing %s cookie", apidserver.DashboardJobsCSRFCookie)
 	}
 }
 
 func TestDashboardQueueDeadLetterReplay_AppScopedAndCSRFProtected(t *testing.T) {
-	h, sessionCookie, store, sessions := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -271,17 +272,17 @@ func TestDashboardQueueDeadLetterReplay_AppScopedAndCSRFProtected(t *testing.T) 
 		t.Fatalf("dead-letter invocation: %v", err)
 	}
 
-	missing := dashboardPOST(t, h, sessionCookie, "/dashboard/apps/replay-app/queues/dead_letter/"+inv.ID+"/replay", nil)
+	missing := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/apps/replay-app/queues/dead_letter/"+inv.ID+"/replay", nil)
 	if missing.Code != http.StatusBadRequest {
 		t.Fatalf("missing csrf status = %d, want 400\nbody = %s", missing.Code, missing.Body.String())
 	}
 
-	token, err := middleware.IssueForAuthenticatedNamed(sessions, dashboardJobsAction, acct.ID, dashboardJobsCSRFCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(sessions, apidserver.DashboardJobsAction, acct.ID, apidserver.DashboardJobsCSRFCookie)
 	if err != nil {
 		t.Fatalf("IssueForAuthenticatedNamed: %v", err)
 	}
-	wrongApp := dashboardPOST(t, h, sessionCookie, "/dashboard/apps/other-app/queues/dead_letter/"+inv.ID+"/replay",
-		map[string]string{middleware.FormFieldName: token}, &http.Cookie{Name: dashboardJobsCSRFCookie, Value: token})
+	wrongApp := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/apps/other-app/queues/dead_letter/"+inv.ID+"/replay",
+		map[string]string{middleware.FormFieldName: token}, &http.Cookie{Name: apidserver.DashboardJobsCSRFCookie, Value: token})
 	if wrongApp.Code != http.StatusNotFound {
 		t.Fatalf("wrong app status = %d, want 404\nbody = %s", wrongApp.Code, wrongApp.Body.String())
 	}
@@ -293,8 +294,8 @@ func TestDashboardQueueDeadLetterReplay_AppScopedAndCSRFProtected(t *testing.T) 
 		t.Fatalf("wrong-app replay changed state to %q", stillDead.State)
 	}
 
-	good := dashboardPOST(t, h, sessionCookie, "/dashboard/apps/replay-app/queues/dead_letter/"+inv.ID+"/replay",
-		map[string]string{middleware.FormFieldName: token}, &http.Cookie{Name: dashboardJobsCSRFCookie, Value: token})
+	good := apidserver.DashboardPOST(t, h, sessionCookie, "/dashboard/apps/replay-app/queues/dead_letter/"+inv.ID+"/replay",
+		map[string]string{middleware.FormFieldName: token}, &http.Cookie{Name: apidserver.DashboardJobsCSRFCookie, Value: token})
 	if good.Code != http.StatusSeeOther {
 		t.Fatalf("valid replay status = %d, want 303\nbody = %s", good.Code, good.Body.String())
 	}
@@ -311,7 +312,7 @@ func TestDashboardQueueDeadLetterReplay_AppScopedAndCSRFProtected(t *testing.T) 
 }
 
 func TestDashboardAppQueues_ForeignAppIsNotFound(t *testing.T) {
-	h, sessionCookie, store, _ := newAuthedDashboardServerFull(t)
+	h, sessionCookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	other, err := store.CreateAccount(t.Context(), "bob@example.com", "hobby")
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
@@ -329,7 +330,7 @@ func TestDashboardAppQueues_ForeignAppIsNotFound(t *testing.T) {
 }
 
 func TestParseAppJobsPath(t *testing.T) {
-	got, ok := parseAppJobsPath("queue-app/jobs/")
+	got, ok := apidserver.ParseAppJobsPath("queue-app/jobs/")
 	if !ok || got != "queue-app" {
 		t.Fatalf("parseAppJobsPath = (%q, %v), want (queue-app, true)", got, ok)
 	}

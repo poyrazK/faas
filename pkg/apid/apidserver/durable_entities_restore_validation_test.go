@@ -1,5 +1,5 @@
 // adr: 943
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/durableentity"
 )
 
@@ -19,11 +20,11 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 	request := entityRequest("validated-source")
 	hook := entityOutboxHook(t, e, app)
 	seedAPIOutbox(t, e, app, request, hook.ID)
-	id, _, problem := e.s.durable.Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
+	id, _, problem := (*e.s.Durable()).Identity((&http.Request{}).WithContext(t.Context()), e.acct, app, request)
 	if problem != nil {
 		t.Fatal(problem)
 	}
-	exported, err := e.s.durable.Engine.ExportState(t.Context(), id)
+	exported, err := (*e.s.Durable()).Engine.ExportState(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +38,7 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 	if rec := e.do(t, http.MethodPost, path+"/validate", restore, nil); rec.Code != http.StatusServiceUnavailable {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	e.s.durable.RestoreValidationEnabled = true
+	(*e.s.Durable()).RestoreValidationEnabled = true
 	var reject atomic.Bool
 	dispatch.guest = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != api.DurableEntityRestoreValidationPath {
@@ -48,7 +49,7 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 		if err != nil || json.Unmarshal(payload, &envelope) != nil || envelope.Validate() != nil || envelope.Event != "validate_restore" {
 			t.Error("invalid validation envelope")
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"protocol_version": 1, "valid": !reject.Load()})
+		apidserver.WriteJSON(w, http.StatusOK, map[string]any{"protocol_version": 1, "valid": !reject.Load()})
 	})
 	if rec := e.do(t, http.MethodPost, path, restore, nil); rec.Code != http.StatusBadRequest || dispatch.calls.Load() != 0 {
 		t.Fatal(rec.Code, rec.Body.String())
@@ -81,7 +82,7 @@ func TestApplicationValidatedRestoreRevalidatesAndSkipsReplay(t *testing.T) {
 	if rec := e.do(t, http.MethodPost, path, restore, nil); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
-	current, err := e.s.durable.Engine.Read(t.Context(), id)
+	current, err := (*e.s.Durable()).Engine.Read(t.Context(), id)
 	if err != nil || current.Version != 2 {
 		t.Fatal("rejection committed", current, err)
 	}

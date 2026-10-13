@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // adr: 281
 
@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -72,10 +73,10 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 
 	registrarErr := errors.New("realtime node unavailable")
 	registrar := &reconcileRealtimeRegistrar{fail: map[string]error{"enabled-endpoint": registrarErr}}
-	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.realtime.Registrar = registrar
+	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Realtime()).Registrar = registrar
 
-	err = srv.realtime.ReconcileManagedRealtimeEndpoints(ctx)
+	err = (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx)
 	if !errors.Is(err, registrarErr) || !strings.Contains(err.Error(), "enabled-endpoint") {
 		t.Fatalf("reconcile error = %v, want endpoint error", err)
 	}
@@ -88,8 +89,8 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 }
 
 func TestReconcileManagedRealtimeEndpointsNoRegistrarIsNoop(t *testing.T) {
-	srv := newServer(state.NewMemStore(), discardLogger(), "gregale.dev", noopNotifier{})
-	if err := srv.realtime.ReconcileManagedRealtimeEndpoints(context.Background()); err != nil {
+	srv := apidserver.NewServer(state.NewMemStore(), apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	if err := (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(context.Background()); err != nil {
 		t.Fatalf("reconcile without registrar = %v, want nil", err)
 	}
 }
@@ -116,9 +117,9 @@ func TestReconcileManagedRealtimeEndpointsRemovesDeletedRegistration(t *testing.
 		t.Fatal(err)
 	}
 	registrar := &reconcileRealtimeRegistrar{inventory: []string{row.ID}}
-	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.realtime.Registrar = registrar
-	if err := srv.realtime.ReconcileManagedRealtimeEndpoints(ctx); err != nil {
+	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Realtime()).Registrar = registrar
+	if err := (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(registrar.removed) != 1 || registrar.removed[0] != row.ID {
@@ -137,8 +138,8 @@ func TestReapManagedRealtimeConnectionOwnersRemovesOnlyExpiredRows(t *testing.T)
 	}
 	time.Sleep(50 * time.Millisecond)
 
-	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	removed, err := srv.realtime.ReapManagedRealtimeConnectionOwners(ctx)
+	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	removed, err := (*srv.Realtime()).ReapManagedRealtimeConnectionOwners(ctx)
 	if err != nil {
 		t.Fatalf("reap owners: %v", err)
 	}
@@ -195,9 +196,9 @@ func TestReconcileManagedRealtimeEndpointsFollowsOwnerLifecycle(t *testing.T) {
 	deletedApp := endpointFor("deletedapp", state.AccountActive, true)
 
 	registrar := &reconcileRealtimeRegistrar{}
-	srv := newServer(store, discardLogger(), "gregale.dev", noopNotifier{})
-	srv.realtime.Registrar = registrar
-	if err := srv.realtime.ReconcileManagedRealtimeEndpoints(ctx); err != nil {
+	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Realtime()).Registrar = registrar
+	if err := (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx); err != nil {
 		t.Fatal(err)
 	}
 	registered := map[string]bool{}

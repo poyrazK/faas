@@ -87,7 +87,9 @@ func (s *PgStore) AdvanceManagedRealtimeDurableCursor(ctx context.Context, endpo
 	var current int64
 	err := s.pool.QueryRow(ctx, `
 		update managed_realtime_durable_cursors
-		set sequence = greatest(sequence, $5), updated_at = clock_timestamp()
+		set acknowledged_sequence = case when $5 > sequence then $5 else acknowledged_sequence end,
+            acknowledged_at = case when $5 > sequence then clock_timestamp() else acknowledged_at end,
+            sequence = greatest(sequence, $5), updated_at = clock_timestamp()
 		where endpoint_id = $1 and principal = $2 and subscription = $3 and channel = $4
 		returning sequence
 	`, endpointID, principal, subscription, channel, sequence).Scan(&current)
@@ -117,7 +119,7 @@ func (s *PgStore) ResetManagedRealtimeDurableCursor(ctx context.Context, endpoin
 	var current int64
 	err = s.pool.QueryRow(ctx, `
 		update managed_realtime_durable_cursors
-		set sequence = $5, updated_at = clock_timestamp()
+		set sequence = $5, acknowledged_sequence = null, acknowledged_at = null, updated_at = clock_timestamp()
 		where endpoint_id = $1 and principal = $2 and subscription = $3 and channel = $4
 		returning sequence
 	`, endpointID, principal, subscription, channel, sequence).Scan(&current)

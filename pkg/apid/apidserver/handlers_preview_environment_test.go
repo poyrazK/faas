@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -9,16 +9,17 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
 	production := make(map[string]state.App)
 	for _, slug := range []string{"api", "worker"} {
-		app, err := e.store.CreateAppIfUnderQuota(ctx, state.App{
-			AccountID: e.acct.ID, Slug: slug, Type: "stateless", Runtime: "node22",
+		app, err := (*e.Store()).CreateAppIfUnderQuota(ctx, state.App{
+			AccountID: (*e.Acct()).ID, Slug: slug, Type: "stateless", Runtime: "node22",
 			RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 30, Status: state.AppActive,
 		}, api.Limits{DeployedApps: 10000})
 		if err != nil {
@@ -26,24 +27,24 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 		}
 		production[slug] = app
 	}
-	root := seedPreviewAppForTest(t, e, "pr-42-api", "api", 42)
-	worker := seedPreviewAppForTest(t, e, "pr-42-worker", "worker", 42)
+	root := apidserver.SeedPreviewAppForTest(t, e, "pr-42-api", "api", 42)
+	worker := apidserver.SeedPreviewAppForTest(t, e, "pr-42-worker", "worker", 42)
 	sha := strings.Repeat("a", 40)
 	set := state.PRPreviewSet{InstallationID: 77, RepoFullName: "octo/api", PRNumber: 42,
 		CommitSHA: sha, RootAppID: root.ID, MemberAppIDs: []string{root.ID, worker.ID}}
-	if err := e.store.PutPRPreviewSet(ctx, set); err != nil {
+	if err := (*e.Store()).PutPRPreviewSet(ctx, set); err != nil {
 		t.Fatal(err)
 	}
 	create := func(appID, commit string, status state.DeploymentStatus, at time.Time) {
 		t.Helper()
-		if _, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindPreview,
+		if _, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindPreview,
 			ImageDigest: "sha256:" + strings.Repeat("b", 64), CommitSHA: commit, Status: status, CreatedAt: at}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	now := time.Now().UTC()
 	for _, slug := range []string{"api", "worker"} {
-		if _, err := e.store.CreateDeployment(ctx, state.Deployment{AppID: production[slug].ID,
+		if _, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{AppID: production[slug].ID,
 			Kind: state.DeploymentKindGitHub, ImageDigest: "sha256:" + strings.Repeat("c", 64),
 			CommitSHA: strings.Repeat("d", 40), Status: state.DeployLive, CreatedAt: now}); err != nil {
 			t.Fatalf("create production deployment for %q: %v", slug, err)
@@ -53,7 +54,7 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 	create(worker.ID, sha, state.DeployBuilding, now)
 	read := func() api.PreviewEnvironmentStatusResponse {
 		t.Helper()
-		rec := e.do(t, http.MethodGet, "/v1/preview/pr-42-api/environment", nil, nil)
+		rec := e.Do(t, http.MethodGet, "/v1/preview/pr-42-api/environment", nil, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 		}
@@ -85,7 +86,7 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 	}
 	// A newer deployment for the old head must not satisfy the new head.
 	set.CommitSHA = strings.Repeat("c", 40)
-	if err := e.store.PutPRPreviewSet(ctx, set); err != nil {
+	if err := (*e.Store()).PutPRPreviewSet(ctx, set); err != nil {
 		t.Fatal(err)
 	}
 	got = read()
@@ -101,23 +102,23 @@ func TestGetPreviewEnvironmentStatus_CurrentHeadAndScope(t *testing.T) {
 	if !got.Ready || got.Phase != "live" || got.LiveWorkloads != 2 || got.Members[1].DeploymentID == "" {
 		t.Fatalf("all-live environment = %+v", got)
 	}
-	if err := e.store.ClosePRPreviewSet(ctx, 77, "octo/api", 42); err != nil {
+	if err := (*e.Store()).ClosePRPreviewSet(ctx, 77, "octo/api", 42); err != nil {
 		t.Fatal(err)
 	}
 	got = read()
 	if got.Ready || got.Phase != "closed" {
 		t.Fatalf("closed environment = %+v", got)
 	}
-	assertProblem(t, e.do(t, http.MethodGet, "/v1/preview/pr-42-worker/environment", nil, nil), http.StatusNotFound, "preview_environment_not_found")
-	legacy := seedPreviewAppForTest(t, e, "pr-7-legacy", "legacy", 7)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/preview/pr-42-worker/environment", nil, nil), http.StatusNotFound, "preview_environment_not_found")
+	legacy := apidserver.SeedPreviewAppForTest(t, e, "pr-7-legacy", "legacy", 7)
 	if legacy.ID == "" {
 		t.Fatal("missing legacy preview id")
 	}
-	assertProblem(t, e.do(t, http.MethodGet, "/v1/preview/pr-7-legacy/environment", nil, nil), http.StatusNotFound, "preview_environment_not_found")
-	foreign, err := e.store.CreateAccount(ctx, "foreign-preview-environment@example.test", api.PlanPro)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/preview/pr-7-legacy/environment", nil, nil), http.StatusNotFound, "preview_environment_not_found")
+	foreign, err := (*e.Store()).CreateAccount(ctx, "foreign-preview-environment@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustSeedAppFor(t, e.store, foreign.ID, "foreign-preview-environment")
-	assertProblem(t, e.do(t, http.MethodGet, "/v1/preview/foreign-preview-environment/environment", nil, nil), http.StatusNotFound, api.CodeNotFound)
+	apidserver.MustSeedAppFor(t, (*e.Store()), foreign.ID, "foreign-preview-environment")
+	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/preview/foreign-preview-environment/environment", nil, nil), http.StatusNotFound, api.CodeNotFound)
 }

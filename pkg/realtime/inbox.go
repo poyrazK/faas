@@ -149,7 +149,18 @@ func (m *Manager) pumpInbox(ctx context.Context, c *connection, client ManagedRe
 				m.inboxResync(ctx, c, sub.consumer, page)
 				return
 			}
-			err := m.queueResume(ctx, c, resumeServerFrame{Type: "inbox_message", Consumer: sub.consumer,
+			if message.Expired(time.Now().UTC()) {
+				if err := m.queueResume(ctx, c, resumeServerFrame{Type: "inbox_checkpoint", Consumer: sub.consumer, Sequence: message.Sequence, Code: "message_expired"}); err != nil {
+					c.mu.Unlock()
+					_ = c.close(websocket.CloseTryAgainLater, resumeOutputQueueFullReason)
+					return
+				}
+				m.expiredInboxCheckpoints.Add(1)
+				sub.lastSent = message.Sequence
+				c.mu.Unlock()
+				continue
+			}
+			err := m.queueResume(ctx, c, resumeServerFrame{ExpiresAt: message.ExpiresAt, Type: "inbox_message", Consumer: sub.consumer,
 				Sequence: message.Sequence, MessageID: message.TargetMessageID, TargetMessageID: message.TargetMessageID, Version: message.Version, MessageEvent: message.MessageEvent, Deleted: message.Deleted, DataBase64: base64.StdEncoding.EncodeToString(message.Data), Binary: message.Binary})
 			if err != nil {
 				c.mu.Unlock()

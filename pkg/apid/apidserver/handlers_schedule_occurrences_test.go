@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestListJobScheduleOccurrences(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	job, err := e.store.JobCreateScheduledIfUnderQuota(context.Background(), state.Job{
-		AccountID: e.acct.ID, Name: "occurrence-history", Kind: "recurring",
+	e := apidserver.Setup(t, api.PlanHobby)
+	job, err := (*e.Store()).JobCreateScheduledIfUnderQuota(context.Background(), state.Job{
+		AccountID: (*e.Acct()).ID, Name: "occurrence-history", Kind: "recurring",
 		ImageRef: "ghcr.io/example/worker:v1", Command: []string{"/app/run"},
 		RAMMB: 256, TaskTimeoutS: 60, MaxParallelism: 1, RetryMax: 1,
 		CronSchedule: "* * * * *", CronTimezone: "UTC",
@@ -25,18 +26,18 @@ func TestListJobScheduleOccurrences(t *testing.T) {
 		t.Fatalf("create scheduled job: %v", err)
 	}
 	first := job.CreatedAt.Add(time.Minute).UTC()
-	run, created, err := e.store.JobRunCreateScheduledOccurrence(context.Background(), job.ID, job.CronSchedule,
+	run, created, err := (*e.Store()).JobRunCreateScheduledOccurrence(context.Background(), job.ID, job.CronSchedule,
 		job.CronTimezone, nil, first, state.JobScheduledOccurrenceOptions{ScheduledFor: first, ScheduleRevision: job.ScheduleRevision})
 	if err != nil || !created {
 		t.Fatalf("create first occurrence run=%+v created=%t err=%v", run, created, err)
 	}
 	second := first.Add(time.Minute)
-	if _, created, err := e.store.JobRunCreateScheduledOccurrence(context.Background(), job.ID, job.CronSchedule,
+	if _, created, err := (*e.Store()).JobRunCreateScheduledOccurrence(context.Background(), job.ID, job.CronSchedule,
 		job.CronTimezone, &first, second, state.JobScheduledOccurrenceOptions{ScheduledFor: second, ScheduleRevision: job.ScheduleRevision}); err != nil || created {
 		t.Fatalf("create overlapping occurrence created=%t err=%v; want durable skip without a run", created, err)
 	}
 
-	page := e.do(t, http.MethodGet, "/v1/jobs/occurrence-history/occurrences?limit=1", nil, nil)
+	page := e.Do(t, http.MethodGet, "/v1/jobs/occurrence-history/occurrences?limit=1", nil, nil)
 	if page.Code != http.StatusOK {
 		t.Fatalf("GET occurrence history = %d: %s", page.Code, page.Body.String())
 	}
@@ -50,7 +51,7 @@ func TestListJobScheduleOccurrences(t *testing.T) {
 	if response.NextBefore == "" {
 		t.Fatalf("next_before missing for another page: %+v", response)
 	}
-	older := e.do(t, http.MethodGet, "/v1/jobs/occurrence-history/occurrences?before="+response.NextBefore, nil, nil)
+	older := e.Do(t, http.MethodGet, "/v1/jobs/occurrence-history/occurrences?before="+response.NextBefore, nil, nil)
 	if older.Code != http.StatusOK {
 		t.Fatalf("GET older occurrence = %d: %s", older.Code, older.Body.String())
 	}

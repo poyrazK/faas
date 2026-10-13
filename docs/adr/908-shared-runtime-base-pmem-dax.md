@@ -1,6 +1,6 @@
 # ADR-908: Shared runtime base through virtio-pmem DAX
 
-- Status: Option 2 (per-account sharing) implemented, off by default behind `pmem_base_dir`. Option 1 (node-wide) still needs a security decision and is not implemented.
+- Status: Option 2 (per-account sharing) implemented and on by default (`pmem_base_dir = "auto"`, 2026-10-12). Option 1 (node-wide) still needs a security decision and is not implemented.
 - Date: 2026-10-12
 - Related: ADR-633, ADR-956, ADR-983, spec §4.6, §11
 - Would amend: spec §4.4 boot config and §4.6 drive layout
@@ -162,13 +162,78 @@ reflink XFS and the pmem-aware guest-init. Each VM served `/` and a CPU-bound
 Each VM costs the host 20% less, and the two accounts each got their own
 clone.
 
+## On by default (amended 2026-10-12)
+
+vmmd's `pmem_base_dir` now defaults to `auto`. Empty or `off` turns it off,
+and a path still pins the directory.
+
+- **Where copies live.** `auto` keeps each account copy in `.faas-pmem` at
+  the root of the mount that holds its base, found in
+  `/proc/self/mountinfo`. `FICLONE` refuses to clone across mounts, even
+  across bind mounts of one filesystem. Production keeps the base cache on
+  the reflink XFS under `/srv/fc`, bind-mounted at `/var/lib/faas/cache`,
+  so copies of cached bases land in `/var/lib/faas/cache/.faas-pmem`. That
+  is outside the cache's two-character buckets and outside `base/`, which
+  ADR-956 indexes.
+- **Which bases qualify.** Only bases labelled `faas-base-pmem` attach as
+  pmem. `rootfs.BaseMkfsCommand` stamps that label, with `-b 4096` and an
+  even-MiB size, only when the base build installs this release's
+  guest-init, which boots from `/dev/pmem0`. A base built earlier keeps
+  virtio-blk until the next runtime refresh rebuilds it, even when it has
+  4 KiB blocks: its guest-init would look for the app layer on the wrong
+  device.
+- **Garbage collection.** A copy's name covers its base's path, size and
+  modification time, so a changed base gets a fresh copy. Every use sets
+  the copy's access time. Copies unused for 7 days are removed, by a sweep
+  that runs at most hourly per directory. A running VM keeps its mapping of
+  a removed copy, and its next wake clones the base again.
+- **Fallbacks.** No reflink, an unlabelled or misaligned base, Firecracker
+  before 1.16 and native process recovery all keep virtio-blk.
+
+Measured on the n2 node with `pmem_base_dir = "auto"`. The Node base was on
+a reflink XFS loop mount, under `cache/`:
+
+- `TestMetalPmemDensity`, with six 1 GiB VMs across two accounts:
+
+  | | host MemAvailable cost per VM | VM cgroup per VM |
+  |---|---|---|
+  | virtio-blk | 331 MB | 322 MB |
+  | per-account pmem (`auto`) | 292 MB | 280 MB |
+
+  Each account's copy was created in `<mount>/.faas-pmem`, and no VM fell
+  back to virtio-blk.
+- The same base relabelled `applayer`, as a pre-pmem build would be,
+  booted from virtio-blk on every VM. The log said "is labelled applayer",
+  and no copy was created.
+- `TestMetalPmemAccountBase` passed with `auto`. An app VM cold booted
+  from its account's pmem copy, then parked and restored from the pmem
+  snapshot. A second account got its own clone, and a VMM without pmem
+  bases cold booted the pmem snapshot from virtio-blk.
+
+### Wake latency with every default on (measured 2026-10-12)
+
+`TestMetalParkWakeCycle` with `FAAS_TEST_PRODUCTION_DEFAULTS=1` configures
+the VMM as vmmd does by default: free page reporting, per-account pmem
+(`auto`), restore prefetch at concurrency 3 and prepared networks. The
+block limiter of ADR-910 also applies. The test does 100 park/wake cycles
+of a busybox httpd guest on the n2 node, a shared host with nested KVM:
+
+| run | p50 | p95 |
+|---|---|---|
+| baseline, five rounds | 267–275 ms | 291–379 ms (median 298) |
+| every default, five rounds | 212–239 ms | 288–417 ms (median 311) |
+| every default, quiet host | 230–233 ms | 298–319 ms |
+| every default but pmem, quiet host | 235–245 ms | 263–373 ms |
+
+The defaults together cut the median wake by about 20%. p95 did not move
+beyond the node's run-to-run noise, about ±40 ms between identical runs.
+Taking pmem out did not lower p95 consistently. Runs during another
+session's builds on the node (p95 1.3–1.8 s) are left out.
+
+**Decision (owner, 2026-10-12):** per-account pmem stays on by default. It
+saves about 12% of host memory per VM (331 → 292 MB), and any p95 cost was
+below what the test node can resolve.
+
 Follow-ups:
 
-- **Base images:** bases are now built by `rootfs.BaseMkfsCommand`, with
-  `-b 4096` and the size rounded up to an even MiB. Bases built before this
-  change keep virtio-blk until the next runtime refresh rebuilds them; app
-  layers keep `MkfsCommand`.
-- **Garbage collection:** clones of bases that are no longer cached are not
-  collected. Each clone shares its extents, so it costs metadata only until
-  the base is deleted.
 - **Metrics:** none yet for pmem boots or for fallbacks to virtio-blk.

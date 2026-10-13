@@ -161,22 +161,41 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
   const replayEnv = {ALICE_JWT:await jwt('alice'),BOB_JWT:await jwt('bob'),GREGALE_DATA_API_REFRESH_TOKEN:token}
   const events = []
   // Adapt only the fixture transport; the hosted entrypoint accepts HTTPS origins.
-  const fetcher = (target,init) => fetch(fresh + new URL(target).pathname + new URL(target).search,init)
-  // Engine /ready can briefly regress while its single connection is released
-  // after the first post-restart request. Establish the serving prerequisite
-  // before exercising hosted authentication and RLS; never retry those checks.
+  const fetcher = async (target,init) => {
+    // Readiness can regress while PostgREST returns its sole connection.
+    // Establish this transport prerequisite for each request, without retrying
+    // an authentication/RLS assertion or changing the two-connection budget.
+    let readyObservations = 0
+    await eventually(async () => {
+      const response = await fetch(`http://127.0.0.1:${ready}/ready`)
+      await response.arrayBuffer()
+      readyObservations = response.status === 200 ? readyObservations + 1 : 0
+      return readyObservations >= 3
+    })
+    const response = await fetch(fresh + new URL(target).pathname + new URL(target).search,init)
+    const body = await response.arrayBuffer()
+    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers})
+  }
+  // The deliberate paused (PT503) request triggers PostgREST's debounced
+  // connection/schema-cache recovery. A single ready response can precede
+  // that reload. Require a stable ready window before the hosted replay;
+  // authentication and RLS assertions themselves are never retried.
+  let readySince
   await eventually(async () => {
     const response = await request(fresh,'/__gregale/schema',token)
     const contract = await response.json()
-    return response.status === 200 && contract.ready === true && contract.fingerprint === freshConfig.fingerprint && contract.refresh_verified === true
+    const ready = response.status === 200 && contract.ready === true && contract.fingerprint === freshConfig.fingerprint && contract.refresh_verified === true
+    if (!ready) { readySince = undefined; return false }
+    readySince ??= performance.now()
+    return performance.now() - readySince >= 300
   })
-  let replayResult
   try {
-    replayResult = await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})
+    assert.equal((await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})).failed,0)
   } catch (error) {
-    assert.fail(`${error.message}: ${JSON.stringify(events)}`)
+    // Emit only the hosted entrypoint's redacted assertion results.
+    error.message += ': ' + JSON.stringify(events.filter(event => event.event === 'replay_result' && !event.passed))
+    throw error
   }
-  assert.equal(replayResult.failed,0)
   scenarios.scenarios[0].requests[1].expect.json=[{id:1}]
   await writeFile(collection,JSON.stringify(scenarios))
   await assert.rejects(runHostedReplay(options,replayEnv,{fetcher,emit:()=>{}}))
