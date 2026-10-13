@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestRuntimeConfigDrainReadsPhysicalNodeAndRequiresQuietPeriod(t *testing.T) {
@@ -123,8 +124,8 @@ func TestRuntimeConfigDrainDoesNotTreatMissingTelemetryAsZero(t *testing.T) {
 
 // deploymentLookupRecorder records DeploymentByID ids.
 type deploymentLookupRecorder struct {
-	*state.MemStore
-	ids []string
+	MemStore *state.MemStore
+	ids      []string
 }
 
 func (r *deploymentLookupRecorder) DeploymentByID(ctx context.Context, id string) (state.Deployment, error) {
@@ -137,7 +138,7 @@ func (r *deploymentLookupRecorder) DeploymentByID(ctx context.Context, id string
 // Postgres rejected "" as a uuid.
 func TestRuntimeConfigRestartHandoffSkipsEmptyRolloutID(t *testing.T) {
 	store := &deploymentLookupRecorder{MemStore: state.NewMemStore()}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	e.updateServiceRolloutHandoff(t.Context(), "", func(h *state.ServiceRolloutHandoff) { h.LastError = "x" })
 	e.failServiceRolloutHandoff(t.Context(), "", state.ServiceRolloutPhaseRouting, "route_publish_failed", nil)
 	if len(store.ids) != 0 {

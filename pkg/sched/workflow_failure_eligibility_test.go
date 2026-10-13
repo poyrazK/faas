@@ -9,10 +9,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type failureEligibilitySchedulerStore struct {
-	*state.MemStore
+	MemStore  *state.MemStore
 	calls     int
 	fail      bool
 	available int
@@ -31,7 +32,7 @@ func TestWorkflowFailureEligibilityScheduler(t *testing.T) {
 		fail            bool
 	}{{0, 1, false}, {2, 3, false}, {api.WorkflowRecoveryFailureObserverBatch + 1, api.WorkflowRecoveryFailureObserverBatch, false}, {2, 1, true}} {
 		s := &failureEligibilitySchedulerStore{MemStore: state.NewMemStore(), available: tt.available, fail: tt.fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		if s.calls != tt.want {
 			t.Fatalf("calls %d want %d", s.calls, tt.want)

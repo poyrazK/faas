@@ -69,6 +69,23 @@ func TestNewMemPanicsOnAnUndispatchedOverride(t *testing.T) {
 	NewMem(&undispatchedFake{MemStore: state.NewMemStore()})
 }
 
+type nilStoreFake struct {
+	Store state.Store
+}
+
+func (nilStoreFake) AppByID(context.Context, string) (state.App, error) {
+	return state.App{}, errOverride
+}
+
+// TestNewStoreAcceptsANilStore: fakes that only exercise their overrides may
+// leave the store nil, as they could with an embedded nil interface.
+func TestNewStoreAcceptsANilStore(t *testing.T) {
+	s := NewStore(&nilStoreFake{})
+	if _, err := s.AppByID(context.Background(), "x"); !errors.Is(err, errOverride) {
+		t.Fatalf("AppByID = %v, want the override's error", err)
+	}
+}
+
 func TestNewMemPanicsWithoutTheStoreField(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil || !strings.Contains(r.(string), "no MemStore field") {
