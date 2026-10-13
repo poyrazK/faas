@@ -79305,6 +79305,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        handoff_decline:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDeclineEvent'
+          description: OperationWorkflowReadinessNotification.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
         decision_review:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseDecisionReviewEvent'
           description: OperationWorkflowReadinessNotification.decision_review. Latched review requirement after the condition captured by an explicit decision changed.
@@ -79363,6 +79366,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_handoff_declined
           - review_response_handoff_acceptance_overdue
           - review_response_decision_review_overdue
           - review_response_decision_review_required
@@ -80664,6 +80668,12 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        reassignment_required:
+          type: boolean
+          description: OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the unresolved review; manual owner reassignment clears this flag without erasing decline history.
+        decline:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDecline'
+          description: OperationWorkflowReviewResponseDecisionReview.decline. Explicit immutable decline of the current handoff with accountable actor and reason.
         acceptance_due_at:
           type: string
           format: date-time
@@ -80806,12 +80816,86 @@ components:
           format: date-time
           description: OperationWorkflowReviewResponseHandoffAcceptance.check_in_at. Future check-in committed at acceptance; later edits do not rewrite this record.
       required: [owner, actor, at, note, check_in_at]
+    OperationWorkflowReviewResponseHandoffDeclineRequest:
+      type: object
+      additionalProperties: false
+      description: Decline one current unaccepted handoff without a decision or acceptance. Retain its owner, plan and exact check-in, even if already overdue; deadlines do not restart.
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDeclineRequest.decision_at. Exact decision timestamp of the handed-off episode.
+        required_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDeclineRequest.required_at. Exact requirement timestamp; stale episodes conflict.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponseHandoffDeclineRequest.reason. Nonblank UTF-8 reason up to 1024 bytes; line breaks and tabs allowed.
+      required: [decision_at, required_at, reason]
+    OperationWorkflowReviewResponseHandoffDecline:
+      type: object
+      additionalProperties: false
+      description: Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of team membership. Retained history carries its one-time notification intent.
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDecline.decision_at. Reviewed decision timestamp.
+        required_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDecline.required_at. Original review requirement timestamp.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDecline.at. Server decline time.
+        notified_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDecline.notified_at. One-time notification publication marker; bounded history or inbox retention can limit delivery.
+        owner:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffDecline.owner. Declining responsible team.
+        previous_owner:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffDecline.previous_owner. Previous owner to notify for manual routing.
+        actor:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffDecline.actor. Authenticated operator recording decline.
+        reason:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffDecline.reason. Operator reason; immutable after recording.
+      required: [decision_at, required_at, at, owner, previous_owner, actor, reason]
+    OperationWorkflowReviewResponseHandoffDeclineEvent:
+      type: object
+      additionalProperties: false
+      description: One historical decline notification routed to the previous owner, without automatic reassignment or deadline changes. Consult current response ownership before acting.
+      properties:
+        source_notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseHandoffDeclineEvent.source_notification_id. Original response alert identity.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseHandoffDeclineEvent.source_sequence. Original response sequence within this inbox.
+        decline:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDecline'
+          description: OperationWorkflowReviewResponseHandoffDeclineEvent.decline. Historical decline and its published notification marker.
+      required: [source_notification_id, source_sequence, decline]
     OperationWorkflowReviewResponseRequest:
       type: object
       additionalProperties: false
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        handoff_decline:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDeclineRequest'
+          description: OperationWorkflowReviewResponseRequest.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
         handoff_accept_after_seconds:
           type: integer
           format: int64
@@ -81110,6 +81194,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        handoff_decline:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDecline'
+          description: OperationWorkflowReviewResponseChange.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
         handoff_accept_after_seconds:
           type: integer
           format: int64
@@ -81137,7 +81224,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

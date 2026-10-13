@@ -4,11 +4,16 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecisionRequest } from './OperationWorkflowReviewResponseDecisionRequest.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptanceRequest } from './OperationWorkflowReviewResponseHandoffAcceptanceRequest.js';
+import type { OperationWorkflowReviewResponseHandoffDeclineRequest } from './OperationWorkflowReviewResponseHandoffDeclineRequest.js';
 import type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
 /**
  * OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
  */
 export type OperationWorkflowReviewResponseRequest = {
+  /**
+   * OperationWorkflowReviewResponseRequest.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
+   */
+  handoff_decline?: OperationWorkflowReviewResponseHandoffDeclineRequest;
   /**
    * OperationWorkflowReviewResponseRequest.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
    */

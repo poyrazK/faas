@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_acceptance import (
         OperationWorkflowReviewResponseHandoffAcceptance,
     )
+    from ..models.operation_workflow_review_response_handoff_decline import (
+        OperationWorkflowReviewResponseHandoffDecline,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseChange")
@@ -43,6 +46,9 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    handoff_decline: OperationWorkflowReviewResponseHandoffDecline | Unset = UNSET
+    """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
+    team membership. Retained history carries its one-time notification intent."""
     handoff_accept_after_seconds: int | Unset = UNSET
     """OperationWorkflowReviewResponseChange.handoff_accept_after_seconds. Future handoff acceptance window,
     defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
@@ -80,6 +86,10 @@ class OperationWorkflowReviewResponseChange:
 
         actor = self.actor
 
+        handoff_decline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_decline, Unset):
+            handoff_decline = self.handoff_decline.to_dict()
+
         handoff_accept_after_seconds = self.handoff_accept_after_seconds
 
         handoff_acceptance: dict[str, Any] | Unset = UNSET
@@ -115,6 +125,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if handoff_decline is not UNSET:
+            field_dict["handoff_decline"] = handoff_decline
         if handoff_accept_after_seconds is not UNSET:
             field_dict["handoff_accept_after_seconds"] = handoff_accept_after_seconds
         if handoff_acceptance is not UNSET:
@@ -140,6 +152,9 @@ class OperationWorkflowReviewResponseChange:
         from ..models.operation_workflow_review_response_handoff_acceptance import (
             OperationWorkflowReviewResponseHandoffAcceptance,
         )
+        from ..models.operation_workflow_review_response_handoff_decline import (
+            OperationWorkflowReviewResponseHandoffDecline,
+        )
 
         d = dict(src_dict)
         owner = d.pop("owner")
@@ -151,6 +166,13 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _handoff_decline = d.pop("handoff_decline", UNSET)
+        handoff_decline: OperationWorkflowReviewResponseHandoffDecline | Unset
+        if isinstance(_handoff_decline, Unset):
+            handoff_decline = UNSET
+        else:
+            handoff_decline = OperationWorkflowReviewResponseHandoffDecline.from_dict(_handoff_decline)
 
         handoff_accept_after_seconds = d.pop("handoff_accept_after_seconds", UNSET)
 
@@ -194,6 +216,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            handoff_decline=handoff_decline,
             handoff_accept_after_seconds=handoff_accept_after_seconds,
             handoff_acceptance=handoff_acceptance,
             decision_review_fallback_owner=decision_review_fallback_owner,

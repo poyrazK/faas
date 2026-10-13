@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_acceptance import (
         OperationWorkflowReviewResponseHandoffAcceptance,
     )
+    from ..models.operation_workflow_review_response_handoff_decline import (
+        OperationWorkflowReviewResponseHandoffDecline,
+    )
     from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
 
 
@@ -36,6 +39,12 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    reassignment_required: bool | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the
+    unresolved review; manual owner reassignment clears this flag without erasing decline history."""
+    decline: OperationWorkflowReviewResponseHandoffDecline | Unset = UNSET
+    """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
+    team membership. Retained history carries its one-time notification intent."""
     acceptance_due_at: datetime.datetime | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual
     handoff time and effective window, separate from the unchanged decision-review deadline."""
@@ -79,6 +88,12 @@ class OperationWorkflowReviewResponseDecisionReview:
 
         health = self.health.to_dict()
 
+        reassignment_required = self.reassignment_required
+
+        decline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.decline, Unset):
+            decline = self.decline.to_dict()
+
         acceptance_due_at: str | Unset = UNSET
         if not isinstance(self.acceptance_due_at, Unset):
             acceptance_due_at = self.acceptance_due_at.isoformat()
@@ -121,6 +136,10 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if reassignment_required is not UNSET:
+            field_dict["reassignment_required"] = reassignment_required
+        if decline is not UNSET:
+            field_dict["decline"] = decline
         if acceptance_due_at is not UNSET:
             field_dict["acceptance_due_at"] = acceptance_due_at
         if acceptance_deadline_notified_at is not UNSET:
@@ -151,6 +170,9 @@ class OperationWorkflowReviewResponseDecisionReview:
         from ..models.operation_workflow_review_response_handoff_acceptance import (
             OperationWorkflowReviewResponseHandoffAcceptance,
         )
+        from ..models.operation_workflow_review_response_handoff_decline import (
+            OperationWorkflowReviewResponseHandoffDecline,
+        )
         from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
 
         d = dict(src_dict)
@@ -161,6 +183,15 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = cast(list[str], d.pop("changes"))
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
+
+        reassignment_required = d.pop("reassignment_required", UNSET)
+
+        _decline = d.pop("decline", UNSET)
+        decline: OperationWorkflowReviewResponseHandoffDecline | Unset
+        if isinstance(_decline, Unset):
+            decline = UNSET
+        else:
+            decline = OperationWorkflowReviewResponseHandoffDecline.from_dict(_decline)
 
         _acceptance_due_at = d.pop("acceptance_due_at", UNSET)
         acceptance_due_at: datetime.datetime | Unset
@@ -214,6 +245,8 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            reassignment_required=reassignment_required,
+            decline=decline,
             acceptance_due_at=acceptance_due_at,
             acceptance_deadline_notified_at=acceptance_deadline_notified_at,
             acceptance=acceptance,

@@ -40,6 +40,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	HandoffDecline       *OperationWorkflowReviewResponseHandoffDeclineEvent `json:"handoff_decline,omitempty"`
 	DecisionReview       *OperationWorkflowReviewResponseDecisionReviewEvent `json:"decision_review,omitempty"`
 	ReviewBlockage       *OperationWorkflowReviewResponseBlockageEvent       `json:"review_blockage,omitempty"`
 	ReviewCheckIn        *OperationWorkflowReviewResponseCheckInEvent        `json:"review_check_in,omitempty"`
@@ -483,6 +484,7 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
+	HandoffDecline              *OperationWorkflowReviewResponseHandoffDeclineRequest    `json:"handoff_decline,omitempty"`
 	HandoffAcceptAfterSeconds   *int64                                                   `json:"handoff_accept_after_seconds,omitempty"`
 	HandoffAcceptance           *OperationWorkflowReviewResponseHandoffAcceptanceRequest `json:"handoff_acceptance,omitempty"`
 	DecisionReviewFallbackOwner *string                                                  `json:"decision_review_fallback_owner,omitempty"`
@@ -537,6 +539,7 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated            bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
+	HandoffDecline              *OperationWorkflowReviewResponseHandoffDecline    `json:"handoff_decline,omitempty"`
 	HandoffAcceptAfterSeconds   int64                                             `json:"handoff_accept_after_seconds,omitempty"`
 	HandoffAcceptance           *OperationWorkflowReviewResponseHandoffAcceptance `json:"handoff_acceptance,omitempty"`
 	DecisionReviewFallbackOwner string                                            `json:"decision_review_fallback_owner,omitempty"`
@@ -613,6 +616,8 @@ type OperationWorkflowReviewResponseDecision struct {
 
 // Review requirements remain latched until an explicit decision replaces the reviewed intent.
 type OperationWorkflowReviewResponseDecisionReview struct {
+	Decline                      *OperationWorkflowReviewResponseHandoffDecline    `json:"decline,omitempty"`
+	ReassignmentRequired         bool                                              `json:"reassignment_required,omitempty"`
 	AcceptanceDueAt              *time.Time                                        `json:"acceptance_due_at,omitempty"`
 	AcceptanceDeadlineNotifiedAt *time.Time                                        `json:"acceptance_deadline_notified_at,omitempty"`
 	Acceptance                   *OperationWorkflowReviewResponseHandoffAcceptance `json:"acceptance,omitempty"`
@@ -652,3 +657,24 @@ type OperationWorkflowReviewResponseHandoffAcceptance struct {
 }
 
 const OperationWorkflowReviewResponseHandoffAcceptDefaultSeconds = 3600
+
+type OperationWorkflowReviewResponseHandoffDeclineRequest struct {
+	DecisionAt time.Time `json:"decision_at"`
+	RequiredAt time.Time `json:"required_at"`
+	Reason     string    `json:"reason"`
+}
+type OperationWorkflowReviewResponseHandoffDecline struct {
+	DecisionAt    time.Time  `json:"decision_at"`
+	RequiredAt    time.Time  `json:"required_at"`
+	Owner         string     `json:"owner"`
+	PreviousOwner string     `json:"previous_owner"`
+	Actor         string     `json:"actor"`
+	At            time.Time  `json:"at"`
+	Reason        string     `json:"reason"`
+	NotifiedAt    *time.Time `json:"notified_at,omitempty"`
+}
+type OperationWorkflowReviewResponseHandoffDeclineEvent struct {
+	SourceNotificationID string                                        `json:"source_notification_id"`
+	SourceSequence       int64                                         `json:"source_sequence"`
+	Decline              OperationWorkflowReviewResponseHandoffDecline `json:"decline"`
+}

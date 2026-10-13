@@ -41,7 +41,7 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 		inputCopy.CheckInAt = &normalized
 		input = &inputCopy
 	}
-	if input.Status == "active" && (input.CheckInAt == nil || !input.CheckInAt.After(now) || input.CheckInAt.Year() > 9999) || input.Status == "resolved" && input.CheckInAt != nil {
+	if input.Status == "active" && (input.CheckInAt == nil || (!input.CheckInAt.After(now) && input.HandoffDecline == nil) || input.CheckInAt.Year() > 9999) || input.Status == "resolved" && input.CheckInAt != nil {
 		return nil, ErrInvalidArgument
 	}
 	page, err := store.readReadinessInbox(ctx, account, tenant, app, scope, uuid.MustParse(id).String(), sequence-1, 1, operator)
@@ -57,6 +57,11 @@ func prepareReviewResponse(ctx context.Context, store readinessSubscriptionBacke
 	}
 	if alert.Coordination == nil || alert.Coordination.Revision != req.Revision || alert.Coordination.Completion != nil {
 		return nil, ErrConflict
+	}
+	if input.HandoffDecline != nil {
+		if err := validateReviewHandoffDecline(alert, *input); err != nil {
+			return nil, err
+		}
 	}
 	if input.HandoffAcceptance != nil {
 		if err := validateReviewHandoffAcceptance(alert, *input); err != nil {

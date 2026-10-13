@@ -364,3 +364,5 @@ export type { OperationWorkflowReviewResponseDecisionRequest, OperationWorkflowR
 export type { OperationWorkflowReviewResponseDecisionReview, OperationWorkflowReviewResponseDecisionReviewEvent } from './customer-operations.js';
 
 export type { OperationWorkflowReviewResponseHandoffAcceptanceRequest, OperationWorkflowReviewResponseHandoffAcceptance } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseHandoffDeclineRequest, OperationWorkflowReviewResponseHandoffDecline, OperationWorkflowReviewResponseHandoffDeclineEvent } from './customer-operations.js';

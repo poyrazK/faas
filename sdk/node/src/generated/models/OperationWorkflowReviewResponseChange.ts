@@ -4,10 +4,15 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
+import type { OperationWorkflowReviewResponseHandoffDecline } from './OperationWorkflowReviewResponseHandoffDecline.js';
 /**
  * OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
  */
 export type OperationWorkflowReviewResponseChange = {
+  /**
+   * OperationWorkflowReviewResponseChange.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
+   */
+  handoff_decline?: OperationWorkflowReviewResponseHandoffDecline;
   /**
    * OperationWorkflowReviewResponseChange.handoff_accept_after_seconds. Future handoff acceptance window, defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
    */
@@ -35,7 +40,7 @@ export type OperationWorkflowReviewResponseChange = {
   /**
    * OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
    */
-  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted';
+  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted' | 'handoff_declined';
   /**
    * OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */

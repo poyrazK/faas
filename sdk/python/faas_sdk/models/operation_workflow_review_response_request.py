@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_acceptance_request import (
         OperationWorkflowReviewResponseHandoffAcceptanceRequest,
     )
+    from ..models.operation_workflow_review_response_handoff_decline_request import (
+        OperationWorkflowReviewResponseHandoffDeclineRequest,
+    )
     from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
 
 
@@ -41,6 +44,9 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    handoff_decline: OperationWorkflowReviewResponseHandoffDeclineRequest | Unset = UNSET
+    """Decline one current unaccepted handoff without a decision or acceptance. Retain its owner, plan and exact
+    check-in, even if already overdue; deadlines do not restart."""
     handoff_accept_after_seconds: int | Unset = UNSET
     """OperationWorkflowReviewResponseRequest.handoff_accept_after_seconds. Future handoff acceptance window,
     defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
@@ -76,6 +82,10 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        handoff_decline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_decline, Unset):
+            handoff_decline = self.handoff_decline.to_dict()
 
         handoff_accept_after_seconds = self.handoff_accept_after_seconds
 
@@ -113,6 +123,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if handoff_decline is not UNSET:
+            field_dict["handoff_decline"] = handoff_decline
         if handoff_accept_after_seconds is not UNSET:
             field_dict["handoff_accept_after_seconds"] = handoff_accept_after_seconds
         if handoff_acceptance is not UNSET:
@@ -140,6 +152,9 @@ class OperationWorkflowReviewResponseRequest:
         from ..models.operation_workflow_review_response_handoff_acceptance_request import (
             OperationWorkflowReviewResponseHandoffAcceptanceRequest,
         )
+        from ..models.operation_workflow_review_response_handoff_decline_request import (
+            OperationWorkflowReviewResponseHandoffDeclineRequest,
+        )
         from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
 
         d = dict(src_dict)
@@ -148,6 +163,13 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _handoff_decline = d.pop("handoff_decline", UNSET)
+        handoff_decline: OperationWorkflowReviewResponseHandoffDeclineRequest | Unset
+        if isinstance(_handoff_decline, Unset):
+            handoff_decline = UNSET
+        else:
+            handoff_decline = OperationWorkflowReviewResponseHandoffDeclineRequest.from_dict(_handoff_decline)
 
         handoff_accept_after_seconds = d.pop("handoff_accept_after_seconds", UNSET)
 
@@ -191,6 +213,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            handoff_decline=handoff_decline,
             handoff_accept_after_seconds=handoff_accept_after_seconds,
             handoff_acceptance=handoff_acceptance,
             decision_review_fallback_owner=decision_review_fallback_owner,

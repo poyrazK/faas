@@ -3,11 +3,20 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
+import type { OperationWorkflowReviewResponseHandoffDecline } from './OperationWorkflowReviewResponseHandoffDecline.js';
 import type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 /**
  * First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
  */
 export type OperationWorkflowReviewResponseDecisionReview = {
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the unresolved review; manual owner reassignment clears this flag without erasing decline history.
+   */
+  reassignment_required?: boolean;
+  /**
+   * OperationWorkflowReviewResponseDecisionReview.decline. Explicit immutable decline of the current handoff with accountable actor and reason.
+   */
+  decline?: OperationWorkflowReviewResponseHandoffDecline;
   /**
    * OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual handoff time and effective window, separate from the unchanged decision-review deadline.
    */

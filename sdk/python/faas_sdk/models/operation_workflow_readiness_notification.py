@@ -45,6 +45,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_decision_review_event import (
         OperationWorkflowReviewResponseDecisionReviewEvent,
     )
+    from ..models.operation_workflow_review_response_handoff_decline_event import (
+        OperationWorkflowReviewResponseHandoffDeclineEvent,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessNotification")
@@ -65,6 +68,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    handoff_decline: OperationWorkflowReviewResponseHandoffDeclineEvent | Unset = UNSET
+    """One historical decline notification routed to the previous owner, without automatic reassignment or deadline
+    changes. Consult current response ownership before acting."""
     decision_review: OperationWorkflowReviewResponseDecisionReviewEvent | Unset = UNSET
     """One durable revalidation alert per explicit decision, routed to the current response owner without changing
     intent, deadlines or application execution."""
@@ -143,6 +149,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        handoff_decline: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_decline, Unset):
+            handoff_decline = self.handoff_decline.to_dict()
 
         decision_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.decision_review, Unset):
@@ -239,6 +249,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if handoff_decline is not UNSET:
+            field_dict["handoff_decline"] = handoff_decline
         if decision_review is not UNSET:
             field_dict["decision_review"] = decision_review
         if review_blockage is not UNSET:
@@ -323,6 +335,9 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_review_response_decision_review_event import (
             OperationWorkflowReviewResponseDecisionReviewEvent,
         )
+        from ..models.operation_workflow_review_response_handoff_decline_event import (
+            OperationWorkflowReviewResponseHandoffDeclineEvent,
+        )
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -334,6 +349,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _handoff_decline = d.pop("handoff_decline", UNSET)
+        handoff_decline: OperationWorkflowReviewResponseHandoffDeclineEvent | Unset
+        if isinstance(_handoff_decline, Unset):
+            handoff_decline = UNSET
+        else:
+            handoff_decline = OperationWorkflowReviewResponseHandoffDeclineEvent.from_dict(_handoff_decline)
 
         _decision_review = d.pop("decision_review", UNSET)
         decision_review: OperationWorkflowReviewResponseDecisionReviewEvent | Unset
@@ -488,6 +510,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            handoff_decline=handoff_decline,
             decision_review=decision_review,
             review_blockage=review_blockage,
             review_check_in=review_check_in,

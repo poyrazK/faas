@@ -34,6 +34,7 @@ func evaluateReadinessOutcomeWatches(ctx context.Context, store readinessSubscri
 	updates = append(updates, reviewResponseCheckInUpdates(page.Items, r)...)
 	updates = append(updates, reviewDecisionDeadlineUpdates(page.Items, r)...)
 	updates = append(updates, reviewHandoffDeadlineUpdates(page.Items, r)...)
+	updates = append(updates, reviewHandoffDeclineUpdates(page.Items, r)...)
 	cursor := r.OutcomeCursor
 	var firstErr error
 	for _, n := range candidates {

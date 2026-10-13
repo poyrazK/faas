@@ -22,6 +22,7 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
+	HandoffDeclineCursor  int64                                      `json:"handoff_decline_cursor,omitempty"`
 	HandoffDeadlineCursor int64                                      `json:"handoff_deadline_cursor,omitempty"`
 	ReviewDecisionCursor  int64                                      `json:"review_decision_cursor,omitempty"`
 	ReviewBlockageCursor  int64                                      `json:"review_blockage_cursor,omitempty"`

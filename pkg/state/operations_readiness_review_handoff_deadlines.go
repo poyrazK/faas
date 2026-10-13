@@ -25,7 +25,7 @@ func pendingReviewHandoff(n api.OperationWorkflowReadinessNotification) bool {
 		return false
 	}
 	review := response.DecisionReview
-	return review.Reassigned && review.DeadlineNotifiedAt != nil && review.Acceptance == nil && review.AcceptanceDeadlineNotifiedAt == nil && review.Owner != "" && response.Owner == review.Owner && n.Coordination.Owner == review.Owner
+	return review.Reassigned && review.DeadlineNotifiedAt != nil && review.Acceptance == nil && review.Decline == nil && review.AcceptanceDeadlineNotifiedAt == nil && review.Owner != "" && response.Owner == review.Owner && n.Coordination.Owner == review.Owner
 }
 
 // Deadline checks rotate independently of application-state reads and other targets.

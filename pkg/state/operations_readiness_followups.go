@@ -76,6 +76,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			return n, err
 		}
 	}
+	if req.ReviewResponse != nil && req.ReviewResponse.HandoffDecline != nil {
+		if err := validateReviewHandoffDecline(n, *req.ReviewResponse); err != nil {
+			return n, err
+		}
+	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if req.PreparedReviewResponse != nil {
 		response := *req.PreparedReviewResponse
@@ -89,6 +94,9 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 				response.DecisionReview = pinnedDecisionReview(n.ReviewResponse)
 				if response.DecisionReview != nil {
 					response.DecisionReview.OwnerChanged = response.DecisionReview.OwnerChanged || n.ReviewResponse.Owner != response.Owner
+					if response.DecisionReview.Decline != nil {
+						response.DecisionReview.ReassignmentRequired = response.Status == "active" && response.Owner == response.DecisionReview.Decline.Owner
+					}
 				}
 			}
 			response.Health = n.ReviewResponse.Health
@@ -119,7 +127,17 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 			acceptanceForHistory = &api.OperationWorkflowReviewResponseHandoffAcceptance{Owner: response.Owner, Actor: actor, At: now, Note: req.ReviewResponse.HandoffAcceptance.Note, CheckInAt: *response.CheckInAt}
 			response.DecisionReview.Acceptance = acceptanceForHistory
 		}
+		var declineForHistory *api.OperationWorkflowReviewResponseHandoffDecline
+		if req.ReviewResponse.HandoffDecline != nil {
+			review := response.DecisionReview
+			declineForHistory = &api.OperationWorkflowReviewResponseHandoffDecline{DecisionAt: review.DecisionAt, RequiredAt: review.RequiredAt, Owner: response.Owner, PreviousOwner: review.PreviousOwner, Actor: actor, At: now, Reason: req.ReviewResponse.HandoffDecline.Reason}
+			review.Decline = declineForHistory
+			review.ReassignmentRequired = true
+		}
 		changeReason := "human_update"
+		if declineForHistory != nil {
+			changeReason = "handoff_declined"
+		}
 		if acceptanceForHistory != nil {
 			changeReason = "handoff_accepted"
 		}
@@ -127,7 +145,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		if req.ReviewResponse.Decision != nil {
 			decisionForHistory = response.Decision
 		}
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptAfterSeconds: response.HandoffAcceptAfterSeconds, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptAfterSeconds: response.HandoffAcceptAfterSeconds, HandoffDecline: declineForHistory, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true

@@ -9,6 +9,7 @@ import (
 )
 
 type readinessWatchUpdate struct {
+	HandoffDecline   *reviewHandoffDeclineUpdate
 	HandoffDeadline  *reviewHandoffDeadlineUpdate
 	DecisionDeadline *reviewDecisionDeadlineUpdate
 	ReviewBlockage   *reviewResponseBlockageUpdate
@@ -145,6 +146,9 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
 func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+	if u.HandoffDecline != nil {
+		return applyReviewHandoffDeclineNotice(r, n, u)
+	}
 	if u.HandoffDeadline != nil {
 		return applyReviewHandoffDeadline(r, n, u)
 	}

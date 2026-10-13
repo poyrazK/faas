@@ -1311,6 +1311,9 @@ export type { OperationWorkflowReviewResponseDecisionReview } from './OperationW
 export type { OperationWorkflowReviewResponseDecisionReviewEvent } from './OperationWorkflowReviewResponseDecisionReviewEvent.js';
 export type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
 export type { OperationWorkflowReviewResponseHandoffAcceptanceRequest } from './OperationWorkflowReviewResponseHandoffAcceptanceRequest.js';
+export type { OperationWorkflowReviewResponseHandoffDecline } from './OperationWorkflowReviewResponseHandoffDecline.js';
+export type { OperationWorkflowReviewResponseHandoffDeclineEvent } from './OperationWorkflowReviewResponseHandoffDeclineEvent.js';
+export type { OperationWorkflowReviewResponseHandoffDeclineRequest } from './OperationWorkflowReviewResponseHandoffDeclineRequest.js';
 export type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowReviewResponseHealth.js';
 export type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 export type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
