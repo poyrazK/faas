@@ -17,12 +17,13 @@ const DefaultMaxVerificationAge = api.DefaultBindingVerificationAge
 // Scope selects the inventory's verification scope. Unsupported probes require
 // an explicit waiver; their coverage never becomes passed.
 type Policy struct {
-	App                   string
-	DeploymentID          string
-	Scope                 string
-	MaxVerificationAge    time.Duration
-	AllowUnsupported      bool
-	RequireApplicationAck bool
+	App                       string
+	DeploymentID              string
+	Scope                     string
+	MaxVerificationAge        time.Duration
+	AllowUnsupported          bool
+	RequireApplicationAck     bool
+	ObjectStorageRequirements map[string]string
 }
 
 type Finding = api.BindingCheckFinding
@@ -32,6 +33,9 @@ type Report api.BindingCheckReport
 // Evaluate is deterministic for the supplied inventory, policy and clock. It
 // performs no I/O and does not mutate the inventory or schedule probes/restarts.
 func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (Report, error) {
+	if err := api.ValidateObjectStorageRequirements(policy.ObjectStorageRequirements); err != nil {
+		return Report{}, err
+	}
 	if !api.ValidAppSlug(policy.App) || policy.MaxVerificationAge <= 0 || now.IsZero() {
 		return Report{}, fmt.Errorf("binding check requires an app, a positive verification age and a clock")
 	}
@@ -47,6 +51,8 @@ func Evaluate(inventory api.AppBindingInventory, policy Policy, now time.Time) (
 		report.Scope = inventory.VerificationScope
 	}
 	report.checkInventory(inventory, policy)
+	report.ObjectStorageRequirements = cloneStorageRequirements(policy.ObjectStorageRequirements)
+	report.checkObjectStorageRequirements(inventory, policy)
 	bindings := append([]api.AppBindingInventoryItem{}, inventory.Bindings...)
 	sort.Slice(bindings, func(i, j int) bool {
 		a, b := bindings[i], bindings[j]
@@ -146,6 +152,13 @@ func (r *Report) checkBinding(item api.AppBindingInventoryItem, policy Policy) {
 		}
 		if item.Type == api.BindingTypePostgres && item.State != "ready" || item.Type == api.BindingTypeObjectStorage && item.State != "active" {
 			r.bindingBlock(item, "binding_not_ready", "The managed binding must finish provisioning or recovery before preflight can pass.")
+		}
+		if item.Type == api.BindingTypeObjectStorage {
+			result.RequiredObjectStorageMode = policy.ObjectStorageRequirements[item.Binding]
+			if item.Verification != nil {
+				result.ObjectStorageMode = objectStorageEvidenceMode(item.Verification)
+			}
+			r.checkObjectStorageOperations(item, result.RequiredObjectStorageMode)
 		}
 		r.checkVerification(item, policy.MaxVerificationAge)
 		r.checkRotation(item)

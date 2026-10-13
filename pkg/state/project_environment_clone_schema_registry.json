@@ -421,6 +421,7 @@
       "app_id",
       "max_age_seconds",
       "mode",
+      "object_storage_requirements",
       "reason",
       "require_application_ack",
       "revision",
@@ -5819,6 +5820,7 @@
     "table": "object_bucket_notifications",
     "columns": [
       "bucket_id",
+      "managed_rules",
       "revision",
       "rules"
     ],

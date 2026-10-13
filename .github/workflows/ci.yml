@@ -114,6 +114,11 @@ env:
   PROM_TARBALL_SHA256_LINUX_AMD64: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e62924f"
 
 jobs:
+  storage-node-starter:
+    uses: ./.github/workflows/storage-node-starter.yml
+    permissions:
+      contents: read
+
   # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
   # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.
@@ -892,7 +897,7 @@ jobs:
           - id: a
             label: parity/operations/reconcile/reposcan
             # Bridge, GitOps, and customer-operation acceptance require PostgreSQL.
-            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration)(/|$)'
+            package_pattern: '/(pkg/statefuldenylist|pkg/devbridgeintegration|pkg/operations/acceptance|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|tests/object-compute-triggers)(/|$)'
             coverage_file: cover-shard2a.out
             gitops_acceptance: true
             state_coverage: true
@@ -1283,7 +1288,7 @@ jobs:
           GO_TEST_FRESHNESS: ${{ github.event_name != 'pull_request' && '-count=1 -shuffle=on' || '' }}  # queue counts as non-PR: fresh + shuffled
         run: |
           mkdir -p coverage
-          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|pkg/apid/apidserver|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
+          PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -vE '(cmd/apid|pkg/apid/apidserver|migrations|pkg/meter|pkg/db|pkg/alerts|pkg/state|pkg/devbridgeintegration|pkg/operations/acceptance|cmd/gregale|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/reconcile|pkg/reposcan|pkg/environmentsync/pgintegration|tests/object-compute-triggers|pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api|pkg/e2etest)')
           go test -race $GO_TEST_FRESHNESS -p 4 -timeout=10m -coverprofile=coverage/cover-shard4.out -covermode=atomic $PKGS
 
 

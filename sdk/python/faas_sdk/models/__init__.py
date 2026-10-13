@@ -422,6 +422,10 @@ from .binding_application_adoption import BindingApplicationAdoption
 from .binding_application_adoption_source import BindingApplicationAdoptionSource
 from .binding_application_adoption_status import BindingApplicationAdoptionStatus
 from .binding_check_binding_result import BindingCheckBindingResult
+from .binding_check_binding_result_object_storage_mode import BindingCheckBindingResultObjectStorageMode
+from .binding_check_binding_result_required_object_storage_mode import (
+    BindingCheckBindingResultRequiredObjectStorageMode,
+)
 from .binding_check_finding import BindingCheckFinding
 from .binding_check_report import BindingCheckReport
 from .binding_inventory_issue import BindingInventoryIssue
@@ -439,6 +443,7 @@ from .binding_runtime_freshness import BindingRuntimeFreshness
 from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
 from .binding_verification import BindingVerification
 from .binding_verification_check import BindingVerificationCheck
+from .binding_verification_object_storage_mode import BindingVerificationObjectStorageMode
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -863,6 +868,9 @@ from .dev_bridge_session_summary import DevBridgeSessionSummary
 from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
 from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
 from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
+from .dev_bucket_request import DevBucketRequest
+from .dev_bucket_request_permission import DevBucketRequestPermission
+from .dev_bucket_response import DevBucketResponse
 from .dev_patch_preview import DevPatchPreview
 from .dev_patch_preview_reason import DevPatchPreviewReason
 from .dev_patch_status_response import DevPatchStatusResponse
@@ -2044,9 +2052,13 @@ from .object_storage_charge import ObjectStorageCharge
 from .object_storage_compute_binding import ObjectStorageComputeBinding
 from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
 from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
+from .object_storage_compute_trigger import ObjectStorageComputeTrigger
+from .object_storage_compute_trigger_events_item import ObjectStorageComputeTriggerEventsItem
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
+from .object_storage_release_requirements import ObjectStorageReleaseRequirements
+from .object_storage_release_requirements_additional_property import ObjectStorageReleaseRequirementsAdditionalProperty
 from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
@@ -3123,6 +3135,7 @@ from .realtime_schedule_completion_webhook_payload_outcome import RealtimeSchedu
 from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
 from .rebind_environment_git_source_request_approval_policy import RebindEnvironmentGitSourceRequestApprovalPolicy
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
 from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
@@ -3563,6 +3576,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
+from .set_object_storage_binding_release_policy_request import SetObjectStorageBindingReleasePolicyRequest
 from .set_password_request import SetPasswordRequest
 from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
 from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
@@ -4456,6 +4470,8 @@ __all__ = (
     "BindingApplicationAdoptionSource",
     "BindingApplicationAdoptionStatus",
     "BindingCheckBindingResult",
+    "BindingCheckBindingResultObjectStorageMode",
+    "BindingCheckBindingResultRequiredObjectStorageMode",
     "BindingCheckFinding",
     "BindingCheckReport",
     "BindingInventoryIssue",
@@ -4473,6 +4489,7 @@ __all__ = (
     "BindingRuntimeInstanceCounts",
     "BindingVerification",
     "BindingVerificationCheck",
+    "BindingVerificationObjectStorageMode",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -4879,6 +4896,9 @@ __all__ = (
     "DevBridgeSessionSummaryConnectionState",
     "DevBridgeWebhookReplay",
     "DevBridgeWebhookReplayState",
+    "DevBucketRequest",
+    "DevBucketRequestPermission",
+    "DevBucketResponse",
     "DevPatchPreview",
     "DevPatchPreviewReason",
     "DevPatchStatusResponse",
@@ -6004,9 +6024,13 @@ __all__ = (
     "ObjectStorageComputeBinding",
     "ObjectStorageComputeBindingList",
     "ObjectStorageComputeBindingSecretKeys",
+    "ObjectStorageComputeTrigger",
+    "ObjectStorageComputeTriggerEventsItem",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
+    "ObjectStorageReleaseRequirements",
+    "ObjectStorageReleaseRequirementsAdditionalProperty",
     "ObjectStorageUsage",
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
@@ -6985,6 +7009,7 @@ __all__ = (
     "RebindEnvironmentGitSourceRequest",
     "RebindEnvironmentGitSourceRequestApprovalPolicy",
     "ReceiveInboundWebhookBody",
+    "ReconcileObjectStorageComputeTriggersRequest",
     "RecordDevSyncRequest",
     "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",
@@ -7415,6 +7440,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetObjectS3CopySourceRequest",
+    "SetObjectStorageBindingReleasePolicyRequest",
     "SetPasswordRequest",
     "SetPlatformTenantConsumerProvisioningPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequest",

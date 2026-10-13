@@ -1040,7 +1040,9 @@ paths:
         canary advance evaluate the policy; request flags may only strengthen it.
         New candidates must be admitted with explicit zero traffic. Automatic
         cutovers, legacy recovery and project release graph switches fail closed
-        until they support binding fences. To recover without evidence, explicitly
+        until they support binding fences. Policies with storage requirements must use
+        release-policy-with-object-storage for updates, including explicit clearing.
+        To recover without evidence, explicitly
         set off with the current revision and a reason, then retry. Every update
         has durable policy history. Existing traffic is not changed by this call.
       requestBody:
@@ -1051,6 +1053,47 @@ paths:
       responses:
         '200':
           description: Saved policy with incremented revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/bindings/release-policy-with-object-storage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Deployment scope whose object-storage release policy will be replaced. Omit for default.
+        schema: { type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
+    put:
+      tags: [apps]
+      operationId: setObjectStorageBindingReleasePolicy
+      summary: Replace release policy including required object-storage operations.
+      description: |
+        Requires deploy:write or admin and completed MFA. Uses the same revision
+        compare-and-set and traffic fences as release-policy. Explicit
+        object_storage_requirements is required; an empty object clears it.
+        Keys are managed environment prefixes in this scope (at most 32), values
+        are read, write or read_write. Missing bindings, insufficient permissions,
+        stale evidence, incomplete stages and mismatched operations block traffic.
+        Read accepts the legacy listing canary; write requires upload and cleanup;
+        read_write also requires byte-for-byte download. Current application ACKs
+        are independently required when configured. This call only records policy;
+        neither policy updates nor promotion initiate storage writes. Old servers
+        return 404 on this route rather than silently dropping the requirements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetObjectStorageBindingReleasePolicyRequest' }
+      responses:
+        '200':
+          description: Updated object-storage release requirements and the new policy revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BindingReleasePolicy' }
@@ -2986,6 +3029,43 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/compute-triggers:
+    parameters:
+      - { name: slug, in: path, required: true, description: App owning the bucket and trigger destination., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Bucket whose managed triggers are reconciled., schema: { type: string, format: uuid } }
+    put:
+      tags: [storage]
+      operationId: reconcileObjectStorageComputeTriggers
+      summary: Reconcile managed ObjectCreated triggers for the bucket's owning app
+      description: |
+        Requires MFA, storage manage scope and bucket write access. The destination
+        is always this bucket's owning app in its region. expected_revision is
+        mandatory and stale revisions return 409, including unchanged requests.
+        Replaces only managed rules, preserving manual notification rules.
+        Explicit triggers: [] clears managed ownership. Manual ID collisions
+        return 409; overlapping filters return 400. Nonempty configuration
+        requires object storage enabled and an async-invocation eligible plan.
+        Accepted deliveries retain their original destination snapshots.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReconcileObjectStorageComputeTriggersRequest' }
+      responses:
+        '200':
+          description: Complete notification configuration including managed rule identities; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketNotifications' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        default:
+          description: Missing owned bucket, storage disabled, or invalid request
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/notifications:
     parameters:
       - { name: slug, in: path, required: true, description: App whose notification policy is inspected., schema: { type: string } }
@@ -3009,7 +3089,7 @@ paths:
     put:
       operationId: putObjectBucketNotifications
       summary: Replace durable bucket notification rules
-      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Full replacement clears managed compute-trigger ownership, including identical rules. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
       tags: [storage]
       requestBody:
         required: true
@@ -11975,11 +12055,12 @@ paths:
         '403': { $ref: '#/components/responses/PlanLimit' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     get:
       tags: [dev]
       operationId: getDevSession
       summary: Inspect a remote developer environment.
-      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+      description: Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
       parameters:
         - name: workspace_id
           in: query
@@ -11996,6 +12077,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
       operationId: destroyDevSession
@@ -12012,6 +12094,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/dev/test-runs/{run_id}:
     parameters:
@@ -48493,7 +48576,7 @@ components:
       additionalProperties: false
     EnvironmentWorkloadSource:
       type: object
-      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
+      description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. An immutable image may explicitly opt into full-rootfs dispatch. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
         kind:
           type: string
@@ -48512,6 +48595,9 @@ components:
           type: string
         image:
           type: string
+        full_rootfs:
+          type: boolean
+          description: Explicit full-rootfs dispatch for an immutable image source; unsupported for other source kinds.
       required:
       - kind
       additionalProperties: false
@@ -49606,7 +49692,7 @@ components:
       properties:
         mode: { type: string, enum: [report, enforce] }
         on_regression: { type: string, enum: [hold, abort], description: 'Recovery action to save. Omission resets it to hold; abort requires enforce mode and two confirmed critical-route 5xx windows before automatic recovery.' }
-        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
     RouteHealthInvestigationSelection:
       type: object
@@ -50184,7 +50270,7 @@ components:
       required: [mode, expected_revision]
       properties:
         mode: { type: string, enum: [report, enforce] }
-        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
     RouteGateDecision:
       type: object
       description: Metadata-only decision from the same transaction as a canary traffic advance. Findings remain in the route result API.
@@ -50516,6 +50602,8 @@ components:
       description: Preflight status and safe evidence summary for one binding.
       required: [type, name, scope, status]
       properties:
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.' }
+        required_object_storage_mode: { type: string, enum: [read, write, read_write] }
         type: { type: string }
         name: { type: string }
         binding: { type: string }
@@ -50531,6 +50619,7 @@ components:
       description: Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a passed report does not independently establish application readiness or credential use. Optional application acknowledgements are version-bound self-attestations.
       required: [app, scope, deployment_id, checked_at, inventory_generated_at, max_verification_age, allow_unsupported, passed, coverage, bindings, runtime, issues, blockers, warnings]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         expected_deployment_id: { type: string, format: uuid }
         app: { type: string }
         scope: { type: string }
@@ -50556,11 +50645,25 @@ components:
         path: { type: string, minLength: 1, maxLength: 512 }
         expected_status: { type: integer, minimum: 200, maximum: 299 }
 
+    ObjectStorageReleaseRequirements:
+      type: object
+      maxProperties: 32
+      description: 'Managed environment prefix to required canary mode in the selected scope. Prefixes match ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require successful cleanup. No implicit probes or writes.'
+      additionalProperties: { type: string, enum: [read, write, read_write] }
+    SetObjectStorageBindingReleasePolicyRequest:
+      description: Revision-guarded release policy replacement with explicit required object-storage canary modes.
+      allOf:
+        - $ref: '#/components/schemas/SetBindingReleasePolicyRequest'
+        - type: object
+          required: [object_storage_requirements]
+          properties:
+            object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
     BindingReleasePolicy:
       type: object
       description: Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
       required: [app_id, scope, mode, revision, max_verification_age, require_application_ack]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         app_id: { type: string, format: uuid }
         scope: { type: string }
         mode: { type: string, enum: [off, enforce] }
@@ -50574,6 +50677,7 @@ components:
       description: Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
       required: [mode, expected_revision]
       properties:
+        object_storage_requirements: { $ref: '#/components/schemas/ObjectStorageReleaseRequirements' }
         mode: { type: string, enum: [off, enforce] }
         expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740990 }
         max_verification_age: { type: string, default: 10m, description: 'Whole-second Go duration between 1s and 24h.' }
@@ -50600,9 +50704,10 @@ components:
         bindings_check: { $ref: '#/components/schemas/BindingCheckReport' }
     BindingVerification:
       type: object
-      description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification checks bucket-list read access only; resident application adoption is not checked.
+      description: Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary. Object-storage verification records bucket listing or explicitly requested permission-aware object operations and cleanup; inspect checks for coverage. Resident application adoption is not checked.
       required: [result, source, deployment_id, scope]
       properties:
+        object_storage_mode: { type: string, enum: [read, write, read_write], description: 'Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.' }
         result: { type: string, description: 'Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence.' }
         reason: { type: string, description: 'Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or report_truncated.' }
         source: { type: string, description: 'Currently task_guest.' }
@@ -53096,10 +53201,43 @@ components:
       properties:
         bucket_id: { type: string, format: uuid }
         revision: { type: integer, format: int64, minimum: 0 }
+        managed_rule_ids:
+          type: array
+          maxItems: 1000
+          items: { type: string }
+          description: Rules owned by declarative compute reconciliation. Full manual replacement clears ownership.
         rules:
           type: array
           maxItems: 1000
           items: { $ref: '#/components/schemas/ObjectNotificationRule' }
+    ObjectStorageComputeTrigger:
+      type: object
+      description: Stable ObjectCreated filter targeting only the bucket's owning app.
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 255, description: Stable manifest identity scoped to the bucket. }
+        events:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Defaults to s3:ObjectCreated:* when omitted or empty.
+          items:
+            type: string
+            enum: ['s3:ObjectCreated:*', 's3:ObjectCreated:Put', 's3:ObjectCreated:Copy', 's3:ObjectCreated:CompleteMultipartUpload']
+        prefix: { type: string, maxLength: 1024 }
+        suffix: { type: string, maxLength: 1024 }
+    ReconcileObjectStorageComputeTriggersRequest:
+      type: object
+      description: Revision-checked replacement of only the bucket's declarative compute triggers.
+      additionalProperties: false
+      required: [expected_revision, triggers]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 1152921504606846976 }
+        triggers:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObjectStorageComputeTrigger' }
     ObjectNotificationRule:
       type: object
       description: Proven mutation routing to a Gregale function or existing enabled queue binding. Prefix and suffix are decoded strings; overlapping filters for the same event are rejected. IDs are generated when omitted.
@@ -57473,6 +57611,10 @@ components:
           description: Opaque identity derived locally from the CLI installation and canonical source path. Omit only for legacy sessions.
         postgres:
           $ref: '#/components/schemas/DevPostgresRequest'
+        buckets:
+          type: array
+          description: Explicitly provision private workspace buckets and bindings. Requires storage:manage or admin in addition to developer session authorization. Omission preserves existing resources. Repeating a revoked binding returns conflict.
+          items: { $ref: '#/components/schemas/DevBucketRequest' }
         lease_seconds:
           type: integer
           format: int64
@@ -57591,6 +57733,29 @@ components:
         applied_at: { type: string, format: date-time, description: When the first instance acknowledged the patch. }
         apply_ms: { type: integer, format: int64, minimum: 0, description: How long the instance took to write the patch and request the restart. }
         error_code: { type: string, description: 'Bounded guest error code when state is failed, for example apply_failed or restart_failed.' }
+    DevBucketRequest:
+      description: Opt-in private bucket in the developer workspace, bound in the default secret scope. Bucket and binding names are unique within the batch.
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+        region: { type: string, description: Omit to reuse existing placement or the current creation default. }
+        permission: { type: string, enum: [read, write, read_write], default: read_write }
+        prefix: { type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', description: Defaults to GREGALE_S3_ followed by the normalized bucket name. }
+        triggers:
+          type: array
+          maxItems: 1000
+          description: Opt-in ObjectCreated triggers targeting this developer app. Omission preserves managed intent; an empty array clears it.
+          items: { $ref: '#/components/schemas/ObjectStorageComputeTrigger' }
+
+    DevBucketResponse:
+      description: Safe metadata for an active automatic developer bucket binding. No credential secret or provider placement is returned.
+      type: object
+      required: [bucket, binding]
+      properties:
+        bucket: { $ref: '#/components/schemas/ObjectBucket' }
+        binding: { $ref: '#/components/schemas/ObjectStorageComputeBinding' }
+
     DevPostgresResponse:
       description: Safe receipt for the isolated developer database and its app binding. Credentials are injected into DATABASE_URL and never returned.
       type: object
@@ -57611,6 +57776,10 @@ components:
         app: { $ref: '#/components/schemas/AppResponse' }
         expires_at: { type: string, format: date-time }
         postgres: { $ref: '#/components/schemas/DevPostgresResponse' }
+        buckets:
+          type: array
+          description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
+          items: { $ref: '#/components/schemas/DevBucketResponse' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.

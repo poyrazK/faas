@@ -1,10 +1,12 @@
 // adr: 426 — the guest canary exercises signed read permission and the
 // provider listing path without object writes or credential diagnostics.
+// adr: 1027 — explicit write probes exercise signed transfers and exact cleanup.
 package s3gateway
 
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -22,6 +24,52 @@ type bindingProbeProvider struct {
 	t     *testing.T
 	calls atomic.Int32
 	err   error
+}
+
+func TestObjectStorageWriteBindingProbeThroughGateway(t *testing.T) {
+	for _, permission := range []string{"write", "read_write", "read"} {
+		t.Run(permission, func(t *testing.T) {
+			var payload []byte
+			var provider *gatewayTestProvider
+			h, _, p := newGatewayTestHandler(t, permission, func(r *http.Request) (*http.Response, error) {
+				response := &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"probe"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}
+				if r.Method == "PUT" {
+					payload, _ = io.ReadAll(r.Body)
+				} else if r.Method == "GET" {
+					if len(provider.deleted) > 0 {
+						response.StatusCode = 404
+						response.Body = io.NopCloser(strings.NewReader("<Error><Code>NoSuchKey</Code></Error>"))
+					} else {
+						response.Body = io.NopCloser(strings.NewReader(string(payload)))
+					}
+				} else {
+					t.Error("unexpected provider transfer")
+				}
+				return response, nil
+			})
+			provider = p
+			h.now = func() time.Time { return time.Now().UTC() }
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+			endpoint, _ := url.Parse(srv.URL)
+			h.host = endpoint.Host
+			env := map[string]string{"ASSETS_ENDPOINT": srv.URL, "ASSETS_REGION": "us-east-1", "ASSETS_BUCKET": "assets", "ASSETS_ACCESS_KEY_ID": testAccess, "ASSETS_SECRET_ACCESS_KEY": testSecret, "ASSETS_ADDRESSING_STYLE": "path"}
+			mode := permission
+			if mode == "read" {
+				mode = "read_write"
+			}
+			report := bindingprobe.ObjectStorageWrite(context.Background(), "ASSETS", mode, func(k string) string { return env[k] })
+			if report.Passed() != (permission != "read") {
+				t.Fatalf("gateway permission=%s report=%+v", permission, report)
+			}
+			if permission != "read" && (len(provider.deleted) != 1 || len(payload) == 0 || len(provider.conditions) != 1 || provider.conditions[0].IfNoneMatch != "*") {
+				t.Fatal("gateway lost create-only condition or cleanup")
+			}
+			if permission == "write" && len(provider.presignRequests) != 1 {
+				t.Fatal("write-only binding attempted a download")
+			}
+		})
+	}
 }
 
 func (p *bindingProbeProvider) ListObjects(_ context.Context, bucket, prefix, cursor string, limit int32) (objectstorage.ObjectPage, error) {

@@ -165,6 +165,15 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 			return nil, fmt.Errorf("%w: inherited workload inputs disagree with candidate", ErrInvalidArgument)
 		}
 	}
+	if frozen.Source != nil && frozen.Source.Kind == "image" {
+		if frozen.Source.FullRootfs {
+			if d.FullRootfsOverride == nil || !*d.FullRootfsOverride {
+				return nil, fmt.Errorf("%w: reviewed image requires full-rootfs opt-in", ErrInvalidArgument)
+			}
+		} else if frozen.DeploymentInputs == nil && d.FullRootfsOverride != nil {
+			return nil, fmt.Errorf("%w: unreviewed image full-rootfs override", ErrInvalidArgument)
+		}
+	}
 	if err := validateEnvironmentServiceBindings(d.AppID, frozen.ServiceBindings); err != nil {
 		return nil, fmt.Errorf("%w: invalid frozen scoped service bindings", err)
 	}
@@ -595,12 +604,8 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 			}
 			frozen.SourceDeployments = append(frozen.SourceDeployments, baseline.ID)
 		}
-		raw, err := json.Marshal(frozen)
-		if err != nil {
-			return nil, err
-		}
 		input := Deployment{AppID: app.ID, Scope: snapshot.Environment, Kind: DeploymentKindImage,
-			ImageDigest: workloadSource.Image, CommitSHA: revision.CommitSHA, DeployedVia: "api", EnvironmentWorkloadRuntime: string(raw)}
+			ImageDigest: workloadSource.Image, CommitSHA: revision.CommitSHA, DeployedVia: "api"}
 		if workloadSource.Kind != "image" {
 			input.Kind, input.SourceRoot = DeploymentKindGitHub, workloadSource.Directory
 			input.SourceURL = "github://" + source.Spec.Repository + "@" + revision.CommitSHA
@@ -608,6 +613,18 @@ func workloadCandidateInputs(source EnvironmentGitSource, revision EnvironmentDe
 		if frozen.DeploymentInputs != nil {
 			frozen.DeploymentInputs.apply(&input)
 		}
+		if workloadSource.Kind == "image" && workloadSource.FullRootfs {
+			if frozen.DeploymentInputs != nil && (frozen.DeploymentInputs.FullRootfs == nil || !*frozen.DeploymentInputs.FullRootfs) {
+				return nil, fmt.Errorf("%w: existing deployment full-rootfs policy differs from reviewed image source", ErrEnvironmentWorkloadPreparationUnavailable)
+			}
+			enabled := true
+			input.FullRootfsOverride = &enabled
+		}
+		raw, err := json.Marshal(frozen)
+		if err != nil {
+			return nil, err
+		}
+		input.EnvironmentWorkloadRuntime = string(raw)
 		out = append(out, input)
 	}
 	if err := validateServiceBindingCandidateGraph(desired, out); err != nil {

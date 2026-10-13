@@ -51,11 +51,11 @@ POLICIES = {
     'freeze 2 s -> frozen 10 min, unbilled': dict(kind='freeze', thr=2, ttl=600, billed=False),
     'freeze 10 s -> frozen 1 h, unbilled': dict(kind='freeze', thr=10, ttl=3600, billed=False),
     'freeze 0.5 s -> frozen 1 h, unbilled': dict(kind='freeze', thr=0.5, ttl=3600, billed=False),
-    # ADR-957: a quiet pause stays RUNNING (billed, RAM held) but books no
+    # ADR-1151: a quiet pause stays RUNNING (billed, RAM held) but books no
     # vCPU; qp=0 models dropping idle VMs' vCPU bookings without pausing.
     'idle running VMs hold no vCPU, no pause, park at idle timeout': dict(kind='quiet', qp=0, freeze=False, ttl=0),
     'quiet pause 2 s (billed), park at idle timeout': dict(kind='quiet', qp=2, freeze=False, ttl=0),
-    'quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-957)': dict(kind='quiet', qp=2, freeze=True, ttl=3600),
+    'quiet pause 2 s (billed) + freeze at idle timeout -> 1 h (ADR-1151)': dict(kind='quiet', qp=2, freeze=True, ttl=3600),
 }
 COLD_AFTER = 7 * 86400
 

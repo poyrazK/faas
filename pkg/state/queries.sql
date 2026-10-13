@@ -9527,13 +9527,13 @@ VALUES ('objectstorage', 'event.published', sqlc.arg(account_id)::uuid,
         sqlc.arg(payload)::jsonb, sqlc.arg(at)::timestamptz);
 
 -- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1;
 
 -- name: ObjectNotificationsSave :exec
-INSERT INTO object_bucket_notifications (bucket_id, revision, rules) VALUES ($1,$2,$3)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules;
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules;
 
 -- name: ObjectNotificationsCapture :execrows
 UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot || sqlc.arg(recipients)::jsonb
@@ -12070,7 +12070,9 @@ VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(kind)::text,sqlc.ar
  sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_healthcheck',sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_liveness_probe',
  sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_readiness_probe',coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'override_main_depends_on','[]'::jsonb),
  coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'sidecars','[]'::jsonb),coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'workflows','[]'::jsonb),
- coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),(sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'full_rootfs_allow_auto')::boolean,false),
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'full_rootfs_override')::boolean,
+          nullif((sqlc.arg(runtime)::jsonb->'source'->>'full_rootfs')::boolean,false)),
  coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'min_instances')::integer,0),
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
@@ -15080,18 +15082,18 @@ FROM apps a LEFT JOIN app_binding_release_policies p ON p.app_id=a.id AND p.scop
 WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted';
 
 -- name: WriteBindingReleasePolicy :one
-INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason)
-SELECT a.id,sqlc.arg(scope),sqlc.arg(mode),sqlc.arg(expected_revision)::bigint+1,sqlc.arg(max_age_seconds),sqlc.arg(require_application_ack),sqlc.arg(reason)
+INSERT INTO app_binding_release_policies(app_id,scope,mode,revision,max_age_seconds,require_application_ack,reason,object_storage_requirements)
+SELECT a.id,sqlc.arg(scope),sqlc.arg(mode),sqlc.arg(expected_revision)::bigint+1,sqlc.arg(max_age_seconds),sqlc.arg(require_application_ack),sqlc.arg(reason),sqlc.arg(object_storage_requirements)::jsonb
 FROM apps a WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
  AND sqlc.arg(expected_revision)::bigint=0
 ON CONFLICT(app_id,scope) DO UPDATE SET mode=EXCLUDED.mode,revision=app_binding_release_policies.revision+1,
- max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,updated_at=clock_timestamp()
+ max_age_seconds=EXCLUDED.max_age_seconds,require_application_ack=EXCLUDED.require_application_ack,reason=EXCLUDED.reason,object_storage_requirements=EXCLUDED.object_storage_requirements,updated_at=clock_timestamp()
 WHERE app_binding_release_policies.revision=sqlc.arg(expected_revision)::bigint
 RETURNING to_jsonb(app_binding_release_policies)::jsonb AS policy;
 
 -- name: UpdateBindingReleasePolicy :one
 UPDATE app_binding_release_policies p SET mode=sqlc.arg(mode),revision=p.revision+1,max_age_seconds=sqlc.arg(max_age_seconds),
- require_application_ack=sqlc.arg(require_application_ack),reason=sqlc.arg(reason),updated_at=clock_timestamp()
+ require_application_ack=sqlc.arg(require_application_ack),reason=sqlc.arg(reason),object_storage_requirements=sqlc.arg(object_storage_requirements)::jsonb,updated_at=clock_timestamp()
 FROM apps a WHERE p.app_id=a.id AND a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
  AND p.scope=sqlc.arg(scope) AND p.revision=sqlc.arg(expected_revision)
 RETURNING to_jsonb(p)::jsonb AS policy;
@@ -19783,3 +19785,25 @@ SELECT payload FROM customer_workflow_playbook_progress WHERE account_id=$1 AND 
 INSERT INTO customer_workflow_playbook_progress (id,account_id,app_id,tenant_id,case_key,revision,payload) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING;
 -- name: UpdateWorkflowPlaybookProgress :execrows
 UPDATE customer_workflow_playbook_progress SET payload=sqlc.arg(payload),revision=sqlc.arg(next_revision) WHERE id=sqlc.arg(id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND tenant_id=sqlc.arg(tenant_id) AND case_key=sqlc.arg(case_key) AND revision=sqlc.arg(revision);
+
+-- name: EnvironmentGitOpsHasServingManagedWorkload :one
+-- ADR-568: an empty definition cannot bypass a prior managed release or the
+-- router's live-scope fallback when no active release exists.
+SELECT EXISTS (
+  SELECT 1 FROM deployments d
+  JOIN apps a ON a.id = d.app_id
+  WHERE a.account_id = sqlc.arg(account_id)::uuid
+    AND a.project_id = sqlc.arg(project_id)::uuid
+    AND d.scope = sqlc.arg(scope)
+    AND d.environment_workload_runtime IS NOT NULL
+    AND (
+      (d.status = 'live' AND NOT d.environment_workload_held)
+      OR EXISTS (
+        SELECT 1 FROM project_release_sets rs
+        JOIN project_release_members rm ON rm.release_id = rs.id
+        WHERE rs.project_id = a.project_id AND rs.account_id = a.account_id
+          AND rs.environment_slug = sqlc.arg(scope) AND rs.active
+          AND rm.app_id = a.id AND rm.deployment_id = d.id
+      )
+    )
+) AS managed;

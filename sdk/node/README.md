@@ -2773,6 +2773,22 @@ Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted n
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
 
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `SecretReloadCoordinator` from `@gregale/sdk-node/secrets/runtime` with each
+`ObjectStorageBinding.secretConsumer()` to install SIGHUP before readiness,
+serialize atomic snapshot adoption and ACK only after all registered consumers
+succeed. Require the current guest atomic snapshot, readiness and generation
+contract; register all other secret users as well. Start serving after
+`await coordinator.start()` and pass your shutdown signal. Both runtime subpaths
+are server-only and have no added package dependencies.
+
+For automatic old-client cleanup, pass `{retire: ...}` to the storage binding.
+Use `acquire()` and release the lease in a finally block after consuming/closing
+all response streams; managed bindings reject raw `current()`. Stop admission
+and the coordinator before `waitForRetirement(shutdownSignal)`. A canceled wait
+never destroys leased clients. Without a hook, lifetime remains caller-owned.
+
 ### Durable entity developer workflow
 
 The pure `@gregale/sdk-node/durable-entities/runtime` entrypoint exports

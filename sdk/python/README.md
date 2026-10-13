@@ -1071,3 +1071,15 @@ Use the attention reason `sla_breached` to find known breaches. Performance coho
 Workflow steps optionally accept `state_sla_warning_percent`, mapping budgeted nonterminal states to whole percentages 1–99. For example, an 80% warning on a 1,800-second budget starts at 1,440 seconds. Pin threshold changes to a new workflow contract version.
 
 Current `sla` data includes optional `warning_percent` and, when retained entry history is known, `warning_at`. Status becomes `at_risk` at that time, then `breached` at the due time. Unknown history implies neither status. Use attention reason `sla_at_risk`; matching summaries expose `sla_at_risk_workflow_count`. These observations do not enforce application actions.
+
+Managed compute storage client loading and rotation are described in the
+[object storage compute guide](../../docs/object-storage-compute.md).
+Use `faas_sdk.secret_reload_runtime.SecretReloadCoordinator` with
+`storage.secret_consumer()` for startup, SIGHUP and manual adoption of atomic
+credential snapshots. Start and finish on the main thread to manage SIGHUP
+ownership and register every secret consumer. For automatic old-client cleanup,
+pass `retire=...` to the storage binding and use `with storage.acquire() as lease`.
+Consume/close response bodies before leaving that block. Managed bindings reject
+raw `current()`. Stop admission and the coordinator before
+`storage.wait_for_retirement(timeout=5)`; timeout never closes leased clients.
+Without a hook, `current()` keeps caller-owned lifetime behavior.

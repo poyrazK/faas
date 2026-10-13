@@ -6,15 +6,22 @@ Environment GitOps is an implementation preview under [ADR-568](adr/568-environm
 
 | Area | Implemented | Remaining before complete environment enforcement |
 | --- | --- | --- |
-| Git source | Immutable definition review, approval, polling and separate source freshness | Full outage and rollback journey with serving workloads |
+| Git source | Immutable definition review, approval, polling and separate source freshness; PostgreSQL serving-graph outage and reviewed rollback journey | Dedicated native outage/rollback acceptance for live workloads; workload deletion remains unsupported |
 | Ownership and adoption | Reviewed adoption plans, stable resource identities, stale-plan rejection, scoped ownership guards and same-repository GitHub build provenance | Other providers and incomplete or conflicting GitHub provenance |
-| Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery | Production report-mode acceptance for the complete API/worker/queue graph |
+| Drift reporting | Opt-in continuous reports against the last approved definition, durable runs and restart recovery; PostgreSQL apid acceptance for an API/worker/queue graph through a source outage and controller restart | Live report-mode qualification on a deployed control plane |
 | Workload preparation | Held image, pinned source, function and job candidates; frozen identity and reviewed contract for each active owned queue binding; atomic private workload reservations; same-repository inherited GitHub source, Dockerfile and function intent; private HTTP/HTTPS service graphs and standalone HTTP graphs | Dedicated Linux acceptance with configured node-local service proxies and unsupported source-provider provenance |
 | Qualification, activation and serving | Immutable attempt-bound guest API-env acknowledgement, restored framework-ready, capture, restore and smoke receipts; HTTP candidates use explicitly owned `runtime.healthz` and `runtime.port`; push and pull workers plus HTTP functions can use bounded reviewed `queue_smoke` payloads; jobs use reviewed argv, timeout, variables and scoped secret references with version-fresh runtime receipts and a sanitized exit receipt; request/service routes and named push-worker, pull-worker and HTTP-function consumers have separate serving receipts; request/service, queue-backed workers and scheduled Jobs can pin request/service targets inside the reviewed graph and release; image-only schedules get a durable paused Gregale Job binding and post-activation scheduled-run proof | Dedicated Linux acceptance; Job queue bindings remain unsupported |
 | Native execution | Fenced journals, persistent disk staging and publication intent, original-process API control, exclusive four-object capture, durable writer receipts, private Manager restore orchestration, version-checked load, verified anonymous restore inputs, private load/resume/entropy-hook and process-bound restored platform channels; restore-target config/runtime receipts and receipt-gated route selection in both stores; native-retired and native-effects-absent proofs; schedd's periodic, node-bound abandoned-execution recovery; smoke-authorized conditional GCS retirement with durable host tombstones and an opt-in vmmd retry loop | Dedicated Linux capture/restore acceptance; production qualification polling remains gated until those pass |
 | Enforcement | Transactional ownership, override and execution fences; lease-bound activation and serving of supported request/service graphs including pinned scoped service bindings, push and pull workers, queue-bound HTTP functions, and scheduled Jobs with a successful post-activation occurrence | Production qualification polling remains gated; dedicated Linux acceptance and unsupported production execution adapters |
 
 Approved Git content, observed intent, qualification, activation and serving state are separate facts. A reviewed or adopted definition does not mean that a deployment is ready or that the environment is serving that revision. Unqualified owned source, runtime, secret-reference, service-binding and queue-binding fields prevent the applied revision from advancing.
+
+An immutable `source.kind: image` may set `source.full_rootfs: true` when the image is not layered on Gregale's runtime base. The choice is part of the reviewed source contract and is frozen with the candidate deployment; other source kinds reject it. Omitting the field keeps the existing dispatch policy, including inherited settings on adopted workloads.
+For an adopted workload with live deployments, a conflicting inherited full-rootfs setting blocks preparation until the live deployment policy and reviewed source agree.
+
+The PostgreSQL journey serves an API and queue worker, observes a Git source outage without losing that serving evidence, applies a reviewed queue-contract change, then rolls back to the earlier approved revision. The rollback must obtain fresh preparation, qualification, activation, route and queue-serving evidence; an accepted pending invocation keeps its binding identity throughout. These receipts are submitted through state APIs, so dedicated native guest and live-adapter acceptance remains required. Removing the worker in a rollback is still blocked by the unavailable workload-pruning adapter.
+
+The opt-in apid reporter has a separate PostgreSQL journey for API variables, routes and policies alongside a worker queue binding. It retains durable drift reports across a Git source outage and controller restart while leaving console values and the queue contract unchanged. This validates report mode, not live workload activation or enforcement.
 
 ## Try review and reporting
 
@@ -82,7 +89,9 @@ neither creates a customer invocation or queue row. HTTP functions continue to
 use push bindings only. Push and pull workers may activate dark after
 qualification; Gregale reports them serving only after a successfully completed
 named-queue or generic pull invocation is atomically recorded against the
-selected live deployment. Queue-bound HTTP functions use the same durable
+selected live deployment. The invocation must complete after that active
+release was published; an older delivery or acknowledgement cannot establish
+serving for a later release. Queue-bound HTTP functions use the same durable
 push-consumer acknowledgement, scoped to a reviewed function and
 `workload_class: http`; they require both the queue acknowledgement and their
 request-route acknowledgements. A gateway route acknowledgement cannot prove
@@ -166,6 +175,29 @@ normal reporting cadence. A plan using a temporary override schedules its next
 check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
+
+## Isolated enforcement acceptance
+
+The real apid enforcement worker can run only in an isolated development
+acceptance process with all three settings set to `1`: `FAAS_DEV`,
+`GREGALE_GITOPS_ACCEPTANCE`, and
+`FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT`. The production control-plane
+role rejects the dev-only enforcement setting at boot. Customer enforcement
+remains closed by default.
+
+Against a disposable PostgreSQL cluster, run the subprocess journey with:
+
+```sh
+GREGALE_GITOPS_ACCEPTANCE=1 DATABASE_URL="$DISPOSABLE_DATABASE_URL" \
+  FAAS_PGTEST_TEMPLATE_DATABASE=1 go test ./cmd/e2e \
+  -run '^TestEnvironmentGitOpsAcceptanceE2E$' -count=1
+```
+
+This journey covers HTTP console writes and ownership rejection, approved
+intent in PostgreSQL, the real apid worker, repair, and durable partial status.
+It intentionally has no serving candidate. Dedicated native x86_64 KVM
+capture, restore, guest, gateway and rollback acceptance is still required
+before production qualification polling or enforcement can be enabled.
 
 ## Next implementation steps
 

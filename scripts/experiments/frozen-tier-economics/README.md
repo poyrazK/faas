@@ -29,7 +29,7 @@ python3 -P -E scripts/experiments/frozen-tier-economics/show.py /tmp/results.jso
 30 s on every plan (ADR-974) instead of the plan's idle timeout.
 
 `occupancy.py apps.npz` prints the active vCPU, booked vCPU, resident and
-frozen VM counts per instant under ADR-957's policy (quiet pause plus
+frozen VM counts per instant under ADR-1151's policy (quiet pause plus
 freeze at the idle timeout).
 
 The simulation runs in about 10 s and peaks at about 1.5 GB of RAM. Plans, prices,

@@ -35,6 +35,7 @@ type EnvironmentWorkloadSource struct {
 	Directory  string `json:"directory,omitempty"`
 	Dockerfile string `json:"dockerfile,omitempty"`
 	Image      string `json:"image,omitempty"`
+	FullRootfs bool   `json:"full_rootfs,omitempty"`
 }
 
 type EnvironmentRouteContract struct {

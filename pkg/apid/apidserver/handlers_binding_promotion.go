@@ -152,7 +152,9 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	if err != nil {
 		return observation, api.ErrCapacity("binding release policy could not be read")
 	}
+	var storageRequirements map[string]string
 	if releasePolicy.Mode == "enforce" {
+		storageRequirements = releasePolicy.ObjectStorageRequirements
 		storedAge, err := time.ParseDuration(releasePolicy.MaxVerificationAge)
 		if err != nil {
 			return observation, api.ErrCapacity("binding release policy is invalid")
@@ -169,7 +171,7 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	query.Del("scope")
 	inventoryRequest.URL.RawQuery = query.Encode()
 	inventory := s.collectBindingInventory(r.Context(), inventoryRequest, acct, app, "")
-	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: app.Slug, DeploymentID: deployment.ID, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck}, time.Now())
+	report, err := bindingcheck.Evaluate(inventory, bindingcheck.Policy{App: app.Slug, DeploymentID: deployment.ID, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck, ObjectStorageRequirements: storageRequirements}, time.Now())
 	if err != nil {
 		return observation, api.ErrInternal("could not evaluate binding promotion policy")
 	}
@@ -180,6 +182,7 @@ func (s *server) observeBindingPromotion(r *http.Request, acct state.Account, ap
 	deadline, expiration := bindingPromotionDeadline(observation.report, inventory, age)
 	observation.expiration = expiration
 	observation.fence = state.BindingPromotionFence{AccountID: acct.ID, AppID: app.ID, DeploymentID: deployment.ID, Scope: report.Scope, Revision: revision, ValidUntil: deadline, PolicyRevision: releasePolicy.Revision, MaxVerificationAge: age, AllowUnsupported: req.AllowUnsupported, RequireApplicationAck: req.RequireApplicationAck}
+	observation.fence.ObjectStorageRequirements = report.ObjectStorageRequirements
 	return observation, nil
 }
 

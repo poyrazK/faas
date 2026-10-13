@@ -1005,6 +1005,12 @@ const (
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
+	// ArtifactCacheMinFreeBytes is the free space the node artifact cache
+	// (snapshots, app layers, bases) leaves on its filesystem. Builder drives
+	// and capture staging share that disk, so besides its byte budget
+	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
+	// the filesystem has less than this free.
+	ArtifactCacheMinFreeBytes int64 = 8 << 30
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -4533,6 +4539,11 @@ const (
 	// still books BillableRAMMB. See MeasuredChargeMB.
 	MeasuredChargeFloorMB         = 64
 	MeasuredChargeHeadroomPercent = 25
+	// QuietPauseAfterMillis is how long an eligible function instance sits
+	// with nothing in flight before vmmd pauses its vCPUs until the next
+	// request (ADR-957). The instance stays RUNNING and billed. In the
+	// ADR's simulation 2 s fit 2.5x the function apps per node.
+	QuietPauseAfterMillis = 2000
 	// The sample a measured charge starts from is the larger of an
 	// instance's latest resident memory and its p95 over the last
 	// MeasuredChargeWindowSeconds, sampled every MeasuredChargeSampleSeconds
