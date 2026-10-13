@@ -511,6 +511,7 @@
     {
       "type": "stat",
       "title": "API availability (5m)",
+      "description": "The FaasApiAvailabilityLow ratio: 5xx the platform produced before any guest response byte (gateway_platform_errors_total) over 2xx+5xx requests. A 5xx returned by the customer's app does not count.",
       "id": 11,
       "gridPos": {
         "h": 8,
@@ -524,7 +525,7 @@
       },
       "targets": [
         {
-          "expr": "(sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..\"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])) * 100",
+          "expr": "(1 - ((sum(rate(gateway_platform_errors_total{app!=\"-\"}[5m])) or vector(0)) / sum(rate(gateway_requests_total{app!=\"-\",code=~\"2..|5..\"}[5m])))) * 100",
           "refId": "A"
         }
       ],
@@ -563,6 +564,34 @@
           "values": false
         },
         "textMode": "auto"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Platform-caused 5xx by app (top 10, 5m)",
+      "description": "The numerator of API availability: 5xx the gateway produced before the guest sent a response byte (wake failure, queue full, upstream unreachable). App-authored 5xx are excluded.",
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 40
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (app) (rate(gateway_platform_errors_total{app!=\"-\"}[5m])))",
+          "legendFormat": "{{app}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
       }
     },
     {

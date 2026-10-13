@@ -4140,7 +4140,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// registered on every daemon; only gatewayd-public
 	// increments via IncrementGatewaydPublicOtelSpansIngested.
 	gatewaydPublicOtelSpansIngested := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_spans_ingested_total",
+		Name: prefix + "_otel_spans_ingested_total",
 		Help: "OTel spans writer ingest outcomes on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by outcome ∈ {inserted, rate_limited, db_error, shape_invalid}. `inserted` is the customer-telemetry-spans panel (rate over 5m). `rate_limited` is the per-account token-bucket overflow path (DebugTelemetryRequestsPerMinute exceeded). `db_error` is the apid WriteSpansSummary RPC failure path. `shape_invalid` is the OTLP body parser rejection (malformed JSON, missing trace_id, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansIngested.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansIngested)
@@ -4150,7 +4150,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// single-registry pattern; only gatewayd-public increments
 	// via IncrementGatewaydPublicOtelSpansTruncated.
 	gatewaydPublicOtelSpansTruncated := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_spans_truncated_total",
+		Name: prefix + "_otel_spans_truncated_total",
 		Help: "OTel spans writer truncation tripwire on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D). Fires once per OTLP POST when the inbound body has more spans than the plan's DebugTelemetrySpansPerTrace ceiling (Hobby=50/Pro=200/Scale=1000). Sustained non-zero means the customer's app is chatty enough that the slowest-N selection is dropping signal — alertable via SpansTruncationRateSlo. Unlabelled — single-registry pattern; only gatewayd-public increments via IncrementGatewaydPublicOtelSpansTruncated.",
 	})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelSpansTruncated)
@@ -4160,7 +4160,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only gatewayd-public increments via
 	// IncrementGatewaydPublicOtelAuthFailures.
 	gatewaydPublicOtelAuthFailures := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prefix + "_gatewayd_public_otel_auth_failures_total",
+		Name: prefix + "_otel_auth_failures_total",
 		Help: "OTel spans writer auth failures on the gatewayd-public POST /v1/otel/v1/traces handler (ADR-127 PR-D), labelled by reason ∈ {unauthenticated, plan_disabled, internal}. `unauthenticated` is the apid AuthenticateKey RPC rejecting the bearer token (hash miss, expired, revoked). `plan_disabled` is the customer's plan not including DebugTelemetryEnabled. `internal` is the apid RPC error (Postgres down, etc). Single-registry: registered on every daemon; only gatewayd-public increments via IncrementGatewaydPublicOtelAuthFailures.",
 	}, []string{"reason"})
 	commonCollectors = append(commonCollectors, gatewaydPublicOtelAuthFailures)

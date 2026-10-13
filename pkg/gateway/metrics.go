@@ -832,6 +832,23 @@ const (
 	tierCold = "cold"
 )
 
+// wakeLatencyBuckets is the shared envelope of gateway_wake_latency_seconds,
+// its _by_node twin and gateway_wake_phase_duration_seconds. The finite
+// buckets reach past the wake gate's 30 s TTL so a stalled wake reads as its
+// real duration: with 10 s on top, every slower wake landed in +Inf and
+// histogram_quantile reported 10 s. The added buckets sit above 10 s, so
+// quantiles below 10 s are unchanged and the §12 calibration still holds.
+func wakeLatencyBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0, 20.0, 30.0, 60.0}
+}
+
+// platformWakeLatencyBuckets keeps the fine resolution around the 0.35 s
+// public-beta gate and extends the tail to the same 60 s ceiling, so a
+// regression past 3 s reads as its real duration rather than 3 s.
+func platformWakeLatencyBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0, 30.0, 60.0}
+}
+
 func NewMetrics() *Metrics {
 	reg := prometheus.NewRegistry()
 	m := &Metrics{
@@ -1208,16 +1225,12 @@ func NewMetrics() *Metrics {
 			Name: "gateway_wake_latency_seconds",
 			Help: "End-to-end latency from request received to first upstream byte after a cold wake.",
 			// Buckets target the §12 SLO: p50 ≤ 0.35 s, p95 ≤ 0.8 s, page > 1.5 s.
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Buckets: wakeLatencyBuckets(),
 		}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name: "gateway_platform_wake_latency_seconds",
-			Help: "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
-			Buckets: []float64{
-				0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0,
-			},
+			Name:    "gateway_platform_wake_latency_seconds",
+			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
+			Buckets: platformWakeLatencyBuckets(),
 		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
 		// — same distribution, same SLO targets — just labelled
@@ -1227,10 +1240,8 @@ func NewMetrics() *Metrics {
 		// new histogram is opt-in and not part of any SLO.
 		wakeLatencyByNode: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_wake_latency_seconds_by_node",
-			Help: "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Help:    "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
+			Buckets: wakeLatencyBuckets(),
 		}, []string{"node_id"}),
 		// Spec §12 row "wake queue wait p95". Observed by WakeGate.Wait
 		// on every caller that joins a single-flight coalescing wake. The
@@ -1269,9 +1280,7 @@ func NewMetrics() *Metrics {
 			// Same bucket envelope as wakeLatency so the dashboards
 			// can compare phase histograms to the aggregate without
 			// re-bucketing.
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Buckets: wakeLatencyBuckets(),
 		}, []string{"phase"}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_queue_depth",
