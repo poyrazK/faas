@@ -586,7 +586,9 @@ jobs:
     name: unit tests (pg shard 1 — apid/meter/migrations)
     runs-on: ubuntu-latest
     # Include cold APID race compilation and the full PostgreSQL API suite.
-    timeout-minutes: 45
+    # Green runs on 2026-10-12/13 took 42-43 minutes; the next one was
+    # cancelled at 45 with no failing test.
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -815,8 +817,8 @@ jobs:
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
-            test_timeout: 20m
-            job_timeout_minutes: 30
+            test_timeout: 30m
+            job_timeout_minutes: 45
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
     # in its four deterministic shards above.
@@ -1053,10 +1055,17 @@ jobs:
     runs-on: ubuntu-latest
     # Race compilation plus the scheduler suite can consume ten minutes.
     # Leave room for the coverage gate and upload after the tests pass.
-    timeout-minutes: 20
+    # The memory-bounded pkg/sched compile below roughly doubles that
+    # compile's time on a cold cache.
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
+    # pkg/sched with its internal tests is ~140k lines; its race+coverage
+    # compile reached ~15 GB RSS with DWARF on. Both steps must pass the same
+    # flags, or the test step recompiles it instead of hitting the cache.
+    env:
+      GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/sched=-dwarf=false -c=1"'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -1085,13 +1094,17 @@ jobs:
           restore-keys: |
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pure-1-${{ runner.os }}-go${{ env.GO_VERSION }}-
-      # Compiling this shard's race-instrumented dependencies (pkg/state and the
-      # scheduler) peaks near 10 GB of compiler RSS, and pkg/fcvm's tests peak
-      # near 6 GB. With both in flight under -p 4 the 16 GB hosted runner ran
-      # out of memory and GitHub reported "The runner has received a shutdown
-      # signal" (diagnosed 2026-10-13). Compiling two packages at a time first
-      # fills the build cache, so the test step below only links and runs.
+      # The pkg/sched test compile peaked near 15 GB of compiler RSS and
+      # pkg/fcvm's tests near 6 GB. With both in flight under -p 4 the 16 GB
+      # hosted runner ran out of memory and GitHub reported "The runner has
+      # received a shutdown signal" (diagnosed 2026-10-13). Compiling first,
+      # two packages at a time and under a soft memory limit, fills the build
+      # cache, so the test step below only links and runs.
       - name: compile shard 1 test binaries
+        env:
+          # The soft limit makes the pkg/sched compile collect harder instead of
+          # growing to ~11 GB; it only affects this compile-only step.
+          GOMEMLIMIT: 6GiB
         run: |
           PKGS=$(go list ./... | grep -v '/cmd/e2e' | grep -v '/pkg/apid/apidserver$' | grep -E '(pkg/sched|pkg/fcvm|pkg/gateway|pkg/imaged|pkg/wire|cmd/gatewayd-internal|pkg/api)')
           go test -race -cover -covermode=atomic -count=1 -p 2 -run='^$' $PKGS > /dev/null
@@ -1210,7 +1223,8 @@ jobs:
     name: portable container contracts (strict)
     runs-on: ubuntu-latest
     # Bounded-memory cold builds reached 14 min before the contracts finished.
-    timeout-minutes: 35
+    # Whole green runs took 29-34 minutes on 2026-10-12/13.
+    timeout-minutes: 50
     permissions:
       contents: read
     # The UDP contract race-builds cmd/apid; cold, that exhausted hosted-runner
@@ -1299,7 +1313,9 @@ jobs:
     # The complete cold-run gate sequence can exhaust 30 minutes at the
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
-    timeout-minutes: 45
+    # A cold run on 2026-10-13 spent 18 minutes in the standards gates and
+    # 11 in promtool, and was cancelled at 45 during the last gate.
+    timeout-minutes: 70
     permissions:
       contents: read
     env:
