@@ -7,6 +7,10 @@
  */
 export type DailyUsageResponse = {
   app_id: string;
+  /**
+   * Workload meter. All disposable Runs of an account share one row per day whose app_id is the account ID.
+   */
+  kind?: 'app' | 'job' | 'run';
   day: string;
   /**
    * Cumulative mb_seconds for the day (informational; not billed).

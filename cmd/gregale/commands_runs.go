@@ -24,7 +24,7 @@ import (
 
 const (
 	executionPollIntervalDefault = 250 * time.Millisecond
-	executionWaitTimeoutDefault  = 5 * time.Minute
+	executionWaitTimeoutDefault  = 20 * time.Minute
 )
 
 type executionArtifactInputFlags []api.ExecutionArtifactInput

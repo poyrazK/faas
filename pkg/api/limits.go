@@ -6226,8 +6226,9 @@ var (
 	// ExecutionTimeoutMaxMS is the admission-to-result wall-clock deadline,
 	// including snapshot restore. Remaining time is passed to the guest when
 	// execution starts, so queue/restore delay can never extend caller code
-	// beyond the advertised deadline.
-	ExecutionTimeoutMaxMS = [4]int{0, 10_000, ExecutionTimeoutHardMaxMS, ExecutionTimeoutHardMaxMS}
+	// beyond the advertised deadline. ADR-987: Hobby 1 min, Pro 5 min,
+	// Scale 15 min; Runs are billed per running second (ADR-986).
+	ExecutionTimeoutMaxMS = [4]int{0, 60_000, 300_000, ExecutionTimeoutHardMaxMS}
 
 	// Deprecated workflow cap aliases retained for source compatibility with
 	// the original PR-1279 shorthand. New code must read the named fields on
@@ -6298,7 +6299,7 @@ const (
 	// arrays above or reuse the plan's existing RAM/disk source of truth.
 	ExecutionTimeoutDefaultMS       = 5_000
 	ExecutionTimeoutMinMS           = 100
-	ExecutionTimeoutHardMaxMS       = 30_000
+	ExecutionTimeoutHardMaxMS       = 900_000
 	ExecutionMemoryDefaultMB        = 128
 	ExecutionCPUMillicoresDefault   = 250
 	ExecutionCPUMillicoresMax       = DefaultAppCPUMillicores
@@ -6311,12 +6312,27 @@ const (
 	ExecutionArtifactMaxPathBytes   = 256
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
+	// ExecutionVCPUCount is the fixed guest vCPU count of every Run VM. A
+	// runtime snapshot fixes the machine's vCPU count, so it must not depend
+	// on the account plan; the CPU limit is enforced by the cgroup quota
+	// (ExecutionCPUMillicoresMax), not by vCPUs.
+	ExecutionVCPUCount = 2
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
 	// encrypted source/input envelope, including an optional multi-file bundle.
 	// It leaves bounded room above the admitted 1 MiB source and input fields for
 	// JSON/base64 encoding and age-recipient overhead; it is not a
 	// customer-visible allowance.
 	ExecutionSealedPayloadMaxBytes = 3 << 20
+	// ExecutionReceiptRetention is how long a terminal Run keeps its receipt:
+	// result, stdout/stderr, inline artifacts, and replay events. Afterwards
+	// the scheduler deletes the row. The usage ledger is independent of the
+	// receipt and is never removed by retention, so billing and monthly usage
+	// survive. Runs belonging to an active managed workflow are kept until
+	// that workflow is terminal.
+	ExecutionReceiptRetention = 7 * 24 * time.Hour
+	// ExecutionRetentionSweepInterval paces receipt deletion. It is a
+	// scheduler mechanic, not a customer-facing allowance.
+	ExecutionRetentionSweepInterval = 10 * time.Minute
 )
 
 // ExecutionPlanLimits is the complete admission envelope for disposable

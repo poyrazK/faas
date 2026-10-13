@@ -26,6 +26,16 @@ func appSlugsByID(client *api.Client) map[string]string {
 	return slugs
 }
 
+// usageRowLabel labels a usage row. All disposable Runs of the account share
+// one row keyed by the account ID, so it gets a fixed label instead of being
+// reported as a deleted app.
+func usageRowLabel(slugs map[string]string, kind, appID string) string {
+	if kind == "run" {
+		return "runs"
+	}
+	return appLabel(slugs, appID)
+}
+
 // appLabel is the app's slug when known. A deleted app keeps its usage rows;
 // once the app list loaded, an ID it lacks is labelled deleted so the row is
 // not mistaken for a live app (H5-4). A failed list leaves the bare ID.

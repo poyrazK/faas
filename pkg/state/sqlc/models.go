@@ -8584,6 +8584,7 @@ type UsageMinute struct {
 	JobID             pgtype.UUID
 	JobRunID          pgtype.UUID
 	JobExecutionClass pgtype.Text
+	ExecutionID       pgtype.UUID
 }
 
 type UsageMonthly struct {

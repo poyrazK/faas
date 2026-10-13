@@ -52,6 +52,11 @@ type ExecutionCoordinatorConfig struct {
 	DestroyTimeout     time.Duration
 	FinalizeTimeout    time.Duration
 	SweepLimit         int
+	// Retention is how long terminal receipts are kept before the sweeper
+	// deletes them; RetentionInterval paces that delete. Defaults come from
+	// api.ExecutionReceiptRetention and api.ExecutionRetentionSweepInterval.
+	Retention         time.Duration
+	RetentionInterval time.Duration
 	// Metrics is optional. When supplied, the coordinator emits only bounded,
 	// payload-free execution lifecycle signals through the schedd registry.
 	Metrics *wire.OpsMetrics
@@ -215,6 +220,12 @@ func normalizeExecutionCoordinatorConfig(config ExecutionCoordinatorConfig) Exec
 	if config.SweepLimit > 1000 {
 		config.SweepLimit = 1000
 	}
+	if config.Retention <= 0 {
+		config.Retention = api.ExecutionReceiptRetention
+	}
+	if config.RetentionInterval <= 0 {
+		config.RetentionInterval = api.ExecutionRetentionSweepInterval
+	}
 	return config
 }
 
@@ -233,6 +244,7 @@ func (c *ExecutionCoordinator) Run(ctx context.Context) error {
 	if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		c.log.Warn("schedd: execution initial recovery sweep failed", "error_class", executionErrorClass(err))
 	}
+	c.purgeExpired(ctx)
 	c.observeQueuePressure(ctx)
 
 	var workers sync.WaitGroup
@@ -361,6 +373,24 @@ func (c *ExecutionCoordinator) SweepOnce(ctx context.Context) (state.ExecutionSw
 		return state.ExecutionSweepResult{}, fmt.Errorf("sched: sweep executions: %w", err)
 	}
 	return result, nil
+}
+
+// PurgeExpiredOnce deletes one bounded batch of terminal receipts older than
+// the configured retention. Stores without the retention extension are a
+// no-op so older test doubles keep working.
+func (c *ExecutionCoordinator) PurgeExpiredOnce(ctx context.Context) (int, error) {
+	if c == nil || c.store == nil {
+		return 0, ErrExecutionCoordinatorNotWired
+	}
+	retention, ok := c.store.(state.ExecutionRetentionStore)
+	if !ok {
+		return 0, nil
+	}
+	deleted, err := retention.PurgeExpiredExecutions(ctx, c.now().UTC().Add(-c.config.Retention), c.config.SweepLimit)
+	if err != nil {
+		return 0, fmt.Errorf("sched: purge expired executions: %w", err)
+	}
+	return deleted, nil
 }
 
 type executionLeaseSignal uint8
@@ -684,6 +714,8 @@ func (c *ExecutionCoordinator) runWorker(ctx context.Context) {
 func (c *ExecutionCoordinator) runSweeper(ctx context.Context) {
 	ticker := time.NewTicker(c.config.SweepInterval)
 	defer ticker.Stop()
+	retention := time.NewTicker(c.config.RetentionInterval)
+	defer retention.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -693,7 +725,50 @@ func (c *ExecutionCoordinator) runSweeper(ctx context.Context) {
 				c.log.Warn("schedd: execution recovery sweep failed", "error_class", executionErrorClass(err))
 			}
 			c.observeQueuePressure(ctx)
+		case <-retention.C:
+			c.purgeExpired(ctx)
 		}
+	}
+}
+
+// RunRetention only expires receipts. schedd uses it when dispatch is off so
+// receipts from an earlier enabled period still age out. It needs a store but
+// no backend, and returns nil after ctx cancellation.
+func (c *ExecutionCoordinator) RunRetention(ctx context.Context) error {
+	if c == nil || c.store == nil {
+		return ErrExecutionCoordinatorNotWired
+	}
+	ticker := time.NewTicker(c.config.RetentionInterval)
+	defer ticker.Stop()
+	for {
+		c.purgeExpired(ctx)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// purgeExpired drains expired receipts in bounded batches until a batch comes
+// back short, so a backlog clears within one retention tick.
+func (c *ExecutionCoordinator) purgeExpired(ctx context.Context) {
+	total := 0
+	for ctx.Err() == nil {
+		deleted, err := c.PurgeExpiredOnce(ctx)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				c.log.Warn("schedd: execution receipt retention failed", "error_class", executionErrorClass(err))
+			}
+			return
+		}
+		total += deleted
+		if deleted < c.config.SweepLimit {
+			break
+		}
+	}
+	if total > 0 {
+		c.log.Info("schedd: execution receipts expired", "deleted", total)
 	}
 }
 

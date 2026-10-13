@@ -661,6 +661,16 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	for _, base := range profileBases {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
+	// Disposable Runs boot every runtime base with a payload-free drive1
+	// that carries only the execution marker. Staging it here removes the
+	// per-runtime layer configuration operators previously had to publish.
+	executionLayers, err := h.EnsureExecutionLayers(ctx, arch, "", wire.ExecRunner{})
+	if err != nil {
+		return err
+	}
+	for _, layer := range executionLayers {
+		log.Info("imaged execution layer ready", "profile", layer.Profile, "key", layer.StorageKey, "skipped", layer.Skipped)
+	}
 	if prestageOnlyFromEnv(getenv) {
 		log.Info("imaged runtime-base pre-stage complete",
 			"arch", arch,

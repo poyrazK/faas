@@ -1,0 +1,5 @@
+[Service]
+# Disposable Runs dispatch gate. Artifacts (kernel, runtime bases, execution
+# layers) are derived from storage; imaged stages the execution layers.
+Environment=FAAS_EXECUTION_DISPATCH={{ (faas_runs_enabled | default(false) | bool) | ternary('1', '0') }}
+Environment=FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY={{ faas_runs_dispatch_concurrency | default(1) }}

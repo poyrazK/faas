@@ -981,7 +981,9 @@ type InstanceResponse struct {
 
 // UsageResponse is one app's monthly usage slice (spec §10).
 type UsageResponse struct {
-	AppID     string `json:"app_id"`
+	AppID string `json:"app_id"`
+	// Kind is "app", "job", or "run"; Runs share one row per account.
+	Kind      string `json:"kind,omitempty"`
 	MBSeconds int64  `json:"mb_seconds"`
 	Requests  int64  `json:"requests"`
 	// IncludedGBHours is the included quota for the account's plan at the

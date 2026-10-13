@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.usage_response_kind import UsageResponseKind, check_usage_response_kind
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="UsageResponse")
@@ -22,6 +23,8 @@ class UsageResponse:
     mb_seconds: int
     requests: int
     included_gb_hours: int
+    kind: UsageResponseKind | Unset = UNSET
+    """Workload meter. All disposable Runs of an account share one row whose app_id is the account ID."""
     cpu_usec: int | Unset = UNSET
     """Cumulative host cgroup CPU-µs (informational; not billed). issue #279 / PR-B."""
     tx_bytes: int | Unset = UNSET
@@ -49,6 +52,10 @@ class UsageResponse:
 
         included_gb_hours = self.included_gb_hours
 
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind
+
         cpu_usec = self.cpu_usec
 
         tx_bytes = self.tx_bytes
@@ -69,6 +76,8 @@ class UsageResponse:
                 "included_gb_hours": included_gb_hours,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if cpu_usec is not UNSET:
             field_dict["cpu_usec"] = cpu_usec
         if tx_bytes is not UNSET:
@@ -93,6 +102,13 @@ class UsageResponse:
 
         included_gb_hours = d.pop("included_gb_hours")
 
+        _kind = d.pop("kind", UNSET)
+        kind: UsageResponseKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = check_usage_response_kind(_kind)
+
         cpu_usec = d.pop("cpu_usec", UNSET)
 
         tx_bytes = d.pop("tx_bytes", UNSET)
@@ -108,6 +124,7 @@ class UsageResponse:
             mb_seconds=mb_seconds,
             requests=requests,
             included_gb_hours=included_gb_hours,
+            kind=kind,
             cpu_usec=cpu_usec,
             tx_bytes=tx_bytes,
             net_tx_bytes=net_tx_bytes,

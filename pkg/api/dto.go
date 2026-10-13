@@ -4428,7 +4428,10 @@ type ListInstancesResponse struct {
 // without an integer→float→integer round trip; the SDK exposes
 // both the raw integer and the derived CPUHours getter.
 type UsageResponse struct {
-	AppID     string `json:"app_id"`
+	AppID string `json:"app_id"`
+	// Kind is the workload meter: "app", "job", or "run". All of an
+	// account's disposable Runs share one row whose app_id is the account ID.
+	Kind      string `json:"kind,omitempty"`
 	MBSeconds int64  `json:"mb_seconds"`
 	Requests  int64  `json:"requests"`
 	// IncludedGBHours is the included quota for the account's plan at the
@@ -5031,7 +5034,9 @@ type UsageExportResponse struct {
 // yesterday / today / single-day queries where the monthly grain
 // is over-aggregated. ADR-048 §5.
 type DailyUsageResponse struct {
-	AppID          string `json:"app_id"`
+	AppID string `json:"app_id"`
+	// Kind is the workload meter: "app", "job", or "run".
+	Kind           string `json:"kind,omitempty"`
 	Day            string `json:"day"` // YYYY-MM-DD
 	MBSeconds      int64  `json:"mb_seconds"`
 	Requests       int64  `json:"requests"`

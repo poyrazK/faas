@@ -5842,13 +5842,13 @@ func cmdUsageList(args []string) int {
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6,
+				usageRowLabel(slugs, u.Kind, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6,
 				u.TotalEgressGB(),
 				float64(u.TXBytes)/(1024*1024*1024),
 				float64(u.NetTxBytes)/(1024*1024*1024))
 			continue
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
+		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", usageRowLabel(slugs, u.Kind, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
@@ -7800,10 +7800,10 @@ func cmdUsageDaily(args []string) int {
 			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
 			netGB := float64(u.NetTxBytes) / (1024 * 1024 * 1024)
 			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  egress %.3f GB (tx %.2f / net %.2f)\n",
-				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
+				usageRowLabel(slugs, u.Kind, u.AppID), u.Day, u.Requests, gbh, netGB, txGB, netGB)
 			continue
 		}
-		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
+		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", usageRowLabel(slugs, u.Kind, u.AppID), u.Day, u.Requests, gbh)
 	}
 	return 0
 }

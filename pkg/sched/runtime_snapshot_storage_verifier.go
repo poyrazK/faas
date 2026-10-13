@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -28,6 +29,47 @@ func NewStorageRuntimeSnapshotVerifier(backend storage.StorageBackend) *StorageR
 }
 
 var _ RuntimeSnapshotVerifier = (*StorageRuntimeSnapshotVerifier)(nil)
+
+// runtimeSnapshotVerifiedCacheMax bounds the verified-entry memo. Catalog rows
+// are per runtime identity, so a node sees a handful of entries at a time.
+const runtimeSnapshotVerifiedCacheMax = 256
+
+// CachingRuntimeSnapshotVerifier remembers successful verifications. Catalog
+// entries and their storage objects are immutable (a capture gets a fresh
+// key), so re-hashing a multi-hundred-megabyte memory file on every Run claim
+// would only add restore latency. Failures are never cached.
+type CachingRuntimeSnapshotVerifier struct {
+	inner    RuntimeSnapshotVerifier
+	mu       sync.Mutex
+	verified map[string]struct{}
+}
+
+func NewCachingRuntimeSnapshotVerifier(inner RuntimeSnapshotVerifier) *CachingRuntimeSnapshotVerifier {
+	return &CachingRuntimeSnapshotVerifier{inner: inner, verified: map[string]struct{}{}}
+}
+
+func (v *CachingRuntimeSnapshotVerifier) VerifyRuntimeSnapshot(ctx context.Context, snapshot RuntimeSnapshot) error {
+	if v == nil || v.inner == nil {
+		return ErrRuntimeSnapshotUnwired
+	}
+	key := snapshot.StorageKey + "\x00" + snapshot.SnapshotDigest
+	v.mu.Lock()
+	_, ok := v.verified[key]
+	v.mu.Unlock()
+	if ok {
+		return nil
+	}
+	if err := v.inner.VerifyRuntimeSnapshot(ctx, snapshot); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	if len(v.verified) >= runtimeSnapshotVerifiedCacheMax {
+		clear(v.verified)
+	}
+	v.verified[key] = struct{}{}
+	v.mu.Unlock()
+	return nil
+}
 
 // VerifyRuntimeSnapshot streams the exact expected byte counts through a
 // SHA-256 digest. It never buffers a snapshot in memory and caps reads at one

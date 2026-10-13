@@ -149,6 +149,80 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 		return RuntimeSnapshot{}, fmt.Errorf("sched: verify published runtime snapshot: %w", err)
 	}
 
+	entry, err = p.insertCatalogRecord(ctx, catalogKey, entry)
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	cleanup = false
+	return entry, nil
+}
+
+// RegisterStoredRuntimeSnapshot catalogs a capture that vmmd already wrote to
+// storageKey and its vmstate sibling (PauseAndSnapshot of a payload-free
+// execution VM). The objects are hashed once here; restores then verify
+// against that digest. On any failure the objects are removed and no row is
+// inserted, so the identity stays a cache miss.
+func (p *RuntimeSnapshotPublisher) RegisterStoredRuntimeSnapshot(ctx context.Context, identity RuntimeSnapshotIdentity, storageKey string, memBytes, vmstateBytes int64, createdAt time.Time) (RuntimeSnapshot, error) {
+	if p == nil || p.store == nil || p.storage == nil {
+		return RuntimeSnapshot{}, ErrRuntimeSnapshotUnwired
+	}
+	vmstateKey := runtimeSnapshotVMStateStorageKey(storageKey)
+	cleanup := true
+	defer func() {
+		if cleanup {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			p.cleanupObjects(cleanupCtx, storageKey, vmstateKey)
+		}
+	}()
+	if err := identity.Validate(); err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	if memBytes <= 0 || vmstateBytes <= 0 {
+		return RuntimeSnapshot{}, fmt.Errorf("%w: snapshot byte sizes must be positive", ErrRuntimeSnapshotInvalid)
+	}
+	catalogKey, err := identity.Key()
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	if err := p.ensureCatalogKeyAvailable(ctx, catalogKey); err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	h := sha256.New()
+	_, _ = io.WriteString(h, runtimeSnapshotDigestDomain)
+	if err := verifySnapshotObject(ctx, p.storage, h, "mem", storageKey, memBytes); err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	if err := verifySnapshotObject(ctx, p.storage, h, "vmstate", vmstateKey, vmstateBytes); err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	if createdAt.IsZero() {
+		createdAt = p.now()
+	}
+	entry := RuntimeSnapshot{
+		Identity: identity, StorageKey: storageKey, SnapshotDigest: hex.EncodeToString(h.Sum(nil)),
+		MemBytes: memBytes, VMStateBytes: vmstateBytes, Sanitized: true, PayloadFree: true,
+		State: RuntimeSnapshotReady, CreatedAt: createdAt.UTC(),
+	}
+	if err := entry.Validate(); err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	entry, err = p.insertCatalogRecord(ctx, catalogKey, entry)
+	if err != nil {
+		return RuntimeSnapshot{}, err
+	}
+	cleanup = false
+	return entry, nil
+}
+
+// NewRuntimeSnapshotCaptureKey returns a fresh capture storage key for vmmd to
+// write the memory object to; the vmstate object uses the sibling key.
+func NewRuntimeSnapshotCaptureKey() (storageKey, vmstateKey string) {
+	storageKey = runtimeSnapshotPublicationStorageKey()
+	return storageKey, runtimeSnapshotVMStateStorageKey(storageKey)
+}
+
+func (p *RuntimeSnapshotPublisher) insertCatalogRecord(ctx context.Context, catalogKey string, entry RuntimeSnapshot) (RuntimeSnapshot, error) {
 	record := state.RuntimeSnapshotRecord{
 		Profile:             entry.Identity.Profile,
 		CatalogKey:          catalogKey,
@@ -177,7 +251,6 @@ func (p *RuntimeSnapshotPublisher) PublishRuntimeSnapshot(ctx context.Context, p
 		return RuntimeSnapshot{}, fmt.Errorf("sched: publish runtime snapshot catalog: %w", err)
 	}
 	entry.CreatedAt = stored.CreatedAt
-	cleanup = false
 	return entry, nil
 }
 

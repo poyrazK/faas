@@ -5368,6 +5368,34 @@ DELETE FROM execution_payloads AS payload
 USING candidates
 WHERE payload.execution_id = candidates.execution_id;
 
+-- name: ExecutionPurgeExpiredReceipts :execrows
+-- Receipt retention. Deleting the execution cascades to its payload, replay
+-- events, integration grants, and artifact grants; the usage ledger has no
+-- FK to executions and is kept. A receipt is deleted only after its usage is
+-- recorded, and never while its managed workflow can still read it.
+WITH candidates AS (
+  SELECT execution.id
+  FROM executions AS execution
+  WHERE execution.status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+    AND execution.finished_at < sqlc.arg(finished_before)::timestamptz
+    AND EXISTS (
+      SELECT 1 FROM execution_usage_ledger AS ledger
+      WHERE ledger.execution_id = execution.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM agent_execution_workflows AS workflow
+      WHERE workflow.account_id = execution.account_id
+        AND workflow.workflow_id = execution.workflow_id
+        AND workflow.status IN ('queued', 'running')
+    )
+  ORDER BY execution.finished_at, execution.id
+  FOR UPDATE OF execution SKIP LOCKED
+  LIMIT sqlc.arg(batch_limit)::int
+)
+DELETE FROM executions AS execution
+USING candidates
+WHERE execution.id = candidates.id;
+
 -- name: ExecutionUsageRecord :exec
 -- The execution ID is the idempotency key. Recording from the terminal
 -- execution row keeps usage and the lifecycle projection in lockstep and
@@ -5384,6 +5412,26 @@ FROM executions
 WHERE id = sqlc.arg(execution_id)
   AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
 ON CONFLICT (execution_id) DO NOTHING;
+
+-- name: ExecutionComputeUsageRecord :exec
+-- Billable Run compute: (admitted memory + per-VM overhead) MB for every
+-- started second between running and terminal, host-observed. A Run that
+-- never reached running (restore failure, queued cancel) is not charged.
+-- The execution ID is the usage instance ID, so retries cannot double-count.
+INSERT INTO usage_minutes (
+    account_id, instance_id, minute, mb_seconds, cpu_usec, meter_kind, execution_id
+)
+SELECT account_id, id,
+       date_trunc('minute', finished_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+       (memory_mb + sqlc.arg(overhead_mb)::int)::bigint
+         * GREATEST(1, ceil(EXTRACT(EPOCH FROM (finished_at - started_at))))::bigint,
+       cpu_time_ms * 1000, 'run', id
+FROM executions
+WHERE id = sqlc.arg(execution_id)
+  AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+  AND started_at IS NOT NULL
+  AND finished_at IS NOT NULL
+ON CONFLICT (instance_id, minute) DO NOTHING;
 
 -- name: ExecutionUsageByAccount :one
 SELECT

@@ -310,6 +310,13 @@ type ExecutionStore interface {
 	SweepExecutions(ctx context.Context, at time.Time, limit int) (ExecutionSweepResult, error)
 }
 
+// ExecutionRetentionStore deletes terminal Run receipts that finished before
+// a cutoff. Usage ledger rows are kept; receipts without a recorded usage row
+// and receipts of active managed workflows are never deleted.
+type ExecutionRetentionStore interface {
+	PurgeExpiredExecutions(ctx context.Context, finishedBefore time.Time, limit int) (int, error)
+}
+
 // ExecutionPrincipalListStore is an optional secure listing extension for
 // narrow Runs API keys. Implementations must filter ownership in storage
 // before pagination; callers must fail closed when it is unavailable.

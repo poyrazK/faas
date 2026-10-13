@@ -366,6 +366,27 @@
     group: root
     mode: "0644"
 
+# Disposable Runs (docs/executions.md): faas_runs_enabled turns on apid
+# admission and schedd dispatch together. Rendered unconditionally so turning
+# the switch off clears both gates.
+- name: control_plane_service — set disposable Runs admission gate
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-runs-apid.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-runs.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set disposable Runs dispatch gate
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: zz-faas-runs-schedd.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-runs.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # faas_apid_app_errors_listen (apid, the LISTENER) and
 # faas_gatewayd_app_errors_target (gatewayd-internal, the CLIENT) are a pair.
 # Setting only the client is silent and permanent: gatewayd-internal dials a
