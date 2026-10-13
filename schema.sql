@@ -19322,7 +19322,9 @@ CREATE TABLE public.dev_watch_settings (
     app_id uuid NOT NULL,
     command text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT dev_watch_settings_command_check CHECK ((((octet_length(command) >= 1) AND (octet_length(command) <= 512)) AND (command !~ '[\n\r]'::text)))
+    host text DEFAULT ''::text NOT NULL,
+    CONSTRAINT dev_watch_settings_command_check CHECK ((((octet_length(command) >= 1) AND (octet_length(command) <= 512)) AND (command !~ '[\n\r]'::text))),
+    CONSTRAINT dev_watch_settings_host_check CHECK (((octet_length(host) <= 253) AND (host ~ '^[a-z0-9.-]*$'::text)))
 );
 
 

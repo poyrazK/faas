@@ -191,8 +191,34 @@ the builder VM. That is the only case that waits for a build.
      acknowledges them without restarting the workload.
 3. **Framework defaults.** `dev.watch: true` resolves the command from the
    package's `dev` script or known frameworks (Next.js, Vite, Nuxt, Remix,
-   SvelteKit). The rebuild explainer suggests `--watch`. *The `dev` script
-   default and the explainer suggestion are implemented; known-framework
-   commands are not.*
+   SvelteKit). The rebuild explainer suggests `--watch`. *Implemented
+   (2026-10-13):*
+   - The CLI keeps `npm run dev` when a `dev` script exists and appends
+     `-- --host 0.0.0.0` when that script is a single command starting a
+     server that listens on `localhost` by default (`vite`, `vite dev`,
+     `astro dev`, `nuxt dev`, `remix vite:dev`, `react-router dev`). Such a
+     server fails its boot with `app_loopback_bound`: the gateway reaches the
+     guest at 10.0.0.2 and port normalization only DNATs to the observed
+     port. A script that already passes `--host` is used as written; a
+     composite one (`&&`, `concurrently`) is used as written with a note.
+   - Without a `dev` script it runs the detected framework's own command:
+     Nuxt, Astro, SvelteKit, React Router, Remix with Vite and Vite with
+     `--host 0.0.0.0`, Next.js as `next dev` (which already listens on every
+     interface). Anything else still needs a `dev` script or
+     `--watch-command`.
+   - Development servers also refuse requests for hosts or origins they do
+     not know: Vite 5.4.12+/6.0.9+ answers 403 to an unknown `Host`, and
+     Next.js 16 blocks the HMR websocket from an origin outside
+     `allowedDevOrigins`. The gateway forwards the customer `Host`, so apid
+     stores the developer app's public hostname with the watch command
+     (`dev_watch_settings.host`), builderd passes it in the build manifest
+     and keys the build cache on it, and the watch overlay sets
+     `GREGALE_DEV_HOST` and Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`
+     in the image. Next.js reads `allowedDevOrigins` only from its config
+     file, so the CLI tells Next.js developers to add
+     `process.env.GREGALE_DEV_HOST` there when `next.config` does not
+     mention it.
+   - The rebuild explainer suggests `--watch`, with the command it would
+     run, only when the CLI can pick one for the app.
 4. **Python.** `uvicorn --reload` / Flask debug for uv projects, whose
    `uv sync` over the full source makes them non-verbatim today.

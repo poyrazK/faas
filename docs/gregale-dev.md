@@ -232,7 +232,7 @@ delivers the edit. With `--json`, the watcher emits a
 
 When a sync cannot be live-patched, the terminal says why and what would make
 the app patchable, for example
-`Full rebuild instead of a live patch: your app has a build step, so edits go through the build. Run gregale dev --watch ...`
+`Full rebuild instead of a live patch: your app has a build step, so edits go through the build. Run gregale dev --watch to hot-reload it with its development server (npm run dev) instead ...`
 or that a dependency or lockfile changed. A reason is printed when it first
 appears and again only after a sync with a different outcome, so an app with a
 build step hears it once per session. Expected cases (the first sync, a running
@@ -320,8 +320,37 @@ own development server in the developer environment, so edits hot-reload in
 seconds:
 
 ```bash
-gregale dev --watch                              # runs `npm run dev`
+gregale dev --watch                              # runs your dev script or framework
 gregale dev --watch-command "next dev"           # or an explicit command
+```
+
+Without `--watch-command`, `--watch` picks the command itself:
+
+| Your app | Command |
+| --- | --- |
+| a `dev` script that starts Vite, Astro, Nuxt, SvelteKit (`vite dev`), Remix (`remix vite:dev`) or React Router | `npm run dev -- --host 0.0.0.0` |
+| any other `dev` script | `npm run dev` |
+| no `dev` script: Nuxt / Astro / SvelteKit / React Router / Remix with Vite / Vite | `nuxt dev` / `astro dev` / `vite dev` / `react-router dev` / `remix vite:dev` / `vite`, each with `--host 0.0.0.0` |
+| no `dev` script: Next.js | `next dev` |
+
+`--host 0.0.0.0` is added because those servers listen on `localhost` by
+default, which the gateway cannot reach. A `dev` script that already passes
+`--host`, or that runs several commands (`&&`, `concurrently`), is used as
+written; make sure its server listens on `0.0.0.0`. The terminal prints the
+command it chose.
+
+The developer environment's hostname is available to the development server
+as `GREGALE_DEV_HOST`. Vite-based servers accept it automatically (Gregale
+sets Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`). Next.js only serves hot
+reload to origins listed in `allowedDevOrigins`, which it reads from its
+config file alone, so add the hostname there; `gregale dev --watch` reminds
+you when `next.config` does not set it:
+
+```js
+// next.config.js
+module.exports = {
+  allowedDevOrigins: process.env.GREGALE_DEV_HOST ? [process.env.GREGALE_DEV_HOST] : [],
+}
 ```
 
 or in `gregale.yaml`:
@@ -343,9 +372,9 @@ Watch mode needs:
 
 - a Node.js app built without a Dockerfile (a Dockerfile owner can write a
   development stage instead);
-- a `dev` script in `package.json`, or `--watch-command`. Bind the server to
-  all interfaces if it defaults to `localhost` only (for example
-  `vite --host`);
+- a `dev` script in `package.json`, a framework from the table above, or
+  `--watch-command`. An explicit command must start a server that listens on
+  all interfaces (for example `vite --host 0.0.0.0`);
 - at least 512 MB of RAM for the developer environment;
 - authentication on the developer environment, because development servers
   serve source maps and error overlays.

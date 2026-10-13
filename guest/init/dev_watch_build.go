@@ -24,7 +24,10 @@ func errDevWatchUnsupported(format string, args ...any) error {
 // non-executing path command, so the step only layers the source onto the
 // installed dependencies; sets the development command as the start command;
 // and marks the image with NODE_ENV=development and api.DevWatchEnv=1, which
-// tells guest-init to apply live patches without restarting the server.
+// tells guest-init to apply live patches without restarting the server. The
+// app's public hostname goes in api.DevWatchHostEnv and, for Vite-based
+// servers, which answer 403 to a Host they do not know, in
+// api.DevWatchViteAllowedHostsEnv.
 func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	if m.DevWatchCommand == "" {
 		return nil
@@ -52,6 +55,10 @@ func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	}
 	variables["NODE_ENV"] = "development"
 	variables[api.DevWatchEnv] = "1"
+	if m.DevWatchHost != "" && api.ValidDevWatchHost(m.DevWatchHost) {
+		variables[api.DevWatchHostEnv] = m.DevWatchHost
+		variables[api.DevWatchViteAllowedHostsEnv] = m.DevWatchHost
+	}
 	return nil
 }
 

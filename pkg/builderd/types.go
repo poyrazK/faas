@@ -50,6 +50,8 @@ type VMRequest struct {
 	Function       bool   // handler build; allows markerless Node/Python sources
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
+	// DevWatchHost is the developer app's public hostname for that image.
+	DevWatchHost string
 	// DependencyCacheKey is a platform-derived, tenant-scoped digest. Empty
 	// keeps the builder fully ephemeral; developer sessions set it so matching
 	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.

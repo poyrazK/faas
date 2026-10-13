@@ -14,7 +14,7 @@ import (
 // adr: 1170 — the watch overlay sets the development command and marks the
 // image, and only Node builds accept it.
 func TestDevWatchRailpackConfig(t *testing.T) {
-	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev"}
+	m := api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev", DevWatchHost: "dev-api.gregale.dev"}
 	config := map[string]any{"deploy": map[string]any{"base": map[string]any{"image": "runner"}}}
 	if err := devWatchRailpackConfig(config, m); err != nil {
 		t.Fatal(err)
@@ -24,8 +24,19 @@ func TestDevWatchRailpackConfig(t *testing.T) {
 		t.Fatalf("deploy = %+v", deploy)
 	}
 	variables := deploy["variables"].(map[string]any)
-	if variables["NODE_ENV"] != "development" || variables[api.DevWatchEnv] != "1" {
+	if variables["NODE_ENV"] != "development" || variables[api.DevWatchEnv] != "1" ||
+		variables[api.DevWatchHostEnv] != "dev-api.gregale.dev" || variables[api.DevWatchViteAllowedHostsEnv] != "dev-api.gregale.dev" {
 		t.Fatalf("variables = %+v", variables)
+	}
+	for _, host := range []string{"", "Dev-API.gregale.dev", "a.example,evil.example"} {
+		config := map[string]any{}
+		if err := devWatchRailpackConfig(config, api.BuildManifest{Framework: api.FrameworkRailpackNode, DevWatchCommand: "npm run dev", DevWatchHost: host}); err != nil {
+			t.Fatal(err)
+		}
+		variables := config["deploy"].(map[string]any)["variables"].(map[string]any)
+		if _, ok := variables[api.DevWatchHostEnv]; ok {
+			t.Fatalf("host %q reached the image: %+v", host, variables)
+		}
 	}
 	if err := devWatchRailpackConfig(map[string]any{}, api.BuildManifest{Framework: api.FrameworkRailpackPython, DevWatchCommand: "uvicorn app:app --reload"}); err == nil ||
 		!strings.HasPrefix(err.Error(), api.CodeDevWatchUnsupported) {

@@ -505,7 +505,7 @@ func cmdDev(args []string) int {
 	if *debug && !devDebugSupported(sourceDir, config) {
 		return printErr("Invalid flags", fmt.Errorf("--debug supports Node.js workloads only"))
 	}
-	devWatch, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
+	devWatch, devWatchNotes, err := resolveDevWatch(sourceDir, config, *watch, *watchCommand)
 	if err != nil {
 		return printErr("Invalid --watch", err)
 	}
@@ -527,6 +527,9 @@ func cmdDev(args []string) int {
 		}
 		if session.Watch != nil {
 			PrintProgress(osStdout, "watch mode: runs %q with hot reload; this environment does not run your production build", session.Watch.Command)
+			for _, note := range devWatchNotes {
+				PrintProgress(osStdout, "watch mode: %s", note)
+			}
 		}
 	}
 
@@ -539,7 +542,10 @@ func cmdDev(args []string) int {
 	devBrowserOpened := false
 	var diagnosticReported atomic.Bool
 	var syncHistoryWarned atomic.Bool
-	var patchExplainer devPatchExplainer
+	patchExplainer := devPatchExplainer{}
+	if devWatch == nil && config.shape != shapeFunction {
+		patchExplainer.watchCommand = devWatchSuggestion(sourceDir)
+	}
 	seedPending := *postgresSeed != ""
 	forceReseed := *reseed
 	reportDevDiagnostic := func(d devDiagnostic) {

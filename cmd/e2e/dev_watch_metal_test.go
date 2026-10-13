@@ -12,6 +12,14 @@
 //	                                development server, which reloads it
 //	                                itself; the edit is served by the same
 //	                                instance before the second build is live
+//
+// The fixture's server behaves like Vite's on the two points phase 3's
+// framework defaults exist for: it listens on localhost unless started with
+// --host, and it answers 403 to a Host header it was not told about. The
+// session uses the command the CLI picks for such a dev script
+// (`npm run dev -- --host 0.0.0.0`), and the image must carry the
+// environment's hostname in GREGALE_DEV_HOST and Vite's allowed-hosts
+// variable.
 package e2e_test
 
 import (
@@ -34,7 +42,9 @@ const devWatchWorkspace = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 // devWatchFixture is a Node app with a build script, which ADR-740 alone
 // never live-patches (build_command). Its dev script is node --watch, the
-// smallest development server that reloads edited files without help.
+// smallest development server that reloads edited files without help. Like
+// Vite, it listens on 127.0.0.1 unless given --host and refuses Host headers
+// other than IP literals, localhost and __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS.
 func devWatchFixture(t *testing.T, body string) []byte {
 	t.Helper()
 	const pkgJSON = `{"name":"faas-dev-watch","version":"1.0.0","private":true,"engines":{"node":"22"},
@@ -42,10 +52,26 @@ func devWatchFixture(t *testing.T, body string) []byte {
 "dependencies":{}}
 `
 	indexJS := `const http = require('http');
+const hostFlag = process.argv.indexOf('--host');
+const listenHost = hostFlag >= 0 ? process.argv[hostFlag + 1] : '127.0.0.1';
+const allowed = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS || '').split(',').filter(Boolean);
+const hostAllowed = (header) => {
+  const name = (header || '').replace(/:[0-9]+$/, '');
+  return name === 'localhost' || /^[0-9.]+$/.test(name) || name.startsWith('[') || allowed.includes(name);
+};
 http.createServer((req, res) => {
+  if (!hostAllowed(req.headers.host)) {
+    res.writeHead(403, {'content-type': 'text/plain'});
+    res.end('Blocked request. This host is not allowed.\n');
+    return;
+  }
   res.writeHead(200, {'content-type': 'text/plain'});
+  if (req.url === '/dev-host') {
+    res.end((process.env.GREGALE_DEV_HOST || '') + '\n');
+    return;
+  }
   res.end(req.url === '/healthz' ? 'ready\n' : '` + body + `\n');
-}).listen(3000, () => console.log('dev watch fixture listening on :3000'));
+}).listen(3000, listenHost, () => console.log('dev watch fixture listening on ' + listenHost + ':3000'));
 `
 	return buildTarGz(t, map[string]string{"package.json": pkgJSON, "index.js": indexJS})
 }
@@ -54,7 +80,12 @@ http.createServer((req, res) => {
 // only runs behind the developer environment's authentication.
 func devWatchGet(t *testing.T, h *e2etest.Harness, host, key string) (string, int) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, gatewayAppURL(h, ""), nil)
+	return devWatchGetPath(t, h, host, key, "")
+}
+
+func devWatchGetPath(t *testing.T, h *e2etest.Harness, host, key, path string) (string, int) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, gatewayAppURL(h, "")+strings.TrimPrefix(path, "/"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +149,7 @@ func TestDevWatchMetal(t *testing.T) {
 		t.Fatalf("require authentication: status %d", status)
 	}
 	watchBody, status := doReq(t, h, key, http.MethodPut, "/v1/dev/sessions/devwatch", api.UpsertDevSessionRequest{
-		WorkspaceID: devWatchWorkspace, Watch: &api.DevWatch{Command: "npm run dev"}})
+		WorkspaceID: devWatchWorkspace, Watch: &api.DevWatch{Command: "npm run dev -- --host 0.0.0.0"}})
 	if status != http.StatusOK {
 		t.Fatalf("enable watch mode: status %d body %s", status, watchBody)
 	}
@@ -138,8 +169,14 @@ func TestDevWatchMetal(t *testing.T) {
 		if !verbatim || !watch {
 			t.Fatalf("build provenance verbatim=%t watch=%t, want a verbatim watch build of an app with a build script", verbatim, watch)
 		}
+		// 200 rather than 403 proves the gateway's Host reached a server
+		// that was told to accept it; reaching it at all proves --host
+		// passed through npm run dev.
 		if body, code := devWatchGet(t, h, host, key); code != http.StatusOK || body != "dev watch v1" {
 			t.Fatalf("app probe = %d %q, want 200 v1", code, body)
+		}
+		if body, code := devWatchGetPath(t, h, host, key, "/dev-host"); code != http.StatusOK || body != host {
+			t.Fatalf("GREGALE_DEV_HOST = %d %q, want %q", code, body, host)
 		}
 	})
 
