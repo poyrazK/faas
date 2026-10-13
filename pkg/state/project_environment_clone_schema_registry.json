@@ -55,6 +55,14 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_totp_failures",
+    "columns": [
+      "account_id",
+      "failed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "accounts",
     "columns": [
       "abuse_hold_at",
@@ -1669,6 +1677,18 @@
       "operation",
       "resource_id",
       "resource_type"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "control_plane_leases",
+    "columns": [
+      "acquired_at",
+      "epoch",
+      "expires_at",
+      "holder",
+      "name",
+      "renewed_at"
     ],
     "kind": "operational"
   },
