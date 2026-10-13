@@ -1178,9 +1178,10 @@ var cliCommands = []cliCommand{
 		Name:     dispatchApps,
 		DocSlug:  "apps",
 		Short:    "List your apps",
-		Examples: []string{"gregale apps", "gregale apps --json", "gregale apps -q my-api"},
+		Examples: []string{"gregale apps", "gregale apps --json", "gregale apps rm my-api --dry-run", "gregale apps rm my-api --yes"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
+			{Name: "rm", Short: "Delete an app (alias: delete); restore it within the deletion grace window", Positionals: []string{"<slug>"}},
 			{Name: "restore", Short: "Restore an app during its deletion grace window", Positionals: []string{"<slug>"}},
 			{Name: "routes", Short: "List admitted per-route labels for one app", Positionals: []string{"<slug>"}},
 			appTCPListenerCLISubcommand(true),

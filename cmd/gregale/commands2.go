@@ -950,7 +950,8 @@ func cmdApp(args []string) int {
 	return 0
 }
 
-// cmdAppsRm implements `gregale apps -q <slug>` (DELETE /v1/apps/{slug}).
+// cmdAppsRm implements `gregale apps rm <slug>` and `gregale apps -q <slug>`
+// (DELETE /v1/apps/{slug}).
 // On the interactive path (no -q) the user must retype the slug
 // verbatim (issue #312) so a stray `y` cannot delete the app.
 
@@ -964,7 +965,7 @@ func cmdAppsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps [--dry-run|-q|--quiet|--yes] <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale apps rm <slug> [--dry-run|-q|--quiet|--yes]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -3223,6 +3224,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			projectName = defaultProjectSlug(*tarball)
 		case *name == "" && *templateName != "":
 			projectName = *templateName
+		case *name == "":
+			// Compose names its project at the top level; a directory
+			// name that differs must not claim another project's apps.
+			if composeName := composeProjectName(sourceDir); composeName != "" {
+				projectName = composeName
+			}
 		}
 		*projectSlug = sanitizeProjectSlug(projectName)
 	}
@@ -3824,7 +3831,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return jsonOut(writeJSONProblem(planProblem(plan)))
 			}
 			printPlanText(osStdout, plan, excludeList, *deployShowAffected)
-			return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
+			return printErr("Project plan cannot be applied", planBlockedError(plan))
 		}
 		if !*yes {
 			if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
