@@ -35094,6 +35094,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Saved capacity or plan ceiling changed from expected values; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -63709,12 +63714,22 @@ components:
         configured: { type: boolean }
         policy: { $ref: '#/components/schemas/EventRoutingRetryPolicy' }
 
+    EventSubscriptionCapacityGuard:
+      type: object
+      additionalProperties: false
+      description: Value preconditions checked atomically before changing subscription capacity. Both fields are required. Checks saved configuration and the current plan allowance; live usage is not reserved.
+      required: [max_pending_deliveries, plan_max_pending_deliveries]
+      properties:
+        max_pending_deliveries: { type: integer, minimum: 0, description: "Expected saved setting, including zero for plan default; may exceed a downgraded plan ceiling." }
+        plan_max_pending_deliveries: { type: integer, minimum: 1, description: Expected current plan consumer ceiling before applying a subscription override. }
+
     EventSubscriptionCapacityRequest:
       type: object
       additionalProperties: false
       description: Explicit per-subscription live-delivery ceiling. Zero restores the plan default; positive values must not exceed the current plan ceiling. Requires deploy write or admin scope and MFA.
       required: [max_pending_deliveries]
       properties:
+        expected: { $ref: '#/components/schemas/EventSubscriptionCapacityGuard' }
         max_pending_deliveries: { type: integer, minimum: 0, description: Maximum pending plus dispatching deliveries; zero restores the current plan default. }
 
     EventSubscriptionDeliveryControl:

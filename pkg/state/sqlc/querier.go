@@ -923,6 +923,7 @@ type Querier interface {
 	EventStorageLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error)
 	EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error)
+	EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	EventSubscriptionCapacityOverride(ctx context.Context, db DBTX, arg EventSubscriptionCapacityOverrideParams) (int32, error)
 	EventSubscriptionCapacitySet(ctx context.Context, db DBTX, arg EventSubscriptionCapacitySetParams) error
 	EventSubscriptionControlGet(ctx context.Context, db DBTX, arg EventSubscriptionControlGetParams) (EventSubscriptionDeliveryControl, error)

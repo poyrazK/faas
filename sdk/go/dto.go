@@ -472,6 +472,7 @@ type EventConsumerHealth = api.EventConsumerHealth
 type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
 type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
 type EventSubscriptionCapacityRequest = api.EventSubscriptionCapacityRequest
+type EventSubscriptionCapacityGuard = api.EventSubscriptionCapacityGuard
 type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
 type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
 

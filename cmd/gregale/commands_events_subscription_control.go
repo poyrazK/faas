@@ -14,8 +14,11 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("events subscription-"+action, flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "confirm changing subscription delivery")
+	var expectedMax, expectedPlan *int
 	var capacity *int
 	if action == "capacity" {
+		expectedMax = fs.Int("expected-max-pending", -1, "reviewed saved capacity; requires expected-plan-max-pending")
+		expectedPlan = fs.Int("expected-plan-max-pending", -1, "reviewed plan ceiling; requires expected-max-pending")
 		capacity = fs.Int("max-pending", -1, "maximum pending plus dispatching deliveries; 0 restores plan limit")
 	}
 	var rate *int
@@ -39,6 +42,21 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 		PrintUsage(os.Stderr, usage, "events")
 		return 1
 	}
+	var guard *api.EventSubscriptionCapacityGuard
+	if action == "capacity" {
+		provided := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "expected-max-pending" || f.Name == "expected-plan-max-pending" {
+				provided = true
+			}
+		})
+		if provided {
+			guard = &api.EventSubscriptionCapacityGuard{MaxPendingDeliveries: expectedMax, PlanMaxPendingDeliveries: expectedPlan}
+			if err := (api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard}).Validate(); err != nil {
+				return printErr("Invalid capacity expectations", err)
+			}
+		}
+	}
 	if _, err := uuid.Parse(positional[1]); err != nil {
 		return printErr("Invalid subscription ID", err)
 	}
@@ -49,7 +67,7 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	var out api.EventSubscriptionDeliveryControl
 	switch action {
 	case "capacity":
-		out, err = client.SetEventSubscriptionCapacity(context.Background(), positional[0], positional[1], api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity})
+		out, err = client.SetEventSubscriptionCapacity(context.Background(), positional[0], positional[1], api.EventSubscriptionCapacityRequest{MaxPendingDeliveries: capacity, Expected: guard})
 	case "pause":
 		out, err = client.PauseEventSubscription(context.Background(), positional[0], positional[1])
 	case "resume":

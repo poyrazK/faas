@@ -2880,6 +2880,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `Saved capacity or plan ceiling changed from expected values; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
         504: `Set consumer delivery capacity: subscription control request timed out.`,
       },
     });

@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const eventSubscriptionCapacityAccount = `-- name: EventSubscriptionCapacityAccount :one
+SELECT plan FROM accounts WHERE id=$1::uuid FOR SHARE
+`
+
+func (q *Queries) EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, eventSubscriptionCapacityAccount, accountID)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
+}
+
 const eventSubscriptionCapacityOverride = `-- name: EventSubscriptionCapacityOverride :one
 SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
 WHERE account_id=$1::uuid AND app_id=$2::uuid

@@ -23,10 +23,28 @@ func (r EventSubscriptionResumeRequest) Rate() (int, error) {
 	return rate, nil
 }
 
+// EventSubscriptionCapacityGuard compares reviewed saved configuration and
+// plan allowance; it does not reserve live capacity.
+type EventSubscriptionCapacityGuard struct {
+	MaxPendingDeliveries     *int `json:"max_pending_deliveries"`
+	PlanMaxPendingDeliveries *int `json:"plan_max_pending_deliveries"`
+}
+
 // Zero restores the current plan limit. Positive values lower a subscription's
 // live pending-plus-dispatching delivery ceiling without changing siblings.
 type EventSubscriptionCapacityRequest struct {
-	MaxPendingDeliveries *int `json:"max_pending_deliveries"`
+	Expected             *EventSubscriptionCapacityGuard `json:"expected,omitempty"`
+	MaxPendingDeliveries *int                            `json:"max_pending_deliveries"`
+}
+
+func (r EventSubscriptionCapacityRequest) Validate() error {
+	if r.MaxPendingDeliveries == nil || *r.MaxPendingDeliveries < 0 {
+		return fmt.Errorf("max_pending_deliveries must be explicit and nonnegative")
+	}
+	if e := r.Expected; e != nil && (e.MaxPendingDeliveries == nil || e.PlanMaxPendingDeliveries == nil || *e.MaxPendingDeliveries < 0 || *e.PlanMaxPendingDeliveries <= 0) {
+		return fmt.Errorf("expected requires a nonnegative saved setting and a positive plan ceiling")
+	}
+	return nil
 }
 
 type EventSubscriptionDeliveryControl struct {

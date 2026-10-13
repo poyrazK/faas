@@ -42,3 +42,6 @@ WHERE event_subscription_delivery_controls.account_id=excluded.account_id AND ev
 SELECT coalesce((SELECT max_pending_deliveries FROM event_subscription_delivery_controls
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
 AND subscription_id::text=sqlc.arg(subscription_id)::text),0)::integer AS max_pending_deliveries;
+
+-- name: EventSubscriptionCapacityAccount :one
+SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::uuid FOR SHARE;

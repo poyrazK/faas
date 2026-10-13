@@ -26,8 +26,10 @@ func (s *Service) eventSubscriptionControl(w http.ResponseWriter, r *http.Reques
 	}
 	out, err := applyEventSubscriptionControl(ctx, store, r, acct.ID, app.ID, action)
 	switch {
+	case errors.Is(err, state.ErrEventSubscriptionCapacityChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "event_subscription_capacity_changed", "Subscription capacity changed", "saved capacity or plan ceiling differs from the reviewed expectations; refresh preview before applying"))
 	case errors.Is(err, state.ErrInvalidArgument):
-		api.WriteProblem(w, api.ErrValidation("subscription ID must be a UUID; rate must be between 0 and 100; capacity must be explicit, nonnegative and no greater than the current plan limit"))
+		api.WriteProblem(w, api.ErrValidation("subscription ID must be a UUID; rate must be between 0 and 100; capacity must be explicit, nonnegative and no greater than the current plan limit; capacity expectations must include both reviewed values"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Subscription delivery control not found", "no matching subscription or retained control belongs to this app"))
 	case errors.Is(err, context.DeadlineExceeded):
@@ -42,15 +44,7 @@ func applyEventSubscriptionControl(ctx context.Context, store state.EventSubscri
 	sub := r.PathValue("subscriptionID")
 	switch action {
 	case "capacity":
-		capacityStore, ok := store.(state.EventSubscriptionCapacityStore)
-		if !ok {
-			return api.EventSubscriptionDeliveryControl{}, errors.New("subscription capacity store unavailable")
-		}
-		var req api.EventSubscriptionCapacityRequest
-		if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil || req.MaxPendingDeliveries == nil {
-			return api.EventSubscriptionDeliveryControl{}, state.ErrInvalidArgument
-		}
-		return capacityStore.SetEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries)
+		return applyEventSubscriptionCapacity(ctx, store, r, account, app, sub)
 	case "pause":
 		return store.SetEventSubscriptionDeliveryControl(ctx, account, app, sub, true, 0)
 	case "resume":
@@ -79,4 +73,23 @@ func (s *Service) ResumeEventSubscription(w http.ResponseWriter, r *http.Request
 
 func (s *Service) SetEventSubscriptionCapacity(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.eventSubscriptionControl(w, r, acct, "capacity")
+}
+
+func applyEventSubscriptionCapacity(ctx context.Context, store state.EventSubscriptionControlStore, r *http.Request, account, app, sub string) (api.EventSubscriptionDeliveryControl, error) {
+	capacityStore, ok := store.(state.EventSubscriptionCapacityStore)
+	if !ok {
+		return api.EventSubscriptionDeliveryControl{}, errors.New("subscription capacity store unavailable")
+	}
+	var req api.EventSubscriptionCapacityRequest
+	if err := httpkit.DecodeJSONSized(r, &req, 4<<10); err != nil || req.Validate() != nil {
+		return api.EventSubscriptionDeliveryControl{}, state.ErrInvalidArgument
+	}
+	if req.Expected != nil {
+		guarded, ok := store.(state.EventSubscriptionCapacityGuardedStore)
+		if !ok {
+			return api.EventSubscriptionDeliveryControl{}, errors.New("guarded subscription capacity store unavailable")
+		}
+		return guarded.SetEventSubscriptionCapacityGuarded(ctx, account, app, sub, req)
+	}
+	return capacityStore.SetEventSubscriptionCapacity(ctx, account, app, sub, *req.MaxPendingDeliveries)
 }

@@ -13,13 +13,14 @@ import (
 )
 
 type subscriptionCapacityPreview struct {
-	ReadOnly                      bool                              `json:"read_only"`
-	Advisory                      bool                              `json:"advisory"`
-	RequestedMaxPendingDeliveries int                               `json:"requested_max_pending_deliveries"`
-	Valid                         bool                              `json:"valid"`
-	ValidationError               string                            `json:"validation_error,omitempty"`
-	Pressure                      api.EventConsumerCapacityPressure `json:"pressure"`
-	Projection                    *subscriptionCapacityProjection   `json:"projection,omitempty"`
+	Expected                      *api.EventSubscriptionCapacityGuard `json:"expected,omitempty"`
+	ReadOnly                      bool                                `json:"read_only"`
+	Advisory                      bool                                `json:"advisory"`
+	RequestedMaxPendingDeliveries int                                 `json:"requested_max_pending_deliveries"`
+	Valid                         bool                                `json:"valid"`
+	ValidationError               string                              `json:"validation_error,omitempty"`
+	Pressure                      api.EventConsumerCapacityPressure   `json:"pressure"`
+	Projection                    *subscriptionCapacityProjection     `json:"projection,omitempty"`
 }
 type subscriptionCapacityProjection struct {
 	EffectiveMaxPendingDeliveries int      `json:"effective_max_pending_deliveries"`
@@ -99,6 +100,7 @@ func cmdEventsSubscriptionCapacityPreview(args []string) int {
 	for _, scope := range report.Pressure.Scopes[1:] {
 		_, _ = fmt.Fprintf(osStdout, "%s live %d / %d\n", scope.Scope, scope.LiveDeliveries, scope.EffectiveLimit)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Apply expectations: --expected-max-pending %d --expected-plan-max-pending %d (capacity apply still requires --yes)\n", *report.Expected.MaxPendingDeliveries, *report.Expected.PlanMaxPendingDeliveries)
 	_, _ = fmt.Fprintln(osStdout, "Read-only advisory preview. No capacity is reserved; write permission/MFA, other delivery gates, immediate admission and ordering are not established.")
 	return code
 }
@@ -143,6 +145,8 @@ func buildSubscriptionCapacityPreview(pressure *api.EventConsumerCapacityPressur
 		out.ValidationError = fmt.Sprintf("proposed capacity must be between 0 and current plan ceiling %d", pressure.PlanMaxPendingDeliveries)
 		return out, nil
 	}
+	configured, ceiling := pressure.ConfiguredMaxPendingDeliveries, pressure.PlanMaxPendingDeliveries
+	out.Expected = &api.EventSubscriptionCapacityGuard{MaxPendingDeliveries: &configured, PlanMaxPendingDeliveries: &ceiling}
 	out.Valid = true
 	effective := proposed
 	if effective == 0 {

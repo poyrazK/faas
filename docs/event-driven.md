@@ -3187,3 +3187,45 @@ can change before apply. Review the report, then explicitly use
 `subscription-capacity APP SUB --max-pending N --yes` if desired. Server validation
 still controls admission, with no immediate-delivery, ordering or exactly-once
 promise. See [ADR-1176](adr/1176-guarded-subscription-capacity-preview.md).
+
+### Apply a reviewed capacity change with value guards
+
+```sh
+gregale --json events subscription-capacity-preview APP SUB --max-pending 16
+gregale events subscription-capacity APP SUB --max-pending 16 --expected-max-pending 0 --expected-plan-max-pending 256 --yes
+```
+
+Use the actual saved setting and plan allowance from your preview; the numbers
+above are an example. Valid preview JSON includes an `expected` object, and human
+output prints both expectation flags. Both flags must be supplied together.
+Neither flag keeps legacy apply behavior; malformed/partial expectations fail
+locally. Apply still requires --yes and normal write scope/MFA.
+
+The existing capacity PUT accepts:
+
+```json
+{
+  "max_pending_deliveries": 16,
+  "expected": { "max_pending_deliveries": 0, "plan_max_pending_deliveries": 256 }
+}
+```
+
+The expectation object requires both explicit fields. Compare saved configuration,
+including zero, rather than the effective clamped limit. A saved setting above a
+downgraded plan is allowed as an expectation, but the new setting must fit the
+current plan. PostgreSQL holds the plan row and existing capacity/subscription
+locks through the comparison and commit; MemStore checks under its mutex.
+
+Changed expectations return HTTP 409, code `event_subscription_capacity_changed`,
+with no committed control change. Refresh and review a preview before retrying;
+the CLI never retries without guards or invents new expectations. Go/Node/Python
+request models expose the optional guard. Upgrade capacity writers before relying
+on it; older strict decoders reject the new request field.
+
+These are current-value guards. An intervening change that returns to the same
+values can pass. They do not fence app/subscription reincarnation, reserve live
+capacity, compare pause/pacing/circuit state, or guarantee admission/order. Those
+controls remain intact, and already admitted work is not evicted. After an uncertain
+response, inspect status and review again; a repeat conflict is not proof of success.
+Plan changes can occur after commit. See
+[ADR-1177](adr/1177-guarded-subscription-capacity-apply.md).

@@ -1352,6 +1352,7 @@ from .event_schema_rollout_retained import EventSchemaRolloutRetained
 from .event_schema_rollout_validation import EventSchemaRolloutValidation
 from .event_storage_usage_response import EventStorageUsageResponse
 from .event_storage_usage_response_limits import EventStorageUsageResponseLimits
+from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
@@ -5406,6 +5407,7 @@ __all__ = (
     "EventSchemaRolloutValidation",
     "EventStorageUsageResponse",
     "EventStorageUsageResponseLimits",
+    "EventSubscriptionCapacityGuard",
     "EventSubscriptionCapacityRequest",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
