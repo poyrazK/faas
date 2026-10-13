@@ -551,3 +551,5 @@ type EventSubscriptionCapacityCommands = api.EventSubscriptionCapacityCommands
 type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityCommandsQuery
 
 type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
+
+type EventDeliveryHealthConfirmation = api.EventDeliveryHealthConfirmation

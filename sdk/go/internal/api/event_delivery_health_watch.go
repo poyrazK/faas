@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +69,7 @@ type EventDeliveryHealthCondition struct {
 }
 
 type EventDeliveryHealthWatchResult struct {
+	Confirmations  []EventDeliveryHealthConfirmation   `json:"confirmations,omitempty"`
 	Checkpoint     *EventDeliveryHealthCheckpoint      `json:"checkpoint,omitempty"`
 	SLO            []EventDeliveryHealthSLOObservation `json:"slo,omitempty"`
 	reserved       int
@@ -93,6 +93,8 @@ type deliveryHealthCondition struct {
 	resuming                     bool
 	recoveryFirst                time.Time
 	recoverySamples              int
+	confirmationLossReason       string
+	confirmationLossAt           time.Time
 }
 
 func (o EventDeliveryHealthWatchOptions) validate() error {
@@ -338,9 +340,13 @@ func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub 
 
 func collectDeliveryHealthConditions(out *EventDeliveryHealthWatchResult, conditions []*deliveryHealthCondition) {
 	out.Conditions = make([]EventDeliveryHealthCondition, 0, len(conditions))
+	out.Confirmations = nil
 	for _, condition := range conditions {
 		condition.ObservedAt = condition.observedAt
 		out.Conditions = append(out.Conditions, condition.EventDeliveryHealthCondition)
+		if condition.Metric == "capacity_command_receipt_budget_used_slots" || condition.Metric == "capacity_command_receipt_budget_full_seconds" {
+			out.Confirmations = append(out.Confirmations, deliveryHealthReceiptBudgetConfirmation(condition, out.queueFull))
+		}
 	}
 	if out.Checkpoint != nil {
 		out.Checkpoint.AppID = out.AppID
@@ -366,14 +372,14 @@ func deliveryHealthProgress(o EventDeliveryHealthWatchOptions, out EventDelivery
 }
 
 func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, value float64, valid bool, observed, now time.Time, maxAge time.Duration) {
-	valid = valid && !observed.IsZero() && !observed.After(now) && now.Sub(observed) <= maxAge && !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
+	failure := deliveryHealthConfirmationFailure(value, valid, observed, now, maxAge, c.observedAt)
 	gap := !c.localLast.IsZero() && now.Sub(c.localLast) > maxAge
-	monotonic := c.observedAt.IsZero() || observed.After(c.observedAt)
 	if gap {
 		loseDeliveryHealthConfirmation(out, c, now, "sample_gap")
 	}
-	if !valid || !monotonic {
+	if failure != "" {
 		loseDeliveryHealthConfirmation(out, c, now, "evidence_unavailable")
+		c.confirmationLossReason = failure
 		return
 	}
 	c.observedAt, c.localLast = observed, now
@@ -428,6 +434,8 @@ func updateDeliveryHealthCondition(out *EventDeliveryHealthWatchResult, c *deliv
 }
 
 func loseDeliveryHealthConfirmation(out *EventDeliveryHealthWatchResult, c *deliveryHealthCondition, now time.Time, reason string) {
+	c.confirmationLossReason = reason
+	c.confirmationLossAt = now.UTC()
 	if c.State == "firing" || c.resuming {
 		out.Sequence++
 		appendDeliveryHealthAlert(out, c, now, "confirmation_lost", reason)

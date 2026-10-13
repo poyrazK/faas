@@ -15,7 +15,7 @@ import (
 )
 
 func cmdEventsSubscriptionDeliveryHealth(args []string) int {
-	flags, positional := splitArgsForFlags(args, "watch", "alerts-json", "resume")
+	flags, positional := splitArgsForFlags(args, "watch", "alerts-json", "resume", "confirmation-progress")
 	fs := newFlagSet("events subscription-delivery-health", flag.ContinueOnError)
 	window := fs.String("window", "5m", "observation window: 5m|15m|1h|6h|24h")
 	watchFlags := newDeliveryHealthWatchFlags(fs)
@@ -82,12 +82,13 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 }
 
 type deliveryHealthWatchFlags struct {
-	watch, alertsJSON *bool
-	resume            *bool
-	checkpoint        *string
-	ackInbox          *string
-	options           api.EventDeliveryHealthWatchOptions
-	slo               api.EventDeliveryHealthSLOOptions
+	confirmationProgress *bool
+	watch, alertsJSON    *bool
+	resume               *bool
+	checkpoint           *string
+	ackInbox             *string
+	options              api.EventDeliveryHealthWatchOptions
+	slo                  api.EventDeliveryHealthSLOOptions
 }
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
@@ -97,6 +98,7 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f.ackInbox = fs.String("ack-inbox", "", "atomically replaced JSON acknowledgement batch; requires checkpoint")
 	f.resume = fs.Bool("resume", false, "resume the selected checkpoint with fresh evidence")
 	f.alertsJSON = fs.Bool("alerts-json", false, "emit local lifecycle alert JSON lines on stderr")
+	f.confirmationProgress = fs.Bool("confirmation-progress", false, "print live receipt-budget confirmation progress on text stdout")
 	fs.DurationVar(&f.options.Interval, "interval", api.EventDeliveryHealthWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	fs.DurationVar(&f.options.Timeout, "timeout", api.EventDeliveryHealthWatchTimeoutDefault, "watch deadline (up to 24h)")
 	fs.DurationVar(&f.options.MaxAge, "max-age", api.EventDeliveryHealthWatchAgeDefault, "maximum component sample age (100ms-24h)")
@@ -177,6 +179,9 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 			err = fmt.Errorf("--%s requires --watch", option.Name)
 		}
 	})
+	if f.confirmationProgress != nil && *f.confirmationProgress && jsonOutput {
+		return fmt.Errorf("live confirmation progress uses text stdout; omit --confirmation-progress with --json")
+	}
 	if sloSelected && !sloTarget {
 		return fmt.Errorf("SLO sample/sustain settings require an SLO target")
 	}
@@ -227,6 +232,9 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 				}
 			}
 		}
+		if f.confirmationProgress != nil && *f.confirmationProgress {
+			printDeliveryHealthConfirmations(progress.Confirmations)
+		}
 		return nil
 	}
 	result, err := client.WatchEventConsumerDeliveryHealth(ctx, app, sub, options)
@@ -246,6 +254,7 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 		for _, v := range result.SLO {
 			_, _ = fmt.Fprintf(osStdout, "SLO %s: %s (%s) | value %.6f | target %.6f | samples %d/%d | coverage %s | budget burn %.3fx\n", v.Metric, v.Status, v.Reason, v.Value, v.Threshold, v.Samples, v.MinimumSamples, v.Coverage, v.ErrorBudgetBurnRate)
 		}
+		printDeliveryHealthConfirmations(result.Confirmations)
 		_, _ = fmt.Fprintf(osStdout, "Watch stopped: %s | observations %d | alert sequence %d\n", result.StopReason, result.Observations, result.Sequence)
 	}
 	if err != nil {
