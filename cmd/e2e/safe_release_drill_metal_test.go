@@ -203,18 +203,21 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 	})
 
 	t.Run("quiet release that fails after its smoke aborts on probe evidence", func(t *testing.T) {
-		d.createApp(t, "sr-late")
-		stable := d.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: v1})
-		candidate := d.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: late, Canary: customCanary("1", "30s")})
+		// A second Hobby account: the drill account is at its 5-app limit.
+		ld := *d
+		ld.key = d.h.SeedAccount(context.Background(), api.PlanHobby)
+		ld.createApp(t, "sr-late")
+		stable := ld.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: v1})
+		candidate := ld.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: late, Canary: customCanary("1", "30s")})
 		started := time.Now()
-		got := d.waitDeployment(t, candidate.ID, 30*time.Second+api.CanaryLowTrafficMaxHold+3*time.Minute, func(dep state.Deployment) bool {
+		got := ld.waitDeployment(t, candidate.ID, 30*time.Second+api.CanaryLowTrafficMaxHold+3*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "complete" || dep.RolloutState == "aborted"
 		})
 		t.Logf("DRILL probe_abort seconds=%.0f state=%q reason=%q", time.Since(started).Seconds(), got.RolloutState, got.RolloutAbortedReason)
 		if got.RolloutState != "aborted" || !strings.Contains(got.RolloutAbortedReason, "5xx error rate regression") {
 			t.Fatalf("late-failing candidate = state:%q reason:%q, want a 5xx abort from probe evidence", got.RolloutState, got.RolloutAbortedReason)
 		}
-		restored := d.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool {
+		restored := ld.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
 		if restored.TrafficPercent != 100 {
