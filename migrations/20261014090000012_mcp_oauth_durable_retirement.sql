@@ -1,4 +1,10 @@
 -- +goose Up
+-- The final schema object marks this transactional Up as applied. A ledger
+-- replay must preserve definitions widened by later migrations and must not
+-- re-run grant backfills or replace saved rollback constraint definitions.
+-- +goose StatementBegin
+DO $mcp_replay_guard$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='mcp_oauth_app_retirement') THEN RETURN; END IF;
 CREATE TABLE mcp_oauth_retirements (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -26,7 +32,7 @@ CREATE INDEX mcp_oauth_retirements_binding ON mcp_oauth_retirements(account_id,b
 -- Legacy monitor snapshots now carry public progress only. The canonical sealed
 -- grant belongs to the account-owned retirement table, without an app FK.
 ALTER TABLE mcp_catalog_monitors DROP CONSTRAINT mcp_catalog_oauth_lifecycle_chk;
--- +goose StatementBegin
+
 CREATE FUNCTION mcp_catalog_oauth_public_lifecycle_valid(payload jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE view record; phase jsonb; checked jsonb:=payload; path text[];
@@ -42,7 +48,7 @@ BEGIN
  END LOOP;
  RETURN mcp_catalog_oauth_lifecycle_valid(checked);
 END $$;
--- +goose StatementEnd
+
 
 INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)
 SELECT (phase->>'id')::uuid,m.account_id,m.app_id,
@@ -53,7 +59,7 @@ FROM mcp_catalog_monitors m JOIN apps a ON a.id=m.app_id
 CROSS JOIN LATERAL jsonb_each(jsonb_build_object('default',m.payload)||COALESCE(m.payload->'roles','{}'::jsonb)) views
 CROSS JOIN LATERAL (SELECT views.value->'oauth_lifecycle'->'revocation' AS phase) phases
 WHERE phase->>'id' IS NOT NULL ON CONFLICT(id) DO NOTHING;
--- +goose StatementBegin
+
 CREATE FUNCTION mcp_oauth_public_phase(phase jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
  SELECT phase-ARRAY['private_config','private_ciphertext','private_client_ciphertext','private_lease_id','private_lease_until'];
 $$;
@@ -69,10 +75,10 @@ BEGIN
   UPDATE mcp_catalog_monitors SET payload=v_payload WHERE app_id=row.app_id;
  END LOOP;
 END $$;
--- +goose StatementEnd
+
 ALTER TABLE mcp_catalog_monitors ADD CONSTRAINT mcp_catalog_oauth_lifecycle_chk CHECK (mcp_catalog_oauth_public_lifecycle_valid(payload));
 
--- +goose StatementBegin
+
 CREATE FUNCTION mcp_oauth_retire_deleted_app() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE root jsonb; changed jsonb; view record; cfg jsonb; grant_data jsonb; phase jsonb; record_data jsonb; job_id uuid; client_cipher bytea; path text[]; captured_at timestamptz:=now(); count_jobs bigint;
 BEGIN
@@ -104,8 +110,8 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
 CREATE TRIGGER mcp_oauth_app_retirement BEFORE UPDATE OF status OR DELETE ON apps FOR EACH ROW EXECUTE FUNCTION mcp_oauth_retire_deleted_app();
+END $mcp_replay_guard$;
 -- +goose StatementEnd
-
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

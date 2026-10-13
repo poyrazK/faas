@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"strings"
@@ -38,12 +39,12 @@ func TestRenewalIntentLeaseRecoveryAndFences(t *testing.T) {
 	if err = recordOAuthRenewal(&root, job, journal.ID, "saved", &result); err != nil {
 		t.Fatal("late result was lost", err)
 	}
-	if err = saveObserverOAuth(&root, job, result, at); err != ErrMCPCatalogMonitorChanged {
+	if err = saveObserverOAuth(&root, job, result, at); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
 		t.Fatal("old lease installed result", err)
 	}
 	wrong := result
 	wrong.Ciphertext = []byte("other")
-	if err = saveObserverOAuth(&root, newer, wrong, at); err != ErrMCPCatalogMonitorChanged {
+	if err = saveObserverOAuth(&root, newer, wrong, at); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
 		t.Fatal("different result installed", err)
 	}
 	if err = saveObserverOAuth(&root, newer, result, at); err != nil {
@@ -57,12 +58,12 @@ func TestRenewalIntentLeaseRecoveryAndFences(t *testing.T) {
 	if err != nil || !fresh || next.ID == journal.ID {
 		t.Fatal("new source was not admitted", err)
 	}
-	if err = recordOAuthRenewal(&root, job, journal.ID, "saved", &result); err != ErrMCPCatalogMonitorChanged {
+	if err = recordOAuthRenewal(&root, job, journal.ID, "saved", &result); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
 		t.Fatal("superseded operation recorded", err)
 	}
 	stale := newer
 	stale.Snapshot.Config.Revision = uuid.NewString()
-	if err = recordOAuthRenewal(&root, stale, next.ID, "failed", nil); err != ErrMCPCatalogMonitorChanged {
+	if err = recordOAuthRenewal(&root, stale, next.ID, "failed", nil); !errors.Is(err, ErrMCPCatalogMonitorChanged) {
 		t.Fatal("stale revision recorded", err)
 	}
 }

@@ -1,4 +1,10 @@
 -- +goose Up
+-- The final schema object marks this transactional Up as applied. A ledger
+-- replay must preserve definitions widened by later migrations and must not
+-- re-run grant backfills or replace saved rollback constraint definitions.
+-- +goose StatementBegin
+DO $mcp_replay_guard$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='edge_rule_change_log'::regclass AND conname='edge_rule_change_log_account_ids_check') THEN RETURN; END IF;
 -- Ownership is captured at mutation time, without foreign keys: deletion of
 -- an app/account must not erase the policy's replay identity. Historical NULL
 -- ownership is deliberately not guessed from mutable current app metadata.
@@ -7,7 +13,7 @@ ALTER TABLE edge_rule_change_log ADD CONSTRAINT edge_rule_change_log_account_ids
  CHECK (account_ids IS NULL OR (cardinality(account_ids) > 0 AND array_position(account_ids, NULL) IS NULL));
 CREATE INDEX edge_rule_change_log_account_ids_idx ON edge_rule_change_log USING gin (account_ids);
 CREATE INDEX edge_rule_change_log_unknown_owner_idx ON edge_rule_change_log (id DESC) WHERE account_ids IS NULL;
--- +goose StatementBegin
+
 CREATE OR REPLACE FUNCTION edge_rules_record_change()
 RETURNS trigger AS $$
 DECLARE
@@ -35,8 +41,8 @@ BEGIN
     END IF;
 END;
 $$ LANGUAGE plpgsql;
+END $mcp_replay_guard$;
 -- +goose StatementEnd
-
 -- +goose Down
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION edge_rules_record_change()

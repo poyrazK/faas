@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -131,7 +132,7 @@ func (s *PgStore) RecordMCPCatalogOAuthRenewal(ctx context.Context, job MCPCatal
 	_, err := s.editMCPCatalogMonitor(ctx, job.AccountID, job.AppID, false, func(root *api.MCPCatalogMonitorSnapshot, _ time.Time) error {
 		return recordOAuthRenewal(root, job, id, phase, result)
 	})
-	if err == ErrMCPCatalogMonitorChanged && phase == "saved" && result != nil {
+	if errors.Is(err, ErrMCPCatalogMonitorChanged) && phase == "saved" && result != nil {
 		_ = s.RecordMCPOAuthIssuedGrant(ctx, job.AccountID, id, result.Ciphertext, "credential_changed")
 	}
 	return err
@@ -140,7 +141,7 @@ func (m *MemStore) RecordMCPCatalogOAuthRenewal(ctx context.Context, job MCPCata
 	_, err := m.editMCPCatalogMonitor(job.AccountID, job.AppID, false, func(root *api.MCPCatalogMonitorSnapshot, _ time.Time) error {
 		return recordOAuthRenewal(root, job, id, phase, result)
 	})
-	if err == ErrMCPCatalogMonitorChanged && phase == "saved" && result != nil {
+	if errors.Is(err, ErrMCPCatalogMonitorChanged) && phase == "saved" && result != nil {
 		_ = m.RecordMCPOAuthIssuedGrant(ctx, job.AccountID, id, result.Ciphertext, "credential_changed")
 	}
 	return err

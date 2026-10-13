@@ -11304,6 +11304,15 @@ END $$;
 
 
 --
+-- Name: mcp_admission_audit_kind_base(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_admission_audit_kind_base() RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$SELECT 'CHECK ((kind = ANY (ARRAY[''deploy.created''::text, ''deploy.source_ref''::text, ''deploy.local_tarball''::text, ''deploy.traffic_changed''::text, ''deploy.health_probe_failed''::text, ''deploy.health_recovered''::text, ''deploy.rolled_back''::text, ''deploy.removed''::text, ''deploy.rollout_started''::text, ''deploy.rollout_completed''::text, ''deploy.rollout_aborted''::text, ''deploy.canary_step_advanced''::text, ''deploy.alert_rule_fired''::text, ''deploy.scan_regressed''::text, ''deploy.mcp_task_held''::text, ''deploy.mcp_task_retry_requested''::text, ''deploy.mcp_task_retry_started''::text, ''deploy.mcp_task_retry_completed''::text, ''deploy.mcp_task_recovered''::text, ''deploy.mcp_task_hold_cancelled''::text, ''deploy.worker_drain_started''::text, ''deploy.worker_drain_completed''::text])))'$$;
+
+
+--
 -- Name: mcp_catalog_managed_observers_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19593,7 +19602,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text, 'deploy.mcp_admission'::text])))
+    CONSTRAINT deployment_audit_kind_chk CHECK (((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])) OR (kind = 'deploy.mcp_admission'::text)))
 );
 
 

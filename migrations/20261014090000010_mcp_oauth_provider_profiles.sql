@@ -1,5 +1,10 @@
 -- +goose Up
+-- The final schema object marks this transactional Up as applied. A ledger
+-- replay must preserve definitions widened by later migrations and must not
+-- re-run grant backfills or replace saved rollback constraint definitions.
 -- +goose StatementBegin
+DO $mcp_replay_guard$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='mcp_catalog_monitors'::regclass AND conname='mcp_catalog_oauth_profiles_chk') THEN RETURN; END IF;
 CREATE FUNCTION mcp_catalog_oauth_profiles_valid(payload jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE view jsonb; config jsonb; field text; method text;
@@ -22,9 +27,10 @@ BEGIN
  END LOOP;
  RETURN true;
 END $$;
--- +goose StatementEnd
-ALTER TABLE mcp_catalog_monitors ADD CONSTRAINT mcp_catalog_oauth_profiles_chk CHECK (mcp_catalog_oauth_profiles_valid(payload));
 
+ALTER TABLE mcp_catalog_monitors ADD CONSTRAINT mcp_catalog_oauth_profiles_chk CHECK (mcp_catalog_oauth_profiles_valid(payload));
+END $mcp_replay_guard$;
+-- +goose StatementEnd
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

@@ -1,5 +1,10 @@
 -- +goose Up
+-- The final schema object marks this transactional Up as applied. A ledger
+-- replay must preserve definitions widened by later migrations and must not
+-- re-run grant backfills or replace saved rollback constraint definitions.
 -- +goose StatementBegin
+DO $mcp_replay_guard$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='app_secrets'::regclass AND tgname='mcp_oauth_secret_credential_change') THEN RETURN; END IF;
 CREATE FUNCTION mcp_oauth_secret_source(app uuid, scope_name text, secret_key text, version bigint) RETURNS text LANGUAGE sql IMMUTABLE AS $$
  SELECT encode(sha256(convert_to(encode(sha256(convert_to(app::text||chr(10)||scope_name||chr(10)||secret_key||chr(10)||version::text,'UTF8')),'hex'),'UTF8')),'hex');
 $$;
@@ -83,8 +88,8 @@ BEGIN
  IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
 CREATE TRIGGER mcp_oauth_secret_credential_change BEFORE INSERT OR UPDATE OR DELETE ON app_secrets FOR EACH ROW EXECUTE FUNCTION mcp_oauth_secret_credential_change();
+END $mcp_replay_guard$;
 -- +goose StatementEnd
-
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN

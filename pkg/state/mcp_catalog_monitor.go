@@ -40,7 +40,7 @@ func (s *PgStore) editMCPCatalogMonitor(ctx context.Context, account, app string
 	if err != nil {
 		return api.MCPCatalogMonitorSnapshot{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	// Serialize initial configuration too, using the owning app row lock.
 	if _, err = sqlc.New().LockMCPCatalogMonitorApp(ctx, tx, sqlc.LockMCPCatalogMonitorAppParams{AppID: mustPgUUID(app), AccountID: mustPgUUID(account)}); err != nil {
 		return api.MCPCatalogMonitorSnapshot{}, mapErr(err)

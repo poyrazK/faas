@@ -67,9 +67,9 @@ func (m *MemStore) ListDueMCPCatalogObservers(_ context.Context, limit int) ([]M
 			continue
 		}
 		views := api.CatalogMonitorSummary(root, app.Slug, at).Roles
-		for role, view := range views {
+		for role := range views {
 			// Summary hides the lease token; eligibility uses the stored role instead.
-			view, _ = api.CatalogMonitorRoleSnapshot(root, role)
+			view, _ := api.CatalogMonitorRoleSnapshot(root, role)
 			if observerDue(view, at) {
 				out = append(out, MCPCatalogObserverJob{AccountID: app.AccountID, AppID: id, Slug: app.Slug, Role: role, Snapshot: cloneMCPCatalogMonitor(view)})
 			}

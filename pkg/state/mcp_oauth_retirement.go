@@ -149,7 +149,7 @@ func (s *PgStore) PrepareMCPOAuthRetirement(ctx context.Context, job MCPCatalogO
 	if err != nil {
 		return out, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err = sqlc.New().LockMCPOAuthRetirementAccount(ctx, tx, job.AccountID); err != nil {
 		return out, err
 	}
@@ -227,7 +227,7 @@ func (s *PgStore) editRetirement(ctx context.Context, account, id string, edit f
 	if err != nil {
 		return out, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err = sqlc.New().LockMCPOAuthRetirementAccount(ctx, tx, account); err != nil {
 		return out, err
 	}

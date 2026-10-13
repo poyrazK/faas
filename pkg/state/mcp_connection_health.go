@@ -133,7 +133,7 @@ func (s *PgStore) MCPConnectionHealth(ctx context.Context, account, app string, 
 	if err != nil {
 		return api.MCPConnectionHealthSnapshot{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = tx.Exec(ctx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"); err != nil {
 		return api.MCPConnectionHealthSnapshot{}, err
 	}

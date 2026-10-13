@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"strings"
@@ -29,14 +30,14 @@ func TestCredentialChangeCapacityAtomicityAndScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := m.UpsertAppSecret(t.Context(), account, app, "REFRESH", []byte("new secret")); err != ErrConflict {
+	if err := m.UpsertAppSecret(t.Context(), account, app, "REFRESH", []byte("new secret")); !errors.Is(err, ErrConflict) {
 		t.Fatal("capacity did not reject mutation", err)
 	}
 	secret, _ := m.GetAppSecret(t.Context(), account, app, "REFRESH")
 	if secret.SecretVersion != 1 || !bytes.Equal(secret.Ciphertext, []byte("old secret")) || m.mcpCatalogMonitors[app].Config.Revision != revision || m.mcpCatalogMonitors[app].ObserverStatus.OAuth == nil || len(m.mcpOAuthRetirements) != api.MCPOAuthRetirementMaxOutstanding {
 		t.Fatal("failed mutation lost secret, grant, fence or retirement metadata")
 	}
-	if _, err := m.DeleteAppSecretInScopeWithRevocation(t.Context(), account, app, DefaultEnvScope, "REFRESH"); err != ErrConflict {
+	if _, err := m.DeleteAppSecretInScopeWithRevocation(t.Context(), account, app, DefaultEnvScope, "REFRESH"); !errors.Is(err, ErrConflict) {
 		t.Fatal("capacity did not reject deletion", err)
 	}
 	if err := m.UpsertAppSecretInScope(t.Context(), account, app, "staging", "REFRESH", []byte("scope secret")); err != nil {

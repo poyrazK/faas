@@ -1,5 +1,10 @@
 -- +goose Up
+-- The final schema object marks this transactional Up as applied. A ledger
+-- replay must preserve definitions widened by later migrations and must not
+-- re-run grant backfills or replace saved rollback constraint definitions.
 -- +goose StatementBegin
+DO $mcp_replay_guard$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='apps'::regclass AND tgname='mcp_oauth_aa_renewal_retirement') THEN RETURN; END IF;
 CREATE FUNCTION mcp_catalog_oauth_renewal_valid(payload jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE view jsonb; journal jsonb; result jsonb;
@@ -21,10 +26,10 @@ BEGIN
  END LOOP;
  RETURN true;
 END $$;
--- +goose StatementEnd
+
 ALTER TABLE mcp_catalog_monitors ADD CONSTRAINT mcp_catalog_oauth_renewal_chk CHECK (mcp_catalog_oauth_renewal_valid(payload));
 
--- +goose StatementBegin
+
 CREATE FUNCTION mcp_oauth_retire_deleted_renewal() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE root jsonb; changed jsonb; view record; cfg jsonb; grant_data jsonb; phase jsonb; record_data jsonb; job_id uuid; client_cipher bytea; path text[]; captured_at timestamptz:=now(); count_jobs bigint;
 BEGIN
@@ -54,8 +59,8 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
 CREATE TRIGGER mcp_oauth_aa_renewal_retirement BEFORE UPDATE OF status OR DELETE ON apps FOR EACH ROW EXECUTE FUNCTION mcp_oauth_retire_deleted_renewal();
+END $mcp_replay_guard$;
 -- +goose StatementEnd
-
 -- +goose Down
 -- +goose StatementBegin
 DO $$ BEGIN
