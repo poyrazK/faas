@@ -1,3 +1,4 @@
+// adr: 1202 — scoped response loss preserves post-commit ambiguity and recovery.
 package gateway
 
 import (

@@ -1,3 +1,4 @@
+// adr: 1227 — record bounded, namespace-scoped per-request dependency attempts.
 package gateway
 
 import (
