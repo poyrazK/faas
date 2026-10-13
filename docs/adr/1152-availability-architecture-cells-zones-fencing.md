@@ -407,21 +407,38 @@ The primitive is used for:
 ### 5. Static-stability rules for the data plane
 
 1. **Keep last-known-good.** A refresh error never discards
-   last-known-good state. Fix `compute_gateway_pool.go:62-66` first.
-2. **Stale tier everywhere.** Every routing cache has a bounded stale
-   tier, including custom-domain, tenant-surface, environment and
-   global-ingress hosts.
-3. **LISTEN is a hint.**
-   - Consumers missing the safety ticker that `pkg/db/notify_hub.go`
-     requires get one: the cluster signing-key loaders, vmmd's egress
-     watcher, the DNS handoff and SSE fan-in.
-   - A hub reconnect triggers an immediate resync.
-4. **No decisions from stale observation.** No recovery decision is made
-   from evidence gathered while the observer was disconnected.
-5. **Buffer, don't drop.** Activity and usage signals are buffered across
-   outages.
-6. **Wait for dependencies.** Daemons wait for their dependencies instead
-   of crash-looping into a failed systemd unit.
+   last-known-good state. gatewayd-public's compute inventory serves the
+   last successful read for up to 10 minutes and refreshes in the
+   background.
+2. **Stale tier for ordinary and custom-domain routes.** Both use the
+   ADR-190 tier (10 minutes); a custom domain's per-request validation
+   error falls back to it instead of returning 404, and each successful
+   validation restarts the window. Two cases deliberately stay
+   fail-closed: registered-environment hosts, whose target moves on
+   promotion, and the platform-tenant suspension guard, which must not
+   serve a possibly suspended customer. Global-ingress hosts keep the
+   regional branch's 30-second snapshot lease.
+3. **LISTEN is a hint.** Consumers driven only by notifications subscribe
+   with `db.SubscribeWithResync`. They receive a synthetic resync
+   notification after the LISTEN connection is re-established, and after
+   one of their deliveries is dropped, and they reload from the table.
+   This covers the cluster signing-key loaders (schedd and
+   gatewayd-internal), vmmd's egress watcher, the DNS handoff and
+   gatewayd-public's compute inventory. apid's SSE fan-in is not covered:
+   events lost there are visible to clients and need a replayable event
+   log, not a reload.
+4. **No decisions from stale observation.** Liveness verdicts based on
+   heartbeat age (the stale-peer observer and the dead-node sweep) wait
+   until this process has read the store without interruption for a full
+   staleness window.
+5. **Buffer, don't drop.** Gateway activity whose report fails is kept
+   and retried for up to 15 minutes, longer than the longest plan idle
+   timeout.
+6. **Wait for dependencies.** Under a `Type=notify` unit, a daemon whose
+   database is unreachable at startup waits while activating, extending
+   its start timeout, instead of exiting into the
+   `StartLimitBurst=5` restart limit. `FaasStuckActivating` pages after
+   five minutes. Configuration errors still fail fast.
 
 ### 6. Zero-downtime contract for planned operations
 
@@ -453,7 +470,14 @@ Required mechanisms:
 - **Snapshot continuity.**
   - guest-init moves out of drive0, or becomes versioned so it is
     backward compatible.
-  - Firecracker staleness is scoped to the node or release that changed.
+  - Firecracker staleness is scoped to the node that changed. Phase 1
+    removes imaged's fleet-wide startup sweep: imaged runs on every
+    compute node, so one upgraded node retired every node's snapshots.
+    Wake already refuses a snapshot of another Firecracker version in
+    both schedd and vmmd, and a new capture now replaces a live row of
+    another version. Follow-up: stamp `fc_version` from the capturing
+    vmmd rather than schedd, record each node's version from its
+    heartbeat, and check the target node's version at wake.
   - Upgraded nodes re-snapshot hot apps before traffic is routed to them.
 - **Schema discipline.**
   - Expand/contract migrations, with a linter for `CREATE INDEX
@@ -495,7 +519,7 @@ Required mechanisms:
 | Phase | Scope | Exit criterion (recorded under `docs/ops/evidence/`) |
 |---|---|---|
 | P0 · Proof | SLO dashboards. Native drills for partition, zone loss, Postgres failover and node drain, run nightly (wire `CmdFaultInjector.Partition`). Multi-host load test. | Every drill automated, with a baseline recorded |
-| P1 · Static stability | §5, `archive_timeout`, pgbouncer, per-node Firecracker staleness | Postgres down 5 min: zero errors on warm traffic; no recovery storm afterwards |
+| P1 · Static stability | §5, `archive_timeout` and WAL-archive alerts, per-node Firecracker staleness. pgbouncer and a fixed `max_connections` move to P2: the pooler costs more connections than it saves below four compute nodes (`postgres_capacity` README). | Postgres down 5 min: zero errors on warm traffic; no recovery storm afterwards |
 | P2 · Cell HA across zones | §3 Patroni; ≥2 edges behind a Cloudflare Load Balancer; N apid replicas; leases for singletons; monitoring off the database hosts; off-region backups of the database and artifacts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0. Region-rebuild drill: restore the cell into its paired region within RPO ≤ 60 s and RTO about 2–4 h |
 | P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis, zone-loss certificate | Partition drill: zero duplicate at-most-once executions; quota never released without stop proof |
 | P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
