@@ -2304,6 +2304,16 @@ Submit a reviewed fixed lineage retry selection
 |---|---|---|
 | `--file <PATH>` | JSON request with request_id and guarded cases (maximum 200) |  |
 
+### events subscription-lineage-retry-job-cancel
+
+Cancel unprocessed lineage retries
+
+`gregale events subscription-lineage-retry-job-cancel [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+
 ### events subscription-lineage-retry-job
 
 Inspect durable lineage retry progress

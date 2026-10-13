@@ -242,6 +242,7 @@ export type { CanaryPresetSpec } from './models/CanaryPresetSpec.js';
 export type { CanaryProfileSignal } from './models/CanaryProfileSignal.js';
 export type { CanaryRouteGate } from './models/CanaryRouteGate.js';
 export type { CancelDeploymentRequest } from './models/CancelDeploymentRequest.js';
+export type { CancelEventExecutionLineageRetryJobRequest } from './models/CancelEventExecutionLineageRetryJobRequest.js';
 export type { CancelPendingWorkRequest } from './models/CancelPendingWorkRequest.js';
 export type { CancelPendingWorkResponse } from './models/CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './models/CapabilitiesResponse.js';

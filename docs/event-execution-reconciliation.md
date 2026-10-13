@@ -153,3 +153,49 @@ retention can expire independently while a job is pending. Original receipt
 acceptance and known root incarnation remain fenced. Bulk retries record lineage
 only and preserve scan counters, history-loss markers and established coverage
 boundaries. They never rerun handlers or recreate missing historical evidence.
+
+## Cancel a bulk retry job
+
+Read the retained job and copy its original `created_at`, then cancel with that
+exact timestamp:
+
+```sh
+gregale --json events subscription-lineage-retry-job APP SUB REQUEST_UUID
+gregale --json events subscription-lineage-retry-job-cancel APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+```
+
+The API uses POST `execution-reconciliation/retry-jobs/{requestID}/cancel` with:
+
+```json
+{"expected_created_at": "2026-10-13T10:00:00Z"}
+```
+
+Use the actual original creation timestamp from the reviewed job, not the example.
+Cancellation requires deploy/write scope and returns 200 with the terminal job.
+Go exposes `CancelEventExecutionLineageRetryJob`, with matching Node and Python
+operations. The creation guard prevents a delayed cancellation from targeting a
+replacement after expiry and request-UUID reuse. A mismatched guard returns 409
+with code `event_lineage_retry_job_changed`; missing/expired jobs return 404.
+For jobs created before cancellation support, obtain the timestamp from GET.
+
+Cancellation waits for the same job lock as scheduler evaluations. An evaluation
+already holding the lock may commit before cancellation takes effect. Once
+cancellation commits, further evaluations for this job stop. The job becomes
+`cancelled`, and each remaining item becomes `cancelled` with reason
+`job_cancelled`. Committed results and the fixed selection remain inspectable.
+`processed` still counts only evaluated/skipped items; cancellation does not
+increment it or mutate unprocessed cases. Other jobs and individual retries remain
+independent.
+
+Repeat cancellation with the same UUID and creation timestamp after a lost
+response or timeout. A repeated cancellation preserves the first cancellation's
+status, results, timestamp and retention deadline. Cancelling a completed job
+returns its existing completed result. Repeating the original job submission also
+returns the cancelled job with 200; it never resumes it. To retry deliberately,
+review current case guards and submit a new UUID.
+
+Cancellation leaves existing lineage repairs applied and does not extend the
+30-day job retention deadline, execute or interrupt handlers, reset coverage or
+change scan/history evidence. Apply the cancellation state migration before
+running the updated API. Downgrading requires physically pruning cancelled job
+rows first; the old CHECK rejects them without restarting work.

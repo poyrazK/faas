@@ -6,6 +6,7 @@ import type { AppEventPublicationVerification } from '../models/AppEventPublicat
 import type { AppEventPublishStatusResponse } from '../models/AppEventPublishStatusResponse.js';
 import type { AppPublishEventRequest } from '../models/AppPublishEventRequest.js';
 import type { AppPublishEventResponse } from '../models/AppPublishEventResponse.js';
+import type { CancelEventExecutionLineageRetryJobRequest } from '../models/CancelEventExecutionLineageRetryJobRequest.js';
 import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWorkflowRecoveryPolicyRequest.js';
 import type { CreateEventExecutionLineageRetryJobRequest } from '../models/CreateEventExecutionLineageRetryJobRequest.js';
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
@@ -1557,7 +1558,7 @@ export class EventsService {
   /**
    * Submit a fixed reviewed lineage retry selection.
    * Requires deploy/write scope. At most 200 unique cases with expected revisions and original acceptance timestamps. Creation validates every guard atomically. Repeating the same retained UUID and normalized selection returns current job progress; another selection returns 409. Scheduler evaluations and checkpoints commit together. Changed or unavailable cases are reported individually. Repairs lineage only, without handler execution or historical outcome reconstruction. Jobs expire 30 days after submission; use a new UUID after expiry and refresh case guards.
-   * @returns EventExecutionLineageRetryJob Previously completed job.
+   * @returns EventExecutionLineageRetryJob Previously completed or cancelled job.
    * @throws ApiError
    */
   public static createEventExecutionLineageRetryJob({
@@ -1595,8 +1596,55 @@ export class EventsService {
     });
   }
   /**
+   * Cancel unprocessed cases in a retained bulk lineage retry job.
+   * Requires deploy/write scope. The original creation timestamp fences the job incarnation. Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it.
+   * @returns EventExecutionLineageRetryJob Cancelled or previously terminal job, preserving evaluated results.
+   * @throws ApiError
+   */
+  public static cancelEventExecutionLineageRetryJob({
+    slug,
+    subscriptionId,
+    requestId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Original nonzero submission UUID.
+     */
+    requestId: string,
+    requestBody: CancelEventExecutionLineageRetryJobRequest,
+  }): CancelablePromise<EventExecutionLineageRetryJob> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier or missing original creation timestamp.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Original creation timestamp does not match; stable code event_lineage_retry_job_changed.`,
+        413: `Request exceeds the 65536-byte body limit.`,
+        504: `Cancellation timed out; repeat the same UUID and original creation timestamp.`,
+      },
+    });
+  }
+  /**
    * Inspect retained bulk lineage retry progress and per-case results.
-   * Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Results describe recorded evaluations, not live lineage status.
+   * Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage status.
    * @returns EventExecutionLineageRetryJob Retained job and case results.
    * @throws ApiError
    */

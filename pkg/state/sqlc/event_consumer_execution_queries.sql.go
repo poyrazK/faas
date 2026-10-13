@@ -974,6 +974,41 @@ func (q *Queries) LockEventExecutionLineageCoverage(ctx context.Context, db DBTX
 	return i, err
 }
 
+const lockEventExecutionLineageRetryJob = `-- name: LockEventExecutionLineageRetryJob :one
+SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND request_id=$4::uuid AND retain_until>clock_timestamp()
+FOR UPDATE
+`
+
+type LockEventExecutionLineageRetryJobParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	RequestID      pgtype.UUID
+}
+
+func (q *Queries) LockEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg LockEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error) {
+	row := db.QueryRow(ctx, lockEventExecutionLineageRetryJob,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.RequestID,
+	)
+	var i EventExecutionLineageRetryJob
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.RequestID,
+		&i.AccountID,
+		&i.AppID,
+		&i.State,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetainUntil,
+	)
+	return i, err
+}
+
 const lockNextEventExecutionLineageRetryJob = `-- name: LockNextEventExecutionLineageRetryJob :one
 SELECT j.subscription_id, j.request_id, j.account_id, j.app_id, j.state, j.snapshot, j.created_at, j.updated_at, j.retain_until FROM event_execution_lineage_retry_jobs j JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id AND a.status<>'deleted'
 WHERE j.state='pending' AND j.retain_until>clock_timestamp()

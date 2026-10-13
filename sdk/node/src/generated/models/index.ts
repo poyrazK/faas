@@ -237,6 +237,7 @@ export type { CanaryPresetSpec } from './CanaryPresetSpec.js';
 export type { CanaryProfileSignal } from './CanaryProfileSignal.js';
 export type { CanaryRouteGate } from './CanaryRouteGate.js';
 export type { CancelDeploymentRequest } from './CancelDeploymentRequest.js';
+export type { CancelEventExecutionLineageRetryJobRequest } from './CancelEventExecutionLineageRetryJobRequest.js';
 export type { CancelPendingWorkRequest } from './CancelPendingWorkRequest.js';
 export type { CancelPendingWorkResponse } from './CancelPendingWorkResponse.js';
 export type { CapabilitiesResponse } from './CapabilitiesResponse.js';

@@ -394,3 +394,5 @@ export type { EventExecutionLineageRetrySelection } from './generated/models/Eve
 export type { CreateEventExecutionLineageRetryJobRequest } from './generated/models/CreateEventExecutionLineageRetryJobRequest.js';
 export type { EventExecutionLineageRetryJobItem } from './generated/models/EventExecutionLineageRetryJobItem.js';
 export type { EventExecutionLineageRetryJob } from './generated/models/EventExecutionLineageRetryJob.js';
+
+export type { CancelEventExecutionLineageRetryJobRequest } from './generated/models/CancelEventExecutionLineageRetryJobRequest.js';

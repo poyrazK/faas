@@ -18,6 +18,7 @@ type EventExecutionLineageRetryJobsStore interface {
 	PreviewEventExecutionLineageRetries(context.Context, string, string, string, string, int64, int) (api.EventExecutionLineageCases, error)
 	CreateEventExecutionLineageRetryJob(context.Context, string, string, string, api.CreateEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error)
 	GetEventExecutionLineageRetryJob(context.Context, string, string, string, string) (api.EventExecutionLineageRetryJob, error)
+	CancelEventExecutionLineageRetryJob(context.Context, string, string, string, string, api.CancelEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error)
 	AdvanceEventExecutionLineageRetryJobs(context.Context, int) (int, error)
 }
 
@@ -51,7 +52,7 @@ func sameLineageJobSelection(job api.EventExecutionLineageRetryJob, req api.Crea
 	return true
 }
 func newLineageRetryJob(app, sub string, req api.CreateEventExecutionLineageRetryJobRequest) api.EventExecutionLineageRetryJob {
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 	job := api.EventExecutionLineageRetryJob{RequestID: req.RequestID, AppID: canonicalMemUUID(app), SubscriptionID: canonicalMemUUID(sub), Status: "pending", CreatedAt: now, UpdatedAt: now, RetainUntil: now.Add(api.EventExecutionLedgerRetention), Items: make([]api.EventExecutionLineageRetryJobItem, 0, len(req.Cases))}
 	for _, c := range req.Cases {
 		job.Items = append(job.Items, api.EventExecutionLineageRetryJobItem{Selection: c, Status: "pending"})

@@ -465,6 +465,7 @@ from .canary_route_gate_mode import CanaryRouteGateMode
 from .cancel_deployment_request import CancelDeploymentRequest
 from .cancel_deployment_request_reason import CancelDeploymentRequestReason
 from .cancel_deployment_response_200 import CancelDeploymentResponse200
+from .cancel_event_execution_lineage_retry_job_request import CancelEventExecutionLineageRetryJobRequest
 from .cancel_pending_work_request import CancelPendingWorkRequest
 from .cancel_pending_work_response import CancelPendingWorkResponse
 from .capabilities_response import CapabilitiesResponse
@@ -4510,6 +4511,7 @@ __all__ = (
     "CancelDeploymentRequest",
     "CancelDeploymentRequestReason",
     "CancelDeploymentResponse200",
+    "CancelEventExecutionLineageRetryJobRequest",
     "CancelPendingWorkRequest",
     "CancelPendingWorkResponse",
     "CapabilitiesResponse",

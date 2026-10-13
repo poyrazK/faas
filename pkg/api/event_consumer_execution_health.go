@@ -176,3 +176,14 @@ func (c *Client) GetEventExecutionLineageRetryJob(ctx context.Context, app, sub,
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(requestID), nil, &out)
 	return out, err
 }
+
+// CancelEventExecutionLineageRetryJobRequest fences the original job incarnation.
+type CancelEventExecutionLineageRetryJobRequest struct {
+	ExpectedCreatedAt time.Time `json:"expected_created_at"`
+}
+
+func (c *Client) CancelEventExecutionLineageRetryJob(ctx context.Context, app, sub, requestID string, req CancelEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+	var out EventExecutionLineageRetryJob
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(requestID)+"/cancel", req, &out)
+	return out, err
+}

@@ -56934,7 +56934,7 @@ CREATE INDEX IF NOT EXISTS event_execution_lineage_retries_expiry_idx ON event_e
 CREATE TABLE IF NOT EXISTS event_execution_lineage_retry_jobs (
  subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
  request_id uuid NOT NULL, account_id uuid NOT NULL, app_id uuid NOT NULL,
- state text NOT NULL CHECK(state IN ('pending','completed')),
+ state text NOT NULL CHECK(state IN ('pending','completed','cancelled')),
  snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
  created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
  retain_until timestamptz NOT NULL CHECK(retain_until>created_at),

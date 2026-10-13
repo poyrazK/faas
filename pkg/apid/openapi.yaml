@@ -33646,7 +33646,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
         '200':
-          description: Previously completed job.
+          description: Previously completed or cancelled job.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
@@ -33669,12 +33669,70 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventExecutionLineageRetryJob
+      summary: Cancel unprocessed cases in a retained bulk lineage retry job.
+      description: Requires deploy/write scope. The original creation timestamp fences the job incarnation. Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Original nonzero submission UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CancelEventExecutionLineageRetryJobRequest' }
+      responses:
+        '200':
+          description: Cancelled or previously terminal job, preserving evaluated results.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Original creation timestamp does not match; stable code event_lineage_retry_job_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Cancellation timed out; repeat the same UUID and original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}:
     get:
       tags: [events]
       operationId: getEventExecutionLineageRetryJob
       summary: Inspect retained bulk lineage retry progress and per-case results.
-      description: Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Results describe recorded evaluations, not live lineage status.
+      description: Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage status.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -62622,6 +62680,12 @@ components:
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
 
+    CancelEventExecutionLineageRetryJobRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_created_at]
+      properties:
+        expected_created_at: { type: string, format: date-time, description: Exact original created_at from the reviewed retained job; fences a replacement after expiry. }
     EventExecutionLineageRetrySelection:
       type: object
       additionalProperties: false
@@ -62648,7 +62712,7 @@ components:
       required: [selection, status]
       properties:
         selection: { $ref: '#/components/schemas/EventExecutionLineageRetrySelection' }
-        status: { type: string, enum: [pending, changed, unavailable, unresolved, conflict, repaired, already_associated] }
+        status: { type: string, enum: [pending, cancelled, changed, unavailable, unresolved, conflict, repaired, already_associated] }
         reason: { type: string }
         result: { $ref: '#/components/schemas/EventExecutionLineageCase' }
     EventExecutionLineageRetryJob:
@@ -62659,8 +62723,8 @@ components:
         request_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        status: { type: string, enum: [pending, completed] }
-        processed: { type: integer, minimum: 0, maximum: 200 }
+        status: { type: string, enum: [pending, completed, cancelled] }
+        processed: { type: integer, minimum: 0, maximum: 200, description: Cases evaluated or skipped before cancellation; cancelled items are not counted. }
         items:
           type: array
           maxItems: 200

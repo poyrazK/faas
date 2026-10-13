@@ -26,6 +26,7 @@ class EventExecutionLineageRetryJob:
     app_id: UUID
     status: EventExecutionLineageRetryJobStatus
     processed: int
+    """Cases evaluated or skipped before cancellation; cancelled items are not counted."""
     items: list[EventExecutionLineageRetryJobItem]
     created_at: datetime.datetime
     updated_at: datetime.datetime

@@ -483,6 +483,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1152 | [Authoritative legacy event execution lineage repair](1152-authoritative-event-execution-lineage-repair.md) | accepted | Bounded restart-safe receipt scans associate provable roots without reconstructing historical outcomes |
 | 1153 | [Inspectable lineage cases and guarded retries](1153-inspectable-lineage-cases-and-guarded-retries.md) | accepted | Retained reason-coded cases, scoped pagination and revision-fenced idempotent reevaluation |
 | 1154 | [Bounded bulk lineage retries](1154-bounded-bulk-lineage-retries.md) | accepted | Reviewed fixed selections, durable per-case checkpoints and guarded retry results |
+| 1155 | [Cancellable bulk lineage retries](1155-cancellable-bulk-lineage-retries.md) | accepted | Job-lock cancellation, original-creation guards and preserved per-case results |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

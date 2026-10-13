@@ -521,3 +521,5 @@ type EventExecutionLineageRetrySelection = api.EventExecutionLineageRetrySelecti
 type CreateEventExecutionLineageRetryJobRequest = api.CreateEventExecutionLineageRetryJobRequest
 type EventExecutionLineageRetryJobItem = api.EventExecutionLineageRetryJobItem
 type EventExecutionLineageRetryJob = api.EventExecutionLineageRetryJob
+
+type CancelEventExecutionLineageRetryJobRequest = api.CancelEventExecutionLineageRetryJobRequest

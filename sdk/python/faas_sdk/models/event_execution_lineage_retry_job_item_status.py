@@ -1,11 +1,12 @@
 from typing import Literal
 
 EventExecutionLineageRetryJobItemStatus = Literal[
-    "already_associated", "changed", "conflict", "pending", "repaired", "unavailable", "unresolved"
+    "already_associated", "cancelled", "changed", "conflict", "pending", "repaired", "unavailable", "unresolved"
 ]
 
 EVENT_EXECUTION_LINEAGE_RETRY_JOB_ITEM_STATUS_VALUES: set[EventExecutionLineageRetryJobItemStatus] = {
     "already_associated",
+    "cancelled",
     "changed",
     "conflict",
     "pending",

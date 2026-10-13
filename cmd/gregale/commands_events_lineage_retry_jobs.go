@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -16,12 +17,14 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 	fs := newFlagSet(mode, flag.ContinueOnError)
 	var limit int
 	var after int64
-	var reason, file string
+	var reason, file, expectedCreated string
 	switch mode {
 	case "subscription-lineage-retry-preview":
 		fs.IntVar(&limit, "limit", api.EventExecutionLineageCasesPageDefault, "page size")
 		fs.Int64Var(&after, "after", 0, "exclusive cursor")
 		fs.StringVar(&reason, "reason", "", "exact reason code")
+	case "subscription-lineage-retry-job-cancel":
+		fs.StringVar(&expectedCreated, "expected-created-at", "", "original creation timestamp from the reviewed job")
 	case "subscription-lineage-retry-job-create":
 		fs.StringVar(&file, "file", "", "JSON request path")
 	}
@@ -29,11 +32,11 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		return 1
 	}
 	n := 2
-	if mode == "subscription-lineage-retry-job" {
+	if mode == "subscription-lineage-retry-job" || mode == "subscription-lineage-retry-job-cancel" {
 		n = 3
 	}
 	if len(positional) != n || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events "+mode+" APP SUB [REQUEST_ID] [--file PATH] [--reason CODE] [--limit N] [--after ID]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events "+mode+" APP SUB [REQUEST_ID] [--file PATH] [--reason CODE] [--limit N] [--after ID] [--expected-created-at TIMESTAMP]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -63,6 +66,12 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 			return printErr("Invalid job request", e)
 		}
 		out, err = client.CreateEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], req)
+	} else if mode == "subscription-lineage-retry-job-cancel" {
+		created, e := time.Parse(time.RFC3339Nano, expectedCreated)
+		if e != nil || created.IsZero() {
+			return printErr("Invalid cancellation guard", fmt.Errorf("--expected-created-at must be the original RFC3339 creation timestamp from the reviewed job"))
+		}
+		out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
 	} else {
 		out, err = client.GetEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2])
 	}

@@ -2,6 +2,7 @@ package appevents
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -68,7 +69,7 @@ func (s *Service) CreateEventExecutionLineageRetryJob(w http.ResponseWriter, r *
 	out, err := store.CreateEventExecutionLineageRetryJob(ctx, acct.ID, app, r.PathValue("subscriptionID"), req)
 	if !writeLineageCaseError(w, err) {
 		status := http.StatusAccepted
-		if out.Status == "completed" {
+		if out.Status != "pending" {
 			status = http.StatusOK
 		}
 		httpkit.WriteJSON(w, status, out)
@@ -86,5 +87,36 @@ func (s *Service) GetEventExecutionLineageRetryJob(w http.ResponseWriter, r *htt
 	out, err := store.GetEventExecutionLineageRetryJob(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.PathValue("requestID"))
 	if !writeLineageCaseError(w, err) {
 		httpkit.WriteJSON(w, 200, out)
+	}
+}
+
+func writeLineageRetryJobCancelError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(409, "event_lineage_retry_job_changed", "Lineage retry job changed", "refresh the job and use its original creation timestamp"))
+		return true
+	case errors.Is(err, context.DeadlineExceeded):
+		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Lineage cancellation timed out", "repeat cancellation with the same job UUID and original creation timestamp"))
+		return true
+	default:
+		return writeLineageCaseError(w, err)
+	}
+}
+func (s *Service) CancelEventExecutionLineageRetryJob(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventSubscriptionControlTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
+	store, app, ok := s.lineageRetryJobTarget(w, r, acct)
+	if !ok {
+		return
+	}
+	var req api.CancelEventExecutionLineageRetryJobRequest
+	if !httpkit.DecodeJSONLimit(w, r, &req, api.EventExecutionLineageRetryJobBodyMaxBytes) {
+		return
+	}
+	out, err := store.CancelEventExecutionLineageRetryJob(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.PathValue("requestID"), req)
+	if !writeLineageRetryJobCancelError(w, err) {
+		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
 }

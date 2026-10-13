@@ -285,3 +285,8 @@ DELETE FROM event_execution_lineage_retry_jobs WHERE (subscription_id,request_id
 -- name: EventExecutionLineageRetryJobIdentity :one
 SELECT * FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
  AND subscription_id=sqlc.arg(subscription_id)::uuid AND request_id=sqlc.arg(request_id)::uuid;
+
+-- name: LockEventExecutionLineageRetryJob :one
+SELECT * FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND request_id=sqlc.arg(request_id)::uuid AND retain_until>clock_timestamp()
+FOR UPDATE;
