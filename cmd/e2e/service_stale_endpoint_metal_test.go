@@ -8,8 +8,12 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -26,7 +30,16 @@ import (
 // (serviceProxyDefaultEndpointTTL); the margin keeps clock jitter out.
 const staleLeaseBudget = 4500 * time.Millisecond
 
-func TestServiceCallInsideLeaseAfterParkWakesMetal(t *testing.T) {
+// staleLeaseFixture is one caller app ("edge") and one live target app
+// ("target") on real guests.
+type staleLeaseFixture struct {
+	h      *e2etest.Harness
+	edgeID string
+	park   func()
+}
+
+func newStaleLeaseFixture(t *testing.T) *staleLeaseFixture {
+	t.Helper()
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset")
 	}
@@ -35,7 +48,7 @@ func TestServiceCallInsideLeaseAfterParkWakesMetal(t *testing.T) {
 	}
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
-		return
+		return nil
 	}
 	if err := dbMigrateUp(t, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -93,7 +106,14 @@ func TestServiceCallInsideLeaseAfterParkWakesMetal(t *testing.T) {
 	if status, _, body := pollServiceCall(t, h, edgeID, "target", "/", http.StatusOK, 2*time.Minute); status != http.StatusOK {
 		t.Fatalf("warm-up call: status=%d body=%s", status, body)
 	}
+	return &staleLeaseFixture{h: h, edgeID: edgeID, park: park}
+}
 
+// runStaleLeaseCycles parks the target right after a call refreshed the
+// proxy's lease on it, then makes call while that lease still names the
+// parked instance. check reports why the call's result is wrong, or "".
+func (f *staleLeaseFixture) runStaleLeaseCycles(t *testing.T, call func() (int, string), check func(status int, body string) string) {
+	t.Helper()
 	const cycles = 3
 	informative := 0
 	for i := 0; i < cycles; i++ {
@@ -103,25 +123,95 @@ func TestServiceCallInsideLeaseAfterParkWakesMetal(t *testing.T) {
 		// retry-budget bucket: the re-route after vmmd's NotFound is
 		// undelivered (ADR-1133) and must not spend a quiet app's allowance.
 		time.Sleep(5500 * time.Millisecond)
-		if status, _, body := pollServiceCall(t, h, edgeID, "target", "/", http.StatusOK, time.Minute); status != http.StatusOK {
+		if status, _, body := pollServiceCall(t, f.h, f.edgeID, "target", "/", http.StatusOK, time.Minute); status != http.StatusOK {
 			t.Fatalf("cycle %d: lease-refreshing call: status=%d body=%s", i, status, body)
 		}
 		leased := time.Now()
-		park()
+		f.park()
 		time.Sleep(time.Second)
 		elapsed := time.Since(leased)
-		status, _, body := serviceCall(t, h, edgeID, "target", "/")
+		status, body := call()
 		if elapsed > staleLeaseBudget {
 			t.Logf("cycle %d: park took too long (%s after the lease refresh); lease expired, cycle not informative (status=%d)", i, elapsed.Round(time.Millisecond), status)
 			continue
 		}
 		informative++
 		t.Logf("cycle %d: call %s after the lease refresh, target parked: status=%d", i, elapsed.Round(time.Millisecond), status)
-		if status != http.StatusOK || strings.TrimSpace(body) != helloBody {
-			t.Errorf("cycle %d: call inside the stale lease = %d %q, want 200 %q (the parked target must be woken)", i, status, strings.TrimSpace(body), helloBody)
+		if problem := check(status, body); problem != "" {
+			t.Errorf("cycle %d: call inside the stale lease: %s", i, problem)
 		}
 	}
 	if informative == 0 {
 		t.Fatalf("no cycle landed inside the %s lease budget; the stale-lease path was not exercised", staleLeaseBudget)
 	}
+}
+
+func TestServiceCallInsideLeaseAfterParkWakesMetal(t *testing.T) {
+	f := newStaleLeaseFixture(t)
+	if f == nil {
+		return
+	}
+	f.runStaleLeaseCycles(t,
+		func() (int, string) {
+			status, _, body := serviceCall(t, f.h, f.edgeID, "target", "/")
+			return status, body
+		},
+		func(status int, body string) string {
+			if status != http.StatusOK || strings.TrimSpace(body) != helloBody {
+				return fmt.Sprintf("got %d %q, want 200 %q (the parked target must be woken)", status, strings.TrimSpace(body), helloBody)
+			}
+			return ""
+		})
+}
+
+// ADR-1133: a POST with a small declared-length body that lands on the stale
+// lease is buffered by the proxy, so the re-route after vmmd's NotFound can
+// replay it to the woken target with the body intact.
+func TestServicePostInsideLeaseAfterParkReplaysBodyMetal(t *testing.T) {
+	f := newStaleLeaseFixture(t)
+	if f == nil {
+		return
+	}
+	payload := make([]byte, 256<<10) // well under ServiceProxyReplayBodyMaxBytes
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	f.runStaleLeaseCycles(t,
+		func() (int, string) {
+			return servicePost(t, f.h, f.edgeID, "target", "/echo", payload)
+		},
+		func(status int, body string) string {
+			if status != http.StatusOK {
+				return fmt.Sprintf("got %d %q, want 200 (the parked target must be woken and the POST replayed)", status, truncateForLog(body))
+			}
+			if !bytes.Equal([]byte(body), payload) {
+				return fmt.Sprintf("echoed %d bytes, want the %d-byte request body back unchanged", len(body), len(payload))
+			}
+			return ""
+		})
+}
+
+// servicePost sends a declared-length POST through the internal service proxy.
+func servicePost(t *testing.T, h *e2etest.Harness, callerAppID, service, path string, payload []byte) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, h.GatewayControlURL+"/v1/internal/services/"+service+path, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("build service request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Faas-Caller-App", callerAppID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("service call: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+func truncateForLog(s string) string {
+	if len(s) > 200 {
+		return s[:200] + "…"
+	}
+	return s
 }

@@ -11,7 +11,8 @@
 //
 // Modes:
 //
-//	(default)      serve the contents of -body-file on / and 200 on /healthz;
+//	(default)      serve the contents of -body-file on / and 200 on /healthz,
+//	               echo POST /echo request bodies back;
 //	               bind $PORT when -addr is omitted (falling back to 8080)
 //	-spin          also burn one CPU forever (cpu-fairness fixture)
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
@@ -24,6 +25,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -158,6 +160,21 @@ func main() {
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
+	// /echo answers with the request body, so service-proxy tests can check
+	// that a replayed request still carried it.
+	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		got, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
+		if err != nil {
+			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(got)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)

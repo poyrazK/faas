@@ -63,6 +63,18 @@ replay idempotent calls with small bodies, as the public edge already does.
 - The extra attempt is bounded to one per call, so a node that keeps
   reporting `NotFound` cannot loop a request.
 
+## Validation
+
+`TestServicePostInsideLeaseAfterParkReplaysBodyMetal` parks the target right
+after a call refreshed the proxy's lease on it, then POSTs a 256 KiB body to
+the fixture's `/echo` route while the lease still names the parked instance.
+On the n2 node, with only `gatewayd-internal` swapped between runs:
+
+- with body buffering, 3 of 3 cycles answered 200 and echoed the body
+  byte-for-byte (the GET variant also passed 3 of 3 in the same run);
+- one commit earlier (re-route without buffering), 3 of 3 cycles answered
+  503 `app_unavailable`.
+
 ## Rejected alternatives
 
 - **Exempt every stale signal.** A broken stream after the init frame may
