@@ -1,0 +1,34 @@
+# Managed realtime
+
+Gregale manages client connections and channel delivery. Your backend publishes
+messages to a managed realtime endpoint; web and mobile clients subscribe through
+WebSocket or HTTPS Server-Sent Events. This supports job progress, live dashboards,
+chat events, and notifications without operating a separate connection server.
+
+Configure the endpoint and authentication before distributing client credentials.
+Keep account credentials on your backend. Scoped publisher credentials can limit
+channels, event types, payload sizes, message TTL, and publishing rate. Worker
+credentials authorize only their configured consumer group and operations.
+
+Retained channels support recovery after reconnecting. Consumer groups add leased
+claims, retry policies, dead-letter recovery, and worker health reporting. A worker
+must settle a claim with its current fencing token; use that token to protect
+customer-side writes from a stale worker.
+
+See the [Node SDK](../sdk/node/README.md), [Python SDK](../sdk/python/README.md),
+and [customer transaction and fencing examples](realtime-customer-examples.md).
+The [realtime operations guide](ops/realtime.md) documents configuration,
+preview gates, limits, recovery behavior, and rollout procedures.
+
+## Principal access controls preview
+
+When the operator enables the access-control preview, an endpoint can deny a
+principal access to specific channels or revoke its existing sessions. OIDC
+endpoints use the authenticated principal; subscription-ticket authentication
+requires the ticket preview to be enabled as well. Access controls do not permit
+clients to choose another principal or override their credential's permissions.
+
+Access-control capacity is bounded. If the endpoint reaches its limit, review
+existing deny entries before adding more. See the
+[access-control operations guide](ops/realtime.md#principal-access-controls-preview)
+for the request contract and recovery procedure.

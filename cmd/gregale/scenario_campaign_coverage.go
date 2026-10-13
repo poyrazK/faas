@@ -218,7 +218,7 @@ func applyTestCampaignSeedCase(scenario testScenario, c testFaultMatrixCaseSpec)
 		load.FaultCampaign = &campaign
 		state := seed
 		for cycle := 1; cycle <= campaign.Count; cycle++ {
-			choice := campaign.Choices[testFaultCampaignDraw(&state)%uint64(len(campaign.Choices))]
+			choice := campaign.Choices[testFaultCampaignChoiceIndex(&campaign, &state, cycle-1)]
 			rule := choice.Rule
 			rule.Seed = testFaultCampaignDraw(&state)
 			load.ChaosSchedule[2*cycle-1].Duration = choice.Duration
@@ -275,7 +275,7 @@ func summarizeTestCampaignCoverage(scenario testScenario, matrix *testFaultMatri
 		}
 		state := c.Campaign.Seed
 		for cycle := 1; cycle <= campaign.Count; cycle++ {
-			index := int(testFaultCampaignDraw(&state) % uint64(len(campaign.Choices)))
+			index := testFaultCampaignChoiceIndex(campaign, &state, cycle-1)
 			_ = testFaultCampaignDraw(&state)
 			choice := &e.Choices[index]
 			choice.Planned += scenario.Resilience.Runs
@@ -504,7 +504,7 @@ func selectTestCampaignSeeds(scenario testScenario, campaign *testFaultCampaignS
 		counts := make([]int, len(campaign.Choices))
 		state := seed
 		for cycle := 0; cycle < campaign.Count; cycle++ {
-			counts[testFaultCampaignDraw(&state)%uint64(len(counts))] += runs
+			counts[testFaultCampaignChoiceIndex(campaign, &state, cycle)] += runs
 			_ = testFaultCampaignDraw(&state)
 		}
 		useful := len(result.Seeds) < 2

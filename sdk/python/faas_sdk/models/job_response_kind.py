@@ -1,9 +1,10 @@
 from typing import Literal
 
-JobResponseKind = Literal["batch", "recurring"]
+JobResponseKind = Literal["batch", "image_run", "recurring"]
 
 JOB_RESPONSE_KIND_VALUES: set[JobResponseKind] = {
     "batch",
+    "image_run",
     "recurring",
 }
 

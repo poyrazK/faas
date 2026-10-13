@@ -28,7 +28,7 @@ tests:
         exp_alerts:
           - exp_labels:
               rule_group: faas_slo
-              severity: page
+              severity: warn
               component: prometheus
               family: prometheus_health
             exp_annotations:
@@ -97,7 +97,7 @@ tests:
         alertname: FaasPrometheusNotificationQueueBacklog
         exp_alerts:
           - exp_labels:
-              severity: page
+              severity: warn
               component: prometheus
               family: prometheus_health
             exp_annotations:

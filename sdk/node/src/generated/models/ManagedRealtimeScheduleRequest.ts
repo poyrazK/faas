@@ -3,9 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Scheduled channel publish payload with recurrence and retry settings.
+ * Scheduled channel publish payload with recurrence, retry settings, and optional message TTL.
  */
 export type ManagedRealtimeScheduleRequest = {
+  /**
+   * Message lifetime in seconds from publication of each occurrence; zero disables expiry.
+   */
+  ttl_seconds?: number;
   /**
    * Optional immutable channel-scoped group label; at most 128 UTF-8 bytes.
    */

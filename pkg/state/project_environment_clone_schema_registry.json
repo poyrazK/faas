@@ -4757,6 +4757,8 @@
       "env_overrides",
       "failure_rules",
       "id",
+      "image_cmd",
+      "image_entrypoint",
       "image_materialization_attempts",
       "image_materialization_error",
       "image_materialization_lease_owner",
@@ -5307,6 +5309,29 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_channel_webhook_filters",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "metadata",
+      "webhook_id"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_commit_receipts",
+    "columns": [
+      "channel",
+      "content_hash",
+      "endpoint_id",
+      "event_id",
+      "published_at",
+      "sequence",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_connection_owners",
     "columns": [
       "connection_id",
@@ -5317,6 +5342,101 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_consumer_group_alerts",
+    "columns": [
+      "breached",
+      "cooldown_seconds",
+      "dead_letter_threshold",
+      "enabled",
+      "group_id",
+      "last_event_at",
+      "next_check_at",
+      "observed_age",
+      "observed_at",
+      "observed_backlog",
+      "observed_dead",
+      "oldest_pending_seconds",
+      "unassigned_threshold"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_consumer_group_messages",
+    "columns": [
+      "attempts",
+      "available_at",
+      "credential_id",
+      "dead_since",
+      "deadline_invalid",
+      "delivery_deadline",
+      "expiry_warned_at",
+      "failure_code",
+      "fencing_token",
+      "first_claim_observed",
+      "group_id",
+      "lease_until",
+      "message",
+      "ordered",
+      "ordering_key",
+      "priority",
+      "processing_started_at",
+      "release_count",
+      "sequence",
+      "status",
+      "token_hash",
+      "worker"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "managed_realtime_consumer_groups",
+    "columns": [
+      "assigned_sequence",
+      "channel",
+      "circuit_cooldown_seconds",
+      "circuit_enabled",
+      "circuit_failures",
+      "circuit_open_until",
+      "circuit_probe_fencing_token",
+      "circuit_probe_sequence",
+      "circuit_reason",
+      "circuit_state",
+      "circuit_threshold",
+      "claim_rate_burst",
+      "claim_rate_per_second",
+      "claim_rate_tat",
+      "completed",
+      "created_at",
+      "dead_letter_policy",
+      "dead_letter_retention_seconds",
+      "deadline_metadata_key",
+      "deduplication_metadata_key",
+      "deduplication_window_seconds",
+      "draining",
+      "duplicate_messages",
+      "endpoint_id",
+      "expired_dead_letters",
+      "expired_deliveries",
+      "filtered_messages",
+      "history_pruned_events",
+      "id",
+      "last_fencing_token",
+      "lease_seconds",
+      "max_attempts",
+      "message_filter",
+      "name",
+      "next_retention_check_at",
+      "next_worker_health_check_at",
+      "ordering_metadata_key",
+      "paused_at",
+      "priority_metadata_key",
+      "priority_turn",
+      "retry_policy",
+      "throttled_claim_requests"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "managed_realtime_direct_message_deliveries",
@@ -5382,6 +5502,8 @@
   {
     "table": "managed_realtime_durable_cursors",
     "columns": [
+      "acknowledged_at",
+      "acknowledged_sequence",
       "channel",
       "endpoint_id",
       "principal",
@@ -5434,6 +5556,56 @@
     "kind": "configuration"
   },
   {
+    "table": "managed_realtime_group_delivery_history",
+    "columns": [
+      "attempt",
+      "event",
+      "failure_code",
+      "fencing_token",
+      "group_id",
+      "id",
+      "recorded_at",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_event_ids",
+    "columns": [
+      "event_hash",
+      "expires_at",
+      "group_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_metrics",
+    "columns": [
+      "bucket_at",
+      "completed",
+      "dead_letters",
+      "first_claims",
+      "group_id",
+      "processing_milliseconds",
+      "queue_milliseconds",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_group_settlement_receipts",
+    "columns": [
+      "created_at",
+      "expires_at",
+      "group_id",
+      "idempotency_key",
+      "principal",
+      "request_hash",
+      "result"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_inbox_cursors",
     "columns": [
       "channel",
@@ -5475,6 +5647,17 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_inbox_message_expirations",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "expires_at",
+      "sequence",
+      "ttl_seconds"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_inbox_messages",
     "columns": [
       "channel",
@@ -5501,6 +5684,17 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_message_expirations",
+    "columns": [
+      "channel",
+      "endpoint_id",
+      "expires_at",
+      "sequence",
+      "ttl_seconds"
+    ],
+    "kind": "customer_data"
+  },
+  {
     "table": "managed_realtime_notification_timeline",
     "columns": [
       "attempts",
@@ -5520,6 +5714,20 @@
     "kind": "operational"
   },
   {
+    "table": "managed_realtime_outbox_observations",
+    "columns": [
+      "attempts",
+      "blocked_code",
+      "channel",
+      "created_at",
+      "endpoint_id",
+      "event_id",
+      "observed_at",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_presence_leases",
     "columns": [
       "channel",
@@ -5532,6 +5740,57 @@
       "state",
       "state_updated_at",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_principal_access",
+    "columns": [
+      "denied_channels",
+      "endpoint_id",
+      "principal",
+      "revision",
+      "sessions_revoked_before",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_publisher_credentials",
+    "columns": [
+      "accepted_count",
+      "channels",
+      "endpoint_id",
+      "event_types",
+      "expires_at",
+      "generation",
+      "id",
+      "issued_at",
+      "last_channel",
+      "last_sequence",
+      "last_used_at",
+      "max_message_ttl_seconds",
+      "max_payload_bytes",
+      "name",
+      "publishes_per_minute",
+      "rate_count",
+      "rate_window",
+      "replay_count",
+      "revoked_at",
+      "token_hash"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_publisher_receipts",
+    "columns": [
+      "channel",
+      "content_hash",
+      "credential_id",
+      "expires_at",
+      "idempotency_key",
+      "published_at",
+      "sequence"
     ],
     "kind": "operational"
   },
@@ -5628,6 +5887,27 @@
     "kind": "customer_data"
   },
   {
+    "table": "managed_realtime_replay_jobs",
+    "columns": [
+      "created_at",
+      "dry_run",
+      "error_count",
+      "group_id",
+      "id",
+      "last_error",
+      "next_at",
+      "outcomes",
+      "position",
+      "rate",
+      "reviewed_job_id",
+      "selection",
+      "started_job_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_schedule_history",
     "columns": [
       "attempts",
@@ -5681,10 +5961,56 @@
       "skip_reason",
       "skipped_occurrences",
       "status",
+      "ttl_seconds",
       "updated_at",
       "version"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_subscription_tickets",
+    "columns": [
+      "channels",
+      "endpoint_id",
+      "expires_at",
+      "issued_at",
+      "principal",
+      "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_realtime_worker_credentials",
+    "columns": [
+      "expires_at",
+      "generation",
+      "group_id",
+      "id",
+      "issued_at",
+      "last_operation",
+      "last_used_at",
+      "name",
+      "permissions",
+      "revoked_at",
+      "token_hash",
+      "use_count"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "managed_realtime_worker_heartbeats",
+    "columns": [
+      "credential_id",
+      "group_id",
+      "id",
+      "last_seen_at",
+      "lost",
+      "principal",
+      "ready",
+      "status_code",
+      "worker"
+    ],
+    "kind": "operational"
   },
   {
     "table": "meter_gateway_usage_events",

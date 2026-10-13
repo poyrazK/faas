@@ -1,5 +1,6 @@
 # Build artifacts
 /bin/
+/scenario-restart-native-evidence/
 *.test
 *.out
 coverage.*

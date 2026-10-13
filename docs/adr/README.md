@@ -116,7 +116,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 642 | [Restore-safe guest timers](642-restore-safe-guest-timers.md) | proposed | Guests boot with kvm-clock and the one-shot LAPIC timer because Firecracker 1.7 restores lost TSC-deadline interrupts; backing identity v2 refuses captures booted with the old profile |
 | 643 | [Park-to-admit for refused wakes](643-park-to-admit-refused-wakes.md) | proposed | A gateway wake refused for fleet capacity parks one idle, floor-respecting instance of another owned app and retries once, instead of answering 503 until the idle timeout |
 | 680 | [Restored processes reseed their userspace random generators before serving](680-restore-userspace-rng-reseed.md) | accepted | guest-init reseed barrier with Node (N-API RAND_poll addon) and Python preloads; fails closed to cold boot; GHSA-24j2-p895-mwc9 |
-| 981 | [Node RNG caches are drained on first use after a restore](981-node-rng-caches-drained-on-first-use.md) | accepted | The reseed reply marks randomUUID/randomInt caches stale and the preload's wrappers drain on first read, so apps that never call them skip the drain; capture-time emptying was rejected after metal showed it replays (amends ADR-680) |
+| 981 | [Node RNG caches are drained on first use after a restore](1110-node-rng-caches-drained-on-first-use.md) | accepted | The reseed reply marks randomUUID/randomInt caches stale and the preload's wrappers drain on first read, so apps that never call them skip the drain; capture-time emptying was rejected after metal showed it replays (amends ADR-680) |
 | 790 | [meterd catches up closed minutes it did not roll](790-meterd-closed-minute-catch-up.md) | proposed | A sample tick re-rolls, from the billing ledger, closed minutes of the last 24 h never recorded compute-complete (≤15 per tick); idempotent through first-write-wins; H5-55 |
 | 791 | [The build wall-clock limit is 15 minutes](791-build-wall-clock-limit.md) | accepted | Records `BuildTimeoutSeconds = 900` (raised from the spec's 10 min in August without an ADR); end-to-end deploy time is not separately enforced; H5-71 |
 | 815 | [Guarded native runtime qualification collector](815-guarded-native-runtime-qualification-collector.md) | accepted | Collects and signs exact-runtime native evidence only after teardown, host rechecks, service restoration and retained import |
@@ -226,7 +226,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 388 | [Provider invoice facts for FOCUS](388-provider-invoice-facts.md) | accepted | Durable provider facts, reconciled line classifications, and source coverage |
 | 387 | [FOCUS invoice projection](387-focus-invoice-projection.md) | accepted | Account-scoped invoice CSV and metadata, exact reconciliation, and declared source gaps |
 | 461 | [Managed PostgreSQL credential privileges](482-managed-postgres-credential-privileges.md) | accepted for gated preview | SQL runtime and migration logins, stable schema ownership, and verified role isolation |
-| 386 | [HTTP/1 upgrade socket ownership](386-http1-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
+| 386 | [HTTP/1 upgrade socket ownership](386-http001-upgrade-socket-ownership.md) | accepted | Hijack successful raw upgrades, retain buffered duplex bytes, and cancel both directions on session closure |
 | 385 | [Durable scheduled work policies](385-scheduled-work-policies.md) | accepted for recurring Jobs and deployment-command Crons | Persist versioned schedule decisions and classified retries with per-occurrence history |
 | 384 | [Fetch-compatible internal service port](384-fetch-compatible-internal-service-port.md) | accepted | Canonical HTTP bindings use 10081 with the existing authorization path; legacy 10080 remains available |
 | 383 | [Curated dependency profiles for stateless executions](383-curated-stateless-execution-profiles.md) | accepted | Preinstalled immutable package sets, separate snapshots, and lease-pinned image provenance |
@@ -490,7 +490,10 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
+| 1161 | [Image runs (`gregale run --image`)](1161-image-runs.md) | accepted for an operator-gated preview | One-task Job runs against a cached per-image `image_run` runner job; Docker ENTRYPOINT/CMD rules; `api.ImageRunCachedImages`; gate `FAAS_IMAGE_RUNS` |
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
+| 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
+| 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
@@ -511,7 +514,7 @@ Files carrying the banner:
 - docs/adr/015-unix-socket-auth-v1.md
 - docs/adr/016-vmmd-stats-and-metrics.md
 - docs/adr/018-schedd-grpc-surface.md
-- docs/adr/023-ipv6-egress-policy.md (banner appended after the existing PR-D block)
+- docs/adr/023-ipv006-egress-policy.md (banner appended after the existing PR-D block)
 - docs/adr/024-certmagic-cutover.md
 - docs/adr/025-decoupled-control-plane-and-compute.md
 - docs/adr/028-gatewayd-remote-routing.md
@@ -529,14 +532,14 @@ Files carrying the banner:
 - docs/adr/055-per-host-egress-policy-templating.md
 - docs/adr/056-wire-node-verifier.md
 - docs/adr/062-tier-a-per-node-schedd-and-placement.md
-- docs/adr/064-tier-a4-cross-node-rebalance.md
+- docs/adr/064-tier-a004-cross-node-rebalance.md
 - docs/adr/064-wake-timeline-canonical-vocabulary.md
-- docs/adr/066-tier-a5-cross-node-live-migration.md
+- docs/adr/066-tier-a005-cross-node-live-migration.md
 - docs/adr/068-issue-517-closure-evidence.md
 - docs/adr/074-warm-snapshot-audit-gc.md
-- docs/adr/075-deploy-1-capdecl-mount-rpc-boundary.md
+- docs/adr/075-deploy-001-capdecl-mount-rpc-boundary.md
 - docs/adr/076-session-binding-hash.md
-- docs/adr/078-deploy-2-daemonunit-generator.md
+- docs/adr/078-deploy-002-daemonunit-generator.md
 - docs/adr/079-customer-handler-on-unix-socket-and-h2c.md
 - docs/adr/079-per-app-public-auth.md
 - docs/adr/080-per-app-async-task-queue.md
@@ -581,33 +584,33 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## S3 service decisions
 
-- [ADR-530: S3 compatibility and multipart capacity admission](530-s3-compatibility-and-multipart-capacity.md)
-- [ADR-531: S3 multipart transfer fencing and cleanup](531-s3-multipart-transfer-fencing-and-cleanup.md)
-- [ADR-532: Conditional S3 multipart completion](532-conditional-s3-multipart-completion.md)
+- [ADR-530: S3 compatibility and multipart capacity admission](530-s003-compatibility-and-multipart-capacity.md)
+- [ADR-531: S3 multipart transfer fencing and cleanup](531-s003-multipart-transfer-fencing-and-cleanup.md)
+- [ADR-532: Conditional S3 multipart completion](532-conditional-s003-multipart-completion.md)
 - [ADR-533: Safe object capacity reconciliation](533-safe-object-capacity-reconciliation.md)
 - [ADR-534: Recoverable application object uploads](534-recoverable-application-object-uploads.md)
-- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s3-gateway-puts.md)
-- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s3-gateway-copies.md)
+- [ADR-535: Recoverable S3 gateway PUTs](535-recoverable-s003-gateway-puts.md)
+- [ADR-536: Recoverable S3 gateway copies](536-recoverable-s003-gateway-copies.md)
 - [ADR-537: Customer object write receipts](537-customer-object-write-receipts.md)
-- [ADR-538: S3 multipart copy and source ETag conditions](538-s3-multipart-copy-and-source-etag-conditions.md)
-- [ADR-539: Historical S3 write receipt recovery](539-historical-s3-write-receipt-recovery.md)
-- [ADR-540: Native S3 version capacity inventory](540-native-s3-version-capacity-inventory.md)
-- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s3-copy-sources-and-date-conditions.md)
-- [ADR-542: Customer S3 version identities and reads](542-customer-s3-version-identities-and-reads.md)
-- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s3-copy-sources.md)
-- [ADR-544: Durable S3 multipart completion identities](544-durable-s3-multipart-completion-identities.md)
+- [ADR-538: S3 multipart copy and source ETag conditions](538-s003-multipart-copy-and-source-etag-conditions.md)
+- [ADR-539: Historical S3 write receipt recovery](539-historical-s003-write-receipt-recovery.md)
+- [ADR-540: Native S3 version capacity inventory](540-native-s003-version-capacity-inventory.md)
+- [ADR-541: Immutable S3 copy sources and date conditions](541-immutable-s003-copy-sources-and-date-conditions.md)
+- [ADR-542: Customer S3 version identities and reads](542-customer-s003-version-identities-and-reads.md)
+- [ADR-543: Customer-selected S3 copy sources](543-customer-selected-s003-copy-sources.md)
+- [ADR-544: Durable S3 multipart completion identities](544-durable-s003-multipart-completion-identities.md)
 - [ADR-545: Durable bucket versioning configuration](545-durable-bucket-versioning-configuration.md)
-- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s3-version-deletion.md)
-- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s3-mutable-deletion.md)
+- [ADR-546: Permanent immutable S3 version deletion](546-immutable-s003-version-deletion.md)
+- [ADR-547: Durable ordinary and mutable null S3 deletion](547-durable-s003-mutable-deletion.md)
 - [ADR-548: Coordinate immutable deletion with version inventory](548-immutable-deletion-inventory-coordination.md)
 - [ADR-549: Tag current and retained object versions](549-version-specific-object-tagging.md)
 - [ADR-550: Durable object lifecycle discovery and expiration](550-durable-object-lifecycle.md)
 - [ADR-551: Atomic object mutation events](551-atomic-object-mutation-events.md)
-- [ADR-552: Owned S3 notification destinations](552-owned-s3-notification-destinations.md)
+- [ADR-552: Owned S3 notification destinations](552-owned-s003-notification-destinations.md)
 - [ADR-553: Bounded production object transfers](553-bounded-production-object-transfers.md)
-- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s3-encryption.md)
+- [ADR-554: Owned key bindings and native S3 encryption](554-owned-key-bindings-and-native-s003-encryption.md)
 - [ADR-555: Durable object encryption journals](555-durable-object-encryption-journals.md)
-- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s3-encryption.md)
+- [ADR-556: Customer S3 encryption and owned response metadata](556-customer-s003-encryption.md)
 - [ADR-557: Branded object URL capabilities with one write receipt](557-branded-object-url-capabilities.md)
 - [ADR-558: Branded control multipart uploads](558-branded-control-multipart-uploads.md)
 - [ADR-559: Owned encryption on upload routes](559-owned-encryption-on-upload-routes.md)
@@ -703,7 +706,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-517: version customer workflow contracts and require transition evidence](517-versioned-customer-workflow-contracts.md) — pin workflow meaning and verify required milestones across app commit and platform publication
 - [ADR-518: business workflow observations and transactional evidence](518-business-workflow-observations-and-evidence.md) — scoped workflow assessments, typed business evidence, reconciliation, and compensation observations
 
-- [ADR-571: S3 write proof custody and owned cleanup](571-s3-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
+- [ADR-571: S3 write proof custody and owned cleanup](571-s003-write-proof-custody-and-owned-cleanup.md) — retain pending key evidence and coordinate protected version/account cleanup.
 - [ADR-658: Private result files for workflow Operations](658-workflow-operation-artifacts.md)
 
 ## Automation recovery lifecycle
@@ -819,6 +822,97 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-837: Production lifecycle review history](837-production-lifecycle-review-history.md)
 
+## Managed realtime release decisions
+
+- [ADR-1112 — Transactional realtime publishing](1112-transactional-realtime-publishing.md)
+- [ADR-1113 — Managed realtime access revocation](1113-managed-realtime-access-revocation.md)
+- [ADR-1114: PostgreSQL realtime table-change feeds](1114-postgresql-realtime-changefeeds.md)
+- [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
+- [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
+- [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
+- [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
+- [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
+- [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)
+- [ADR 1030: Lease-fenced realtime consumer groups](1030-realtime-consumer-groups.md)
+- [ADR 1031: Group-bound realtime worker credentials](1031-scoped-realtime-worker-credentials.md)
+- [ADR 1032: Channel-scoped realtime publisher credentials](1032-scoped-realtime-publisher-credentials.md)
+- [ADR 1033: Consumer-group dead-letter webhooks](1033-realtime-consumer-group-dead-letter-webhooks.md)
+- [ADR 1034: Batch claims and concurrent consumer-group workers](1034-realtime-batch-claims-and-worker-concurrency.md)
+- [ADR 1035: Consumer-group pause and resume](1035-realtime-consumer-group-pause-and-resume.md)
+- [ADR 1036: Consumer-group drain mode](1036-realtime-consumer-group-drain.md)
+- [ADR 1037: Bounded consumer-group long polling](1037-realtime-consumer-group-long-polling.md)
+- [ADR 1038: Consumer-group lag alerts](1038-realtime-consumer-group-lag-alerts.md)
+- [ADR 1039: Per-entity consumer-group ordering](1039-realtime-consumer-group-entity-ordering.md)
+- [ADR 1040: Persistent consumer-group lease fencing tokens](1040-realtime-consumer-group-lease-fencing.md)
+- [ADR 1041: Consumer-group dead-letter retention](1041-realtime-consumer-group-dead-letter-retention.md)
+- [ADR 1042: Automatic consumer-group retry policies](1042-realtime-consumer-group-retry-policies.md)
+- [ADR 1043: Bounded bulk dead-letter recovery](1043-realtime-consumer-group-bulk-dead-letter-recovery.md)
+- [ADR 1044: Consumer-group delivery deadlines](1044-realtime-consumer-group-delivery-deadlines.md)
+- [ADR 1045: Shared consumer-group claim rate limits](1045-realtime-consumer-group-claim-rate-limits.md)
+- [ADR 1046: Immutable consumer-group message filters](1046-realtime-consumer-group-message-filters.md)
+- [ADR 1047: Consumer-group worker health heartbeats](1047-realtime-consumer-group-worker-heartbeats.md)
+- [ADR 1048: Consumer-group processing latency metrics](1048-realtime-consumer-group-processing-metrics.md)
+- [ADR 1049: Delayed publishing visibility in the realtime inspector](1049-realtime-delayed-publish-inspector.md)
+- [ADR 1050: Priority-aware consumer group claims](1050-realtime-consumer-group-priority-claims.md)
+- [ADR 1051: Consumer-group batch settlement](1051-realtime-consumer-group-batch-settlement.md)
+- [ADR 1052: Automatic consumer-group circuit breakers](1052-realtime-consumer-group-circuit-breakers.md)
+- [ADR 1053: Consumer-group delivery-attempt history](1053-realtime-consumer-group-delivery-attempt-history.md)
+- [ADR 1054: Cooperative consumer-group lease release](1054-realtime-cooperative-lease-release.md)
+- [ADR 1055: Consumer-group settlement receipts](1055-realtime-consumer-group-settlement-receipts.md)
+- [ADR 1056: Consumer-group event deduplication](1056-realtime-consumer-group-event-deduplication.md)
+- [ADR 1057: Read-only dead-letter JSONL export](1057-realtime-dead-letter-jsonl-export.md)
+- [ADR 1058: Background dead-letter replay jobs](1058-realtime-background-dead-letter-replay-jobs.md)
+- [ADR 1059: Replay-job lifecycle notifications](1059-realtime-replay-job-notifications.md)
+- [ADR 1060: Dry-run replay jobs and reviewed recovery](1060-realtime-dry-run-replay-jobs.md)
+- [ADR 1061: Python async realtime worker helper](1061-python-async-realtime-workers.md)
+- [ADR 1062: Python receipt-backed settlement retries](1062-python-receipt-backed-settlement-retries.md)
+- [ADR 1063: Python worker settlement batching](1063-python-worker-settlement-batching.md)
+- [ADR 1064: Python worker lifecycle hooks](1064-python-worker-lifecycle-hooks.md)
+- [ADR 1065: Python worker processing timeouts](1065-python-worker-processing-timeouts.md)
+- [ADR 1066: Python worker graceful draining](1066-python-worker-graceful-draining.md)
+- [ADR 1067: Python expiring realtime activity](1067-python-expiring-realtime-activity.md)
+- [ADR 1068: Python combined presence directory](1068-python-presence-directory.md)
+- [ADR 1069: Python temporary activity publisher](1069-python-temporary-activity-publisher.md)
+- [ADR 1070: Python activity inactivity expiry](1070-python-activity-inactivity-expiry.md)
+- [ADR 1071: Python realtime activity summaries](1071-python-realtime-activity-summaries.md)
+- [ADR 1072: Python realtime activity scopes](1072-python-realtime-activity-scopes.md)
+- [ADR 1073: Python confirmed read-progress tracker](1073-python-confirmed-read-progress-tracker.md)
+- [ADR 1074: Python coalesced read assertions](1074-python-coalesced-read-assertions.md)
+- [ADR 1075: Python aggregate unread summaries](1075-python-aggregate-unread-summaries.md)
+- [ADR 1076: Python read-progress freshness](1076-python-read-progress-freshness.md)
+- [ADR 1077: Python read-refresh coordinator](1077-python-read-refresh-coordinator.md)
+- [ADR 1078: Python unread badge presentation](1078-python-unread-badge-presentation.md)
+- [ADR 1079: Python realtime connection-status observation](1079-python-realtime-connection-status.md)
+- [ADR 1080: Python realtime connection quality](1080-python-realtime-connection-quality.md)
+- [ADR 1081: Python realtime health summary](1081-python-realtime-health-summary.md)
+- [ADR 1082: Python reconnect catch-up observation](1082-python-reconnect-catch-up.md)
+- [ADR 1083: Python catch-up stall detection](1083-python-catch-up-stall-detection.md)
+- [ADR 1084: Python subscription readiness](1084-python-subscription-readiness.md)
+- [ADR 1085: Python subscription readiness waits](1085-python-subscription-readiness-waits.md)
+- [ADR 1086: Python catch-up completion waits](1086-python-catch-up-completion-waits.md)
+- [ADR 1087: Python combined realtime readiness gate](1087-python-combined-realtime-readiness.md)
+- [ADR 1088: Python realtime diagnostics export](1088-python-realtime-diagnostics-export.md)
+- [ADR 1089: Python realtime incident timeline](1089-python-realtime-incident-timeline.md)
+- [ADR 1090: Python realtime reconnect and replay coordinator](1090-python-realtime-recovery-coordinator.md)
+- [ADR 1091: Python native managed realtime WebSocket transport](1091-python-native-managed-websocket-client.md)
+- [ADR 1092: Python multi-channel subscriptions on one WebSocket](1092-python-multi-channel-websocket-client.md)
+- [ADR 1093: Native Python WebSocket presence and activity](1093-python-native-presence-and-activity.md)
+- [ADR 1094: Python durable channel subscriptions](1094-python-durable-channel-subscriptions.md)
+- [ADR 1095: Python server-side channel event filters](1095-python-server-side-channel-event-filters.md)
+- [ADR 1096: Python native read receipts and unread counts](1096-python-native-read-receipts-and-unread-counts.md)
+- [ADR 1097: Python native live-only direct messages](1097-python-live-only-direct-messages.md)
+- [1098: Python retained-channel SSE fallback](1098-python-realtime-sse-fallback.md)
+- [1099: Python realtime subscription pause and resume](1099-python-realtime-subscription-pause-resume.md)
+- [1100: Python realtime backpressure observations](1100-python-realtime-backpressure-observations.md)
+- [1101: Python retained-channel graceful draining](1101-python-realtime-graceful-drain.md)
+- [1102: Delivery expiration for retained realtime channel events](1102-retained-realtime-message-expiration.md)
+- [1103: Default and per-message TTL for retained channel batches](1103-retained-realtime-batch-message-ttl.md)
+- [1104: Message TTL for scheduled realtime publication](1104-scheduled-realtime-message-ttl.md)
+- [1105: TTL for transactional realtime messages](1105-transactional-realtime-message-ttl.md)
+- [1106: Message TTL for scoped realtime publishers](1106-scoped-realtime-publisher-message-ttl.md)
+- [1107: Realtime message expiry diagnostics](1107-realtime-message-expiry-diagnostics.md)
+- [1108: Delivery TTL for direct realtime inbox messages](1108-direct-inbox-delivery-ttl.md)
+
 - [ADR-933: Durable entity outbox relay and transport acceptance](933-durable-entity-outbox-relay.md)
 
 - [ADR-934: Gated durable entity guest outbox protocol](934-durable-entity-guest-outbox-protocol.md)
@@ -879,6 +973,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
+
+- [ADR-1111: Typed Go SDK methods for the managed realtime release](1111-go-sdk-managed-realtime-release.md)
 
 - [ADR-983: Firecracker 1.17 and guest kernel 6.18](983-firecracker-1-17-and-guest-kernel-6-18.md)
 
