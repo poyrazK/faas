@@ -1,0 +1,243 @@
+# ADR-957: Pause tiers — quiet pause between requests, frozen after idle
+
+- Status: Proposed. Rollout starts with function apps only (owner
+  decision, 2026-10-13); services follow once functions have run well in
+  production.
+- Date: 2026-10-12
+- Builds on: ADR-906 (frozen instances: prototype, measurements,
+  economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
+  (snapshot reuse at park)
+- Amends (when accepted): spec §6.1 state machine (a `frozen` state),
+  §6.2 invariant 2 (frozen charge; vCPU admission by active vCPU), §12
+  metrics, ADR-906 decision 2 (how a frozen instance is charged)
+
+## Context
+
+ADR-906 measured a Firecracker pause: 0.4 ms to pause or resume, no host
+CPU while paused, first byte 5–14 ms after resuming a restored VM, against
+a 340 ms p50 snapshot wake in production. Its economics simulation replays
+3,000 HTTP apps from the Azure Functions 2019 trace and found that vCPU
+admission, not RAM, limits every policy. A node admits Σ guest vCPU up to
+host threads × `CPUOvercommit` (160 on an EX44), and Free, Hobby and Pro
+VMs expose 2 vCPUs each, so an EX44 holds at most ~80 running VMs whatever
+their RAM. An idle running VM keeps its vCPUs booked for the whole idle
+timeout (30–600 s) while using about 0.4% of a core.
+
+The same simulator (`scripts/experiments/frozen-tier-economics`), extended
+with a pause that keeps the instance billed and holds RAM but no vCPU, gives
+(apps per EX44 at the p99.9 instant; mean latency of a request that finds
+no running VM):
+
+| policy | billed GB-h per app-month | revenue per app-month | apps per EX44 | binding limit | wakes per app-week | latency of those wakes |
+|---|---|---|---|---|---|---|
+| A. today: idle timeout, then park | 29.4 | €3.94 | 251 | vCPU | 1,096 restores | 340 ms |
+| B. freeze at the idle timeout, park after 1 h (ADR-906 as proposed) | 29.4 | €3.94 | 251 | vCPU | 1,096, 99.1% thaws | 10.9 ms |
+| C. idle running VMs hold no vCPU, no pause | 29.4 | €3.94 | 1,052 | RAM | ~1,100 restores | 340 ms |
+| D. quiet pause after 2 s (billed), park at the idle timeout | 29.4 | €3.94 | 716 | vCPU | 6,901, 84% resumes | 55.7 ms |
+| **E. quiet pause after 2 s (billed), freeze at the idle timeout** | **29.4** | **€3.94** | **716** | **vCPU** | **6,901, 84% resumes, 16% thaws** | **3.4 ms** |
+| F. freeze after 2 s, frozen time unbilled | 9.3 | €3.83 | 716 | vCPU | 6,901, 99.8% thaws | 8.5 ms |
+
+C shows the vCPU rule is the lever, but it only drops the booking: an idle
+VM that gets busy again is never re-admitted, so the node's CPU guarantee
+becomes statistical and wakes after the idle timeout still restore. E keeps
+today's billing (§4.7 untouched, no revenue change), fits 2.85× the apps,
+and turns almost every wake into a resume or a thaw. At 716 apps per EX44,
+E's p99.9 instant has 166 active vCPU (budget 160), 424 booked vCPU for
+running and quiet-paused VMs (2.65× the budget), 210 resident VMs and about
+305 frozen ones (`occupancy.py` in the same directory).
+
+The trace is all functions, but the table above uses the plan idle
+timeouts. Function apps idle out after 30 s on every plan (ADR-974), which
+leaves less idle time to reclaim. With `FUNCTIONS=1`:
+
+| function apps (30 s idle timeout) | apps per EX44 | billing | wakes that restore | mean wake latency |
+|---|---|---|---|---|
+| today | 285 | 23.6 GB-h, €3.92 per app-month | all | 340 ms |
+| quiet pause after 2 s | 716 | unchanged | 18% | 62.3 ms |
+| quiet pause, then frozen at the idle timeout | 716 | unchanged | 0.1% | 3.5 ms |
+
+Quiet pause alone carries the whole capacity gain; frozen adds the latency
+win for requests that arrive after the 30 s idle timeout.
+
+## Decision (proposed)
+
+Two tiers built on the same Firecracker pause, with different owners.
+
+### 1. Quiet pause: inside RUNNING, owned by vmmd, billed
+
+- vmmd pauses a running instance after `QuietPauseAfter` (2 s) without
+  activity: no forward RPC in flight (HTTP, raw, TCP and UDP streams, so an
+  open WebSocket or TCP connection counts), no `waitUntil` tail task and no
+  exec session. vmmd already tracks forwarded requests (`pkg/fcvm/activity`)
+  and tail tasks (the Manager's tail counters), and all four forward RPCs
+  pass through `Server.beginActivity`.
+- `beginActivity` resumes a paused instance before the bridge dials the
+  guest, once per instance however many requests arrive together. ADR-906
+  measured +1–3 ms p50 for a request that finds the VM paused.
+- No memory reclaim. Liveness, readiness and framework-ready loops skip a
+  paused instance instead of counting failures. vmmd's own calls into the
+  guest (probes, metric scrapes, vsock queries) never resume it.
+- The row stays `running`. There is no database write and no schedd round
+  trip, and billing is unchanged: a quiet-paused instance is a running
+  instance that is not using its vCPUs.
+- vmmd reports `quiet_paused` and `quiet_paused_since` in `InstanceStats`;
+  schedd uses them for admission (section 3).
+- schedd decides eligibility at wake and sends it in the app spec
+  (`quiet_pause_after_ms`, 0 = off). The first release covers function
+  apps only (`app_type = function`), the execution model AWS Lambda uses,
+  where the environment is frozen between invocations. It needs no new
+  customer setting. Quiet pause is never on for workers, apps attached to a
+  private network (guest-to-guest packets bypass vmmd, so a paused peer
+  would drop them), mirror instances, jobs, app tasks or builders.
+- What a customer sees, from ADR-906's pause experiments: in-process timers
+  and background threads stop 2 s after the last request; an outbound
+  connection survives, but a peer that expects heartbeats more often than
+  the pause lasts may close it; after resume the guest clock is a constant
+  ~75 ms behind.
+- Services come later, once functions have run well in production. They
+  get a declared lifecycle written by apid: `request` (paused between
+  requests, the function behaviour), `idle` (runs through the idle timeout,
+  then frozen; the default for services) or `always` (never paused or
+  frozen). The platform cannot see in-process timers or heartbeat
+  protocols from outside, so the app declares them.
+
+### 2. Frozen: a new instance state, owned by schedd, not billed
+
+- At the idle timeout the reaper freezes an eligible instance instead of
+  parking it. If the deployment has a usable snapshot (ADR-159), the edge
+  is RUNNING → FROZEN. If not, vmmd snapshots the VM and keeps it paused
+  (`PauseAndSnapshot` with `keep_paused`), SNAPSHOTTING → FROZEN, so a later
+  park still has a snapshot to wake from.
+- State machine: `frozen` joins the `instances.state` CHECK. Edges: RUNNING
+  and SNAPSHOTTING → FROZEN; FROZEN → RUNNING (thaw); FROZEN → PARKED (TTL,
+  memory pressure, superseded deployment, changed config fence, failed
+  thaw); FROZEN → STOPPED, FAILED, EVICTING_ACCOUNT_DELETING.
+  `CountsForConcurrency` is false and `CountsForRAM` is true.
+- Billing: `frozen` stays out of the billable set in the
+  `instance_billing_intervals` trigger (ADR-906 decision 4).
+- Admission: a frozen reservation (`KindFrozen`) holds the instance's
+  measured memory, at least `MeasuredChargeFloorMB` (64 MB), and no vCPU,
+  CPU millicores or concurrency. It is outside ADR-909's reservation
+  overcommit cap. A thaw re-admits the full reservation (plan RAM + 8 MB,
+  vCPU, CPU, concurrency) the way a wake is admitted; `PromoteWarm` only
+  adds concurrency because a warm VM keeps its full booking. If it does not fit,
+  schedd destroys the frozen VM (FROZEN → PARKED) and the request takes an
+  ordinary wake, on another node if needed.
+- Thaw path: gateway → schedd `Wake` → `promoteFrozenInstanceLocked`, the
+  warm-pool promotion generalised: config-fence check, ledger re-admission,
+  vmmd `Thaw` (resume and restart probes), `PublishOwnedInstanceRuntime`
+  (FROZEN → RUNNING compare-and-set), route publication. No resume hook
+  (ADR-906 decision 5).
+- Bounds: `FrozenTTL` (1 h), then park. Under memory pressure (ADR-909
+  eviction) frozen instances go first, least recently used, before any
+  running one. `FrozenMaxPerNode` caps Firecracker processes and jail uids.
+  A host restart loses frozen VMs; recovery marks their rows parked, since
+  snapshots stay the source of truth (ADR-005). Memory reclaim and zswap
+  apply only under pressure, as ADR-906's density results recommend.
+- Eligibility: whatever an idle park would take today, except instances
+  with ephemeral secrets (the warm pool discards those because a resumed VM
+  would outlive its credentials), mirror instances and ended or superseded
+  deployments.
+
+### 3. Admission counts active vCPU
+
+- The vCPU gate counts active vCPU: Σ guest vCPU of waking, cold-booting
+  and running instances that are not quiet-paused, from the newest stats,
+  plus every reservation admitted since. This mirrors ADR-909's
+  `MeasuredMemory` with an `ActiveVCPU(nodeID) (vcpu, asOf, ok)` source;
+  without fresh stats the gate falls back to today's bookings. The physical
+  CPU-millicore gate follows the same rule.
+- Booked vCPU for running and quiet-paused instances is capped at
+  `QuietPauseMaxVCPUOvercommitPercent` (300%) of the budget. Frozen
+  instances book none.
+- A quiet resume never waits for admission. When many paused instances
+  resume together, active vCPU can exceed the budget until they go quiet
+  again. The cost is CPU contention, which raises latency and does not fail
+  requests; the 300% cap bounds it, and CPU pressure (PSI) alerts on it.
+- Rejected for now: a vmmd-held token per active vCPU. It would make a
+  resume wait for capacity, moving admission into vmmd and putting a queue
+  on the request path.
+
+### 4. Ownership stays as it is
+
+vmmd is still the only component touching Firecracker, and quiet pause is
+decided inside vmmd from its own counters. schedd is still the only writer
+of `instances`: it owns `frozen`, the TTL, eviction, thaw admission and
+eligibility. gatewayd-internal keeps its hot path; a frozen instance is
+unroutable like a parked one and wakes through schedd. meterd is unchanged,
+because billing follows instance states through the trigger. apid will
+write the services' lifecycle setting when services are added.
+
+## Limits (`pkg/api/limits.go`)
+
+| name | value |
+|---|---|
+| `QuietPauseAfter` | 2 s |
+| `QuietPauseMaxVCPUOvercommitPercent` | 300 |
+| `FrozenTTL` | 1 h |
+| `FrozenMaxPerNode` | 1,000 |
+| frozen charge floor | `MeasuredChargeFloorMB` (64 MB, existing) |
+
+## Metrics (§12 additions)
+
+`vmmd_quiet_pause_total{outcome}`, `vmmd_quiet_resume_seconds`,
+`vmmd_quiet_paused_instances`, `vmmd_freeze_seconds`, `vmmd_thaw_seconds`,
+`node_frozen_resident_bytes`, `sched_frozen_instances`,
+`sched_frozen_evictions_total{reason}`, `sched_active_vcpu{node}`, and
+`gateway_wake_latency_seconds{method="thaw"}`.
+
+## Rollout
+
+One PR each. PRs that touch the VM lifecycle run `test-metal` and
+`leakcheck` on the n2 node.
+
+Step 1, quiet pause for function apps:
+
+1. This ADR.
+2. vmmd quiet pause behind `quiet_pause.enabled` in `vmmd.toml` (off by
+   default): pause controller, resume in `beginActivity`, probe skipping,
+   stats fields. Metal test: 1,000 pause/resume cycles under forwarded load,
+   an open stream is never paused, a paused VM snapshots and destroys
+   cleanly, no leaks.
+3. schedd eligibility for function apps in the app spec.
+4. schedd active-vCPU admission and the 300% cap, with a property test for
+   the vCPU side of invariant 2.
+5. Canary on one production node with the flag on, comparing resume
+   latency, errors and CPU pressure against the other nodes; then on for
+   every node.
+
+Step 2, frozen for function apps, once step 1 has run well in production:
+
+6. `frozen` state: migration (CHECK, billing trigger, indexes),
+   `machine.go` edges, store conformance tests.
+7. vmmd `Freeze`/`Thaw` RPCs from the ADR-906 prototype, and
+   `PauseAndSnapshot` with `keep_paused`.
+8. schedd: freeze instead of park at the idle timeout, TTL, eviction order,
+   thaw promotion, recovery after a host restart.
+9. Metrics, dashboards and debugger states; billing tests (frozen unbilled,
+   quiet-paused billed); canary as in step 1.
+
+Step 3, services: the declared lifecycle (`request`, `idle`, `always`)
+through apid, the CLI and docs, then the same canary.
+
+## Consequences
+
+- In the simulation, a request that finds no running VM waits 3.4 ms on
+  average instead of 340 ms, vCPU-bound nodes hold 2.85× the apps, and
+  billing and revenue do not change.
+- Function apps lose in-process timers between requests after 2 s, as on
+  AWS Lambda. The function docs state it.
+- A burst of resumes can oversubscribe CPU for a while. The guarantee is
+  soft, bounded by the 300% cap and watched through PSI.
+- More resident Firecracker processes: about 515 per EX44 at 716 apps
+  (~2 MB each), within `FrozenMaxPerNode` and the 10,000 jail uids.
+- Snapshot, migration and destroy must all handle a paused VM, and
+  migration resumes a quiet-paused VM first.
+
+## Open questions
+
+1. Frozen TTL: 1 h or 10 min? The simulation gives the same capacity, and
+   10.9 against 11.0 ms mean thaw-or-restore latency. Decided before step 2.
+2. Is a soft CPU guarantee for quiet resumes acceptable, or should resumes
+   wait for a vCPU token? The step 1 canary measures how far active vCPU
+   exceeds the budget in practice.

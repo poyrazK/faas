@@ -14,7 +14,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs |
+| [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -63,6 +63,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
+| [`entities`](#entities) | Observe durable entity state and recovery metadata |
 | [`customer-operations`](#customer-operations) | Inspect customer work, verify downloads and reconcile outcomes |
 | [`operations`](#operations) | Coordinate named work with leases, explicit contention policy, and fenced ownership |
 | [`debug`](#debug) | Inspect production requests and regressions |
@@ -1431,7 +1432,7 @@ Show feature maturity and plan availability
 
 ## ai
 
-AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs
+AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs
 
 `gregale ai [<subcommand>]`
 
@@ -1442,6 +1443,10 @@ gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 -
 gregale ai guardrails <integration-id> --app my-api --rpm 60 --models 'gpt-4o-mini,o3*' --max-output-tokens 2048
 gregale ai prices set <integration-id> --price model=gpt-4o-mini,input=0.15,cached=0.075,output=0.60
 gregale ai usage <integration-id> --date 2026-10-11
+gregale ai policy <integration-id> --user-daily-tokens 200000 --user-daily-cost 2
+gregale ai users <integration-id> --limit 20
+gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv
+gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
@@ -1451,7 +1456,7 @@ gregale ai logs <integration-id> --limit 20
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1460,6 +1465,8 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
 | `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
+| `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
+| `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
 
 ### ai app-limit
 
@@ -1496,6 +1503,16 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 |---|---|---|
 | `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
 
+### ai catalog
+
+Show the built-in prices that apply to models missing from a price list
+
+`gregale ai catalog [--model <NAME>] <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--model <NAME>` | show only the entry that prices this model |  |
+
 ### ai usage
 
 Show one UTC day of token usage and cost by caller and model
@@ -1505,6 +1522,21 @@ Show one UTC day of token usage and cost by caller and model
 | Flag | Meaning | |
 |---|---|---|
 | `--date <YYYY-MM-DD>` | UTC day within the last 90 days |  |
+
+### ai users
+
+Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first, or export a day range
+
+`gregale ai users [--date <YYYY-MM-DD>] [--user <ID>] [--limit <N>] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--format <csv|ndjson>] [export] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--date <YYYY-MM-DD>` | UTC day within the last 31 days |  |
+| `--user <ID>` | show only this end user |  |
+| `--limit <N>` | end users to show, 1 to 1000 |  |
+| `--from <YYYY-MM-DD>` | export: first UTC day within the last 31 days (default today) |  |
+| `--to <YYYY-MM-DD>` | export: last UTC day (default today) |  |
+| `--format <csv|ndjson>` | export format | one of `csv` · `ndjson` |
 
 ### ai routes
 
@@ -1764,13 +1796,14 @@ Manage transactional PostgreSQL outbox sources (internal)
 
 Register a fixed app destination
 
-`gregale commit add --name <NAME> --operation-policy <NAME> [--contract-version <VERSION>] [--allow-tenant-selection]`
+`gregale commit add --name <NAME> [--destination <DESTINATION>] [--operation-policy <NAME>] [--contract-version <VERSION>] [--allow-tenant-selection]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | account source name | required |
-| `--operation-policy <NAME>` | managed Operations queue policy | required |
-| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` |
+| `--destination <DESTINATION>` | immutable destination (default operation) | one of `operation` · `event` |
+| `--operation-policy <NAME>` | required for operation destinations; forbidden for event destinations |  |
+| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` · `3` |
 | `--allow-tenant-selection` | grant version 2 account-owner customer selection |  |
 
 ### commit connection
@@ -1805,6 +1838,98 @@ Read-only source diagnostics and optional local database checks
 |---|---|---|
 | `--file <PATH>` | local TLS PostgreSQL credential file; never uploaded |  |
 
+### commit recovery-alerts
+
+Manage saved historical alerts without polling
+
+`gregale commit recovery-alerts [--checkpoint <PATH>] [--replay] [--ack-alerts <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--checkpoint <PATH>` | saved recovery watch checkpoint |  |
+| `--replay` | emit pending historical alerts as JSON lines |  |
+| `--ack-alerts <PATH>` | atomically acknowledge exact incident_id/sequence entries |  |
+
+### commit recovery-status
+
+Read current delivery evidence for saved recovery attempts
+
+`gregale commit recovery-status [--plan <PATH>] [--result <PATH>] [--resume <PATH>] [--refresh <PATH>] [--watch] [--watch-diagnostics] [--checkpoint <PATH>] [--read-retries <N>] [--diagnostics] [--ack-alerts <PATH>] [--alerts-json] [--stall-threshold <DURATION>] [--max-diagnostic-age <DURATION>] [--max-observation-age <DURATION>] [--interval <DURATION>] [--limit <N>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan JSON |  |
+| `--result <PATH>` | saved apply result JSON |  |
+| `--resume <PATH>` | continue saved status unread items and failed reads |  |
+| `--refresh <PATH>` | reread saved status selection and track changes |  |
+| `--watch` | monitor acknowledged recovery executions |  |
+| `--watch-diagnostics` | watch until complete, fresh diagnostic coverage; enables watch and diagnostics |  |
+| `--checkpoint <PATH>` | atomically save watch progress for restart |  |
+| `--read-retries <N>` | total transient watch read retries (0..20; default 0) |  |
+| `--diagnostics` | include bounded live delivery blocker diagnostics |  |
+| `--ack-alerts <PATH>` | exact alert acknowledgements JSON (requires checkpoint and resume or refresh) |  |
+| `--alerts-json` | watch blocker lifecycle JSON lines on stderr (requires stall-threshold) |  |
+| `--stall-threshold <DURATION>` | persistent blocker alerts (100ms-24h; requires watch, diagnostics and max-diagnostic-age) |  |
+| `--max-diagnostic-age <DURATION>` | diagnostic sample age limit (100ms-24h; requires diagnostics) |  |
+| `--max-observation-age <DURATION>` | watch evidence age limit (100ms-24h; default disabled) |  |
+| `--interval <DURATION>` | watch interval (100ms-1m; default 1s) |  |
+| `--limit <N>` | subscriber observations (1..50; default 50) |  |
+| `--recipient-pages <N>` | receipt pages per item (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall timeout (default 2m) |  |
+
+### commit recovery-apply
+
+Apply freshly revalidated reviewed recovery actions
+
+`gregale commit recovery-apply [--plan <PATH>] [--yes] [--limit <N>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan JSON |  |
+| `--yes` | confirm recovery submissions |  |
+| `--limit <N>` | eligible items examined (1..50; default 50) |  |
+| `--recipient-pages <N>` | receipt pages per item (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall timeout (default 2m) |  |
+
+### commit recovery-plan
+
+Plan selective recovery from fresh receipt evidence
+
+`gregale commit recovery-plan [--report <PATH>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | saved delivery report; fixes selection and filter |  |
+| `--recipient-pages <N>` | recipient pages per publication (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall read timeout (default 2m) |  |
+
+### commit delivery-report
+
+Sample recent publication subscriber outcomes
+
+`gregale commit delivery-report [--refresh <PATH>] [--resume <PATH>] [--recipient-pages <N>] [--limit <N>] [--before <CURSOR>] [--subscription-id <UUID>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--refresh <PATH>` | reread saved selection with fresh observations |  |
+| `--resume <PATH>` | resume saved report; fixes selection and filter |  |
+| `--recipient-pages <N>` | recipient pages per publication (1..20; default 1) |  |
+| `--limit <N>` | publications per page (1..200; default 50) |  |
+| `--before <CURSOR>` | history next_before cursor |  |
+| `--subscription-id <UUID>` | filter original subscriber |  |
+| `--timeout <DURATION>` | overall read timeout (default 2m) |  |
+
+### commit history
+
+List retained publication acceptance receipts
+
+`gregale commit history [--before <CURSOR>] [--limit <N>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | next_before continuation cursor |  |
+| `--limit <N>` | receipts per page (1..200; default 50) |  |
+
 ### commit inspect
 
 Inspect event acceptance, retained execution and blocked observations
@@ -1813,10 +1938,11 @@ Inspect event acceptance, retained execution and blocked observations
 
 Wait without cancelling durable work on timeout
 
-`gregale commit wait [--until <STATE>] [--timeout <D>] [--interval <D>]`
+`gregale commit wait [--subscription-id <UUID>] [--until <STATE>] [--timeout <D>] [--interval <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--subscription-id <UUID>` | original application subscriber; requires --until completed |  |
 | `--until <STATE>` | accepted or completed |  |
 | `--timeout <D>` | maximum wait (default 2m) |  |
 | `--interval <D>` | poll interval (default 1s) |  |
@@ -2165,6 +2291,51 @@ Inspect retained consumer executions and handler outcomes
 | Flag | Meaning | |
 |---|---|---|
 | `--window <5m|15m|1h|6h|24h>` | attempt and completion window (default 5m) |  |
+
+### events delivery-health-alerts
+
+Inspect, replay, or acknowledge a local delivery health alert queue
+
+`gregale events delivery-health-alerts [--checkpoint <PATH>] [--replay] [--ack-alerts <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--checkpoint <PATH>` | delivery health checkpoint |  |
+| `--replay` | replay pending JSON lines |  |
+| `--ack-alerts <PATH>` | exact acknowledgements JSON |  |
+
+### events subscription-delivery-health
+
+Inspect routing, retained executions, and oldest pending blockers
+
+`gregale events subscription-delivery-health [--window <WINDOW>] [--watch] [--alerts-json] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--window <WINDOW>` | 5m\|15m\|1h\|6h\|24h |  |
+| `--watch` | watch configured local health thresholds |  |
+| `--alerts-json` | lifecycle alert JSON lines on stderr |  |
+| `--interval <DURATION>` | poll interval (100ms-1m) |  |
+| `--timeout <DURATION>` | watch deadline (up to 24h) |  |
+| `--max-age <DURATION>` | maximum sample age |  |
+| `--oldest-pending-threshold <DURATION>` | pending acceptance age threshold |  |
+| `--retrying-threshold <N>` | retained retrying execution threshold |  |
+| `--dead-letters-threshold <N>` | retained dead-letter execution threshold |  |
+| `--pause-threshold <DURATION>` | subscription pause duration threshold |  |
+| `--circuit-threshold <DURATION>` | locally sampled circuit restriction duration |  |
+| `--capacity-threshold <DURATION>` | locally sampled capacity wait duration |  |
+| `--waiting-reason-count <REASON=N>` | repeatable pending reason count threshold |  |
+| `--waiting-reason-duration <REASON=DURATION>` | repeatable sustained nonzero reason threshold |  |
+| `--checkpoint <PATH>` | persist delivery health watch state |  |
+| `--resume` | resume checkpoint with fresh evidence |  |
+| `--ack-inbox <PATH>` | live acknowledgement JSON batch; requires checkpoint |  |
+| `--slo-routing-latency <DURATION>` | recorded routing p95 target |  |
+| `--slo-completion-latency <DURATION>` | successful completion p95 target |  |
+| `--slo-retry-rate <N>` | routing retries/second target |  |
+| `--slo-dead-letter-rate <N>` | dead letters/second target |  |
+| `--slo-routing-failure-budget <PERCENT>` | terminal routing failure budget |  |
+| `--slo-min-samples <N>` | minimum window samples |  |
+| `--slo-sustain <DURATION>` | sustained fresh breach duration |  |
 
 ### events subscription-health
 
@@ -2530,10 +2701,12 @@ Inspect immutable routing outcomes and replay history for one event
 
 Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries
 
-`gregale events replay [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
+`gregale events replay [--expected-accepted-at <RFC3339>] [--expected-generation <N>] [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--expected-accepted-at <RFC3339>` | guard original acceptance in replay transaction |  |
+| `--expected-generation <N>` | guard routing generation; requires expected-accepted-at |  |
 | `--allow-expired` | explicitly bypass captured delivery age |  |
 | `--event-id <ID>` | published event id | required |
 | `--event-source <SOURCE>` | published event source | required |
@@ -6002,7 +6175,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -8861,7 +9034,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -9251,6 +9424,52 @@ Revoke an ingest credential
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+
+
+## entities
+
+Observe durable entity state and recovery metadata
+
+`gregale entities [<subcommand>]`
+
+Examples:
+
+```sh
+gregale entities inspect --app my-app --namespace counters --key customer:123
+gregale entities watch --app my-app --namespace sessions --key run:1 --timeout 5m --json
+```
+
+### entities inspect
+
+Read metadata and recovery diagnostics without invoking an entity
+
+`gregale entities inspect --app <SLUG> --namespace <NAME> --key <KEY> [--environment <ENV>] [--tenant <UUID>] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--namespace <NAME>` | exact entity namespace | required |
+| `--key <KEY>` | exact entity key | required |
+| `--environment <ENV>` | exact environment; omitted uses API default |  |
+| `--tenant <UUID>` | owned platform tenant |  |
+| `--timeout <DURATION>` | observation deadline, default 5m, maximum 1h |  |
+| `--interval <DURATION>` | watch poll interval, default 5s, range 1s to 1m |  |
+
+### entities watch
+
+Poll metadata for a bounded window, emitting changes only
+
+`gregale entities watch --app <SLUG> --namespace <NAME> --key <KEY> [--environment <ENV>] [--tenant <UUID>] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--namespace <NAME>` | exact entity namespace | required |
+| `--key <KEY>` | exact entity key | required |
+| `--environment <ENV>` | exact environment; omitted uses API default |  |
+| `--tenant <UUID>` | owned platform tenant |  |
+| `--timeout <DURATION>` | observation deadline, default 5m, maximum 1h |  |
+| `--interval <DURATION>` | watch poll interval, default 5s, range 1s to 1m |  |
 
 
 ## customer-operations

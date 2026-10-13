@@ -210,3 +210,26 @@ func TestServeHelperProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// adr: 1150
+func TestInvocationTimeoutFollowsTheForwardedBudget(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{header: "", want: HandlerTimeout},
+		{header: "2500", want: HandlerTimeout},       // a short budget keeps the 30 s floor
+		{header: "300000", want: 5 * time.Minute},    // Pro's ceiling
+		{header: "86400000", want: 15 * time.Minute}, // never past the longest plan budget
+		{header: "-5", want: HandlerTimeout},         // malformed values are ignored
+		{header: "soon", want: HandlerTimeout},
+	} {
+		h := http.Header{}
+		if tc.header != "" {
+			h.Set("X-Faas-Deadline-Ms", tc.header)
+		}
+		if got := invocationTimeout(h); got != tc.want {
+			t.Errorf("deadline %q: timeout %v, want %v", tc.header, got, tc.want)
+		}
+	}
+}

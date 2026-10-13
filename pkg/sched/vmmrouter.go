@@ -39,6 +39,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 )
 
 // RoutedVMM is the multi-node vmmd surface schedd's engine consumes.
@@ -229,7 +231,11 @@ type VMMRouter struct {
 	tls     *tls.Config
 	// outboundRelay is the schedd-local path to outboundd. It is attached to
 	// every per-node execution stream and never travels to vmmd or the guest.
-	outboundRelay ExecutionOutboundRelay
+	outboundRelay     ExecutionOutboundRelay
+	wakeDispatch      func(context.Context, string, string, string, string, string) error
+	wakePrepare       func(context.Context, string, string, string, string, string) (*state.ProjectEnvironmentCloneWakeDispatch, error)
+	migrationResume   func(context.Context, string, string, string) error
+	migrationAdoption func(context.Context, string, string, string, string, string, string, string) error
 }
 
 // NewVMMRouter builds a router pre-populated with the (nodeID →
@@ -262,6 +268,74 @@ func (r *VMMRouter) WithExecutionOutboundRelay(relay ExecutionOutboundRelay) *VM
 	if r != nil {
 		r.outboundRelay = relay
 	}
+	return r
+}
+
+// WithCloneWakeDispatchRecorder installs the durable ordinary-wake admission gate.
+// Production wires PgStore; configure it before serving scheduler requests.
+func (r *VMMRouter) WithCloneWakeDispatchRecorder(record func(context.Context, string, string, string, string, string) error) *VMMRouter {
+	r.wakeDispatch = record
+	return r
+}
+
+// A separate private capability prevents older clients from silently dropping
+// tagged ownership. Production clients remain unsupported until native binding.
+type checkpointWakeOwnershipVMM interface {
+	CheckCheckpointWakeOwnershipSupport(context.Context) error
+}
+
+func (r *VMMRouter) checkCheckpointWakeOwnershipSupport(ctx context.Context, cli VMM) error {
+	if r.wakePrepare == nil {
+		return nil
+	}
+	capable, ok := cli.(checkpointWakeOwnershipVMM)
+	if !ok {
+		return fmt.Errorf("checkpoint wake ownership: client is unsupported: %w", state.ErrConflict)
+	}
+	return capable.CheckCheckpointWakeOwnershipSupport(ctx)
+}
+
+// WithCloneWakeDispatchPreparer opts into original ownership transport. Do not
+// enable production until vmmd durably binds and fences this incoming protocol.
+// This replaces the recorder for admission; it must not record the same wake twice.
+func (r *VMMRouter) WithCloneWakeDispatchPreparer(prepare func(context.Context, string, string, string, string, string) (*state.ProjectEnvironmentCloneWakeDispatch, error)) *VMMRouter {
+	r.wakePrepare = prepare
+	return r
+}
+
+func (r *VMMRouter) prepareCloneWakeDispatch(ctx context.Context, nodeID, instance string, app AppSpec, method string) (context.Context, error) {
+	if r.wakePrepare != nil {
+		frame, err := r.wakePrepare(ctx, instance, app.AppID, app.DeploymentID, nodeID, method)
+		if err != nil {
+			return nil, fmt.Errorf("prepare wake ownership: %w", err)
+		}
+		if frame == nil {
+			return ctx, nil
+		}
+		if frame.InstanceID != instance || frame.AppID != app.AppID || frame.DeploymentID != app.DeploymentID || frame.NodeID != nodeID || frame.Method != method {
+			return nil, fmt.Errorf("prepare wake ownership: original dispatch changed: %w", state.ErrConflict)
+		}
+		return wakeownershipwire.Outgoing(ctx, *frame)
+	}
+	if r.wakeDispatch != nil {
+		if err := r.wakeDispatch(ctx, instance, app.AppID, app.DeploymentID, nodeID, method); err != nil {
+			return nil, err
+		}
+	}
+	return ctx, nil
+}
+
+// WithCloneMigrationAdoptionRecorder installs durable destination dispatch admission.
+// Production wires PgStore before serving migration requests.
+func (r *VMMRouter) WithCloneMigrationAdoptionRecorder(record func(context.Context, string, string, string, string, string, string, string) error) *VMMRouter {
+	r.migrationAdoption = record
+	return r
+}
+
+// WithCloneMigrationResumeRecorder installs source cancel/resume dispatch admission.
+// Production wires PgStore before serving migration requests.
+func (r *VMMRouter) WithCloneMigrationResumeRecorder(record func(context.Context, string, string, string) error) *VMMRouter {
+	r.migrationResume = record
 	return r
 }
 
@@ -430,6 +504,13 @@ func (r *VMMRouter) resolveFor(ctx context.Context, nodeID string) (VMM, error) 
 // CreateColdBoot implements RoutedVMM.
 func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string, app AppSpec) (*WakeOutcome, error) {
 	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
+		return nil, err
+	}
+	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "cold_boot")
 	if err != nil {
 		return nil, err
 	}
@@ -652,6 +733,16 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 	if err != nil {
 		return nil, err
 	}
+	if snap.DeploymentID != app.DeploymentID && (r.wakeDispatch != nil || r.wakePrepare != nil) {
+		return nil, fmt.Errorf("wake snapshot deployment ownership changed")
+	}
+	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
+		return nil, err
+	}
+	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "restore")
+	if err != nil {
+		return nil, err
+	}
 	return cli.CreateFromSnapshot(ctx, instance, app, snap)
 }
 
@@ -667,6 +758,16 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 	if !ok {
 		return nil, api.NewProblem(501, api.CodeNotImplemented,
 			"Warm-pool restore unavailable", "vmmd client does not support paused snapshot restore")
+	}
+	if snap.DeploymentID != app.DeploymentID && (r.wakeDispatch != nil || r.wakePrepare != nil) {
+		return nil, fmt.Errorf("wake snapshot deployment ownership changed")
+	}
+	if err = r.checkCheckpointWakeOwnershipSupport(ctx, cli); err != nil {
+		return nil, err
+	}
+	ctx, err = r.prepareCloneWakeDispatch(ctx, nodeID, instance, app, "restore")
+	if err != nil {
+		return nil, err
 	}
 	return paused.CreatePausedFromSnapshot(ctx, instance, app, snap)
 }
@@ -813,6 +914,11 @@ func (r *VMMRouter) AdoptMigratedInstance(ctx context.Context, newOwnerNodeID, i
 	if err != nil {
 		return LiveMigrationAdopt{}, err
 	}
+	if r.migrationAdoption != nil {
+		if err := r.migrationAdoption(ctx, instanceID, app.AppID, app.DeploymentID, newOwnerNodeID, memKey, vmstateKey, leaseToken); err != nil {
+			return LiveMigrationAdopt{}, err
+		}
+	}
 	return cli.AdoptMigratedInstance(ctx, newOwnerNodeID, instanceID, app, memKey, vmstateKey, leaseToken)
 }
 
@@ -839,6 +945,11 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 	cli, err := r.resolveFor(ctx, dyingNodeID)
 	if err != nil {
 		return err
+	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, instanceID, dyingNodeID, leaseToken); err != nil {
+			return err
+		}
 	}
 	return cli.CancelLiveMigration(ctx, dyingNodeID, instanceID, leaseToken)
 }

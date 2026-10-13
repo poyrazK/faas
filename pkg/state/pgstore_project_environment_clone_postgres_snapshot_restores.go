@@ -47,7 +47,20 @@ func cloneSnapshotRestoreContextTx(ctx context.Context, tx pgx.Tx, lease Project
 	if op.Status == CloneOperationCapturing && (resource.TargetID != "" || resource.Status != "captured") {
 		return op, ProjectEnvironmentClonePostgresSnapshot{}, ErrConflict
 	}
-	if reservation {
+	checkpoint := len(op.Resources) > 0 && op.Resources[0].Kind == "data_checkpoint"
+	if checkpoint && op.Status != CloneOperationCompensating {
+		release, err := readCloneCheckpointReleaseTx(ctx, tx, op)
+		if err != nil {
+			return op, ProjectEnvironmentClonePostgresSnapshot{}, err
+		}
+		if op.Status != CloneOperationCapturing || release.State != "released" {
+			return op, ProjectEnvironmentClonePostgresSnapshot{}, ErrConflict
+		}
+		if err := validateCloneCheckpointReleaseJournalsTx(ctx, tx, op, release, false); err != nil {
+			return op, ProjectEnvironmentClonePostgresSnapshot{}, err
+		}
+	}
+	if reservation && !checkpoint {
 		live, err := q.ReadProjectEnvironmentCloneDatabaseSource(ctx, tx, sqlc.ReadProjectEnvironmentCloneDatabaseSourceParams{AccountID: mustPgUUID(op.AccountID), ID: mustPgUUID(sourceID)})
 		if err != nil {
 			return op, ProjectEnvironmentClonePostgresSnapshot{}, mapErr(err)

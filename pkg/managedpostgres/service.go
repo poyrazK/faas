@@ -150,16 +150,19 @@ func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, 
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
 	if !s.provisioningEnabled() {
-		return Database{}, ErrUnavailable
+		return Database{}, ErrProvisioningClosed
 	}
-	if request.AccountID == "" || !ValidName(request.Name) {
+	if request.AccountID == "" {
 		return Database{}, ErrInvalid
+	}
+	if !ValidName(request.Name) {
+		return Database{}, errInvalidName
 	}
 	if err := request.Spec.Validate(); err != nil {
 		return Database{}, err
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, ErrUnavailable
+		return Database{}, ErrProvisioningClosed
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
@@ -234,13 +237,13 @@ func (s *Service) Restore(ctx context.Context, request RestoreDatabaseRequest) (
 // Callers must compensate only resources they created, never adopted restores.
 func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabaseRequest) (Database, bool, error) {
 	if !s.provisioningEnabled() {
-		return Database{}, false, ErrUnavailable
+		return Database{}, false, ErrProvisioningClosed
 	}
 	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
 		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Database{}, false, ErrUnavailable
+		return Database{}, false, ErrProvisioningClosed
 	}
 	source, err := s.Get(ctx, request.AccountID, request.SourceDatabaseID)
 	if err != nil {
@@ -286,6 +289,12 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
+		return Database{}, false, ErrInvalid
+	}
+	// No database has history from before it existed. The provider rejects
+	// such a point only after the target is reserved, leaving a failed row
+	// on the account's database quota (production-us hunt #9).
+	if request.PointInTime.Before(source.CreatedAt) {
 		return Database{}, false, ErrInvalid
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
@@ -334,7 +343,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 // an existing private database.
 func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string, definition RestoreSourceDefinition) (int, error) {
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
-		return 0, ErrUnavailable
+		return 0, ErrProvisioningClosed
 	}
 	if accountID == "" || definition.Spec.Validate() != nil || definition.Spec.RestoreWindowSeconds <= 0 || definition.ProviderResourceID == "" ||
 		definition.DataResourceID != "" && !validDataResourceID(definition.DataResourceID) {

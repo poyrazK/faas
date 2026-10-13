@@ -23,7 +23,7 @@ func NewCutoverService(bindings *BindingService, store CutoverStore, sealer Cred
 }
 func (s *CutoverService) Prepare(ctx context.Context, r PrepareCutoverRequest) (Cutover, error) {
 	if !s.bindings.provisioningEnabled() || !s.bindings.provisioningAllowed(ctx, r.AccountID) {
-		return Cutover{}, ErrUnavailable
+		return Cutover{}, ErrProvisioningClosed
 	}
 	if r.ID == "" {
 		r.ID = uuid.NewString()

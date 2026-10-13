@@ -32,15 +32,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
@@ -159,7 +162,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 			tpl, strings.Join(templates.Names, ", "))
 		return 1
 	}
-	if deploy && templates.CategoryFor(tpl) == "operations" {
+	if deploy && (templates.CategoryFor(tpl) == "operations" || templates.CategoryFor(tpl) == "durable-entities") {
 		PrintFail(stderr, "%s requires a local SDK bundle; initialize without --deploy, follow README.md, then deploy the prepared source", tpl)
 		return 1
 	}
@@ -270,6 +273,8 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
+	case "durable-entity-node":
+		return "https://gregale.dev/docs/durable-entity-development"
 	case "data-api", "data-api-starter":
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node", "mcp-go", "mcp-python":
@@ -312,6 +317,29 @@ func pluralY(n int) string {
 		return "y"
 	}
 	return "ies"
+}
+
+// requireTemplateSecretsBeforeFirstStart refuses the first deploy of a
+// template that cannot start without secrets when none are supplied. On
+// production-us `gregale init --template ai-chat --deploy` built for 7.6
+// minutes and then failed with "no provider key set" (hunt #9, H9-164). An
+// existing app may already hold its secrets, so only a missing app is refused;
+// when the lookup fails for another reason the deploy proceeds as before.
+func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface {
+	GetApp(context.Context, string) (api.AppResponse, error)
+}, tpl, secretsFile string, createOnly bool, slug string) error {
+	if tpl == "" || secretsFile != "" || createOnly {
+		return nil
+	}
+	missing := validateTemplateSecrets(tpl, nil)
+	if missing == nil {
+		return nil
+	}
+	var ae *APIError
+	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
+		return nil
+	}
+	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale secrets set --app %s ...`, then deploy", missing, tpl, slug)
 }
 
 // validateTemplateSecrets catches an incomplete first-deploy bundle before

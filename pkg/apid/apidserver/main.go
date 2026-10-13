@@ -764,6 +764,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.realtime.RunManagedRealtimeDrainWorker(ctx)
 		go srv.runManagedExecutionWorkflowWorker(ctx)
 		go srv.durable.RunAlarms(ctx)
+		go srv.durable.RunDurableEntityRegistryCleanup(ctx)
 		go srv.durable.RunOutbox(ctx)
 		go srv.durable.RunMaintenance(ctx)
 		go srv.durable.RunHealth(ctx)
@@ -1639,10 +1640,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) {
-				// invokeApp applies the plan-specific 5s/30s wait;
-				// give that handler the full platform ceiling so the
-				// outer apid budget does not truncate paid plans.
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) {
+				// invokeApp applies the plan-specific 5s/30s wait, and a
+				// deploy commit scans its source archive (H9-157); both
+				// get the platform ceiling instead of the 5 s default.
 				return api.RequestBudgetMax
 			}
 			return 0

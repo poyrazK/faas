@@ -31,7 +31,7 @@ export async function browserStarter(t, template = 'customer-operation-workflow-
   const source = fileURLToPath(new URL(`../../../../cmd/gregale/templates/${template}/`, import.meta.url));
   const dest = join(temp, 'feature'); cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
   prepareOfflineStarterInstall(dest);
-  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}));
+  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000, maxBuffer: 64 << 20}));
   cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;
   execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000, stdio: 'pipe'});

@@ -329,7 +329,8 @@ type Server struct {
 	// here from a row already committed to a peer; without that
 	// distinction it could either strand a paused source or resume
 	// a VM after ownership moved away.
-	nodeID string
+	nodeID                        string
+	managedPostgresDrainAuthority state.ManagedPostgresDrainAuthority
 	// streamBridges owns the reusable v2 bridge process and H2C transport for
 	// each live instance. It is lazy so tests and legacy/v1 traffic pay no
 	// startup cost until the optimized path is actually used.

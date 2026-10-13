@@ -9,10 +9,20 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
+
+var commitSchemaVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// CommitSQLTransaction is the insert capability of an existing PostgreSQL
+// transaction. Both *sql.Tx and EventConsumerSQLTransaction implement it.
+// Implementations must execute inside the caller's transaction, not autocommit.
+type CommitSQLTransaction interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
 
 // InsertCommitEvent inserts an outbox event using the caller's existing
 // PostgreSQL business transaction. It never commits, performs DDL, or calls
@@ -24,6 +34,20 @@ import (
 // A duplicate ID is an error, so a changed event cannot be silently dropped.
 func InsertCommitEvent(ctx context.Context, tx *sql.Tx, event CommitEventRequest) (string, error) {
 	if tx == nil {
+		return "", errors.New("commit: an existing transaction is required")
+	}
+	return InsertCommitEventInTransaction(ctx, tx, event)
+}
+
+// InsertCommitEventInTransaction inserts using a restricted transaction adapter,
+// including the callback transaction supplied by WithEventConsumerTransaction.
+// It shares InsertCommitEvent's validation and never controls the transaction.
+// Pass a live transaction; an autocommit database executor is not supported.
+func InsertCommitEventInTransaction(ctx context.Context, tx CommitSQLTransaction, event CommitEventRequest) (string, error) {
+	if tx == nil {
+		return "", errors.New("commit: an existing transaction is required")
+	}
+	if sqlTx, ok := tx.(*sql.Tx); ok && sqlTx == nil {
 		return "", errors.New("commit: an existing transaction is required")
 	}
 	identity := strings.ToLower(event.ID)
@@ -45,6 +69,19 @@ func InsertCommitEvent(ctx context.Context, tx *sql.Tx, event CommitEventRequest
 	}
 	if !json.Valid(event.Data) {
 		return "", errors.New("commit: event data must be valid JSON")
+	}
+	if event.SchemaVersion != "" {
+		if event.Routing != nil {
+			return "", errors.New("commit: schema version cannot accompany operation routing")
+		}
+		if !commitSchemaVersionPattern.MatchString(event.SchemaVersion) {
+			return "", errors.New("commit: invalid schema version")
+		}
+		_, err := tx.ExecContext(ctx, "INSERT INTO public.gregale_outbox(event_id,event_type,payload,schema_version) VALUES($1::uuid,$2,$3::jsonb,$4)", identity, event.Type, string(event.Data), event.SchemaVersion)
+		if err != nil {
+			return "", err
+		}
+		return identity, nil
 	}
 	if event.Routing != nil {
 		routing := *event.Routing

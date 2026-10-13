@@ -14,13 +14,53 @@ import (
 
 type sequenceRolloutStatus struct {
 	rows  []api.DeploymentResponse
+	errs  []error
 	calls int
 }
 
 func (s *sequenceRolloutStatus) GetDeployment(context.Context, string) (api.DeploymentResponse, error) {
 	index := min(s.calls, len(s.rows)-1)
 	s.calls++
+	if index < len(s.errs) && s.errs[index] != nil {
+		return api.DeploymentResponse{}, s.errs[index]
+	}
 	return s.rows[index], nil
+}
+
+// TestRolloutStatusWaitOutlivesTransientPollErrors pins the production-us
+// finding: one timed-out read ended `rollouts status --wait` with a stale
+// "rolling_out (50%)" while the rollout had already reached 100%.
+func TestRolloutStatusWaitOutlivesTransientPollErrors(t *testing.T) {
+	ten := api.DeploymentResponse{ID: pinnedBindingDeployment, AppID: "app", Status: "live", RolloutState: "rolling_out", TrafficPercent: 10}
+	fifty := ten
+	fifty.TrafficPercent = 50
+	done := ten
+	done.RolloutState, done.TrafficPercent = "complete", 100
+	unavailable := &api.APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable}}
+	client := &sequenceRolloutStatus{
+		rows: []api.DeploymentResponse{ten, ten, {}, fifty, {}, done},
+		errs: []error{nil, nil, errors.New("request timed out"), nil, unavailable, nil},
+	}
+	var seen []int
+	got, err := pollRolloutStatus(t.Context(), client, "app", ten.ID, true, time.Millisecond, func(d api.DeploymentResponse) {
+		seen = append(seen, d.TrafficPercent)
+	})
+	if err != nil || got.RolloutState != "complete" || client.calls != 6 {
+		t.Fatalf("wait = %+v calls=%d err=%v, want complete after 6 reads", got, client.calls, err)
+	}
+	if len(seen) != 3 || seen[0] != 10 || seen[1] != 50 || seen[2] != 100 {
+		t.Fatalf("progress = %v, want one line per change: [10 50 100]", seen)
+	}
+
+	notFound := &api.APIError{Problem: api.Problem{Status: http.StatusNotFound}}
+	client = &sequenceRolloutStatus{rows: []api.DeploymentResponse{{}, ten}, errs: []error{notFound}}
+	if _, err := pollRolloutStatus(t.Context(), client, "app", ten.ID, true, time.Millisecond, nil); !errors.Is(err, notFound) || client.calls != 1 {
+		t.Fatalf("404 err=%v calls=%d, want the 404 after one read", err, client.calls)
+	}
+	client = &sequenceRolloutStatus{rows: []api.DeploymentResponse{{}, ten}, errs: []error{unavailable}}
+	if _, err := pollRolloutStatus(t.Context(), client, "app", ten.ID, false, time.Millisecond, nil); !errors.Is(err, unavailable) || client.calls != 1 {
+		t.Fatalf("status without --wait err=%v calls=%d, want the error after one read", err, client.calls)
+	}
 }
 
 func TestRolloutStatusWaitPinsDeploymentAndBarriers(t *testing.T) {
@@ -31,19 +71,19 @@ func TestRolloutStatusWaitPinsDeploymentAndBarriers(t *testing.T) {
 	done.RolloutState = "complete"
 	done.ServiceRolloutHandoff = &api.ServiceRolloutHandoffResponse{Action: "promote", Phase: "complete"}
 	client := &sequenceRolloutStatus{rows: []api.DeploymentResponse{row, drain, done}}
-	got, err := pollRolloutStatus(t.Context(), client, "app", row.ID, true, time.Millisecond)
+	got, err := pollRolloutStatus(t.Context(), client, "app", row.ID, true, time.Millisecond, nil)
 	if err != nil || got.RolloutState != "complete" || client.calls != 3 {
 		t.Fatalf("wait skipped barriers: %+v calls=%d err=%v", got, client.calls, err)
 	}
 	wrong := row
 	wrong.ID = recoveryPredecessorID
-	if _, err := pollRolloutStatus(t.Context(), &sequenceRolloutStatus{rows: []api.DeploymentResponse{wrong}}, "app", row.ID, false, time.Millisecond); err == nil {
+	if _, err := pollRolloutStatus(t.Context(), &sequenceRolloutStatus{rows: []api.DeploymentResponse{wrong}}, "app", row.ID, false, time.Millisecond, nil); err == nil {
 		t.Fatal("accepted different deployment")
 	}
 	client = &sequenceRolloutStatus{rows: []api.DeploymentResponse{row}}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
 	defer cancel()
-	last, err := pollRolloutStatus(ctx, client, "app", row.ID, true, time.Millisecond)
+	last, err := pollRolloutStatus(ctx, client, "app", row.ID, true, time.Millisecond, nil)
 	if !errors.Is(err, context.DeadlineExceeded) || last.ID != row.ID {
 		t.Fatalf("deadline lost last status: %+v %v", last, err)
 	}

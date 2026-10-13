@@ -959,16 +959,13 @@ func TestEdgeRuleBudgetAction_Validate_Rejects(t *testing.T) {
 			wantSub: "budget_ms must be > 0",
 		},
 		{
-			// The hard upper bound is api.RequestBudgetMax (30 s).
-			// A budget rule can never widen past the global
-			// ceiling; if the customer wants a longer per-route
-			// budget they're mis-using this primitive (or have
-			// mis-configured their platform ceiling). The error
-			// message names the platform ceiling verbatim so the
-			// operator sees both observed and cap.
+			// The hard upper bound is api.RequestBudgetPlanMax (15 min,
+			// ADR-1150); the plan's own ceiling clamps again at request
+			// time. The error message names the platform ceiling
+			// verbatim so the operator sees both observed and cap.
 			name: "budget_ms_over_platform_ceiling",
 			mutate: func(a *EdgeRuleBudgetAction) {
-				a.BudgetMs = int(RequestBudgetMax.Milliseconds()) + 1
+				a.BudgetMs = int(RequestBudgetPlanMax.Milliseconds()) + 1
 			},
 			wantSub: "exceeds the platform ceiling",
 		},

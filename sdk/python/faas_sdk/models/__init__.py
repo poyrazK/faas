@@ -310,6 +310,9 @@ from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookRespons
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_durable_entity_quota_policy_body import ApplyDurableEntityQuotaPolicyBody
+from .apply_durable_entity_quota_policy_body_limits import ApplyDurableEntityQuotaPolicyBodyLimits
+from .apply_durable_entity_quota_policy_response_200 import ApplyDurableEntityQuotaPolicyResponse200
 from .apply_managed_realtime_schedule_group_group_action import ApplyManagedRealtimeScheduleGroupGroupAction
 from .apply_managed_realtime_schedule_group_response_200 import ApplyManagedRealtimeScheduleGroupResponse200
 from .apply_platform_tenant_consumer_request import ApplyPlatformTenantConsumerRequest
@@ -486,14 +489,19 @@ from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
+from .commit_event_publication import CommitEventPublication
 from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
+from .commit_publication_history_item import CommitPublicationHistoryItem
+from .commit_publication_history_response import CommitPublicationHistoryResponse
 from .commit_receipt_response import CommitReceiptResponse
 from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
+from .commit_source_response_destination import CommitSourceResponseDestination
+
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -549,6 +557,7 @@ from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetr
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
+from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -1010,6 +1019,8 @@ from .egress_flow_log_entry import EgressFlowLogEntry
 from .egress_flow_log_response import EgressFlowLogResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
+from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
+from .enable_durable_entity_registry_response_200 import EnableDurableEntityRegistryResponse200
 from .env_diff_cell import EnvDiffCell
 from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
@@ -1067,6 +1078,7 @@ from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
+from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
 from .event_backlog_recipient import EventBacklogRecipient
 from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
 from .event_backlog_recipient_consumer_kind import EventBacklogRecipientConsumerKind
@@ -1078,10 +1090,22 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_capacity_waits import EventConsumerCapacityWaits
+from .event_consumer_capacity_waits_coverage import EventConsumerCapacityWaitsCoverage
+from .event_consumer_delivery_health import EventConsumerDeliveryHealth
 from .event_consumer_execution_health import EventConsumerExecutionHealth
 from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
+from .event_consumer_execution_health_history_status import EventConsumerExecutionHealthHistoryStatus
+from .event_consumer_execution_health_window_coverage import EventConsumerExecutionHealthWindowCoverage
+from .event_consumer_execution_health_window_history_status import EventConsumerExecutionHealthWindowHistoryStatus
 from .event_consumer_health import EventConsumerHealth
 from .event_consumer_health_coverage import EventConsumerHealthCoverage
+from .event_consumer_pending_sample import EventConsumerPendingSample
+from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
+from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
+from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
+from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
@@ -1128,6 +1152,14 @@ from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingRe
 from .event_receipt_routing_response_filter_reason import EventReceiptRoutingResponseFilterReason
 from .event_receipt_routing_response_retry_stop_reason import EventReceiptRoutingResponseRetryStopReason
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_recipient_blocker_batch_item import EventRecipientBlockerBatchItem
+from .event_recipient_blocker_batch_item_error import EventRecipientBlockerBatchItemError
+from .event_recipient_blocker_batch_request import EventRecipientBlockerBatchRequest
+from .event_recipient_blocker_batch_response import EventRecipientBlockerBatchResponse
+from .event_recipient_blocker_query import EventRecipientBlockerQuery
+from .event_recipient_blocker_response import EventRecipientBlockerResponse
+from .event_recipient_blocker_response_reason import EventRecipientBlockerResponseReason
+from .event_recipient_blocker_response_status import EventRecipientBlockerResponseStatus
 from .event_recovery_capacity_wait import EventRecoveryCapacityWait
 from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
 from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
@@ -1326,6 +1358,7 @@ from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
 from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
+from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
 from .failure_rules import FailureRules
@@ -1431,18 +1464,21 @@ from .get_deployment_stages_response_200_current import GetDeploymentStagesRespo
 from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
 from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
 from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
+from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
 from .get_event_backlog_state import GetEventBacklogState
 from .get_event_backlog_waiting_reason import GetEventBacklogWaitingReason
+from .get_event_consumer_delivery_health_window import GetEventConsumerDeliveryHealthWindow
 from .get_event_consumer_execution_health_window import GetEventConsumerExecutionHealthWindow
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
 from .get_github_recovery_status_status import GetGithubRecoveryStatusStatus
 from .get_mirror_rule_summary_window import GetMirrorRuleSummaryWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
+from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -1493,6 +1529,10 @@ from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .inspect_durable_entity_quota_migration_response_200 import InspectDurableEntityQuotaMigrationResponse200
+from .inspect_durable_entity_quota_policy_response_200 import InspectDurableEntityQuotaPolicyResponse200
+from .inspect_durable_entity_registry_cleanup_response_200 import InspectDurableEntityRegistryCleanupResponse200
+from .inspect_durable_entity_tenant_quotas_response_200 import InspectDurableEntityTenantQuotasResponse200
 from .inspect_feature_flag_request import InspectFeatureFlagRequest
 from .install_bind_request import InstallBindRequest
 from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
@@ -1625,6 +1665,7 @@ from .list_delayed_tasks_response import ListDelayedTasksResponse
 from .list_deploy_tokens_response import ListDeployTokensResponse
 from .list_deployment_audit_response import ListDeploymentAuditResponse
 from .list_dev_bridges_response import ListDevBridgesResponse
+from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
@@ -1899,6 +1940,8 @@ from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
+from .mint_durable_entity_session_grant_body import MintDurableEntitySessionGrantBody
+from .mint_durable_entity_session_grant_response_201 import MintDurableEntitySessionGrantResponse201
 from .mirror_clean_condition import MirrorCleanCondition
 from .mirror_replay_batch_request import MirrorReplayBatchRequest
 from .mirror_replay_batch_response import MirrorReplayBatchResponse
@@ -2530,6 +2573,7 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
@@ -2541,6 +2585,9 @@ from .outbound_ai_route_list import OutboundAIRouteList
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
+from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
+from .outbound_ai_user_usage_item import OutboundAIUserUsageItem
+from .outbound_ai_user_usage_response import OutboundAIUserUsageResponse
 from .outbound_app_binding import OutboundAppBinding
 from .outbound_app_binding_list import OutboundAppBindingList
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
@@ -2582,6 +2629,7 @@ from .plan_detected_by_merged_from_item import PlanDetectedByMergedFromItem
 from .plan_detection_warning import PlanDetectionWarning
 from .plan_detection_warning_detector import PlanDetectionWarningDetector
 from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
+from .plan_durable_entity_quota_migration_response_200 import PlanDurableEntityQuotaMigrationResponse200
 from .plan_managed import PlanManaged
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
@@ -2734,6 +2782,10 @@ from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind imp
 from .preview_account_workflow_actions_body import PreviewAccountWorkflowActionsBody
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
+from .preview_durable_entity_quota_policy_body import PreviewDurableEntityQuotaPolicyBody
+from .preview_durable_entity_quota_policy_body_limits import PreviewDurableEntityQuotaPolicyBodyLimits
+from .preview_durable_entity_quota_policy_response_200 import PreviewDurableEntityQuotaPolicyResponse200
+from .preview_durable_entity_retirement_response_200 import PreviewDurableEntityRetirementResponse200
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
 from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
@@ -3563,10 +3615,22 @@ from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_tag import SourceRefDeployRequestTag
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
+from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
+from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
+from .start_durable_entity_registry_cleanup_response_200 import StartDurableEntityRegistryCleanupResponse200
+from .start_durable_entity_retirement_body import StartDurableEntityRetirementBody
+from .start_durable_entity_retirement_response_200 import StartDurableEntityRetirementResponse200
 from .status_incident import StatusIncident
 from .status_incident_severity import StatusIncidentSeverity
 from .status_page import StatusPage
 from .status_uptime_bucket import StatusUptimeBucket
+from .step_durable_entity_quota_migration_body import StepDurableEntityQuotaMigrationBody
+from .step_durable_entity_quota_migration_response_200 import StepDurableEntityQuotaMigrationResponse200
+from .step_durable_entity_registry_cleanup_body import StepDurableEntityRegistryCleanupBody
+from .step_durable_entity_registry_cleanup_response_200 import StepDurableEntityRegistryCleanupResponse200
+from .step_durable_entity_retirement_body import StepDurableEntityRetirementBody
+from .step_durable_entity_retirement_response_200 import StepDurableEntityRetirementResponse200
 from .storage_usage_list_response import StorageUsageListResponse
 from .storage_usage_response import StorageUsageResponse
 from .stream_app_logs_archive import StreamAppLogsArchive
@@ -4157,6 +4221,9 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyDurableEntityQuotaPolicyBody",
+    "ApplyDurableEntityQuotaPolicyBodyLimits",
+    "ApplyDurableEntityQuotaPolicyResponse200",
     "ApplyManagedRealtimeScheduleGroupGroupAction",
     "ApplyManagedRealtimeScheduleGroupResponse200",
     "ApplyPlatformTenantConsumerRequest",
@@ -4456,14 +4523,19 @@ __all__ = (
     "ClearObsoleteReport",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
+    "CommitEventPublication",
     "CommitEventRequest",
     "CommitOperationResponse",
     "CommitOperationResponseState",
+    "CommitPublicationHistoryItem",
+    "CommitPublicationHistoryResponse",
     "CommitReceiptResponse",
     "CommitRouting",
     "CommitRoutingVersion",
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
+    "CommitSourceResponseDestination",
+
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -4517,6 +4589,7 @@ __all__ = (
     "CreateCommitSourceBody",
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
+    "CreateCommitSourceRequestDestination",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -4960,6 +5033,8 @@ __all__ = (
     "EgressFlowLogResponse",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
+    "EnableDurableEntityRegistryBody",
+    "EnableDurableEntityRegistryResponse200",
     "EnvDiffCell",
     "EnvDiffKind",
     "EnvDiffResponse",
@@ -5017,6 +5092,7 @@ __all__ = (
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
+    "EventBacklogConsumerPendingWaitingReasons",
     "EventBacklogRecipient",
     "EventBacklogRecipientCapacityScope",
     "EventBacklogRecipientConsumerKind",
@@ -5028,10 +5104,22 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerCapacityWaits",
+    "EventConsumerCapacityWaitsCoverage",
+    "EventConsumerDeliveryHealth",
     "EventConsumerExecutionHealth",
     "EventConsumerExecutionHealthCoverage",
+    "EventConsumerExecutionHealthHistoryStatus",
+    "EventConsumerExecutionHealthWindowCoverage",
+    "EventConsumerExecutionHealthWindowHistoryStatus",
     "EventConsumerHealth",
     "EventConsumerHealthCoverage",
+    "EventConsumerPendingSample",
+    "EventConsumerPendingSampleCoverage",
+    "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerWaitingReasons",
+    "EventConsumerWaitingReasonsCounts",
+    "EventConsumerWaitingReasonsCoverage",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
@@ -5076,6 +5164,14 @@ __all__ = (
     "EventReceiptRoutingResponseFilterReason",
     "EventReceiptRoutingResponseRetryStopReason",
     "EventReceiptRoutingResponseState",
+    "EventRecipientBlockerBatchItem",
+    "EventRecipientBlockerBatchItemError",
+    "EventRecipientBlockerBatchRequest",
+    "EventRecipientBlockerBatchResponse",
+    "EventRecipientBlockerQuery",
+    "EventRecipientBlockerResponse",
+    "EventRecipientBlockerResponseReason",
+    "EventRecipientBlockerResponseStatus",
     "EventRecoveryCapacityWait",
     "EventRecoveryCapacityWaitGate",
     "EventRecoveryCapacityWaitScope",
@@ -5264,6 +5360,7 @@ __all__ = (
     "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
+    "ExportOutboundIntegrationAIUserUsageFormat",
     "FailureRule",
     "FailureRuleAction",
     "FailureRules",
@@ -5369,18 +5466,21 @@ __all__ = (
     "GetDeploymentStagesResponse200HistoryItem",
     "GetDeploymentStagesResponse200HistoryItemName",
     "GetDeploymentStagesResponse200HistoryItemStatus",
+    "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",
     "GetEventBacklogOrigin",
     "GetEventBacklogState",
     "GetEventBacklogWaitingReason",
+    "GetEventConsumerDeliveryHealthWindow",
     "GetEventConsumerExecutionHealthWindow",
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
     "GetGithubRecoveryStatusStatus",
     "GetMirrorRuleSummaryWindow",
     "GetOpenAPISpecJSONResponse200",
+    "GetOutboundAIPriceCatalogProvider",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -5429,6 +5529,10 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InspectDurableEntityQuotaMigrationResponse200",
+    "InspectDurableEntityQuotaPolicyResponse200",
+    "InspectDurableEntityRegistryCleanupResponse200",
+    "InspectDurableEntityTenantQuotasResponse200",
     "InspectFeatureFlagRequest",
     "InstallBindRequest",
     "InstallBindRequestDeployBranches",
@@ -5557,6 +5661,7 @@ __all__ = (
     "ListDeploymentAuditResponse",
     "ListDeployTokensResponse",
     "ListDevBridgesResponse",
+    "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
@@ -5795,6 +5900,8 @@ __all__ = (
     "MFARecoverResponse",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
+    "MintDurableEntitySessionGrantBody",
+    "MintDurableEntitySessionGrantResponse201",
     "MirrorCleanCondition",
     "MirrorReplayBatchRequest",
     "MirrorReplayBatchResponse",
@@ -6376,6 +6483,7 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
     "OutboundAIRequestLogEntry",
@@ -6387,6 +6495,9 @@ __all__ = (
     "OutboundAIRouteTarget",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
+    "OutboundAIUserUsageExportRow",
+    "OutboundAIUserUsageItem",
+    "OutboundAIUserUsageResponse",
     "OutboundAppBinding",
     "OutboundAppBindingList",
     "OutboundBindingProbePolicy",
@@ -6428,6 +6539,7 @@ __all__ = (
     "PlanDetectionWarning",
     "PlanDetectionWarningDetector",
     "PlanDetectionWarningOutcome",
+    "PlanDurableEntityQuotaMigrationResponse200",
     "PlanManaged",
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
@@ -6560,6 +6672,10 @@ __all__ = (
     "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
+    "PreviewDurableEntityQuotaPolicyBody",
+    "PreviewDurableEntityQuotaPolicyBodyLimits",
+    "PreviewDurableEntityQuotaPolicyResponse200",
+    "PreviewDurableEntityRetirementResponse200",
     "PreviewEnvironmentGitRevisionRequest",
     "PreviewEnvironmentGitRevisionResponse",
     "PreviewEnvironmentMemberResponse",
@@ -7347,10 +7463,22 @@ __all__ = (
     "SourceRefDeployRequestTag",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StartDurableEntityQuotaMigrationBody",
+    "StartDurableEntityQuotaMigrationResponse200",
+    "StartDurableEntityRegistryCleanupBody",
+    "StartDurableEntityRegistryCleanupResponse200",
+    "StartDurableEntityRetirementBody",
+    "StartDurableEntityRetirementResponse200",
     "StatusIncident",
     "StatusIncidentSeverity",
     "StatusPage",
     "StatusUptimeBucket",
+    "StepDurableEntityQuotaMigrationBody",
+    "StepDurableEntityQuotaMigrationResponse200",
+    "StepDurableEntityRegistryCleanupBody",
+    "StepDurableEntityRegistryCleanupResponse200",
+    "StepDurableEntityRetirementBody",
+    "StepDurableEntityRetirementResponse200",
     "StorageUsageListResponse",
     "StorageUsageResponse",
     "StreamAppLogsArchive",

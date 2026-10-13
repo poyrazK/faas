@@ -44,6 +44,7 @@ func accountingCoverageFromRow(row sqlc.ListManagedPostgresAccountingCoverageRow
 	progress.Terminal = row.AccountingState == string(StateDeleted)
 	progress.Unresolved = row.Unresolved
 	progress.EndedAt = row.EndedAt.Time
+	progress.CreatedAt = row.AccountingCreatedAt.Time
 	return AccountingCoverage{DatabaseID: cutoverUUID(row.DatabaseID), Name: row.Name, State: State(row.State),
 		AccountingRequired: row.AccountingRequired, IdentityKnown: row.IdentityKnown,
 		AccountingDatabaseID: cutoverUUID(row.AccountingDatabaseID), CreatedAt: row.AccountingCreatedAt.Time,

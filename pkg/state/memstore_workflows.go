@@ -1088,7 +1088,12 @@ func (m *MemStore) scheduleWorkflowStepRetry(ctx context.Context, runID, stepNam
 	step.Error = &stepErr
 	m.workflowSteps[runID][stepName] = step
 
-	run.Status = WorkflowRunStatusPending
+	// A for_each item's retry leaves its running run to the pass that holds
+	// the lease, which parks it at the earliest wake once the batch is done;
+	// see the PgStore twin (H9-155). Any other retry parks the run.
+	if run.Status != WorkflowRunStatusRunning || step.ForEachParent == nil {
+		run.Status = WorkflowRunStatusPending
+	}
 	run.CurrentStep = &stepName
 	run.ScheduledFor = wakeAt
 	run.UpdatedAt = now

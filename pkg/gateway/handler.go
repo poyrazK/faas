@@ -5734,7 +5734,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) {
+			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}
@@ -6936,11 +6936,14 @@ haveApp:
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth).MaxWait)
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
 		if burstErr != nil {
+			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
+				burstErr = fmt.Errorf("%w: %w", ErrWakeQueueWaitTimeout, burstErr)
+			}
 			// A burst that cannot become routable within its admission policy is
 			// a controlled timeout, not an upstream 502. Client disconnects
 			// remain silent; genuine admission failures use the normal

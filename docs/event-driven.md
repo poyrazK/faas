@@ -377,6 +377,12 @@ idempotent. Gregale does not yet provide `ctx.sleep()` or year-long
 code-as-workflow executions. Its existing short-lived `ctx.waitUntil()`
 post-response tail is separate from durable `wait_for_condition` checks.
 
+Each async invocation attempt, including any wake it triggers, must answer
+within 30 seconds (`api.GatewaySynthDispatchTimeout`). A longer attempt is
+recorded as a timeout ("the invocation attempt exceeded the 30s dispatch
+limit") and retried under the invocation's retry policy, so work that needs
+longer belongs in a job.
+
 ```bash
 gregale invoke --async --payload @payload.json APP_ID
 gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
@@ -3036,3 +3042,27 @@ When guarded, responses include the normalized expected timestamp and an indepen
 Content/routing `status` remains separate. A response can contain `status=match` and `acceptance=replacement_acceptance`: the content matches a newer acceptance. Returned receipt and consumer evidence describe that current acceptance and must not be used as proof of the original's outcome. Replacement returns CLI exit 3; unavailable returns 2; otherwise the existing command exits apply. Unguarded responses omit both new fields and preserve earlier behavior.
 
 Go status queries accept `ExpectedAcceptedAt`; verification methods accept one optional `AppEventAcceptanceGuard`. Node/Python methods expose `expectedAcceptedAt` / `expected_accepted_at`. The guard remains read-only, does not refresh retention, and requires a saved timestamp. It is a timestamp comparison rather than a permanent unique identity token; identical timestamp collisions cannot be distinguished. A stale recipient cursor still fails validation; restart with the saved acceptance guard to inspect the current retained record. See [ADR-932](adr/932-app-publication-acceptance-guards.md).
+
+
+## Transactional event consumer writes (Go, Node and Python SDKs)
+
+Application subscription consumers can commit a deduplication receipt and their
+PostgreSQL business writes together with `WithEventConsumerTransaction`. A lost
+response after commit is recovered by returning the saved result on redelivery.
+Consumer and acceptance identity keep independent recipients separate, and a new
+acceptance after producer-key reuse is distinct. Existing deliveries without the
+new acceptance header cannot use the helper.
+
+See [transactional event consumers](event-consumer-transactions.md) for setup,
+identity framing, replay behavior, application-owned retention, and the limits
+of the database transaction guarantee, including Node and Python handler examples.
+
+### Publish application events from a business transaction
+
+A [version 3 Commit event destination](gregale-commit.md#version-3-application-event-publication-adr-935)
+observes an application-owned transactional outbox and publishes under its bound
+application's event source. Gregale atomically records publication acceptance,
+the subscriber snapshot and the retained Commit receipt. Each subscriber recovers
+independently. Relay retries after event retention return the original Commit
+receipt rather than publishing again. This destination remains under the existing
+Commit qualification gates.

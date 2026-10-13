@@ -1,4 +1,0 @@
-# Lines of internal tests in pkg/apid/apidserver: _test.go files in package apidserver,
-# excluding the export_test.go bridge (scripts/ci/check_apid_size.sh, ADR-982). New tests go
-# in package apidserver_test; raise only with a reason in the PR, lower when tests move out.
-74870
