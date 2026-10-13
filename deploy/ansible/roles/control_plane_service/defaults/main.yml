@@ -34,3 +34,12 @@ faas_public_status_launch_at: "2026-09-14T00:00:00Z"
 faas_custom_domain_tls: false
 faas_custom_domain_target: ""
 faas_custom_domain_addresses: []
+
+# ADR-1141 cluster workload-identity trust (tasks/workload_trust.yml). The
+# same controller-side directory as vmmd_service's
+# faas_workload_identity_source_dir installs the JWKS apid verifies workload
+# tokens against; leave it empty to keep an operator-placed JWKS. An empty
+# issuer trusts vmmd's default (https://identity.gregale.dev).
+faas_workload_identity_source_dir: ""
+faas_workload_jwks_path: /etc/faas/workload-identity.jwks.json
+faas_workload_identity_issuer: ""
