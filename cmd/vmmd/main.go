@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/dbvm"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
@@ -288,6 +289,9 @@ type runDeps struct {
 	configPath string                                                                                                // defaults to /etc/faas/vmmd.toml
 	detectFC   func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	listen     func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// databaseLeases overrides the jail uid allocator of a database node;
+	// nil uses the whole range (tests share a host with a compute vmmd).
+	databaseLeases dbvm.Leaser
 	// openDB / openStore: invoked when a DB URL is configured, including
 	// default-local nodes that need durable managed PostgreSQL admission.
 	openDB    func(context.Context, string) (*pgxpool.Pool, error)
@@ -471,8 +475,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// refuses to start under RoleControlPlane. The role is set
 	// from TOML or FAAS_VMMD_ROLE at deploy time; default is
 	// RoleSingleBox so single-box dev boots unmoved.
-	if err := role.Require("vmmd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly); err != nil {
+	if err := role.Require("vmmd", cfg.Role, role.RoleSingleBox, role.RoleComputeOnly, role.RoleDatabase); err != nil {
 		return err
+	}
+	// ADR-1027: a database node runs database VMs only. Branch before any
+	// compute setup so it never registers as a compute node.
+	if role.Role(cfg.Role) == role.RoleDatabase {
+		return runDatabaseNode(ctx, cfg, ops, log, deps)
 	}
 	// PR scale-out tier-1 residual (Gap #3 wiring): seed the
 	// slot allocator with the operator-supplied bridge CIDR so
@@ -1559,7 +1568,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithNodeID(nodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)
-	if err := enableDatabaseVMs(impl, cfg.DatabaseVMs, mgr.JailLeases(), log); err != nil {
+	if err := enableDatabaseVMs(ctx, impl, cfg.DatabaseVMs, mgr.JailLeases(), log); err != nil {
 		return err
 	}
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out

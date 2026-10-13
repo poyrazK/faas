@@ -14,10 +14,9 @@ Inputs (all required when `pgproxyd_enabled: true`):
 | `pgproxyd_schedd_target` | control-plane schedd over the overlay |
 | `pgproxyd_tls_cert_src`, `pgproxyd_tls_key_src` | publicly trusted `*.<suffix>` certificate and key |
 | `pgproxyd_db_url` | read-only DSN of the `faas_pgproxyd` role (Vault) |
-| `pgproxyd_pki_source` | trust bundle: `gregalectl pki issue-bundle --box-role database --cn <node> --transport-san <overlay-ip>` |
 
-The `--cn` must equal the node's `id` in schedd's `[database_scheduler]`,
-because schedd binds database-node vmmd certificates to `<id>.faas`.
+The node's mTLS bundle (vmmd server leaf and the pgproxyd client leaves) is
+staged by the `database_node` role (`database_node_pki_source`).
 
 Files written on the host:
 

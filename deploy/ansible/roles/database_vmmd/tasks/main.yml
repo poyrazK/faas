@@ -1,0 +1,117 @@
+---
+# database_vmmd — vmmd in database mode (ADR-1027). Run after the firecracker
+# role: vmmd needs firecracker, jailer and the guest kernel.
+
+- name: database_vmmd — require the overlay address
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in (groups['database_nodes'] | default([]))
+      - database_vmmd_overlay_ip | length > 0
+      - database_vmmd_postgres_images | length > 0
+    fail_msg: >-
+      database_vmmd runs only on database_nodes and needs
+      database_vmmd_overlay_ip and at least one PostgreSQL image.
+
+# vmmd's unit creates /run/faas group faas.
+- name: database_vmmd — create the faas group
+  ansible.builtin.group:
+    name: faas
+    system: true
+
+- name: database_vmmd — create the volume root (local NVMe)
+  ansible.builtin.file:
+    path: "{{ database_vmmd_volume_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: database_vmmd — create /etc/faas
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Database VM cgroups live under faas.slice/faas-db.slice (dbvm's parent).
+# Declaring the slice keeps it systemd-owned and fences all databases.
+- name: database_vmmd — write faas-db.slice (hard fence)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-db.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Gregale database microVMs (ADR-1027 hard fence)
+
+      [Slice]
+      MemoryMax={{ ansible_memtotal_mb - database_vmmd_host_reserve_mb }}M
+  register: database_vmmd_slice
+
+- name: database_vmmd — start faas-db.slice
+  ansible.builtin.systemd_service:
+    name: faas-db.slice
+    state: started
+    daemon_reload: "{{ database_vmmd_slice.changed }}"
+
+- name: database_vmmd — render vmmd.toml
+  ansible.builtin.template:
+    src: vmmd.toml.j2
+    dest: /etc/faas/vmmd.toml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
+- name: database_vmmd — install the vmmd unit
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../vmmd_service/files/faas-vmmd.service"
+    dest: /etc/systemd/system/faas-vmmd.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
+- name: database_vmmd — create the unit drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: database_vmmd — install the database-node drop-in
+  ansible.builtin.template:
+    src: 50-database-node.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/50-database-node.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
+- name: database_vmmd — check for the released binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/vmmd
+  register: database_vmmd_binary
+
+- name: database_vmmd — enable and start
+  ansible.builtin.systemd_service:
+    name: faas-vmmd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: database_vmmd_binary.stat.exists
+
+# /readyz turns ready once every PostgreSQL base is built: minutes on a
+# fresh node (image pull plus ext4 build).
+- name: database_vmmd — wait for every base
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9104/readyz
+    status_code: 200
+  register: database_vmmd_ready
+  retries: 60
+  delay: 10
+  until: database_vmmd_ready.status == 200
+  when: database_vmmd_binary.stat.exists

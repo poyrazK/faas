@@ -1,0 +1,96 @@
+---
+# Install a signed release on a database node, as node_join does for compute:
+# verify the tarball against the release workflow's identity, extract it,
+# stage its guest kernel for the firecracker role, then switch
+# /opt/faas/current. Services pick the release up when they restart.
+
+- name: database_node — require every release input
+  ansible.builtin.assert:
+    that:
+      - database_node_release_signature | length > 0
+      - database_node_release_git_sha is match('^[0-9a-f]{7,40}$')
+      - database_node_cosign_source | length > 0
+    fail_msg: >-
+      A release install needs database_node_release_signature,
+      database_node_release_git_sha and database_node_cosign_source.
+
+- name: database_node — create the bootstrap directory
+  ansible.builtin.file:
+    path: /var/lib/faas/bootstrap
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: database_node — install cosign
+  ansible.builtin.copy:
+    src: "{{ database_node_cosign_source }}"
+    dest: /usr/local/bin/cosign
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: database_node — stage the release and its signature
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: "{{ database_node_release_tarball }}", dest: /var/lib/faas/bootstrap/release.tar.gz }
+    - { src: "{{ database_node_release_signature }}", dest: /var/lib/faas/bootstrap/release.cosign.bundle }
+
+- name: database_node — verify the release signature
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/cosign
+      - verify-blob
+      - --certificate-identity-regexp
+      - '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$'
+      - --certificate-oidc-issuer
+      - https://token.actions.githubusercontent.com
+      - --bundle
+      - /var/lib/faas/bootstrap/release.cosign.bundle
+      - /var/lib/faas/bootstrap/release.tar.gz
+  changed_when: false
+
+- name: database_node — create the release directory
+  ansible.builtin.file:
+    path: "/opt/faas/releases/{{ database_node_release_git_sha }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: database_node — extract the verified release
+  ansible.builtin.unarchive:
+    src: /var/lib/faas/bootstrap/release.tar.gz
+    dest: "/opt/faas/releases/{{ database_node_release_git_sha }}"
+    remote_src: true
+    owner: root
+    group: root
+    creates: "/opt/faas/releases/{{ database_node_release_git_sha }}/bin/vmmd"
+
+- name: database_node — stage the signed guest kernel for the firecracker role
+  ansible.builtin.shell:
+    cmd: >-
+      set -euo pipefail;
+      umask 077;
+      tmp=$(mktemp /var/lib/faas/bootstrap/vmlinux.XXXXXX);
+      trap 'rm -f "$tmp"' EXIT;
+      tar --extract --gzip --file /var/lib/faas/bootstrap/release.tar.gz --to-stdout vmlinux > "$tmp";
+      test -s "$tmp";
+      install -o root -g root -m 0644 "$tmp" /var/lib/faas/bootstrap/vmlinux
+    executable: /bin/bash
+  changed_when: true
+
+- name: database_node — switch /opt/faas/current to the release
+  ansible.builtin.file:
+    src: "/opt/faas/releases/{{ database_node_release_git_sha }}"
+    dest: /opt/faas/current
+    state: link
+    force: true
+  notify:
+    - restart faas-vmmd
+    - restart faas-pgproxyd

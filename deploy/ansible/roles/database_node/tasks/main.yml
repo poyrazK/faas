@@ -11,6 +11,23 @@
       the overlay ranges (database_node_overlay_cidrs or overlay_cidrs);
       without them schedd could not reach vmmd.
 
+- name: database_node — install the release
+  ansible.builtin.include_tasks: release.yml
+  when: database_node_release_tarball | length > 0
+
+- name: database_node — stage the node's mTLS bundle (never the CA key)
+  ansible.builtin.copy:
+    src: "{{ database_node_pki_source }}/"
+    dest: /etc/faas/tls/
+    owner: root
+    group: root
+    mode: preserve
+  no_log: true
+  when: database_node_pki_source | length > 0
+  notify:
+    - restart faas-vmmd
+    - restart faas-pgproxyd
+
 - name: database_node — install nftables
   ansible.builtin.package:
     name: nftables

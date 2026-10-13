@@ -1,0 +1,17 @@
+# Managed by Ansible (database_vmmd). ADR-1027: a database node runs
+# database VMs only.
+role = "database"
+listen_addr = "tcp://{{ database_vmmd_overlay_ip }}:{{ database_vmmd_port }}"
+metrics_addr = "127.0.0.1:9104"
+tls_cert_path = "/etc/faas/tls/vmmd/server.crt"
+tls_key_path = "/etc/faas/tls/vmmd/server.key"
+tls_ca_path = "/etc/faas/tls/ca/ca.crt"
+
+[database_vms]
+kernel_path = "/srv/fc/kernel/{{ fc_release | regex_replace('^v', '') }}"
+volume_root = "{{ database_vmmd_volume_root }}"
+
+[database_vms.images]
+{% for major, image in database_vmmd_postgres_images.items() %}
+"{{ major }}" = "{{ image }}"
+{% endfor %}

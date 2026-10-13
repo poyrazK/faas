@@ -277,8 +277,37 @@ are not a fourth manifest box role yet.
   is trusted; SSH is admitted only from listed ranges; forwarding is
   dropped, because database VMs have no network.
 
+- **vmmd in database mode.** With box role `database`, vmmd branches before
+  any compute setup into a small path:
+  - It never registers in `compute_nodes`, so schedd cannot place an app VM
+    on a database node.
+  - It builds no tenant bridge, netns or snapshot state.
+  - It serves only the six database RPCs; an interceptor refuses every other
+    method with `Unimplemented`. mTLS admits `schedd.faas` and
+    `pgproxyd.faas` only.
+  - It owns the whole jail uid range and its own jail base and cgroup
+    (`faas.slice/faas-db.slice`, a declared slice with a hard memory fence).
+  - `/srv/db/volumes` is writable through a unit drop-in.
+- **Base drives.** `[database_vms.images]` maps a major to a PostgreSQL image
+  pinned to its linux/amd64 manifest digest; tags are refused. vmmd builds
+  each base on the node, in the background, at
+  `<base_dir>/postgres-<major>-<hash(image, guest-init)>.ext4`. A release
+  with a new guest-init therefore rebuilds it, while running VMs keep the
+  base bind-mounted into their jail. Old bases are pruned. Systemd is
+  notified once RPCs are served; `/readyz` waits for the bases.
+- **Ansible.** `database_node.yml` installs the signed release (cosign
+  verified against the release workflow identity), stages the mTLS bundle
+  and firewall, runs the `firecracker` role with the release's signed guest
+  kernel, then `database_vmmd`, then `pgproxyd_service`.
+
+Metal: `TestMetalDatabaseNodeMode` runs vmmd in database mode. It served
+RPCs immediately, built the PostgreSQL 17 base from the pinned image in
+12.2 s, refused a compute RPC, and ran a database from create to delete.
+
 Still manual: issuing the public `*.<suffix>` certificate (pgproxyd takes
-it as files), and vmmd's database-mode configuration on the node.
+it as files); schedd's `[database_scheduler]` and gatewayd's
+`database_route_upstreams` on the control plane and compute nodes; and
+database hosts are not yet a manifest role.
 
 ### Driver
 

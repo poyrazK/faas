@@ -58,10 +58,16 @@
         privs: USAGE
       become_user: postgres
 
+# Order: release + mTLS + firewall, then Firecracker with the release's
+# signed guest kernel, then vmmd in database mode, then pgproxyd.
 - name: Converge database nodes
   hosts: database_nodes
   become: true
   gather_facts: true
+  vars:
+    faas_box_role: database
   roles:
     - role: database_node
+    - role: firecracker
+    - role: database_vmmd
     - role: pgproxyd_service

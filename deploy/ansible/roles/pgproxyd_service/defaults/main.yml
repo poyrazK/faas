@@ -22,9 +22,3 @@ pgproxyd_tls_key_src: ""
 # The role may only SELECT database_role_verifiers; database_node.yml
 # creates it on the control plane.
 pgproxyd_db_url: ""
-
-# Trust bundle from the PKI issuer:
-#   gregalectl pki issue-bundle --issuer-root ... --output-dir DIR \
-#     --box-role database --cn <node> --transport-san <overlay-ip>
-# Empty keeps the bundle already installed under /etc/faas/tls.
-pgproxyd_pki_source: ""

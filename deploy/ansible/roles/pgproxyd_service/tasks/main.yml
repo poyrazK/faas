@@ -86,17 +86,6 @@
   no_log: true
   notify: restart faas-pgproxyd
 
-- name: pgproxyd_service — stage the database-node trust bundle
-  ansible.builtin.copy:
-    src: "{{ pgproxyd_pki_source }}/"
-    dest: /etc/faas/tls/
-    owner: root
-    group: root
-    mode: preserve
-  no_log: true
-  when: pgproxyd_pki_source | length > 0
-  notify: restart faas-pgproxyd
-
 # The issuer stores private keys root-only. Grant pgproxyd its own two
 # client leaves and nothing else.
 - name: pgproxyd_service — let pgproxyd reach its client leaves

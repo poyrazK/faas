@@ -65,7 +65,8 @@ type RuntimeConfig struct {
 	// VolumeRoot holds one persistent volume file per database.
 	VolumeRoot string
 	KernelPath string
-	// Bases maps a PostgreSQL major to its read-only base image.
+	// Bases maps a PostgreSQL major to its read-only base image. More can
+	// arrive later through SetBase (vmmd builds them in the background).
 	Bases map[int]string
 	// ParentCgroup is the cgroup v2 parent, relative to the mount.
 	ParentCgroup   string
@@ -107,7 +108,7 @@ type databaseVM struct {
 // NewRuntime validates cfg and resolves the Firecracker binary, whose real
 // basename names jailer's chroot directory.
 func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
-	if cfg.JailBase == "" || cfg.VolumeRoot == "" || cfg.KernelPath == "" || cfg.ParentCgroup == "" || cfg.Leases == nil || len(cfg.Bases) == 0 {
+	if cfg.JailBase == "" || cfg.VolumeRoot == "" || cfg.KernelPath == "" || cfg.ParentCgroup == "" || cfg.Leases == nil {
 		return nil, errors.New("dbvm: runtime config is incomplete")
 	}
 	if cfg.JailBase == fcvm.JailChrootBase {
@@ -132,7 +133,27 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 	if real, err := filepath.EvalSymlinks(fc); err == nil {
 		fc = real
 	}
+	bases := make(map[int]string, len(cfg.Bases))
+	for major, path := range cfg.Bases {
+		bases[major] = path
+	}
+	cfg.Bases = bases
 	return &Runtime{cfg: cfg, fcReal: fc, vms: make(map[string]*databaseVM)}, nil
+}
+
+// SetBase makes path the base image for new boots of major. Running VMs
+// keep the base they booted from: it is bind-mounted into their jail.
+func (r *Runtime) SetBase(major int, path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cfg.Bases[major] = path
+}
+
+func (r *Runtime) base(major int) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	path, ok := r.cfg.Bases[major]
+	return path, ok
 }
 
 func validID(id string) error {
@@ -206,7 +227,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if err := validID(req.ID); err != nil {
 		return err
 	}
-	base, ok := r.cfg.Bases[req.Major]
+	base, ok := r.base(req.Major)
 	if !ok {
 		return fmt.Errorf("%w %d", ErrUnknownMajor, req.Major)
 	}

@@ -1,0 +1,9 @@
+# Managed by Ansible (database_vmmd). ADR-1027: vmmd runs in database mode
+# and writes database volumes outside the compute paths.
+[Unit]
+After=faas-db.slice
+Wants=faas-db.slice
+
+[Service]
+Environment=FAAS_VMMD_ROLE=database
+ReadWritePaths={{ database_vmmd_volume_root }}

@@ -11,3 +11,20 @@ database_node_ssh_cidrs: []
 # UDP ports the overlay transport needs from the internet (WireGuard 51820,
 # Tailscale 41641).
 database_node_overlay_udp_ports: []
+
+# Release (vmmd, pgproxyd, guest-init and the signed guest kernel). Paths on
+# the Ansible controller: the signed release tarball, its cosign bundle and
+# the release's git SHA. Empty keeps the release already installed.
+database_node_release_tarball: ""
+database_node_release_signature: ""
+database_node_release_git_sha: ""
+# cosign binary on the controller, installed to verify the release.
+database_node_cosign_source: ""
+
+# Trust bundle from the PKI issuer, staged into /etc/faas/tls:
+#   gregalectl pki issue-bundle --issuer-root ... --output-dir DIR \
+#     --box-role database --cn <id> --transport-san <overlay-ip>
+# <id> must equal the node's id in schedd's [database_scheduler]: schedd
+# binds database-node vmmd certificates to <id>.faas. Empty keeps the bundle
+# already installed.
+database_node_pki_source: ""

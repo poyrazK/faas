@@ -1,0 +1,19 @@
+---
+# ADR-1027: vmmd on a database node runs database VMs only (role
+# "database"): no compute registration, no tenant network.
+
+# Overlay address schedd's database scheduler dials (its target_url is
+# tcp://<this>:50051). Required.
+database_vmmd_overlay_ip: ""
+database_vmmd_port: 50051
+# Persistent volumes, one file per database: put this on the local NVMe.
+database_vmmd_volume_root: /srv/db/volumes
+# PostgreSQL major -> image pinned to its linux/amd64 manifest digest.
+# vmmd builds each base on the node and rebuilds it when a release ships
+# a new guest-init.
+database_vmmd_postgres_images:
+  "17": "docker.io/library/postgres@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df"
+# Host memory kept out of faas-db.slice for vmmd, pgproxyd and the OS. The
+# slice's MemoryMax fences every database VM together; schedd's
+# admission_ceiling_mb for this node should stay below it.
+database_vmmd_host_reserve_mb: 4096

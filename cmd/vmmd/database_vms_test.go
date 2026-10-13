@@ -4,6 +4,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -11,11 +12,11 @@ import (
 
 func TestDatabaseVMConfigDefaultsAndValidation(t *testing.T) {
 	leases := fcvm.NewAllocator()
-	rcfg, err := DatabaseVMConfig{KernelPath: "/k", Bases: map[string]string{"17": "/b17"}}.runtimeConfig(leases)
+	rcfg, images, err := DatabaseVMConfig{KernelPath: "/k", Bases: map[string]string{"17": "/b17"}}.runtimeConfig(leases)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rcfg.JailBase != defaultDatabaseJailBase || rcfg.VolumeRoot != defaultDatabaseVolumeRoot || rcfg.ParentCgroup != defaultDatabaseParentCgroup || rcfg.Bases[17] != "/b17" {
+	if rcfg.JailBase != defaultDatabaseJailBase || rcfg.VolumeRoot != defaultDatabaseVolumeRoot || rcfg.ParentCgroup != defaultDatabaseParentCgroup || rcfg.Bases[17] != "/b17" || len(images) != 0 {
 		t.Fatalf("runtime config = %+v", rcfg)
 	}
 	for name, cfg := range map[string]DatabaseVMConfig{
@@ -24,10 +25,24 @@ func TestDatabaseVMConfigDefaultsAndValidation(t *testing.T) {
 		"bad major":   {KernelPath: "/k", Bases: map[string]string{"12": "/b"}},
 		"non-numeric": {KernelPath: "/k", Bases: map[string]string{"latest": "/b"}},
 		"empty path":  {KernelPath: "/k", Bases: map[string]string{"17": ""}},
+		"tag image":   {KernelPath: "/k", Images: map[string]string{"17": "docker.io/library/postgres:17"}},
+		"base+image":  {KernelPath: "/k", Bases: map[string]string{"17": "/b"}, Images: map[string]string{"17": testPinnedImage}},
 	} {
-		if _, err := cfg.runtimeConfig(leases); err == nil {
+		if _, _, err := cfg.runtimeConfig(leases); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+const testPinnedImage = "docker.io/library/postgres@sha256:66aafa11cf15800a3c94763f7e11d1e7b2e37e5e84bc4ce027cb6e1e4bfaf4df"
+
+func TestDatabaseVMConfigImagesAreBuiltPerMajor(t *testing.T) {
+	_, images, err := DatabaseVMConfig{KernelPath: "/k", Images: map[string]string{"17": testPinnedImage, "16": testPinnedImage}}.runtimeConfig(fcvm.NewAllocator())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 2 || images[0].major != 16 || images[1].major != 17 {
+		t.Fatalf("images = %+v, want 16 then 17", images)
 	}
 }
 
@@ -50,5 +65,42 @@ func TestLoadConfigParsesDatabaseVMs(t *testing.T) {
 	}
 	if cfg, err := LoadConfig(empty); err != nil || cfg.DatabaseVMs != nil {
 		t.Fatalf("absent table = %+v, %v; want nil", cfg.DatabaseVMs, err)
+	}
+}
+
+// The database_vmmd role's template must load as a database node with every
+// key decoded (a misplaced key would silently fall back to a default).
+func TestDatabaseVmmdTemplateLoads(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", "database_vmmd", "templates", "vmmd.toml.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := strings.NewReplacer(
+		"{{ database_vmmd_overlay_ip }}", "100.64.7.1",
+		"{{ database_vmmd_port }}", "50051",
+		"{{ fc_release | regex_replace('^v', '') }}", "1.7.0",
+		"{{ database_vmmd_volume_root }}", "/srv/db/volumes",
+		"{% for major, image in database_vmmd_postgres_images.items() %}\n", "",
+		"{% endfor %}\n", "",
+		"{{ major }}", "17",
+		"{{ image }}", testPinnedImage,
+	).Replace(string(body))
+	if strings.Contains(rendered, "{{") || strings.Contains(rendered, "{%") {
+		t.Fatalf("unrendered template expressions:\n%s", rendered)
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Role != "database" || cfg.ListenAddr != "tcp://100.64.7.1:50051" || cfg.TLSCertPath != "/etc/faas/tls/vmmd/server.crt" || cfg.DatabaseVMs == nil ||
+		cfg.DatabaseVMs.KernelPath != "/srv/fc/kernel/1.7.0" || cfg.DatabaseVMs.Images["17"] != testPinnedImage {
+		t.Fatalf("loaded %+v / %+v", cfg, cfg.DatabaseVMs)
+	}
+	if _, _, err := cfg.DatabaseVMs.runtimeConfig(fcvm.NewAllocator()); err != nil {
+		t.Fatal(err)
 	}
 }

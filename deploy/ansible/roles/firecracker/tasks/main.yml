@@ -132,23 +132,23 @@
       - faas_release_kernel_stat.stat.exists
       - faas_release_kernel_stat.stat.isreg
     fail_msg: >-
-      compute-only production bootstrap requires vmlinux extracted from the
+      compute-only and database production bootstraps require vmlinux extracted from the
       signed release bundle at /var/lib/faas/bootstrap/vmlinux. Refusing to
       rebuild a host-specific kernel whose digest cannot be shared by the
       fleet.
   when:
-    - (faas_box_role | default('single-box')) == 'compute-only'
+    - (faas_box_role | default('single-box')) in ['compute-only', 'database']
     - not (faas_image_seed | default(false) | bool)
 
 - name: firecracker — select the kernel source
   ansible.builtin.set_fact:
     faas_kernel_release_staged: >-
-      {{ (faas_box_role | default('single-box')) == 'compute-only'
+      {{ (faas_box_role | default('single-box')) in ['compute-only', 'database']
          and not (faas_image_seed | default(false) | bool)
          and (faas_release_kernel_stat.stat.exists | default(false) | bool) }}
     faas_kernel_source_path: >-
       {{ '/var/lib/faas/bootstrap/vmlinux'
-         if ((faas_box_role | default('single-box')) == 'compute-only'
+         if ((faas_box_role | default('single-box')) in ['compute-only', 'database']
              and not (faas_image_seed | default(false) | bool))
          else '/usr/src/linux-' ~ fc_kernel_version ~ '/vmlinux' }}
     faas_kernel_rebuild_required: false
