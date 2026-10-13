@@ -11,6 +11,8 @@ func stringKV(key, value string) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: key, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: value}}}
 }
 
+// adr: 958 — customer span status uses the platform exporter's ok/error
+// vocabulary, and error spans keep only a bounded failure class.
 func TestSummarizeSpanNormalizesStatusAndErrorType(t *testing.T) {
 	exception := &tracepb.Span_Event{Name: "exception", Attributes: []*commonpb.KeyValue{
 		stringKV("exception.type", "QueryTimeout"),
