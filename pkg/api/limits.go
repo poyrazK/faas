@@ -310,8 +310,10 @@ const SyncInvokeWaitSecondsFree = 5
 // GatewaySynthDispatchTimeout bounds one schedd → gatewayd-internal synth
 // call: a cron HTTP target, an async invocation or a workflow step, including
 // any wake it triggers and the application's answer. It is therefore the
-// per-attempt execution limit of an async invocation; an attempt that outlives
-// it is recorded as a timeout and retried under the invocation's retry policy.
+// per-attempt execution limit of an async invocation at the default timeout;
+// an attempt that outlives it is recorded as a timeout and retried under the
+// invocation's retry policy. An invocation of an app whose request timeout is
+// longer is bounded by AsyncInvocationDispatchTimeout instead (ADR-1151).
 const GatewaySynthDispatchTimeout = 30 * time.Second
 
 // New apps start with the pre-auth source limit in observe mode (ADR-829):

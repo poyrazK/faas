@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -157,6 +159,35 @@ func TestDrain_LongTimeoutQueueMessagesStayInOrder(t *testing.T) {
 	waitInvocationState(t, store, second.ID, state.InvocationCompleted)
 	if got := synth.calls(); len(got) != 2 || got[1] != second.ID {
 		t.Fatalf("delivery order %v, want %s then %s", got, first.ID, second.ID)
+	}
+}
+
+// ADR-1151: an invocation of a long-timeout app is bounded by its own dispatch
+// deadline, not the synth client's limit; an unmarked one keeps that limit.
+func TestLongDispatchOutlivesTheSynthClientLimit(t *testing.T) {
+	const handlerTime = 150 * time.Millisecond
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(handlerTime):
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = w.Write([]byte(`{"state":"dispatching","status_code":200,"result":{"ok":true}}`))
+	}))
+	defer srv.Close()
+	client := srv.Client()
+	client.Timeout = 50 * time.Millisecond // stands in for the 30 s synth limit
+	h := &httpGatewaySynth{client: client, basePrefix: srv.URL}
+	inv := state.Invocation{ID: "inv-1", AppID: "app-1", Source: state.InvocationAsyncInvoke, Method: http.MethodPost, Path: "/slow"}
+	wake := WakeResult{InstanceID: "instance-1", NodeID: "node-1"}
+
+	ctx, cancel := context.WithTimeout(withLongDispatch(t.Context()), time.Second)
+	defer cancel()
+	if out, err := h.InvokeWithWake(ctx, "app-1", inv, wake); err != nil || string(out.Result) != `{"ok":true}` {
+		t.Fatalf("long dispatch with a 1 s deadline and a 150 ms handler: result=%s err=%v", out.Result, err)
+	}
+	if _, err := h.InvokeWithWake(t.Context(), "app-1", inv, wake); err == nil {
+		t.Fatal("an unmarked invocation outlived the synth client's limit")
 	}
 }
 
