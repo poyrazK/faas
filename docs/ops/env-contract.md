@@ -46,6 +46,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_TELEMETRY_SOCKET` | apid, gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_REQUEST_TELEMETRY_TARGET` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
+| `FAAS_APID_RESUMABLE_UPLOADS` | apid | `dropin` |  |  | `` | ADR-1152; control_plane_service renders "0" when the cell has more than one control node, because resumable upload chunks spool on the replica that started the session. The CLI then falls back to the single-request upload |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |
 | `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270) |

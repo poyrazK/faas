@@ -930,13 +930,9 @@ func (s *server) setGraceWindow(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 
-	// Read the prior value for the audit row. The cache may
-	// short-circuit this — invalidated-or-stale cache is fine.
+	// Read the prior value for the audit row.
 	oldDays, _ := s.resolveGraceWindow(r.Context(), acct.ID) // best-effort
 	_ = s.store.SetAccountKeyGraceWindow(r.Context(), acct.ID, req.Days)
-	if s.graceWindowCache != nil {
-		s.graceWindowCache.Invalidate(acct.ID)
-	}
 	s.audit.Emit(r.Context(), "key.grace_window_set", &acct.ID, map[string]any{
 		"old_days": oldDays,
 		"new_days": req.Days, // *int — JSON null for the cleared case

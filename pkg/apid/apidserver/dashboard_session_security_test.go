@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -387,24 +388,59 @@ func TestMFAVerify_GuessesAreLimitedPerAccount(t *testing.T) {
 
 func TestTOTPGuard_WindowAndReset(t *testing.T) {
 	t.Parallel()
+	ctx := context.Background()
 	g := newTOTPGuard()
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < totpMaxFailures; i++ {
-		g.fail("a", now.Add(time.Duration(i)*time.Second))
+		g.fail(ctx, "a", now.Add(time.Duration(i)*time.Second))
 	}
-	if wait := g.retryAfter("a", now.Add(10*time.Second)); wait <= 0 || wait > totpFailureWindow {
+	if wait := g.retryAfter(ctx, "a", now.Add(10*time.Second)); wait <= 0 || wait > totpFailureWindow {
 		t.Fatalf("retryAfter at the limit = %s", wait)
 	}
-	if wait := g.retryAfter("b", now); wait != 0 {
+	if wait := g.retryAfter(ctx, "b", now); wait != 0 {
 		t.Fatalf("another account is limited: %s", wait)
 	}
-	if wait := g.retryAfter("a", now.Add(totpFailureWindow+time.Second)); wait != 0 {
+	if wait := g.retryAfter(ctx, "a", now.Add(totpFailureWindow+time.Second)); wait != 0 {
 		t.Fatalf("retryAfter after the window = %s, want 0", wait)
 	}
-	g.fail("c", now)
-	g.reset("c")
+	g.fail(ctx, "c", now)
+	g.reset(ctx, "c")
 	if len(g.fails) != 0 && g.fails["c"] != nil {
 		t.Fatal("reset left failures behind")
+	}
+}
+
+// adr: 1152
+// TestTOTPGuard_SharedAcrossReplicas: two apid replicas over one store share
+// one budget of guesses per account, so a second replica cannot be used to
+// double it, and a correct code on either clears it.
+func TestTOTPGuard_SharedAcrossReplicas(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "totp-replicas@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaA, replicaB := newSharedTOTPGuard(store), newSharedTOTPGuard(store)
+	if replicaA.store == nil {
+		t.Fatal("the shared guard did not pick up the store's window")
+	}
+	for i := 0; i < totpMaxFailures; i++ {
+		guard := replicaA
+		if i%2 == 1 {
+			guard = replicaB
+		}
+		guard.fail(ctx, acct.ID, time.Now())
+	}
+	for name, g := range map[string]*totpGuard{"A": replicaA, "B": replicaB} {
+		if wait := g.retryAfter(ctx, acct.ID, time.Now()); wait <= 0 || wait > totpFailureWindow {
+			t.Fatalf("replica %s retryAfter at the shared limit = %s", name, wait)
+		}
+	}
+	replicaB.reset(ctx, acct.ID)
+	if wait := replicaA.retryAfter(ctx, acct.ID, time.Now()); wait != 0 {
+		t.Fatalf("replica A still limited after a reset on replica B: %s", wait)
 	}
 }
 

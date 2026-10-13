@@ -207,7 +207,7 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(r.Context(), w, acct) {
 		return
 	}
 	confirmSecret := readSealedSecret(s, w, r, acct.ID)
@@ -215,7 +215,7 @@ func (s *server) mfaConfirm(w http.ResponseWriter, r *http.Request, acct state.A
 		return // readSealedSecret wrote the problem
 	}
 	if !auth.VerifyCode(confirmSecret, req.Totp) {
-		s.totp.fail(acct.ID, time.Now())
+		s.totp.fail(r.Context(), acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_confirm_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
@@ -263,7 +263,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Invalid request", "malformed JSON body"))
 		return
 	}
-	if !s.totpAttemptAllowed(w, acct) {
+	if !s.totpAttemptAllowed(r.Context(), w, acct) {
 		return
 	}
 	secret := readSealedSecret(s, w, r, acct.ID)
@@ -271,13 +271,13 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return // readSealedSecret wrote the problem
 	}
 	if !auth.VerifyCode(secret, req.Totp) {
-		s.totp.fail(acct.ID, time.Now())
+		s.totp.fail(r.Context(), acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": "code_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid code", "the TOTP code did not match"))
 		return
 	}
-	s.totp.reset(acct.ID)
+	s.totp.reset(r.Context(), acct.ID)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.verify.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
@@ -965,8 +965,8 @@ func consumeRecoveryCode(ctx context.Context, st consumeRecoveryCodeSelector, ac
 
 // totpAttemptAllowed answers 429 while the account has used up its TOTP
 // guesses (totp_guard.go).
-func (s *server) totpAttemptAllowed(w http.ResponseWriter, acct state.Account) bool {
-	wait := s.totp.retryAfter(acct.ID, time.Now())
+func (s *server) totpAttemptAllowed(ctx context.Context, w http.ResponseWriter, acct state.Account) bool {
+	wait := s.totp.retryAfter(ctx, acct.ID, time.Now())
 	if wait <= 0 {
 		return true
 	}

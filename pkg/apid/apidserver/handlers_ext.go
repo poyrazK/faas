@@ -4744,15 +4744,14 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// resolveGraceWindow reads the per-account grace override via the
-// in-process cache, falling back to the store on a miss. The
-// handler is the only caller; nil-safe when the cache is nil
-// (legacy tests that pre-date the cache field).
+// resolveGraceWindow reads the per-account grace override from the store on
+// every rotation. ADR-1152: apid runs on several control nodes, and an
+// in-process cache invalidated only on the replica that handled the update
+// let a rotation on another replica keep a leaked key valid for the default
+// grace period after the customer had set immediate rotation. Rotations are
+// rare, so the read costs nothing worth caching.
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
-	if s.graceWindowCache == nil {
-		return s.store.GetAccountKeyGraceWindow(ctx, accountID)
-	}
-	return s.graceWindowCache.resolveGraceWindow(ctx, s.store, accountID)
+	return s.store.GetAccountKeyGraceWindow(ctx, accountID)
 }
 
 // --- usage -----------------------------------------------------------------

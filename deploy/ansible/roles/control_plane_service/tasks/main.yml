@@ -297,6 +297,16 @@
     group: root
     mode: "0644"
 
+# ADR-1152: apid settings that depend on how many control nodes the cell has.
+- name: control_plane_service — set apid multi-replica mode
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-apid-replicas.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-apid-replicas.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # ADR-520: customer DNS instructions and on-demand certificate status. Rendered
 # unconditionally so disabling the feature clears the values.
 - name: control_plane_service — set custom-domain routing and TLS mode

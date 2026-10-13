@@ -125,6 +125,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_APID_REQUEST_TELEMETRY_SOCKET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_REQUEST_TELEMETRY_TARGET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDropin},
 	{Name: "FAAS_APID_REQUEST_WRITE_TIMEOUT", Owners: []string{"apid"}, Source: EnvSourceDefault},
+	{Name: "FAAS_APID_RESUMABLE_UPLOADS", Owners: []string{"apid"}, Source: EnvSourceDropin, Note: "ADR-1152; control_plane_service renders \"0\" when the cell has more than one control node, because resumable upload chunks spool on the replica that started the session. The CLI then falls back to the single-request upload"},
 	{Name: "FAAS_APID_ROLE", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_API_CONTRACT_DIFF_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDropin, Note: "public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs"},
 	{Name: "FAAS_API_DISCOVERY_ENABLED", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270)"},

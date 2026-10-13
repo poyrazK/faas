@@ -330,14 +330,6 @@ type server struct {
 	// own a poll lease to expose freshness. Enablement is configured at startup.
 	environmentGitSourceMetrics        *environmentGitSourceMetrics
 	environmentGitSourcePollingEnabled atomic.Bool
-	// graceWindowCache (issue #189 / IAM-5) caches the per-account
-	// rotation grace override (accounts.key_grace_window_days). The
-	// bearer-key auth path does NOT read it (the lazy expiry gate
-	// is in pkg/state.AuthenticateKey); only rotateKey reads it,
-	// and a 60 s TTL bounds the admin-update propagation latency.
-	// nil-safe: the rotate handler queries the store directly when
-	// the cache is nil (the dev/test boot path).
-	graceWindowCache *graceWindowCache
 	// rekeyRunner is the background re-seal walker (ADR-089 PR-C).
 	// Wired only when FAAS_REKEY_ENABLED=true AND mfaIdentities()
 	// is non-empty; nil on daemons where either condition fails.
@@ -1124,7 +1116,7 @@ func newServerWithDeps(
 		// is the shared apiAuthLimiter that backs s.authLimited (the
 		// API surface-level per-IP bucket per spec §11 10/min/IP).
 		// ADR-044.
-		totp: newTOTPGuard(),
+		totp: newSharedTOTPGuard(store),
 		authMw: authmw.New(
 			storeAsAuthenticator(store),
 			sessions,
@@ -1169,12 +1161,6 @@ func newServerWithDeps(
 		// store.ApplyProjectPlan directly; post-PR-G every
 		// workload-mutating path goes through Service.Reconcile.
 		reconcileSvc: buildReconcileService(store, aud.pkgAuditor(), log),
-		// IAM-5 (issue #189): rotation grace-window cache. 60 s
-		// TTL bounds the admin-update propagation latency; the
-		// invalidate-on-write path closes the loop. nil in
-		// legacy tests that pre-date the cache — the rotateKey
-		// handler falls back to the store directly.
-		graceWindowCache: newGraceWindowCache(),
 	}
 	// Issue #270 / ADR-101 / PR-A: build the OIDC exchange
 	// handler after the struct is wired so the handler can read
