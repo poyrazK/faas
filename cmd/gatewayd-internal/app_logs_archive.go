@@ -458,7 +458,7 @@ func (h *ArchiveLogsHandler) instanceInScope(ctx context.Context, accountID, app
 	}
 	start, err := time.Parse("2006-01-02", day)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("parse archive date %q: %w", day, err)
 	}
 	return h.Scope.InstanceLogsOwnedByApp(ctx, accountID, appID, instance, start.AddDate(0, 0, -1), start.AddDate(0, 0, 2))
 }
