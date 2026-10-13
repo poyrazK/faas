@@ -967,6 +967,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1118 · Issue split-rule management](1118-issue-split-rule-management.md)
 
+- [ADR-1156 · Operation waits and approvals](1156-operation-waits-and-approvals.md)
+
 - [ADR-981: Scenario TCP fault injection](981-scenario-tcp-fault-injection.md)
 - [ADR-982: Decompose cmd/apid into pkg/apid domain packages](982-apid-package-decomposition.md)
 

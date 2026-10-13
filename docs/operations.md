@@ -119,6 +119,43 @@ described in the [workflow export starter](../examples/customer-operation-workfl
 See [ADR-672](adr/672-customer-workflow-operation-starter.md) and
 [ADR-676](adr/676-workflow-customer-operations.md). Admission remains closed.
 
+## Waits and approvals
+
+A workflow operation can pause without holding an app instance. Besides HTTP
+actions, its linear chain may contain a `wait_for_duration` timer or a
+`wait_for_callback` step that the definition declares as an approval:
+
+```yaml
+workflows:
+  - name: refund-chain
+    steps:
+      - {name: validate, path: /refunds/validate}
+      - {name: manager-approval, wait_for_callback: true, timeout: 72h, depends_on: [validate]}
+      - {name: cooling-off, wait_for_duration: 24h, depends_on: [manager-approval]}
+      - {name: refund, path: /refunds/execute, depends_on: [cooling-off]}
+operations:
+  - name: refund
+    workflow: refund-chain
+    progress_stages: [validate, manager-approval, cooling-off, refund]
+    approvals:
+      - {step: manager-approval, approver: account}
+```
+
+While parked, the operation is `waiting` with `waiting: {kind, step, since,
+until, approver}`; history records `waiting` and `resumed` events. The declared
+approver decides with `POST /v1/apps/{slug}/operations/{id}/approvals/{step}`
+(account) or `POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}`
+(customer), sending `expected_generation`, `decision` (`approved` or `rejected`)
+and an optional comment. The decision and the deciding key or token are recorded
+as an `approval_decided` event. Repeating a decision is idempotent; a different
+decision conflicts. Rejection settles the operation `failed` with
+`approval_rejected`; a passed approval timeout settles `approval_expired`. Waits
+never require reconciliation, and cancelling a waiting operation settles it
+`cancelled`. Generic workflow callback completion is refused for operation runs,
+so only the approval endpoints can resume an approval. Event waits, condition
+checks and branches remain unavailable to operations. See
+[ADR-1156](adr/1156-operation-waits-and-approvals.md).
+
 ## Contract
 
 `OperationDefinitionSpec` captures an HTTP target or named workflow, platform-tenant ownership,
