@@ -188,6 +188,17 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 			receipts = append(receipts, reviewCoordinationEvent(change))
 		}
 	}
+
+	if after.Coordination != nil {
+		for _, reminder := range after.Coordination.FulfillmentReviewReminders {
+			if before.Coordination != nil && slices.ContainsFunc(before.Coordination.FulfillmentReviewReminders, func(previous api.OperationWorkflowFulfillmentReviewReminder) bool {
+				return previous.NotificationID == reminder.NotificationID
+			}) {
+				continue
+			}
+			receipts = append(receipts, fulfillmentReviewReminderEvent(reminder))
+		}
+	}
 	receipts = captureObligationTargetReceipts(before, after, old, current, cases, actor, now, receipts)
 	receipts = linkObligationSuccessors(before, after, old, current, cases, actor, now, receipts)
 	after.ObligationReceiptsTruncated = before.ObligationReceiptsTruncated

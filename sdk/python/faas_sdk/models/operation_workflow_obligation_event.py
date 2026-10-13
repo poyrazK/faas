@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_fulfillment_review_coordination_change import (
         OperationWorkflowFulfillmentReviewCoordinationChange,
     )
+    from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
     from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
@@ -38,6 +39,11 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset = UNSET
+    """Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
+    reasons, case and evidence context. Identical deadlines do not repeat within the same review cycle; a new
+    deadline or review cycle is independently eligible. Delivery does not complete or reopen the original work,
+    change its owner, or assert fresh application evidence."""
     review_coordination: OperationWorkflowFulfillmentReviewCoordinationChange | Unset = UNSET
     """Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and
     authenticated actor/reason. Does not modify original work or execute an application transition."""
@@ -82,6 +88,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        fulfillment_review_reminder: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review_reminder, Unset):
+            fulfillment_review_reminder = self.fulfillment_review_reminder.to_dict()
 
         review_coordination: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review_coordination, Unset):
@@ -135,6 +145,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if fulfillment_review_reminder is not UNSET:
+            field_dict["fulfillment_review_reminder"] = fulfillment_review_reminder
         if review_coordination is not UNSET:
             field_dict["review_coordination"] = review_coordination
         if fulfillment_review is not UNSET:
@@ -167,6 +179,7 @@ class OperationWorkflowObligationEvent:
         from ..models.operation_workflow_fulfillment_review_coordination_change import (
             OperationWorkflowFulfillmentReviewCoordinationChange,
         )
+        from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
         from ..models.operation_workflow_obligation_fulfillment_review import (
@@ -183,6 +196,15 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _fulfillment_review_reminder = d.pop("fulfillment_review_reminder", UNSET)
+        fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset
+        if isinstance(_fulfillment_review_reminder, Unset):
+            fulfillment_review_reminder = UNSET
+        else:
+            fulfillment_review_reminder = OperationWorkflowFulfillmentReviewReminder.from_dict(
+                _fulfillment_review_reminder
+            )
 
         _review_coordination = d.pop("review_coordination", UNSET)
         review_coordination: OperationWorkflowFulfillmentReviewCoordinationChange | Unset
@@ -254,6 +276,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            fulfillment_review_reminder=fulfillment_review_reminder,
             review_coordination=review_coordination,
             fulfillment_review=fulfillment_review,
             reaffirmation=reaffirmation,

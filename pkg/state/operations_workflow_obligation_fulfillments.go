@@ -257,5 +257,16 @@ func appendFulfillmentEvents(events []api.OperationWorkflowObligationEvent, coor
 			events = append(events, reviewCoordinationEvent(change))
 		}
 	}
+
+	for _, reminder := range coord.FulfillmentReviewReminders {
+		if obligation != "" && reminder.ReviewID != obligation {
+			continue
+		}
+		if !slices.ContainsFunc(events, func(e api.OperationWorkflowObligationEvent) bool {
+			return e.FulfillmentReviewReminder != nil && e.FulfillmentReviewReminder.NotificationID == reminder.NotificationID
+		}) {
+			events = append(events, fulfillmentReviewReminderEvent(reminder))
+		}
+	}
 	return events
 }

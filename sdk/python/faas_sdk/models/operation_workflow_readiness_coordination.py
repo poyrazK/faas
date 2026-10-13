@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_fulfillment_review_coordination_change import (
         OperationWorkflowFulfillmentReviewCoordinationChange,
     )
+    from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
     from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
     from ..models.operation_workflow_obligation_reaffirmation import OperationWorkflowObligationReaffirmation
@@ -51,6 +52,9 @@ class OperationWorkflowReadinessCoordination:
     updated_by: str
     """OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter application
     evidence."""
+    fulfillment_review_reminders: list[OperationWorkflowFulfillmentReviewReminder] | Unset = UNSET
+    """Immutable delivery receipts; each review deadline is notified once, even if restored later. At capacity no
+    further reminders are published for this retained source."""
     review_coordination_changes: list[OperationWorkflowFulfillmentReviewCoordinationChange] | Unset = UNSET
     """Immutable review-cycle ownership/deadline changes. Capacity exhaustion rejects further writes without
     pruning decisions."""
@@ -89,6 +93,13 @@ class OperationWorkflowReadinessCoordination:
         updated_at = self.updated_at.isoformat()
 
         updated_by = self.updated_by
+
+        fulfillment_review_reminders: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.fulfillment_review_reminders, Unset):
+            fulfillment_review_reminders = []
+            for fulfillment_review_reminders_item_data in self.fulfillment_review_reminders:
+                fulfillment_review_reminders_item = fulfillment_review_reminders_item_data.to_dict()
+                fulfillment_review_reminders.append(fulfillment_review_reminders_item)
 
         review_coordination_changes: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.review_coordination_changes, Unset):
@@ -158,6 +169,8 @@ class OperationWorkflowReadinessCoordination:
                 "updated_by": updated_by,
             }
         )
+        if fulfillment_review_reminders is not UNSET:
+            field_dict["fulfillment_review_reminders"] = fulfillment_review_reminders
         if review_coordination_changes is not UNSET:
             field_dict["review_coordination_changes"] = review_coordination_changes
         if fulfillment_reviews is not UNSET:
@@ -186,6 +199,7 @@ class OperationWorkflowReadinessCoordination:
         from ..models.operation_workflow_fulfillment_review_coordination_change import (
             OperationWorkflowFulfillmentReviewCoordinationChange,
         )
+        from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
         from ..models.operation_workflow_obligation_fulfillment_review import (
             OperationWorkflowObligationFulfillmentReview,
@@ -207,6 +221,17 @@ class OperationWorkflowReadinessCoordination:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         updated_by = d.pop("updated_by")
+
+        _fulfillment_review_reminders = d.pop("fulfillment_review_reminders", UNSET)
+        fulfillment_review_reminders: list[OperationWorkflowFulfillmentReviewReminder] | Unset = UNSET
+        if _fulfillment_review_reminders is not UNSET:
+            fulfillment_review_reminders = []
+            for fulfillment_review_reminders_item_data in _fulfillment_review_reminders:
+                fulfillment_review_reminders_item = OperationWorkflowFulfillmentReviewReminder.from_dict(
+                    fulfillment_review_reminders_item_data
+                )
+
+                fulfillment_review_reminders.append(fulfillment_review_reminders_item)
 
         _review_coordination_changes = d.pop("review_coordination_changes", UNSET)
         review_coordination_changes: list[OperationWorkflowFulfillmentReviewCoordinationChange] | Unset = UNSET
@@ -296,6 +321,7 @@ class OperationWorkflowReadinessCoordination:
             note=note,
             updated_at=updated_at,
             updated_by=updated_by,
+            fulfillment_review_reminders=fulfillment_review_reminders,
             review_coordination_changes=review_coordination_changes,
             fulfillment_reviews=fulfillment_reviews,
             reaffirmations=reaffirmations,

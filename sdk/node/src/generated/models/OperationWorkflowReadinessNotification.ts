@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowFulfillmentReviewReminder } from './OperationWorkflowFulfillmentReviewReminder.js';
 import type { OperationWorkflowNextActionDigest } from './OperationWorkflowNextActionDigest.js';
 import type { OperationWorkflowObligationAssessment } from './OperationWorkflowObligationAssessment.js';
 import type { OperationWorkflowObligationEvent } from './OperationWorkflowObligationEvent.js';
@@ -34,6 +35,7 @@ import type { OperationWorkflowReviewResponseHandoffReassignmentEvent } from './
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  fulfillment_review_reminder?: OperationWorkflowFulfillmentReviewReminder;
   fulfillment_review?: OperationWorkflowObligationFulfillmentReview;
   obligation_reopening?: OperationWorkflowObligationReopening;
   /**
@@ -111,7 +113,7 @@ export type OperationWorkflowReadinessNotification = {
   /**
    * OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
    */
-  kind: 'review_response_handoff_reassigned' | 'review_response_handoff_declined' | 'fulfillment_review_required' | 'obligation_reopened' | 'obligation_target_changed' | 'next_action_digest' | 'review_response_escalation_action_checked' | 'review_response_escalation_commitment_overdue' | 'review_response_handoff_acceptance_escalated' | 'review_response_handoff_acceptance_overdue' | 'review_response_decision_review_overdue' | 'review_response_decision_review_required' | 'review_response_recovered' | 'review_response_blocked' | 'review_response_check_in_overdue' | 'business_impact_changed' | 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed' | 'playbook_outcome_changed' | 'playbook_outcome_deadline_reached' | 'playbook_outcome_step_assigned' | 'playbook_dependency_regressed' | 'playbook_dependency_recovered';
+  kind: 'review_response_handoff_reassigned' | 'review_response_handoff_declined' | 'fulfillment_review_required' | 'fulfillment_review_overdue' | 'obligation_reopened' | 'obligation_target_changed' | 'next_action_digest' | 'review_response_escalation_action_checked' | 'review_response_escalation_commitment_overdue' | 'review_response_handoff_acceptance_escalated' | 'review_response_handoff_acceptance_overdue' | 'review_response_decision_review_overdue' | 'review_response_decision_review_required' | 'review_response_recovered' | 'review_response_blocked' | 'review_response_check_in_overdue' | 'business_impact_changed' | 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed' | 'playbook_outcome_changed' | 'playbook_outcome_deadline_reached' | 'playbook_outcome_step_assigned' | 'playbook_dependency_regressed' | 'playbook_dependency_recovered';
   /**
    * OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification.
    */

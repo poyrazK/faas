@@ -22,37 +22,38 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
-	FulfillmentReviewCursor     string                                              `json:"fulfillment_review_cursor,omitempty"`
-	ReopeningKnown              map[string]bool                                     `json:"reopening_known,omitempty"`
-	ReopeningCursor             int64                                               `json:"reopening_cursor,omitempty"`
-	TargetObservations          map[string]string                                   `json:"target_observations,omitempty"`
-	TargetCursor                int64                                               `json:"target_cursor,omitempty"`
-	DigestDeliveredItems        map[string]api.OperationWorkflowNextActionQueueItem `json:"digest_delivered_items,omitempty"`
-	DigestKnown                 map[string]string                                   `json:"digest_known,omitempty"`
-	ScheduledActionReviewCursor int64                                               `json:"scheduled_action_review_cursor,omitempty"`
-	EscalationCommitmentCursor  int64                                               `json:"escalation_commitment_cursor,omitempty"`
-	HandoffReassignmentCursor   int64                                               `json:"handoff_reassignment_cursor,omitempty"`
-	HandoffDeclineCursor        int64                                               `json:"handoff_decline_cursor,omitempty"`
-	HandoffDeadlineCursor       int64                                               `json:"handoff_deadline_cursor,omitempty"`
-	ReviewDecisionCursor        int64                                               `json:"review_decision_cursor,omitempty"`
-	ReviewBlockageCursor        int64                                               `json:"review_blockage_cursor,omitempty"`
-	ReviewBlockages             map[string][]string                                 `json:"review_blockages,omitempty"`
-	ReviewResponseCursor        int64                                               `json:"review_response_cursor,omitempty"`
-	ImpactSources               [][]impactReviewSource                              `json:"impact_sources,omitempty"`
-	ImpactTruncated             []bool                                              `json:"impact_truncated,omitempty"`
-	PlaybookCursor              string                                              `json:"playbook_cursor,omitempty"`
-	ResponseCursor              int64                                               `json:"response_cursor,omitempty"`
-	OutcomeCursor               int64                                               `json:"outcome_cursor,omitempty"`
-	VerificationCursor          int64                                               `json:"verification_cursor,omitempty"`
-	Subscription                api.OperationWorkflowReadinessSubscription          `json:"subscription"`
-	Baseline                    api.OperationWorkflowReadinessSnapshot              `json:"baseline"`
-	Seen                        map[string]string                                   `json:"seen"`
-	Account                     string                                              `json:"-"`
-	Tenant                      string                                              `json:"-"`
-	Operator                    bool                                                `json:"-"`
-	Lease                       string                                              `json:"-"`
-	LeaseUntil                  time.Time                                           `json:"-"`
-	NextEvaluation              time.Time                                           `json:"-"`
+	FulfillmentReviewReminderCursor string                                              `json:"fulfillment_review_reminder_cursor,omitempty"`
+	FulfillmentReviewCursor         string                                              `json:"fulfillment_review_cursor,omitempty"`
+	ReopeningKnown                  map[string]bool                                     `json:"reopening_known,omitempty"`
+	ReopeningCursor                 int64                                               `json:"reopening_cursor,omitempty"`
+	TargetObservations              map[string]string                                   `json:"target_observations,omitempty"`
+	TargetCursor                    int64                                               `json:"target_cursor,omitempty"`
+	DigestDeliveredItems            map[string]api.OperationWorkflowNextActionQueueItem `json:"digest_delivered_items,omitempty"`
+	DigestKnown                     map[string]string                                   `json:"digest_known,omitempty"`
+	ScheduledActionReviewCursor     int64                                               `json:"scheduled_action_review_cursor,omitempty"`
+	EscalationCommitmentCursor      int64                                               `json:"escalation_commitment_cursor,omitempty"`
+	HandoffReassignmentCursor       int64                                               `json:"handoff_reassignment_cursor,omitempty"`
+	HandoffDeclineCursor            int64                                               `json:"handoff_decline_cursor,omitempty"`
+	HandoffDeadlineCursor           int64                                               `json:"handoff_deadline_cursor,omitempty"`
+	ReviewDecisionCursor            int64                                               `json:"review_decision_cursor,omitempty"`
+	ReviewBlockageCursor            int64                                               `json:"review_blockage_cursor,omitempty"`
+	ReviewBlockages                 map[string][]string                                 `json:"review_blockages,omitempty"`
+	ReviewResponseCursor            int64                                               `json:"review_response_cursor,omitempty"`
+	ImpactSources                   [][]impactReviewSource                              `json:"impact_sources,omitempty"`
+	ImpactTruncated                 []bool                                              `json:"impact_truncated,omitempty"`
+	PlaybookCursor                  string                                              `json:"playbook_cursor,omitempty"`
+	ResponseCursor                  int64                                               `json:"response_cursor,omitempty"`
+	OutcomeCursor                   int64                                               `json:"outcome_cursor,omitempty"`
+	VerificationCursor              int64                                               `json:"verification_cursor,omitempty"`
+	Subscription                    api.OperationWorkflowReadinessSubscription          `json:"subscription"`
+	Baseline                        api.OperationWorkflowReadinessSnapshot              `json:"baseline"`
+	Seen                            map[string]string                                   `json:"seen"`
+	Account                         string                                              `json:"-"`
+	Tenant                          string                                              `json:"-"`
+	Operator                        bool                                                `json:"-"`
+	Lease                           string                                              `json:"-"`
+	LeaseUntil                      time.Time                                           `json:"-"`
+	NextEvaluation                  time.Time                                           `json:"-"`
 }
 type readinessSubscriptionBackend interface {
 	readinessFollowUpBackend
@@ -411,7 +412,11 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		fulfillmentUpdates, fulfillmentErr := evaluateFulfillmentReviews(check, store, &record)
 		watchUpdates = append(watchUpdates, fulfillmentUpdates...)
 		cancel()
-		if fulfillmentErr != nil || reopeningErr != nil || targetErr != nil || digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		reminderUpdates, reminderErr := evaluateFulfillmentReviewReminders(check, store, &record)
+		watchUpdates = append(watchUpdates, reminderUpdates...)
+		cancel()
+		if reminderErr != nil || fulfillmentErr != nil || reopeningErr != nil || targetErr != nil || digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)

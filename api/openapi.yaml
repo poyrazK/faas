@@ -79365,6 +79365,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        fulfillment_review_reminder:
+          $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewReminder'
         fulfillment_review:
           $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
         obligation_reopening:
@@ -79451,6 +79453,7 @@ components:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
           - fulfillment_review_required
+          - fulfillment_review_overdue
           - obligation_reopened
           - obligation_target_changed
           - next_action_digest
@@ -79602,6 +79605,12 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        fulfillment_review_reminders:
+          type: array
+          maxItems: 128
+          description: Immutable delivery receipts; each review deadline is notified once, even if restored later. At capacity no further reminders are published for this retained source.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewReminder'
         review_coordination_changes:
           type: array
           maxItems: 128
@@ -82586,6 +82595,8 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        fulfillment_review_reminder:
+          $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewReminder'
         review_coordination:
           $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewCoordinationChange'
         fulfillment_review:
@@ -82614,7 +82625,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed, fulfillment_review_coordinated]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed, fulfillment_review_coordinated, fulfillment_review_overdue]
         at:
           type: string
           format: date-time
@@ -83115,6 +83126,25 @@ components:
           format: date-time
         reaffirmed_by:
           type: string
+    OperationWorkflowFulfillmentReviewReminder:
+      type: object
+      additionalProperties: false
+      description: Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner, reasons, case and evidence context. Identical deadlines do not repeat within the same review cycle; a new deadline or review cycle is independently eligible. Delivery does not complete or reopen the original work, change its owner, or assert fresh application evidence.
+      required: [review_id, notification_id, due_at, notified_at, review]
+      properties:
+        review_id:
+          type: string
+        notification_id:
+          type: string
+          format: uuid
+        due_at:
+          type: string
+          format: date-time
+        notified_at:
+          type: string
+          format: date-time
+        review:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
     OperationWorkflowFulfillmentReviewCoordinationRequest:
       type: object
       additionalProperties: false

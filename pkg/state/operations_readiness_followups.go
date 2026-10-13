@@ -370,6 +370,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		c.FulfillmentReviews = slices.Clone(n.Coordination.FulfillmentReviews)
 		c.Reaffirmations = slices.Clone(n.Coordination.Reaffirmations)
 		c.ReviewCoordinationChanges = slices.Clone(n.Coordination.ReviewCoordinationChanges)
+		c.FulfillmentReviewReminders = slices.Clone(n.Coordination.FulfillmentReviewReminders)
 		c.Completion = n.Coordination.Completion
 	}
 	if req.PreparedCompletion != nil {

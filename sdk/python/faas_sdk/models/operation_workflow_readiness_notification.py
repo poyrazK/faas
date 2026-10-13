@@ -14,6 +14,7 @@ from ..models.operation_workflow_readiness_notification_kind import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
     from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
     from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
     from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
@@ -76,6 +77,11 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset = UNSET
+    """Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
+    reasons, case and evidence context. Identical deadlines do not repeat within the same review cycle; a new
+    deadline or review cycle is independently eligible. Delivery does not complete or reopen the original work,
+    change its owner, or assert fresh application evidence."""
     fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
     """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
@@ -183,6 +189,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        fulfillment_review_reminder: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review_reminder, Unset):
+            fulfillment_review_reminder = self.fulfillment_review_reminder.to_dict()
 
         fulfillment_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.fulfillment_review, Unset):
@@ -312,6 +322,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if fulfillment_review_reminder is not UNSET:
+            field_dict["fulfillment_review_reminder"] = fulfillment_review_reminder
         if fulfillment_review is not UNSET:
             field_dict["fulfillment_review"] = fulfillment_review
         if obligation_reopening is not UNSET:
@@ -375,6 +387,7 @@ class OperationWorkflowReadinessNotification:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
         from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
         from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
         from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
@@ -436,6 +449,15 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _fulfillment_review_reminder = d.pop("fulfillment_review_reminder", UNSET)
+        fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset
+        if isinstance(_fulfillment_review_reminder, Unset):
+            fulfillment_review_reminder = UNSET
+        else:
+            fulfillment_review_reminder = OperationWorkflowFulfillmentReviewReminder.from_dict(
+                _fulfillment_review_reminder
+            )
 
         _fulfillment_review = d.pop("fulfillment_review", UNSET)
         fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset
@@ -645,6 +667,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            fulfillment_review_reminder=fulfillment_review_reminder,
             fulfillment_review=fulfillment_review,
             obligation_reopening=obligation_reopening,
             target_assessment=target_assessment,
