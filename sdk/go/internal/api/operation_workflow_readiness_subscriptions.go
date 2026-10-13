@@ -89,6 +89,7 @@ type OperationWorkflowReadinessInboxResponse struct {
 
 // Coordination is shared inbox bookkeeping, never business workflow evidence.
 type OperationWorkflowReadinessCoordination struct {
+	Fulfillments   []OperationWorkflowObligationFulfillment   `json:"fulfillments,omitempty"`
 	TargetBindings []OperationWorkflowObligationTargetBinding `json:"target_bindings,omitempty"`
 	Completion     *OperationWorkflowReadinessCompletion      `json:"completion,omitempty"`
 	Revision       int64                                      `json:"revision"`
@@ -102,14 +103,15 @@ type OperationWorkflowReadinessCoordination struct {
 	AcknowledgedBy string                                     `json:"acknowledged_by,omitempty"`
 }
 type OperationWorkflowReadinessCoordinationRequest struct {
-	TargetBinding  *OperationWorkflowObligationTargetRequest    `json:"target_binding,omitempty"`
-	ReviewResponse *OperationWorkflowReviewResponseRequest      `json:"review_response,omitempty"`
-	Completion     *OperationWorkflowReadinessCompletionRequest `json:"completion,omitempty"`
-	Revision       int64                                        `json:"revision"`
-	Status         string                                       `json:"status"`
-	Owner          string                                       `json:"owner"`
-	Note           string                                       `json:"note"`
-	FollowUpAt     *time.Time                                   `json:"follow_up_at,omitempty"`
+	Fulfillment    *OperationWorkflowObligationFulfillmentRequest `json:"fulfillment,omitempty"`
+	TargetBinding  *OperationWorkflowObligationTargetRequest      `json:"target_binding,omitempty"`
+	ReviewResponse *OperationWorkflowReviewResponseRequest        `json:"review_response,omitempty"`
+	Completion     *OperationWorkflowReadinessCompletionRequest   `json:"completion,omitempty"`
+	Revision       int64                                          `json:"revision"`
+	Status         string                                         `json:"status"`
+	Owner          string                                         `json:"owner"`
+	Note           string                                         `json:"note"`
+	FollowUpAt     *time.Time                                     `json:"follow_up_at,omitempty"`
 }
 
 // Handoff summarizes retained application evidence; it never authorizes execution.
@@ -931,6 +933,7 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
+	Fulfillment   *OperationWorkflowObligationFulfillment   `json:"fulfillment,omitempty"`
 	TargetBinding *OperationWorkflowObligationTargetBinding `json:"target_binding,omitempty"`
 	Replacement   *OperationWorkflowObligationReplacement   `json:"replacement,omitempty"`
 	Cases         []OperationWorkflowNextActionCase         `json:"cases,omitempty"`
@@ -1005,4 +1008,22 @@ type OperationWorkflowObligationTargetRequest struct {
 	Transition   *OperationWorkflowObligationTransitionTarget `json:"transition,omitempty"`
 	Clear        bool                                         `json:"clear,omitempty"`
 	Reason       string                                       `json:"reason"`
+}
+
+// Fulfillment is an explicit case/cycle receipt, independent of shared-plan closure.
+type OperationWorkflowObligationFulfillmentRequest struct {
+	Binding             OperationWorkflowObligationTargetBinding `json:"binding"`
+	Reason              string                                   `json:"reason"`
+	EvidenceOperationID string                                   `json:"evidence_operation_id"`
+	EvidenceReportID    string                                   `json:"evidence_report_id"`
+}
+type OperationWorkflowObligationFulfillment struct {
+	Binding           OperationWorkflowObligationTargetBinding `json:"binding"`
+	Reason            string                                   `json:"reason"`
+	ActionKind        string                                   `json:"action_kind"`
+	Owner             string                                   `json:"owner"`
+	Evidence          OperationWorkflowStateHistoryEntry       `json:"evidence"`
+	EvidenceCheckedAt time.Time                                `json:"evidence_checked_at"`
+	CompletedAt       time.Time                                `json:"completed_at"`
+	CompletedBy       string                                   `json:"completed_by"`
 }

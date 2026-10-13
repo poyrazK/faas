@@ -49,7 +49,7 @@ func linkObligationSuccessors(before, after api.OperationWorkflowReadinessNotifi
 		if predecessorID == "" {
 			for i := len(before.ObligationReceipts) - 1; i >= 0; i-- {
 				event := before.ObligationReceipts[i]
-				if event.ObligationID == "" || event.ObligationID == successorID || event.ActionKind != successor.Kind || event.Kind != "completed" && event.Kind != "canceled" && event.Kind != "superseded" {
+				if event.ObligationID == "" || event.ObligationID == successorID || event.ActionKind != successor.Kind || event.Kind != "completed" && event.Kind != "fulfilled" && event.Kind != "canceled" && event.Kind != "superseded" {
 					continue
 				}
 				if _, stillActive := current[event.ObligationID]; stillActive {

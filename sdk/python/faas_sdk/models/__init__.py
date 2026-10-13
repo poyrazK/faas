@@ -7691,3 +7691,14 @@ from .operation_workflow_obligation_context_status import OperationWorkflowOblig
 from .operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 from .operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
 from .operation_workflow_obligation_transition_target import OperationWorkflowObligationTransitionTarget
+
+from .operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+from .operation_workflow_obligation_fulfillment_request import OperationWorkflowObligationFulfillmentRequest
+
+from .operation_workflow_obligation_fulfillment_action_kind import OperationWorkflowObligationFulfillmentActionKind
+
+__all__ += (
+    "OperationWorkflowObligationFulfillment",
+    "OperationWorkflowObligationFulfillmentRequest",
+    "OperationWorkflowObligationFulfillmentActionKind",
+)

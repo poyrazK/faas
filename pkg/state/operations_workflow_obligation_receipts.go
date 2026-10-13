@@ -68,6 +68,17 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 			}
 			continue
 		}
+		fulfilled := false
+		if after.Coordination != nil {
+			for _, receipt := range after.Coordination.Fulfillments {
+				if receipt.Binding.ObligationID == id && (before.Coordination == nil || !obligationFulfilled(*before.Coordination, id, receipt.Binding.Case, "")) {
+					fulfilled = true
+				}
+			}
+		}
+		if fulfilled {
+			continue
+		}
 		canonical := after
 		canonical.ObligationReceipts = nil
 		events, terminal := workflowObligationReceipts(canonical, previous, now)
@@ -111,6 +122,18 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 	for _, id := range keys {
 		if _, exists := old[id]; !exists {
 			add(id, "assigned", "This obligation became active for "+current[id].Owner+".")
+		}
+	}
+	if after.Coordination != nil {
+		for _, receipt := range after.Coordination.Fulfillments {
+			event := fulfillmentEvent(receipt)
+			if before.Coordination != nil && obligationFulfilled(*before.Coordination, receipt.Binding.ObligationID, receipt.Binding.Case, "") {
+				continue
+			}
+			event.SharedPlan = len(cases[receipt.Binding.ObligationID]) > 1
+			if !hasObligationEvent(receipts, event) {
+				receipts = append(receipts, event)
+			}
 		}
 	}
 	receipts = captureObligationTargetReceipts(before, after, old, current, cases, actor, now, receipts)

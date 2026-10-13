@@ -12,6 +12,7 @@ import (
 )
 
 type readinessCoordinationUpdate struct {
+	PreparedFulfillment            *api.OperationWorkflowObligationFulfillment
 	PreparedTargetBinding          *api.OperationWorkflowObligationTargetBinding
 	TargetSubscriptionID           string
 	TargetScope                    string

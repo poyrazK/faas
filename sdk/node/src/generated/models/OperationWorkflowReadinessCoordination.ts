@@ -2,12 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
 import type { OperationWorkflowObligationTargetBinding } from './OperationWorkflowObligationTargetBinding.js';
 import type { OperationWorkflowReadinessCompletion } from './OperationWorkflowReadinessCompletion.js';
 /**
  * OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordination = {
+  /**
+   * Immutable exact-case cycle fulfillment receipts. Capacity exhaustion rejects further fulfillment; receipts are never pruned into reopened work.
+   */
+  fulfillments?: Array<OperationWorkflowObligationFulfillment>;
   target_bindings?: Array<OperationWorkflowObligationTargetBinding>;
   completion?: OperationWorkflowReadinessCompletion;
   /**

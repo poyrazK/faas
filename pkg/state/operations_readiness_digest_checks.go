@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,6 +48,18 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 			result.ObligationID = a.Obligation.ID
 		}
 		lifecycle, terminal := workflowObligationReceipts(n, a, digest.EvaluatedAt)
+		if a.Obligation != nil {
+			all := len(saved.Cases) > 0
+			for _, c := range saved.Cases {
+				if !obligationFulfilled(*n.Coordination, a.Obligation.ID, c, source.Subscription.TenantID) {
+					all = false
+				}
+			}
+			lifecycle = appendFulfillmentEvents(lifecycle, n.Coordination, a.Obligation.ID)
+			if all {
+				terminal = "completed"
+			}
+		}
 		result.Lifecycle = scopedDigestObligationLifecycle(lifecycle, saved, tenant, selectedTenant, source.Subscription.TenantID, operator)
 
 		if completion := n.Coordination.Completion; completion != nil {
@@ -104,7 +117,7 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEvent, saved api.OperationWorkflowNextActionQueueItem, tenant, selectedTenant, sourceTenant string, operator bool) []api.OperationWorkflowObligationEvent {
 	out := []api.OperationWorkflowObligationEvent{}
 	for _, event := range events {
-		visible := event.Replacement == nil && event.TargetBinding == nil
+		visible := event.Replacement == nil && event.TargetBinding == nil && event.Fulfillment == nil
 		if !visible {
 			for _, covered := range event.Cases {
 				for _, delivered := range saved.Cases {
@@ -130,9 +143,19 @@ func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEve
 			}
 		}
 		if visible {
+			if !operator && event.Fulfillment != nil {
+				value := *event.Fulfillment
+				value.Binding.Case.PlatformTenantID = ""
+				value.Evidence.PlatformTenantID = ""
+				event.Fulfillment = &value
+			}
 			event.Cases = nil
 			out = append(out, event)
 		}
+	}
+	slices.SortStableFunc(out, func(a, b api.OperationWorkflowObligationEvent) int { return a.At.Compare(b.At) })
+	if len(out) > 40 {
+		out = out[len(out)-40:]
 	}
 	return out
 }

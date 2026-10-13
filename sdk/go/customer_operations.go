@@ -457,3 +457,6 @@ type OperationWorkflowObligationTransitionTarget = api.OperationWorkflowObligati
 type OperationWorkflowObligationTargetBinding = api.OperationWorkflowObligationTargetBinding
 
 type OperationWorkflowObligationTargetRequest = api.OperationWorkflowObligationTargetRequest
+
+type OperationWorkflowObligationFulfillment = api.OperationWorkflowObligationFulfillment
+type OperationWorkflowObligationFulfillmentRequest = api.OperationWorkflowObligationFulfillmentRequest

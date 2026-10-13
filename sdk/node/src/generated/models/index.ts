@@ -1200,6 +1200,8 @@ export type { OperationWorkflowNextActionQueueItem } from './OperationWorkflowNe
 export type { OperationWorkflowObligationAssessment } from './OperationWorkflowObligationAssessment.js';
 export type { OperationWorkflowObligationContext } from './OperationWorkflowObligationContext.js';
 export type { OperationWorkflowObligationEvent } from './OperationWorkflowObligationEvent.js';
+export type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
+export type { OperationWorkflowObligationFulfillmentRequest } from './OperationWorkflowObligationFulfillmentRequest.js';
 export type { OperationWorkflowObligationReplacement } from './OperationWorkflowObligationReplacement.js';
 export type { OperationWorkflowObligationTargetBinding } from './OperationWorkflowObligationTargetBinding.js';
 export type { OperationWorkflowObligationTargetRequest } from './OperationWorkflowObligationTargetRequest.js';

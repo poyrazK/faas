@@ -79540,6 +79540,8 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        fulfillment:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentRequest'
         target_binding:
           $ref: '#/components/schemas/OperationWorkflowObligationTargetRequest'
         review_response:
@@ -79588,6 +79590,12 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        fulfillments:
+          type: array
+          maxItems: 128
+          description: Immutable exact-case cycle fulfillment receipts. Capacity exhaustion rejects further fulfillment; receipts are never pruned into reopened work.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationFulfillment'
         target_bindings:
           type: array
           maxItems: 32
@@ -82543,6 +82551,8 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        fulfillment:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillment'
         target_binding:
           $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
         replacement:
@@ -82561,7 +82571,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled]
         at:
           type: string
           format: date-time
@@ -82831,6 +82841,52 @@ components:
           type: string
           minLength: 1
           maxLength: 2048
+    OperationWorkflowObligationFulfillmentRequest:
+      type: object
+      additionalProperties: false
+      description: Explicit fulfillment of one current bound case/cycle. Must preserve source status, owner, note and deadline and cannot combine with target binding, response or shared completion edits. The full binding fences replacement or rebinding. Evidence must be a retained application report of the exact target transition, published after binding; current readiness is insufficient.
+      required: [binding, reason, evidence_operation_id, evidence_report_id]
+      properties:
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        evidence_operation_id:
+          type: string
+          format: uuid
+        evidence_report_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    OperationWorkflowObligationFulfillment:
+      type: object
+      additionalProperties: false
+      description: Immutable human fulfillment receipt for one exact case and obligation cycle, linked to a retained application transition report. Does not close a shared source plan or assert business success or execution authority. Retained transition lookup scans at most 1000 exact-case reports.
+      required: [binding, reason, action_kind, owner, evidence, evidence_checked_at, completed_at, completed_by]
+      properties:
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        action_kind:
+          type: string
+          enum: [response_check_in, coordinator_completion, follow_up]
+        owner:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/OperationWorkflowStateHistoryEntry'
+        evidence_checked_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        completed_by:
+          type: string
     OperationWorkflowObligationAssessment:
       type: object
       additionalProperties: false

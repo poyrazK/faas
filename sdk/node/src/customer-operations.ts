@@ -784,8 +784,8 @@ function readinessSubscriptionQuery(options: OperationWorkflowReadinessSubscript
  return new URLSearchParams({app_id: options.appID, scope: options.scope});
 }
 
-export interface OperationWorkflowReadinessCoordinationRequest { target_binding?: OperationWorkflowObligationTargetRequest; review_response?: OperationWorkflowReviewResponseRequest; completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
-export interface OperationWorkflowReadinessCoordination extends Omit<OperationWorkflowReadinessCoordinationRequest, 'review_response'> { completion?: OperationWorkflowReadinessCompletion; updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
+export interface OperationWorkflowReadinessCoordinationRequest { fulfillment?: OperationWorkflowObligationFulfillmentRequest; target_binding?: OperationWorkflowObligationTargetRequest; review_response?: OperationWorkflowReviewResponseRequest; completion?: OperationWorkflowReadinessCompletionRequest; revision: number; status: 'unread' | 'read' | 'acknowledged'; owner: string; note: string; follow_up_at?: string }
+export interface OperationWorkflowReadinessCoordination extends Omit<OperationWorkflowReadinessCoordinationRequest, 'review_response' | 'fulfillment' | 'target_binding'> { fulfillments?: OperationWorkflowObligationFulfillment[]; target_bindings?: OperationWorkflowObligationTargetBinding[]; completion?: OperationWorkflowReadinessCompletion; updated_at: string; updated_by: string; acknowledged_at?: string; acknowledged_by?: string }
 export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
 export interface OperationWorkflowReadinessNotificationCheck { next_action_digest?: OperationWorkflowNextActionDigestCheck; business_outcome?: OperationWorkflowReadinessBusinessOutcome; handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
@@ -968,3 +968,6 @@ export type OperationWorkflowObligationTransitionTarget = import('./generated/mo
 export type OperationWorkflowObligationTargetBinding = import('./generated/models/OperationWorkflowObligationTargetBinding.js').OperationWorkflowObligationTargetBinding;
 
 export type OperationWorkflowObligationTargetRequest = import('./generated/models/OperationWorkflowObligationTargetRequest.js').OperationWorkflowObligationTargetRequest;
+
+export type OperationWorkflowObligationFulfillment = import('./generated/models/OperationWorkflowObligationFulfillment.js').OperationWorkflowObligationFulfillment;
+export type OperationWorkflowObligationFulfillmentRequest = import('./generated/models/OperationWorkflowObligationFulfillmentRequest.js').OperationWorkflowObligationFulfillmentRequest;

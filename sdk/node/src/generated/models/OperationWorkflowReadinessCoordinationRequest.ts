@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowObligationFulfillmentRequest } from './OperationWorkflowObligationFulfillmentRequest.js';
 import type { OperationWorkflowObligationTargetRequest } from './OperationWorkflowObligationTargetRequest.js';
 import type { OperationWorkflowReadinessCompletionRequest } from './OperationWorkflowReadinessCompletionRequest.js';
 import type { OperationWorkflowReviewResponseRequest } from './OperationWorkflowReviewResponseRequest.js';
@@ -9,6 +10,7 @@ import type { OperationWorkflowReviewResponseRequest } from './OperationWorkflow
  * OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordinationRequest = {
+  fulfillment?: OperationWorkflowObligationFulfillmentRequest;
   target_binding?: OperationWorkflowObligationTargetRequest;
   /**
    * OperationWorkflowReadinessCoordinationRequest.review_response. Explicit human response ownership, plan and check-in linked to protected-result reviews; separate from alert acknowledgment and application execution.

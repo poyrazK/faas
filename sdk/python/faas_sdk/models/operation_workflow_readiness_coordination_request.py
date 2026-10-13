@@ -13,6 +13,7 @@ from ..models.operation_workflow_readiness_coordination_request_status import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_obligation_fulfillment_request import OperationWorkflowObligationFulfillmentRequest
     from ..models.operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
     from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
     from ..models.operation_workflow_review_response_request import OperationWorkflowReviewResponseRequest
@@ -40,6 +41,11 @@ class OperationWorkflowReadinessCoordinationRequest:
     note: str
     """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
     evidence."""
+    fulfillment: OperationWorkflowObligationFulfillmentRequest | Unset = UNSET
+    """Explicit fulfillment of one current bound case/cycle. Must preserve source status, owner, note and deadline
+    and cannot combine with target binding, response or shared completion edits. The full binding fences replacement
+    or rebinding. Evidence must be a retained application report of the exact target transition, published after
+    binding; current readiness is insufficient."""
     target_binding: OperationWorkflowObligationTargetRequest | Unset = UNSET
     """Bind or clear one active free-form plan obligation for an exact case. Clear requires no transition; bind
     requires a fresh declared current-state transition. Requires the current coordination revision and unchanged
@@ -65,6 +71,10 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = self.owner
 
         note = self.note
+
+        fulfillment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment, Unset):
+            fulfillment = self.fulfillment.to_dict()
 
         target_binding: dict[str, Any] | Unset = UNSET
         if not isinstance(self.target_binding, Unset):
@@ -92,6 +102,8 @@ class OperationWorkflowReadinessCoordinationRequest:
                 "note": note,
             }
         )
+        if fulfillment is not UNSET:
+            field_dict["fulfillment"] = fulfillment
         if target_binding is not UNSET:
             field_dict["target_binding"] = target_binding
         if review_response is not UNSET:
@@ -105,6 +117,9 @@ class OperationWorkflowReadinessCoordinationRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_obligation_fulfillment_request import (
+            OperationWorkflowObligationFulfillmentRequest,
+        )
         from ..models.operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
         from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
         from ..models.operation_workflow_review_response_request import OperationWorkflowReviewResponseRequest
@@ -117,6 +132,13 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = d.pop("owner")
 
         note = d.pop("note")
+
+        _fulfillment = d.pop("fulfillment", UNSET)
+        fulfillment: OperationWorkflowObligationFulfillmentRequest | Unset
+        if isinstance(_fulfillment, Unset):
+            fulfillment = UNSET
+        else:
+            fulfillment = OperationWorkflowObligationFulfillmentRequest.from_dict(_fulfillment)
 
         _target_binding = d.pop("target_binding", UNSET)
         target_binding: OperationWorkflowObligationTargetRequest | Unset
@@ -151,6 +173,7 @@ class OperationWorkflowReadinessCoordinationRequest:
             status=status,
             owner=owner,
             note=note,
+            fulfillment=fulfillment,
             target_binding=target_binding,
             review_response=review_response,
             completion=completion,

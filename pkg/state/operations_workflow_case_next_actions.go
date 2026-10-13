@@ -33,7 +33,16 @@ func projectWorkflowCaseNextActions(out *api.OperationWorkflowCase, rows []api.O
 		}
 		direct := row.Subject != nil && *row.Subject == out.Timeline.Subject && row.Workflow == opts.Workflow && row.InstanceID == opts.InstanceID && (!operator || sameOperationHistoryIdentity(row.PlatformTenantID, tenant))
 		add := func(kind, summary, owner, trigger string, due *time.Time, evidence []api.OperationWorkflowReviewResponseLink, shared bool) {
-			actions = append(actions, api.OperationWorkflowCaseNextAction{Obligation: workflowActionObligation(row, kind), Kind: kind, Summary: summary, Owner: owner, Trigger: trigger, DueAt: due, Overdue: due != nil && !due.After(out.CoordinationCheckedAt), SubscriptionID: row.SubscriptionID, Sequence: row.Sequence, Evidence: evidence, SharedPlan: shared})
+			obligation := workflowActionObligation(row, kind)
+			c := api.OperationWorkflowNextActionCase{Subject: out.Timeline.Subject, Workflow: opts.Workflow, InstanceID: opts.InstanceID, PlatformTenantID: tenant}
+			sourceTenant := row.SubscriptionTenantID
+			if !operator {
+				sourceTenant = tenant
+			}
+			if obligation != nil && obligationFulfilled(row.Coordination, obligation.ID, c, sourceTenant) {
+				return
+			}
+			actions = append(actions, api.OperationWorkflowCaseNextAction{Obligation: obligation, Kind: kind, Summary: summary, Owner: owner, Trigger: trigger, DueAt: due, Overdue: due != nil && !due.After(out.CoordinationCheckedAt), SubscriptionID: row.SubscriptionID, Sequence: row.Sequence, Evidence: evidence, SharedPlan: shared})
 		}
 		response := row.ReviewResponse
 		if row.Kind == "business_impact_changed" && response != nil && response.Status == "active" {

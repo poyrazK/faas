@@ -21,7 +21,8 @@ func newWorkflowCaseObligationHistory(tenant string, opts api.OperationWorkflowC
 }
 func (h *workflowCaseObligationHistory) collect(subscription api.OperationWorkflowReadinessSubscription, n api.OperationWorkflowReadinessNotification) {
 	groups := map[string]*api.OperationWorkflowCaseObligationHistoryItem{}
-	for _, event := range n.ObligationReceipts {
+	events := appendFulfillmentEvents(slices.Clone(n.ObligationReceipts), n.Coordination, "")
+	for _, event := range events {
 		if event.ObligationID == "" || event.ActionKind == "" {
 			continue
 		}
@@ -46,6 +47,12 @@ func (h *workflowCaseObligationHistory) collect(subscription api.OperationWorkfl
 		}
 		if len(selected) == 0 {
 			continue
+		}
+		if !h.operator && event.Fulfillment != nil {
+			value := *event.Fulfillment
+			value.Binding.Case.PlatformTenantID = ""
+			value.Evidence.PlatformTenantID = ""
+			event.Fulfillment = &value
 		}
 		shared := event.SharedPlan || len(event.Cases) > 1
 		event.Cases = selected

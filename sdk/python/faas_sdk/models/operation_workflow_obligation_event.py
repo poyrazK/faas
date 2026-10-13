@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
+    from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
     from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
     from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 
@@ -31,6 +32,10 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    fulfillment: OperationWorkflowObligationFulfillment | Unset = UNSET
+    """Immutable human fulfillment receipt for one exact case and obligation cycle, linked to a retained
+    application transition report. Does not close a shared source plan or assert business success or execution
+    authority. Retained transition lookup scans at most 1000 exact-case reports."""
     target_binding: OperationWorkflowObligationTargetBinding | Unset = UNSET
     """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
     Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
@@ -55,6 +60,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        fulfillment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment, Unset):
+            fulfillment = self.fulfillment.to_dict()
 
         target_binding: dict[str, Any] | Unset = UNSET
         if not isinstance(self.target_binding, Unset):
@@ -88,6 +97,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if fulfillment is not UNSET:
+            field_dict["fulfillment"] = fulfillment
         if target_binding is not UNSET:
             field_dict["target_binding"] = target_binding
         if replacement is not UNSET:
@@ -108,6 +119,7 @@ class OperationWorkflowObligationEvent:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
+        from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
         from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
         from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 
@@ -117,6 +129,13 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _fulfillment = d.pop("fulfillment", UNSET)
+        fulfillment: OperationWorkflowObligationFulfillment | Unset
+        if isinstance(_fulfillment, Unset):
+            fulfillment = UNSET
+        else:
+            fulfillment = OperationWorkflowObligationFulfillment.from_dict(_fulfillment)
 
         _target_binding = d.pop("target_binding", UNSET)
         target_binding: OperationWorkflowObligationTargetBinding | Unset
@@ -153,6 +172,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            fulfillment=fulfillment,
             target_binding=target_binding,
             replacement=replacement,
             cases=cases,

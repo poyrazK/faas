@@ -51,8 +51,12 @@ func updateReadinessNotification(ctx context.Context, store readinessSubscriptio
 	if err != nil {
 		return out, err
 	}
+	prepared.PreparedFulfillment, err = prepareObligationFulfillment(ctx, store, account, tenant, app, scope, id, sequence, req, operator)
+	if err != nil {
+		return out, err
+	}
 	prepared.TargetSubscriptionID, prepared.TargetScope = id, scope
-	if req.TargetBinding != nil {
+	if req.TargetBinding != nil || req.Fulfillment != nil {
 		source, e := store.readReadinessInbox(ctx, account, tenant, app, scope, id, sequence-1, 1, operator)
 		if e != nil {
 			return out, e
@@ -349,6 +353,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	c := &api.OperationWorkflowReadinessCoordination{Revision: revision + 1, Status: req.Status, Owner: req.Owner, Note: req.Note, FollowUpAt: req.FollowUpAt, UpdatedAt: now, UpdatedBy: actor}
 	if n.Coordination != nil {
 		c.TargetBindings = slices.Clone(n.Coordination.TargetBindings)
+		c.Fulfillments = slices.Clone(n.Coordination.Fulfillments)
 		c.Completion = n.Coordination.Completion
 	}
 	if req.PreparedCompletion != nil {
@@ -394,7 +399,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	}
 	n = readinessEscalationCoordination(n, c, actor, now)
 	n.Coordination = c
-	return applyObligationTarget(n, req, actor, now)
+	n, err := applyObligationTarget(n, req, actor, now)
+	if err != nil {
+		return n, err
+	}
+	return applyObligationFulfillment(n, req, actor, now)
 }
 func checkReadinessNotification(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope, id string, sequence int64, operator bool) (out api.OperationWorkflowReadinessNotificationCheck, err error) {
 	defer func() {

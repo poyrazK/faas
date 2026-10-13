@@ -408,3 +408,5 @@ export type { OperationWorkflowObligationTransitionTarget } from './customer-ope
 export type { OperationWorkflowObligationTargetBinding } from './customer-operations.js';
 
 export type { OperationWorkflowObligationTargetRequest } from './customer-operations.js';
+
+export type { OperationWorkflowObligationFulfillment, OperationWorkflowObligationFulfillmentRequest } from './customer-operations.js';
