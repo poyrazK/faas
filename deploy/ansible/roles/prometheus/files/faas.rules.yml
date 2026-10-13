@@ -2129,9 +2129,12 @@ groups:
       # alertmanager is included because the page-route notification
       # path depends on it being reachable from Prometheus on loopback;
       # a dead alertmanager means alerts evaluate but never page anyone.
+      # schedd-compute is the compute-node schedd job; without it a dead
+      # compute schedd only reached FaasComputeMetricsScrapeTargetDown
+      # (warn) while a dead compute vmmd paged.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasDaemonDown
-        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|vmmd|imaged|builderd|realtimed|outboundd|s3-gatewayd|meterd|githubd|prometheus|alertmanager"} == 0
+        expr: up{job=~"apid|gatewayd|gatewayd-internal|schedd|schedd-compute|vmmd|imaged|builderd|realtimed|outboundd|s3-gatewayd|meterd|githubd|prometheus|alertmanager"} == 0
         for: 2m
         labels:
           severity: page

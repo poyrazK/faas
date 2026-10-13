@@ -2,7 +2,6 @@
 # promtool fixture that fires them. This list may only shrink: add a fixture
 # under pkg/promqlrules/testdata/ and delete the alert's line. New page
 # alerts must ship with a fixture instead of a line here.
-BillingDrift
 BillingReconcileFailures
 FaasAccountAbuseHold
 FaasAuditRetentionLoopStalled
@@ -13,10 +12,6 @@ FaasComputeNodeTrustedKeyOverflow
 FaasConsumerUsageOutboxAppendFailed
 FaasConsumerUsageOutboxNearCapacity
 FaasCustomDomainTLSAskErrors
-FaasDBPoolStarved
-FaasDaemonDown
-FaasDaemonLoopStalled
-FaasDaemonNotReady
 FaasDebugRegressionDetected
 FaasDebugRegressionStalled
 FaasDomainDoctorStalled
@@ -25,12 +20,9 @@ FaasFleetSigningKIDDiverged
 FaasGithubRecoveryQueueStalled
 FaasGithubWebhookDeliveryDead
 FaasGithubdPathFilterDegraded
-FaasHighResidentRamPct
-FaasHostOOMKill
 FaasImageAbuseBlocked
 FaasInactiveAccountHasLiveInstance
 FaasInternalMTLSExpiryMetricsStale
-FaasInternalMTLSLeafExpiryCritical
 FaasInternalMTLSRenewalFailed
 FaasJobImageMaterializationClaimFailed
 FaasJobInstanceCleanupFailed
@@ -38,7 +30,6 @@ FaasLogArchiveSpoolNearCap
 FaasLokiBackendDown
 FaasLokiPromtailDown
 FaasLokiShippingDropped
-FaasLvFcUsageHighPage
 FaasManagedRealtimeDrainClaimFailed
 FaasMeterdFleetEgressStreamsMissing
 FaasNewCve
@@ -47,18 +38,13 @@ FaasPublicStatusEvaluationStalled
 FaasRequestTelemetryDefaultReceivingRows
 FaasRequestTelemetryPartitionCoverageMissing
 FaasRequestTelemetryPartitionReconcileStalled
-FaasRestartLoop
 FaasSafeReleaseEmergencyAbort
-FaasScheddInstanceStatsPartialErrors
 FaasSnapshotDriftAuditUnavailable
-FaasSnapshotFleetAvgHighPage
 FaasStaleDeploymentBacklog
 FaasStuckActivating
-FaasTLSCertExpiryPage
 FaasTLSCertExpiryPageByHost
 FaasTenantEgressAbuse
 FaasTrafficDrop
 FaasTrafficSpike
 FaasUsageDailyRollupFailed
 FaasVMMDGuestReceiverDown
-PgBackupStale
