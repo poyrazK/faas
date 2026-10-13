@@ -88,7 +88,7 @@ func (l *LocalStorageBackend) retirementRoot(ctx context.Context, create bool, o
 	return
 }
 
-func (l *LocalStorageBackend) CheckExclusiveArtifactCohortRetirement(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) error {
+func (l *LocalStorageBackend) CheckExclusiveArtifactCohortRetirement(ctx context.Context, captureID string, objects [4]ExclusiveArtifactReceipt) (result error) {
 	_, err := l.validateCaptureCohort(captureID, objects)
 	if err != nil {
 		return err
@@ -101,8 +101,7 @@ func (l *LocalStorageBackend) CheckExclusiveArtifactCohortRetirement(ctx context
 	if err != nil {
 		return err
 	}
-	defer root.Close()
-	defer private.Close()
+	defer func() { result = errors.Join(result, private.Close(), root.Close()) }()
 	quarantined, err := openExclusiveArtifactDirectory(private, captureID)
 	if errors.Is(err, unix.ENOENT) {
 		return l.verifyPublicCohort(ctx, objects)
@@ -111,16 +110,16 @@ func (l *LocalStorageBackend) CheckExclusiveArtifactCohortRetirement(ctx context
 		return err
 	}
 	cohort := os.NewFile(uintptr(quarantined), "quarantined-capture")
-	defer cohort.Close()
+	defer func() { result = errors.Join(result, cohort.Close()) }()
 	return verifyQuarantinedCohort(ctx, cohort, objects)
 }
 
-func (l *LocalStorageBackend) verifyPublicCohort(ctx context.Context, objects [4]ExclusiveArtifactReceipt) error {
+func (l *LocalStorageBackend) verifyPublicCohort(ctx context.Context, objects [4]ExclusiveArtifactReceipt) (result error) {
 	parent, err := l.exclusiveParent(ctx, objects[0].ObjectKey, false)
 	if err != nil {
 		return err
 	}
-	defer parent.Close()
+	defer func() { result = errors.Join(result, parent.Close()) }()
 	if err := verifyQuarantinedCohort(ctx, parent, objects); err != nil {
 		return err
 	}
