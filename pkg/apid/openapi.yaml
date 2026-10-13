@@ -12039,6 +12039,47 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/apps/{slug}/operations/{id}/timeline:
+    get:
+      tags: [operations]
+      operationId: getOperationTimeline
+      summary: Read one chronological history of an operation.
+      description: Requires account read scope and MFA. Merges operation events, HTTP execution attempts, workflow step attempts and completion delivery attempts by time (ADR-1157). Each source pages after its own position, so pages never skip or repeat a record while the operation runs. Attempt entries are snapshots at read time. HTTP attempts carry an instance log window for the archived log route; workflow step attempts do not. Platform tenants read events instead.
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/OperationId'
+      - in: query
+        name: limit
+        description: Maximum timeline entries in this page.
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: cursor
+        description: Operation-bound continuation cursor from next_cursor.
+        required: false
+        schema: {type: string, maxLength: 512}
+      responses:
+        '200':
+          description: Chronological timeline page with a continuation cursor while records remain.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperationTimelineResponse'}
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/OperationConflict'
+        '410':
+          $ref: '#/components/responses/OperationGone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/operations/{id}/executions:
     get:
       tags: [operations]
@@ -53629,6 +53670,70 @@ components:
           maxItems: 100
           items: { $ref: '#/components/schemas/OperationDeliveryAttempt' }
         next_cursor: { type: string, maxLength: 512 }
+    OperationTimelineResponse:
+      description: Chronological page merged from operation events, attempts and completion deliveries.
+      type: object
+      additionalProperties: false
+      required: [operation_id, state, generation, entries]
+      properties:
+        operation_id: { type: string, format: uuid }
+        state:
+          type: string
+          enum: [accepted, running, succeeded, failed, cancelled, requires_reconciliation]
+        generation: { type: integer, minimum: 1 }
+        entries:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OperationTimelineEntry' }
+        events_expired:
+          description: Event history was pruned before the operation; attempts and deliveries remain.
+          type: boolean
+        next_cursor: { type: string, maxLength: 512 }
+    OperationTimelineEntry:
+      description: One timeline record; kind selects which of event, attempt or delivery is present.
+      type: object
+      additionalProperties: false
+      required: [at, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string, enum: [event, attempt, step_attempt, delivery_attempt] }
+        event: { $ref: '#/components/schemas/OperationEvent' }
+        attempt: { $ref: '#/components/schemas/OperationTimelineAttempt' }
+        delivery: { $ref: '#/components/schemas/OperationDeliveryAttempt' }
+    OperationTimelineAttempt:
+      description: One HTTP execution or workflow step attempt as read; a running attempt is not re-emitted when it ends.
+      type: object
+      additionalProperties: false
+      required: [execution_id, attempt, outcome, started_at]
+      properties:
+        generation:
+          description: Execution generation of an HTTP attempt. Step attempts omit it because recovery resumes the same workflow run.
+          type: integer
+          minimum: 1
+        execution_id: { type: string, format: uuid }
+        step: { type: string, maxLength: 63 }
+        attempt: { type: integer, minimum: 1 }
+        outcome: { type: string, enum: [running, succeeded, retry, failed, dead_letter, cancelled, unknown] }
+        http_status: { type: integer }
+        error: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        next_attempt_at: { type: string, format: date-time }
+        logs: { $ref: '#/components/schemas/OperationAttemptLogs' }
+    OperationAttemptLogs:
+      description: Instance log window of an HTTP attempt. Lines other requests wrote on the same instance during the window interleave.
+      type: object
+      additionalProperties: false
+      required: [instance_id, since, archive_dates, correlation]
+      properties:
+        instance_id: { type: string, format: uuid }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        archive_dates:
+          type: array
+          maxItems: 7
+          items: { type: string, format: date }
+        correlation: { type: string, enum: [instance_window] }
     OperationDeliveryRetryRequest:
       description: Stable retry identity and the observed dead delivery generation; explicit generation zero is valid.
       type: object

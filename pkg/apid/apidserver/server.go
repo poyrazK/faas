@@ -1683,6 +1683,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/runtime/operations/{id}/workflow-states/validate", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.operation.ValidateOperationWorkflowStates)))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetAccountOperationEvents))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOperationExecutions))))
+	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOperationTimeline))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/recovery-inspection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.InspectOperationRecovery))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/recovery-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.PreviewOperationRecovery))))
 	mux.HandleFunc("GET /v1/apps/{slug}/operations/{id}/delivery", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.operation.GetOperationDelivery))))

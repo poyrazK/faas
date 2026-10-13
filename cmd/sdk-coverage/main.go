@@ -523,6 +523,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/operations":                                                   "ListAccountOperations",
 	"GET /v1/apps/{slug}/operations/{id}/events":                                       "GetAccountOperationEvents",
 	"GET /v1/apps/{slug}/operations/{id}/executions":                                   "GetOperationExecutions",
+	"GET /v1/apps/{slug}/operations/{id}/timeline":                                     "GetOperationTimeline",
 	"POST /v1/apps/{slug}/operations/{id}/retry-delivery":                              "RetryOperationDelivery",
 	"GET /v1/apps/{slug}/operations/{id}/recovery-inspection":                          "InspectOperationRecovery",
 	"POST /v1/apps/{slug}/operations/{id}/recovery-preview":                            "PreviewOperationRecovery",

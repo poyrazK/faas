@@ -1080,6 +1080,7 @@ export type { OperationArtifact } from './OperationArtifact.js';
 export type { OperationArtifactRequest } from './OperationArtifactRequest.js';
 export type { OperationArtifactUploadRequest } from './OperationArtifactUploadRequest.js';
 export type { OperationArtifactUploadResponse } from './OperationArtifactUploadResponse.js';
+export type { OperationAttemptLogs } from './OperationAttemptLogs.js';
 export type { OperationBusinessCompensation } from './OperationBusinessCompensation.js';
 export type { OperationBusinessCompensationPayload } from './OperationBusinessCompensationPayload.js';
 export type { OperationBusinessConditionDefinition } from './OperationBusinessConditionDefinition.js';
@@ -1154,6 +1155,9 @@ export type { OperationSubmissionLookupResponse } from './OperationSubmissionLoo
 export type { OperationSubmissionScope } from './OperationSubmissionScope.js';
 export type { OperationSummary } from './OperationSummary.js';
 export type { OperationTenantIdentity } from './OperationTenantIdentity.js';
+export type { OperationTimelineAttempt } from './OperationTimelineAttempt.js';
+export type { OperationTimelineEntry } from './OperationTimelineEntry.js';
+export type { OperationTimelineResponse } from './OperationTimelineResponse.js';
 export type { OperationWorkflowActionObligation } from './OperationWorkflowActionObligation.js';
 export type { OperationWorkflowActionPreviewRequest } from './OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './OperationWorkflowActionPreviewResponse.js';
