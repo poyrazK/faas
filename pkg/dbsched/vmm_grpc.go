@@ -98,6 +98,34 @@ func (g *GRPCVMM) DeleteVolume(ctx context.Context, node Node, id string) error 
 	return err
 }
 
+// DropArchive deletes only the database's archive, through node's
+// dbbackupd.
+func (g *GRPCVMM) DropArchive(ctx context.Context, node Node, id string) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: id, Archive: true, ArchiveOnly: true})
+	return err
+}
+
+// ListVolumes reports node's database volumes.
+func (g *GRPCVMM) ListVolumes(ctx context.Context, node Node) ([]NodeVolume, error) {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.ListDatabaseVolumes(ctx, &vmmdpb.ListDatabaseVolumesRequest{})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NodeVolume, 0, len(resp.GetVolumes()))
+	for _, v := range resp.GetVolumes() {
+		out = append(out, NodeVolume{DatabaseID: v.GetDatabaseId(), Running: v.GetRunning()})
+	}
+	return out, nil
+}
+
 // Start boots the VM; a VM that is already running counts as started.
 func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 	c, err := g.client(ctx, node)

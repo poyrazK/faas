@@ -192,3 +192,22 @@ func TestCmdlineHasJailID(t *testing.T) {
 		}
 	}
 }
+
+func TestListVolumes(t *testing.T) {
+	rt := testRuntime(t, &fakeLeaser{})
+	if vols, err := rt.ListVolumes(); err != nil || len(vols) != 0 {
+		t.Fatalf("empty node = %v, %v", vols, err)
+	}
+	if err := os.MkdirAll(rt.cfg.VolumeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{testID + ".img", "not-an-id.img", testID + ".img.tmp"} {
+		if err := os.WriteFile(filepath.Join(rt.cfg.VolumeRoot, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vols, err := rt.ListVolumes()
+	if err != nil || len(vols) != 1 || vols[0].ID != testID || vols[0].Running {
+		t.Fatalf("volumes = %+v, %v", vols, err)
+	}
+}

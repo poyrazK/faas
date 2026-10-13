@@ -521,6 +521,9 @@ service Vmmd {
   // DeleteDatabaseVolume removes a stopped database's volume. Deleting a
   // missing volume succeeds.
   rpc DeleteDatabaseVolume(DeleteDatabaseVolumeRequest) returns (DeleteDatabaseVolumeResponse);
+  // ListDatabaseVolumes reports the node's database volumes, so schedd can
+  // remove those of databases deleted while the node was lost.
+  rpc ListDatabaseVolumes(ListDatabaseVolumesRequest) returns (ListDatabaseVolumesResponse);
   // StartDatabase cold-boots the database VM and returns once guest-init
   // answers. Database VMs are never snapshotted.
   rpc StartDatabase(StartDatabaseRequest) returns (StartDatabaseResponse);
@@ -2590,9 +2593,25 @@ message DeleteDatabaseVolumeRequest {
   // archive also deletes the database's archived WAL and base backups
   // through dbbackupd: the database itself is being deleted.
   bool archive = 2;
+  // archive_only deletes the archive and leaves volumes alone. schedd sends
+  // it to another node when the database's own node is lost, since every
+  // node reads and writes the shared bucket.
+  bool archive_only = 3;
 }
 
 message DeleteDatabaseVolumeResponse {}
+
+message ListDatabaseVolumesRequest {}
+
+message ListDatabaseVolumesResponse {
+  repeated DatabaseVolume volumes = 1;
+}
+
+message DatabaseVolume {
+  string database_id = 1;
+  // running: the database's VM is up on this node.
+  bool running = 2;
+}
 
 message StartDatabaseRequest {
   string database_id = 1;

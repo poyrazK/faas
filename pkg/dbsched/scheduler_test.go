@@ -4,6 +4,7 @@ package dbsched
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -36,30 +37,36 @@ type fakeVMM struct {
 	restoreFail  bool
 	restoreHold  chan struct{}
 	flushes      map[string]time.Time
+	// onNode records node-scoped calls as "op@node"; volNode is where each
+	// volume was created.
+	onNode  []string
+	volNode map[string]string
 }
 
 func newFakeVMM() *fakeVMM {
-	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}}
+	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}}
 }
 
 func (f *fakeVMM) record(call string) {
 	f.calls = append(f.calls, call)
 }
 
-func (f *fakeVMM) CreateVolume(_ context.Context, _ Node, id string, _ int64) error {
+func (f *fakeVMM) CreateVolume(_ context.Context, node Node, id string, _ int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("create")
 	if _, ok := f.volumes[id]; !ok {
 		f.volumes[id] = false
+		f.volNode[id] = node.ID
 	}
 	return nil
 }
 
-func (f *fakeVMM) DeleteVolume(_ context.Context, _ Node, id string) error {
+func (f *fakeVMM) DeleteVolume(_ context.Context, node Node, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("delete")
+	f.onNode = append(f.onNode, "delete@"+node.ID)
 	delete(f.volumes, id)
 	return nil
 }
@@ -83,10 +90,38 @@ func (f *fakeVMM) Start(_ context.Context, _ Node, vm VM) error {
 	return nil
 }
 
-func (f *fakeVMM) Stop(_ context.Context, _ Node, id string) error {
+func (f *fakeVMM) DropArchive(_ context.Context, node Node, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("drop_archive")
+	f.onNode = append(f.onNode, "drop_archive@"+node.ID)
+	return nil
+}
+
+func (f *fakeVMM) ListVolumes(_ context.Context, node Node) ([]NodeVolume, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, "list@"+node.ID)
+	var out []NodeVolume
+	for id := range f.volumes {
+		if f.volNode[id] == node.ID {
+			out = append(out, NodeVolume{DatabaseID: id, Running: f.running[id]})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeVMM) nodeCalls() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.onNode, " ")
+}
+
+func (f *fakeVMM) Stop(_ context.Context, node Node, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("stop")
+	f.onNode = append(f.onNode, "stop@"+node.ID)
 	delete(f.running, id)
 	delete(f.restoring, id)
 	return nil

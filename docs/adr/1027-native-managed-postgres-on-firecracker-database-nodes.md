@@ -445,8 +445,22 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
     database is parked and uploaded, A is marked unavailable and its
     archive disk deleted, and the scheduler restores onto node B from the
     bucket in 13 s, to the last commit before the target.
-- Not yet: pruning objects that exist only in the bucket (a lost node's
-  database keeps its bucket archive until it is deleted).
+- **Deleting on a lost node.** schedd deletes a database whose node is
+  marked `unavailable` without calling that node: its VM and volume went
+  with it. With a shared archive any other node drops the bucket copy
+  (`DeleteDatabaseVolume` with `archive_only`); with no node left the
+  delete fails and stays `deleting` until one returns. Without a shared
+  archive nothing else reaches it, and it goes when the node returns.
+- **Orphans.** If a lost node comes back, its volumes of databases deleted
+  meanwhile have no record. A record always exists before its volume and
+  outlives it, so schedd's maintenance sweep (with the backup sweep, every
+  10 minutes) lists each node's volumes (`ListDatabaseVolumes`) and
+  removes any without a record, stopping its VM first and dropping its
+  archive with it. Metal: after a node-loss restore, the original is
+  deleted while its node is lost, then the node returns and its volume is
+  collected.
+- Not yet: pruning a lost node's live databases' bucket objects (they keep
+  their archive until they are deleted).
 
 ### Driver
 

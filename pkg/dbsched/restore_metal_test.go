@@ -166,4 +166,28 @@ func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
 	}
 	t.Logf("restored onto nb from the bucket in %v; recovered to %v (target %v)", took.Round(time.Millisecond),
 		vm.RestoreRecoveredTo.Format(time.RFC3339Nano), target.UTC().Format(time.RFC3339Nano))
+
+	// The lost original is deleted without its node: node B drops its
+	// bucket archive.
+	if err := s.Delete(ctx, source); err != nil {
+		t.Fatalf("delete on the lost node: %v", err)
+	}
+	if keys, err := bucket.List(ctx, "native/"+source+"/"); err != nil || len(keys) != 0 {
+		t.Fatalf("bucket after delete = %v, %v", keys, err)
+	}
+	if _, err := os.Stat(a.rt.VolumePath(source)); err != nil {
+		t.Fatalf("the lost node's volume should still be there: %v", err)
+	}
+	// Node A comes back: its leftover volume is collected, the restored
+	// database on B is untouched.
+	seedNodes(t, store, a.node)
+	if n, err := s.CollectOrphans(ctx); err != nil || n != 1 {
+		t.Fatalf("collect orphans = %d, %v", n, err)
+	}
+	if _, err := os.Stat(a.rt.VolumePath(source)); !os.IsNotExist(err) {
+		t.Fatalf("orphaned volume survived: %v", err)
+	}
+	if _, err := os.Stat(b.rt.VolumePath(restored)); err != nil {
+		t.Fatalf("the restored database's volume was touched: %v", err)
+	}
 }

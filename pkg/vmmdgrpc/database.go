@@ -33,6 +33,7 @@ type DatabaseRuntime interface {
 	DeleteVolume(ctx context.Context, id string) error
 	// DropArchive deletes a deleted database's archive.
 	DropArchive(ctx context.Context, id string) error
+	ListVolumes() ([]dbvm.Volume, error)
 	Start(ctx context.Context, req dbvm.BootRequest) error
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
@@ -102,15 +103,35 @@ func (s *Server) DeleteDatabaseVolume(ctx context.Context, req *vmmdpb.DeleteDat
 	}
 	// The archive goes first: if dbbackupd is unreachable the volume stays
 	// too, and schedd's retried delete finds both.
-	if req.GetArchive() {
+	if req.GetArchive() || req.GetArchiveOnly() {
 		if err := rt.DropArchive(ctx, req.GetDatabaseId()); err != nil {
 			return nil, s.databaseStatus("drop archive", err)
 		}
+	}
+	if req.GetArchiveOnly() {
+		return &vmmdpb.DeleteDatabaseVolumeResponse{}, nil
 	}
 	if err := rt.DeleteVolume(ctx, req.GetDatabaseId()); err != nil {
 		return nil, s.databaseStatus("delete volume", err)
 	}
 	return &vmmdpb.DeleteDatabaseVolumeResponse{}, nil
+}
+
+// ListDatabaseVolumes reports the node's database volumes to schedd.
+func (s *Server) ListDatabaseVolumes(ctx context.Context, _ *vmmdpb.ListDatabaseVolumesRequest) (*vmmdpb.ListDatabaseVolumesResponse, error) {
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
+	if err != nil {
+		return nil, err
+	}
+	volumes, err := rt.ListVolumes()
+	if err != nil {
+		return nil, s.databaseStatus("list volumes", err)
+	}
+	out := &vmmdpb.ListDatabaseVolumesResponse{}
+	for _, v := range volumes {
+		out.Volumes = append(out.Volumes, &vmmdpb.DatabaseVolume{DatabaseId: v.ID, Running: v.Running})
+	}
+	return out, nil
 }
 
 func (s *Server) StartDatabase(ctx context.Context, req *vmmdpb.StartDatabaseRequest) (*vmmdpb.StartDatabaseResponse, error) {

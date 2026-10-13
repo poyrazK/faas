@@ -433,6 +433,10 @@ func (f *fakeVmmdClient) DeleteDatabaseVolume(context.Context, *vmmdpb.DeleteDat
 	panic("DeleteDatabaseVolume: not stubbed")
 }
 
+func (f *fakeVmmdClient) ListDatabaseVolumes(context.Context, *vmmdpb.ListDatabaseVolumesRequest, ...grpc.CallOption) (*vmmdpb.ListDatabaseVolumesResponse, error) {
+	panic("ListDatabaseVolumes: not stubbed")
+}
+
 func (f *fakeVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
 	panic("StartDatabase: not stubbed")
 }

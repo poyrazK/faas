@@ -18,7 +18,13 @@ import (
 // so every step is safe to retry.
 type VMM interface {
 	CreateVolume(ctx context.Context, node Node, id string, sizeBytes int64) error
+	// DeleteVolume deletes a deleted database's volume and archive.
 	DeleteVolume(ctx context.Context, node Node, id string) error
+	// DropArchive deletes only the archive, through node's dbbackupd; with
+	// a shared archive any node reaches every database's bucket objects.
+	DropArchive(ctx context.Context, node Node, id string) error
+	// ListVolumes reports the database volumes on node.
+	ListVolumes(ctx context.Context, node Node) ([]NodeVolume, error)
 	Start(ctx context.Context, node Node, vm VM) error
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
@@ -35,6 +41,12 @@ const (
 	// (for example after a database node rebooted).
 	errCodeVMLost = "vm_lost"
 )
+
+// NodeVolume is one database volume on a node.
+type NodeVolume struct {
+	DatabaseID string
+	Running    bool
+}
 
 // ErrVMNotRunning reports that vmmd has no running VM for a database.
 var ErrVMNotRunning = errors.New("dbsched: database VM is not running")
@@ -278,8 +290,9 @@ func (s *Scheduler) BackupDue(ctx context.Context) (int, error) {
 	return taken, nil
 }
 
-// RunBackupLoop runs BackupDue every interval until ctx ends. It is apart
-// from the idle loop: a backup can take minutes and must not delay parking.
+// RunBackupLoop runs BackupDue and CollectOrphans every interval until ctx
+// ends. It is apart from the idle loop: a backup can take minutes and must
+// not delay parking.
 func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -292,6 +305,9 @@ func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
 				s.log.Warn("dbsched: backup sweep failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("dbsched: base backups taken", "count", n)
+			}
+			if _, err := s.CollectOrphans(ctx); err != nil {
+				s.log.Warn("dbsched: orphan sweep failed", "err", err)
 			}
 		}
 	}
@@ -457,8 +473,11 @@ func (s *Scheduler) Admin(ctx context.Context, id, sql string) (dbguest.Response
 	return resp, err
 }
 
-// Delete stops a database if needed and removes its volume and record.
-// Deleting a missing database succeeds.
+// Delete stops a database if needed and removes its volume, archive and
+// record. Deleting a missing database succeeds. On a node the operator has
+// marked unavailable (lost), the VM and volume went with the node, so only
+// the archive's bucket copy is deleted; CollectOrphans removes the volume
+// if the node ever comes back.
 func (s *Scheduler) Delete(ctx context.Context, id string) error {
 	s.stopRestore(id)
 	unlock := s.lock(id)
@@ -475,16 +494,90 @@ func (s *Scheduler) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	node, err := s.node(ctx, vm.NodeID)
-	if err == nil {
-		err = s.vmm.Stop(ctx, node, id)
-	}
-	if err == nil {
-		err = s.vmm.DeleteVolume(ctx, node, id)
+	switch {
+	case errors.Is(err, ErrNodeUnavailable) || (err == nil && node.Lifecycle == NodeUnavailable):
+		err = s.dropLostArchive(ctx, id)
+	case err == nil:
+		if err = s.vmm.Stop(ctx, node, id); err == nil {
+			err = s.vmm.DeleteVolume(ctx, node, id)
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("dbsched: delete %s: %w", id, err)
 	}
 	return s.store.Delete(ctx, id)
+}
+
+// dropLostArchive deletes the bucket copy of a lost node's database through
+// any other node. Without a shared archive no other node reaches it; the
+// lost node drops it if it returns (CollectOrphans).
+func (s *Scheduler) dropLostArchive(ctx context.Context, id string) error {
+	if !s.cfg.SharedArchive {
+		s.log.Warn("dbsched: deleted a database on a lost node; its archive stays until the node returns", "database_id", id)
+		return nil
+	}
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, n := range nodes {
+		if n.Lifecycle == NodeUnavailable {
+			continue
+		}
+		err := s.vmm.DropArchive(ctx, n, id)
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	return fmt.Errorf("%w: no node dropped the archive: %w", ErrNodeUnavailable, errors.Join(errs...))
+}
+
+// CollectOrphans removes database volumes no record names: those of
+// databases deleted while their node was lost, found once it is back. A
+// record always exists before its volume and outlives it, so a volume
+// without one is garbage. Their archives go with them. It reports how many
+// it removed.
+func (s *Scheduler) CollectOrphans(ctx context.Context) (int, error) {
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, n := range nodes {
+		if n.Lifecycle == NodeUnavailable {
+			continue
+		}
+		volumes, err := s.vmm.ListVolumes(ctx, n)
+		if err != nil {
+			s.log.Warn("dbsched: list volumes", "node_id", n.ID, "err", err)
+			continue
+		}
+		for _, v := range volumes {
+			if ok, err := s.removeOrphan(ctx, n, v); err != nil {
+				s.log.Warn("dbsched: remove orphaned volume", "node_id", n.ID, "database_id", v.DatabaseID, "err", err)
+			} else if ok {
+				s.log.Info("dbsched: removed orphaned volume", "node_id", n.ID, "database_id", v.DatabaseID)
+				removed++
+			}
+		}
+	}
+	return removed, nil
+}
+
+func (s *Scheduler) removeOrphan(ctx context.Context, node Node, v NodeVolume) (bool, error) {
+	unlock := s.lock(v.DatabaseID)
+	defer unlock()
+	if _, err := s.store.Get(ctx, v.DatabaseID); !errors.Is(err, ErrNotFound) {
+		return false, err
+	}
+	if v.Running {
+		if err := s.vmm.Stop(ctx, node, v.DatabaseID); err != nil {
+			return false, err
+		}
+	}
+	return true, s.vmm.DeleteVolume(ctx, node, v.DatabaseID)
 }
 
 // ParkIdle parks running databases idle longer than IdleTimeout and

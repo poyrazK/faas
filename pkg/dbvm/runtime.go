@@ -234,6 +234,32 @@ func (r *Runtime) DeleteVolume(_ context.Context, id string) error {
 	return nil
 }
 
+// Volume is one database volume on this node.
+type Volume struct {
+	ID      string
+	Running bool
+}
+
+// ListVolumes returns the node's database volumes, sorted by id.
+func (r *Runtime) ListVolumes() ([]Volume, error) {
+	entries, err := os.ReadDir(r.cfg.VolumeRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("dbvm: list volumes: %w", err)
+	}
+	var out []Volume
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".img")
+		if !ok || e.IsDir() || validID(id) != nil {
+			continue
+		}
+		out = append(out, Volume{ID: id, Running: r.Running(id)})
+	}
+	return out, nil
+}
+
 // Running reports whether the database VM is up.
 func (r *Runtime) Running(id string) bool {
 	r.mu.Lock()

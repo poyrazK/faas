@@ -38,6 +38,7 @@ type fakeDatabaseRuntime struct {
 	stopped   string
 	err       error
 	dropErr   error
+	volumes   []dbvm.Volume
 	controlRs dbguest.Response
 }
 
@@ -48,6 +49,9 @@ func (f *fakeDatabaseRuntime) CreateVolume(_ context.Context, _ string, size int
 func (f *fakeDatabaseRuntime) DeleteVolume(context.Context, string) error {
 	f.calls = append(f.calls, "delete_volume")
 	return f.err
+}
+func (f *fakeDatabaseRuntime) ListVolumes() ([]dbvm.Volume, error) {
+	return f.volumes, f.err
 }
 func (f *fakeDatabaseRuntime) DropArchive(context.Context, string) error {
 	f.calls = append(f.calls, "drop_archive")
@@ -159,12 +163,33 @@ func TestDeleteDatabaseVolumeDropsTheArchiveFirst(t *testing.T) {
 	if strings.Join(rt.calls, ",") != "drop_archive,delete_volume" {
 		t.Fatalf("database delete = %v", rt.calls)
 	}
+	// For a database whose node is lost, another node drops only the
+	// shared archive.
+	rt.calls = nil
+	if _, err := s.DeleteDatabaseVolume(unixCaller(), &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: testDatabaseID, ArchiveOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(rt.calls, ",") != "drop_archive" {
+		t.Fatalf("archive-only delete = %v", rt.calls)
+	}
 	rt.calls, rt.dropErr = nil, errors.New("dial unix: connection refused")
 	if _, err := s.DeleteDatabaseVolume(unixCaller(), &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: testDatabaseID, Archive: true}); status.Code(err) != codes.Internal {
 		t.Fatalf("drop failure = %v", err)
 	}
 	if strings.Join(rt.calls, ",") != "drop_archive" {
 		t.Fatalf("volume deleted although the archive was not: %v", rt.calls)
+	}
+}
+
+func TestListDatabaseVolumes(t *testing.T) {
+	rt := &fakeDatabaseRuntime{volumes: []dbvm.Volume{{ID: testDatabaseID, Running: true}}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	resp, err := s.ListDatabaseVolumes(unixCaller(), &vmmdpb.ListDatabaseVolumesRequest{})
+	if err != nil || len(resp.GetVolumes()) != 1 || resp.GetVolumes()[0].GetDatabaseId() != testDatabaseID || !resp.GetVolumes()[0].GetRunning() {
+		t.Fatalf("list = %v, %v", resp, err)
+	}
+	if _, err := s.ListDatabaseVolumes(tlsCaller("pgproxyd.faas"), &vmmdpb.ListDatabaseVolumesRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("pgproxyd listing volumes = %v", err)
 	}
 }
 

@@ -76,6 +76,7 @@ const (
 	Vmmd_CancelLiveMigration_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
 	Vmmd_CreateDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CreateDatabaseVolume"
 	Vmmd_DeleteDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DeleteDatabaseVolume"
+	Vmmd_ListDatabaseVolumes_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/ListDatabaseVolumes"
 	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
 	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
 	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
@@ -537,6 +538,9 @@ type VmmdClient interface {
 	// DeleteDatabaseVolume removes a stopped database's volume. Deleting a
 	// missing volume succeeds.
 	DeleteDatabaseVolume(ctx context.Context, in *DeleteDatabaseVolumeRequest, opts ...grpc.CallOption) (*DeleteDatabaseVolumeResponse, error)
+	// ListDatabaseVolumes reports the node's database volumes, so schedd can
+	// remove those of databases deleted while the node was lost.
+	ListDatabaseVolumes(ctx context.Context, in *ListDatabaseVolumesRequest, opts ...grpc.CallOption) (*ListDatabaseVolumesResponse, error)
 	// StartDatabase cold-boots the database VM and returns once guest-init
 	// answers. Database VMs are never snapshotted.
 	StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error)
@@ -1143,6 +1147,16 @@ func (c *vmmdClient) DeleteDatabaseVolume(ctx context.Context, in *DeleteDatabas
 	return out, nil
 }
 
+func (c *vmmdClient) ListDatabaseVolumes(ctx context.Context, in *ListDatabaseVolumesRequest, opts ...grpc.CallOption) (*ListDatabaseVolumesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListDatabaseVolumesResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ListDatabaseVolumes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StartDatabaseResponse)
@@ -1641,6 +1655,9 @@ type VmmdServer interface {
 	// DeleteDatabaseVolume removes a stopped database's volume. Deleting a
 	// missing volume succeeds.
 	DeleteDatabaseVolume(context.Context, *DeleteDatabaseVolumeRequest) (*DeleteDatabaseVolumeResponse, error)
+	// ListDatabaseVolumes reports the node's database volumes, so schedd can
+	// remove those of databases deleted while the node was lost.
+	ListDatabaseVolumes(context.Context, *ListDatabaseVolumesRequest) (*ListDatabaseVolumesResponse, error)
 	// StartDatabase cold-boots the database VM and returns once guest-init
 	// answers. Database VMs are never snapshotted.
 	StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error)
@@ -1826,6 +1843,9 @@ func (UnimplementedVmmdServer) CreateDatabaseVolume(context.Context, *CreateData
 }
 func (UnimplementedVmmdServer) DeleteDatabaseVolume(context.Context, *DeleteDatabaseVolumeRequest) (*DeleteDatabaseVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteDatabaseVolume not implemented")
+}
+func (UnimplementedVmmdServer) ListDatabaseVolumes(context.Context, *ListDatabaseVolumesRequest) (*ListDatabaseVolumesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListDatabaseVolumes not implemented")
 }
 func (UnimplementedVmmdServer) StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartDatabase not implemented")
@@ -2756,6 +2776,24 @@ func _Vmmd_DeleteDatabaseVolume_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_ListDatabaseVolumes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListDatabaseVolumesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ListDatabaseVolumes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ListDatabaseVolumes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ListDatabaseVolumes(ctx, req.(*ListDatabaseVolumesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_StartDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StartDatabaseRequest)
 	if err := dec(in); err != nil {
@@ -3007,6 +3045,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDatabaseVolume",
 			Handler:    _Vmmd_DeleteDatabaseVolume_Handler,
+		},
+		{
+			MethodName: "ListDatabaseVolumes",
+			Handler:    _Vmmd_ListDatabaseVolumes_Handler,
 		},
 		{
 			MethodName: "StartDatabase",
