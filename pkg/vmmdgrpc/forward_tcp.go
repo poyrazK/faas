@@ -62,6 +62,9 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 
 	s.beginActivity(instance)
 	defer s.endActivity(instance)
+	if err := s.resumeQuiet(stream.Context(), instance); err != nil {
+		return err
+	}
 
 	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(ctx, pid, port)
 	if err != nil {

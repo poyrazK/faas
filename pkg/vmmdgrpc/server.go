@@ -1329,6 +1329,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 	for inst, b := range resident {
 		total += b
 		row := buildInstanceStatsRow(inst, b, s.cpuCache, s.netCache, s.activity, s.ops)
+		s.addQuietPauseState(row)
 		if provider, ok := s.vmm.(interface {
 			DiskUsage(string) (fcvm.DiskUsage, bool)
 		}); ok {

@@ -1069,9 +1069,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	mgr.WithReadinessProbeStarter(func(ctx context.Context, instance string, slot int, appID string, cfg fcvm.ReadinessProbeConfig) {
 		startAppReadinessProbeLoop(ctx, log, appReadinessEvents, instance, appID, cfg,
-			jailer.VsockUDSSocketPath(instance))
+			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	// ADR-957 quiet pause: pause eligible instances between requests. schedd
+	// marks which instances are eligible; this flag lets an operator keep
+	// the whole node out of it.
+	if cfg.QuietPause {
+		mgr.WithQuietPause(fcvm.QuietPauseConfig{
+			Activity: activityTracker,
+			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
+		})
+		go mgr.RunQuietPause(ctx)
+		log.Info("quiet pause enabled (ADR-957)")
+	}
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
 	// own WithStorage wiring at line 223 above; the VMM uses
