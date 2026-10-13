@@ -76,8 +76,11 @@ type BuildManifest struct {
 	// (ADR-1170): no build step, source shipped unchanged, this command as the
 	// start command. Only builderd sets it, and only for developer apps.
 	DevWatchCommand string `json:"dev_watch_command,omitempty"`
-	TimeoutSec      int    `json:"timeout_sec"`
-	LogTailBytes    int    `json:"log_tail_bytes"` // default 64 KiB
+	// DevWatchHost is the developer app's public hostname, set with
+	// DevWatchCommand; the image exposes it as DevWatchHostEnv.
+	DevWatchHost string `json:"dev_watch_host,omitempty"`
+	TimeoutSec   int    `json:"timeout_sec"`
+	LogTailBytes int    `json:"log_tail_bytes"` // default 64 KiB
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init
