@@ -270,7 +270,7 @@ func docsURLForTemplate(name string) string {
 		return storageDocsURL
 	case "secret-reload-node":
 		return secretsDocsURL
-	case "data-api", "data-api-starter":
+	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
@@ -452,6 +452,17 @@ func nextStepsFor(tpl string) []string {
 		}
 	case "data-api":
 		return []string{"Create the Data API with its database and application JWT issuer:", "  gregale data-api create <slug> --database <database> --issuer https://issuer.example --jwks-url https://issuer.example/jwks --audience <audience>", "Generate typed database contracts:", "  gregale data-api types <slug> --output database.types.ts", "See README.md for migration and RLS setup."}
+	case "data-api-support-console":
+		return []string{"Run the synthetic staff sign-in demo:", "  cd <dest> && npm ci && npm run demo", "Configure your OIDC provider, read-only API tokens and approved support views using README.md.", "Run npm test before deploying the console; the demo is never used in production."}
+	case "data-api-teams":
+		return []string{
+			"Install the approved matching SDK bundle:",
+			"  cd <dest> && gregale data-api install --bundle /path/to/data-api-bundle.json --client-directory client",
+			"Verify the client, team access and reliable save scenarios:",
+			"  gregale data-api dev --port 0 --once --check-types --check",
+			"Start the API with `gregale data-api dev --port 0 --check` and follow README.md for the dashboard.",
+			"The seed identities are local test data; provision real membership through reviewed owner migrations.",
+		}
 	case "data-api-starter":
 		return []string{
 			"With Node.js 22+, npm and local Docker, run the starter scenarios:",

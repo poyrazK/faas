@@ -486,6 +486,8 @@ var templateNames13 = []string{
 	"customer-operation-workflow-export",
 	"data-api",
 	"data-api-starter",
+	"data-api-teams",
+	"data-api-support-console",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -3806,6 +3808,71 @@ var cliCommands = []cliCommand{
 	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
+			{Name: "transaction", Short: "Build a typed atomic business-operation starter", Subcommands: []cliSub{{Name: "init", Short: "Generate an editable tenant-scoped order/inventory RPC package", Flags: []cliFlag{{Name: "name", Value: "NAME", Req: true, Short: "new function/table prefix"}, {Name: "output", Value: "DIR", Req: true, Short: "new transaction package directory"}}}}},
+			{Name: "verify", Short: "Verify named data integrity assertions and project authorization locally", Subcommands: []cliSub{{Name: "release", Short: "Run local Data API release checks and consolidate reports", Flags: []cliFlag{{Name: "config", Value: "FILE", Req: true, Short: "version 1 release-check configuration"}}}, {Name: "coverage", Short: "Check customer-declared verification coverage offline", Flags: []cliFlag{
+				{Name: "schema", Value: "FILE", Req: true, Short: "current saved schema contract"},
+				{Name: "policy", Value: "FILE", Req: true, Short: "explicit relation requirements and named check mappings"},
+				{Name: "verification", Value: "FILE", Short: "data-api verify JSON report"},
+				{Name: "plans", Value: "FILE", Short: "budget-checked data-api explain JSON report"},
+				{Name: "baseline-schema", Value: "FILE", Short: "previous contract to identify newly added relations"},
+				{Name: "check", Short: "fail if customer-required coverage is missing"},
+			}}, {Name: "init", Short: "Generate editable verification templates offline", Flags: []cliFlag{
+				{Name: "schema", Value: "FILE", Req: true, Short: "saved schema contract"},
+				{Name: "config", Value: "FILE", Req: true, Short: "development config containing identity names"},
+				{Name: "output", Value: "DIR", Req: true, Short: "new verification package directory"},
+				{Name: "plans", Value: "FILE", Short: "successful explain JSON report for query budgets"},
+			}}}, Flags: []cliFlag{
+				{Name: "directory", Value: "DIR", Short: "Data API project directory (default .)"},
+				{Name: "config", Value: "FILE", Short: "project-relative development config"},
+				{Name: "checks", Value: "FILE", Short: "version 1 named SQL assertion manifest (or use --access-checks)"},
+				{Name: "access-checks", Value: "FILE", Short: "request collection or version 3/4/5 guided RLS check manifest"},
+				{Name: "fixture", Value: "FILE", Short: "SQL fixture for the current schema (default: configured seed)"},
+			}, Examples: []string{"gregale --json data-api verify --checks data-checks.json --fixture fixture.sql"}},
+			{Name: "explain", Short: "Review saved read-query plans against a disposable local database", Flags: []cliFlag{
+				{Name: "directory", Value: "DIR", Short: "Data API project directory (default .)"},
+				{Name: "config", Value: "FILE", Short: "project-relative development config"},
+				{Name: "collection", Value: "FILE", Req: true, Short: "saved API request collection"},
+				{Name: "fixture", Value: "FILE", Short: "representative SQL fixture (default: configured seed)"},
+				{Name: "scenario", Value: "NAME", Short: "one named collection scenario"},
+				{Name: "baseline", Value: "FILE", Short: "previous explain JSON report for estimated plan comparison"},
+				{Name: "check", Short: "fail when query budgets or coverage checks fail"},
+				{Name: "budget", Value: "FILE", Short: "version 1 query budget JSON (requires --check and --baseline)"},
+			}, Examples: []string{"gregale --json data-api explain --collection data-api.requests.json --fixture fixtures/before-upgrade/fixture.sql"}},
+			{Name: "fixture", Short: "Build representative migration rehearsal data", Subcommands: []cliSub{
+				{Name: "build", Short: "Export allowlisted and explicitly masked related rows", Flags: []cliFlag{
+					{Name: "config", Value: "FILE", Req: true, Short: "JSON column allowlists, masks and root filters"},
+					{Name: "output", Value: "DIR", Req: true, Short: "new fixture package directory"},
+					{Name: "database-url-env", Value: "ENV", Short: "environment variable holding the local or test PostgreSQL URL (default DATA_API_FIXTURE_DATABASE_URL)"},
+					{Name: "api-role", Value: "ROLE", Short: "source API role used for contract introspection"},
+				}, Examples: []string{"gregale --json data-api fixture build --config fixture-policy.json --output fixtures/before-upgrade --api-role gregale_data_api"}},
+			}},
+			{Name: "migration", Short: "Rehearse local database migrations", Subcommands: []cliSub{
+				{Name: "guide", Short: "Generate reviewable client migration guidance offline", Flags: []cliFlag{
+					{Name: "baseline", Value: "FILE", Req: true, Short: "previous schema contract"},
+					{Name: "current", Value: "FILE", Req: true, Short: "candidate schema contract"},
+					{Name: "requests", Value: "FILE", Short: "saved API request collection"},
+					{Name: "dependencies", Value: "FILE", Short: "customer-declared consumer dependencies"},
+					{Name: "coverage-policy", Value: "FILE", Short: "explicit verification mappings to review"},
+				}},
+				{Name: "preview", Short: "Rebuild a disposable database and report API, types, client and replay checks", Flags: []cliFlag{
+					{Name: "directory", Value: "DIR", Short: "Data API project directory (default .)"},
+					{Name: "from-version", Value: "N", Short: "upgrade from an existing numbered migration version"},
+					{Name: "fixture", Value: "FILE", Short: "SQL data fixture for the older schema (default: configured seed)"},
+					{Name: "data-check", Value: "FILE", Short: "JSON manifest of post-migration SQL data assertions"},
+					{Name: "baseline", Value: "FILE", Req: true, Short: "read-only schema contract baseline"},
+					{Name: "config", Value: "FILE", Short: "project-relative development config"},
+					{Name: "output", Value: "FILE", Short: "committed types path (default: project config or client/src/database.types.ts)"},
+					{Name: "dependencies", Value: "FILE", Short: "customer-declared consumer dependency manifest"},
+					{Name: "approval", Value: "FILE", Short: "fingerprint-bound breaking change approvals"},
+					{Name: "replay", Value: "FILE", Short: "saved request collection"},
+					{Name: "scenario", Value: "NAME", Short: "one named replay scenario (requires --replay)"},
+				}, Examples: []string{"gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json"}},
+			}},
+			{Name: "onboard", Short: "Create and verify a local typed application with two-user isolation", Flags: []cliFlag{
+				{Name: "template", Value: "NAME", Short: "data-api-starter or data-api-teams", ClosedSet: []string{"data-api-starter", "data-api-teams"}},
+				{Name: "path", Value: "DIR", Short: "new starter project directory", Req: true},
+				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json", Req: true},
+			}, Examples: []string{"gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json"}},
 			{Name: "install", Short: "Install or restore a verified Data API SDK bundle", Flags: []cliFlag{
 				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
 				{Name: "directory", Value: "DIR", Short: "project directory (default .)"},
@@ -3821,6 +3888,7 @@ var cliCommands = []cliCommand{
 				{Name: "port", Value: "PORT", Short: "loopback gateway port (default 8080; 0 selects a free port)"},
 				{Name: "check", Short: "run configured client checks"},
 				{Name: "check-types", Short: "compare committed types without rewriting them (requires --once)"},
+				{Name: "validators", Short: "generate runtime table and RPC argument validators alongside types"},
 				{Name: "once", Short: "verify and exit, removing disposable containers"},
 				{Name: "watch", Short: "watch migrations and refresh API/types (default true; use --watch=false to disable)"},
 				{Name: "baseline", Value: "FILE", Short: "read-only saved contract (default: last successful local contract)"},
@@ -3844,6 +3912,7 @@ var cliCommands = []cliCommand{
 				{Name: "output", Value: "FILE", Short: "generated TypeScript or snapshot output"},
 				{Name: "check", Short: "fail if the output file is stale"},
 				{Name: "snapshot", Short: "export a JSON baseline for data-api diff"},
+				{Name: "validators", Short: "include typed runtime table and RPC argument validators"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}},
 			{Name: "check", Short: "Check compatibility and committed types without rewriting files", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
@@ -3860,6 +3929,7 @@ var cliCommands = []cliCommand{
 				{Name: "check-compatible", Short: "fail on unapproved breaking changes (alias of --check)"},
 				{Name: "approval", Value: "FILE", Short: "reviewed changes bound to both contract fingerprints"},
 				{Name: "accept-contract", Value: "FILE", Short: "write an owner runtime policy; requires zero breaking changes"},
+				{Name: "dependencies", Value: "FILE", Short: "customer-declared saved-view and RPC dependencies for impact reporting"},
 				{Name: "timeout", Value: "DURATION", Short: "task wait deadline (default 2m)"},
 			}, Examples: []string{"gregale data-api diff notes-data --baseline schema.json --check"}},
 			{Name: "refresh", Short: "Request a fresh restart to reload the database schema", Positionals: []string{"<name>"}, Flags: []cliFlag{

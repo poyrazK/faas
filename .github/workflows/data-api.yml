@@ -14,6 +14,7 @@ on:
       - "sdk/data/**"
       - "tests/data-api/**"
       - "examples/data-api-orders/**"
+      - "examples/data-api-teams/**"
       - "examples/data-api-concurrency/**"
       - "examples/data-api-idempotency/**"
       - "examples/data-api-outbox/**"

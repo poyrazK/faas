@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict'
+export async function browserBulkHistory(evaluate,until,inspectorURL){
+ const headers={Authorization:'Bearer '+inspectorURL.hash.slice(1),'Content-Type':'application/json'}
+ const stored=await(await fetch(new URL('bulk-history',inspectorURL),{headers})).json()
+ assert.ok(stored.reports.length>3);assert.ok(!JSON.stringify(stored).includes('inspector-bulk-'));assert.ok(!JSON.stringify(stored).includes('inspector-reconcile-'))
+ assert.equal((await fetch(new URL('bulk-history',inspectorURL))).status,401)
+ const target=stored.reports.find(report=>report.summary.conflict>0)
+ assert.ok(target)
+ await evaluate(`document.querySelector('#bulk-history-runs').value=${JSON.stringify(target.run_id)};document.querySelector('#bulk-history-runs').dispatchEvent(new Event('change'));document.querySelector('#bulk-history-open').click()`)
+ await until("document.querySelector('#bulk-history-status').textContent.startsWith('Opened')")
+ assert.equal(await evaluate("document.querySelector('#identity').value"),target.identity)
+ assert.equal(await evaluate("document.querySelector('#bulk-approved').checked"),false);assert.equal(await evaluate("document.querySelector('#bulk-run').disabled"),true)
+ await evaluate("document.querySelector('#bulk-reconcile').click()")
+ await until("document.querySelector('#bulk-stop').disabled&&document.querySelector('#bulk-reconcile-status').textContent.startsWith('Read under')")
+ await evaluate("document.querySelector('#bulk-history-download').click()")
+ const downloaded=JSON.parse(await evaluate('window.bulkReports.at(-1)'));assert.equal(downloaded.run_id,target.run_id);assert.deepEqual(downloaded.summary,target.summary)
+ const stale=await fetch(new URL('bulk-history',inspectorURL),{method:'PUT',headers:{...headers,'If-Match':'0'.repeat(64)},body:JSON.stringify({version:1,retention:stored.retention,reports:[]})});assert.equal(stale.status,409)
+ const privatePayload=await fetch(new URL('bulk-history',inspectorURL),{method:'PUT',headers:{...headers,'If-Match':stored.revision},body:JSON.stringify({version:1,retention:stored.retention,reports:[{...target,token:'private-fixture'}]})});assert.equal(privatePayload.status,400)
+ await evaluate("document.querySelector('#bulk-history-count').value='2';document.querySelector('#bulk-history-retain').click()")
+ await until("document.querySelector('#bulk-history-status').textContent.startsWith('Retention applied')")
+ let current=await(await fetch(new URL('bulk-history',inspectorURL),{headers})).json();assert.equal(current.reports.length,2);assert.equal(current.retention.runs,2)
+ // Simulate a competing tab; explicit clear must not erase a changed history.
+ const changed=await fetch(new URL('bulk-history',inspectorURL),{method:'PUT',headers:{...headers,'If-Match':current.revision},body:JSON.stringify({version:1,retention:{runs:2,days:31},reports:current.reports})});assert.equal(changed.status,200)
+ await evaluate("document.querySelector('#bulk-history-clear-approved').checked=true;document.querySelector('#bulk-history-clear-approved').dispatchEvent(new Event('change'));document.querySelector('#bulk-history-clear').click()")
+ await until("document.querySelector('#bulk-history-status').textContent.includes('changed; reload')")
+ current=await(await fetch(new URL('bulk-history',inspectorURL),{headers})).json();assert.equal(current.reports.length,2)
+ await evaluate("document.querySelector('#bulk-history-reload').click()")
+ await until("document.querySelector('#bulk-history-status').textContent.startsWith('History reloaded')")
+ await evaluate("document.querySelector('#bulk-history-clear').click()")
+ await until("document.querySelector('#bulk-history-status').textContent.includes('snapshots cleared')")
+ current=await(await fetch(new URL('bulk-history',inspectorURL),{headers})).json();assert.equal(current.reports.length,0);assert.equal(await evaluate("document.querySelector('#bulk-history-open').disabled"),true)
+}

@@ -3,7 +3,7 @@ import { refreshStatusReader, refreshTokenHash } from './refresh.mjs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
-import { traceRequest, markRequest, requestID, runtimeFailure } from './logging.mjs'
+import { traceRequest, markRequest, markQueryShape, requestID, runtimeFailure } from './logging.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
 import { runtimeConfig, servingContracts, limits } from './config.mjs'
 
@@ -53,11 +53,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
     let payload
     try { payload = await verify(token) } catch { return problem(res, 401, 'token_invalid') }
     if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
+    if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
+    if (payload.gregale_read_only === true && !['GET','HEAD'].includes(req.method)) return problem(res, 403, 'read_only_identity')
     if (guarded) {
       if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
       if (guarded[1] !== servingFingerprint && !acceptedFingerprints.has(guarded[1])) return problem(res, 409, 'schema_contract_mismatch')
       if (rpc && !config.functions?.some(f => f.schema === rpc.schema && f.name === rpc.name)) return problem(res, 404, 'not_found')
     }
+    if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
     if (req.url === '/__gregale/schema') {
       if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
       try {

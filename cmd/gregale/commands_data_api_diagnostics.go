@@ -24,14 +24,19 @@ var dataAPIDiagnosticUUID = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[
 var dataAPIDiagnosticRoutes = []string{"rest", "rpc", "health", "schema", "openapi", "unknown"}
 
 type dataAPIRequestRecord struct {
-	Time       string  `json:"time"`
-	RequestID  string  `json:"request_id"`
-	Method     string  `json:"method"`
-	Route      string  `json:"route"`
-	Status     *int    `json:"status"`
-	DurationMS float64 `json:"duration_ms"`
-	Outcome    string  `json:"outcome"`
-	Code       *string `json:"code"`
+	Time          string             `json:"time"`
+	RequestID     string             `json:"request_id"`
+	Method        string             `json:"method"`
+	Route         string             `json:"route"`
+	Status        *int               `json:"status"`
+	DurationMS    float64            `json:"duration_ms"`
+	Outcome       string             `json:"outcome"`
+	Code          *string            `json:"code"`
+	Operation     string             `json:"operation,omitempty"`
+	OperationKind string             `json:"operation_kind,omitempty"`
+	ShapeID       string             `json:"query_shape_id,omitempty"`
+	Shape         *dataAPIQueryShape `json:"query_shape,omitempty"`
+	Fingerprint   string             `json:"schema_fingerprint,omitempty"`
 }
 type dataAPILatency struct {
 	P50 *float64 `json:"p50"`
@@ -56,29 +61,33 @@ type dataAPIFailureCounts struct {
 	Upstream         int `json:"upstream"`
 }
 type dataAPIDiagnosticsReport struct {
-	Version        int                             `json:"version"`
-	Source         string                          `json:"source"`
-	Coverage       string                          `json:"coverage"`
-	App            string                          `json:"app,omitempty"`
-	Deployment     string                          `json:"deployment,omitempty"`
-	Since          string                          `json:"since,omitempty"`
-	First          string                          `json:"first_request_time,omitempty"`
-	Last           string                          `json:"last_request_time,omitempty"`
-	Partial        bool                            `json:"partial"`
-	PartialReasons []string                        `json:"partial_reasons"`
-	InputRecords   int                             `json:"input_records"`
-	Ignored        int                             `json:"ignored"`
-	Invalid        int                             `json:"invalid"`
-	Duplicates     int                             `json:"duplicates"`
-	Filtered       int                             `json:"filtered"`
-	Gaps           int                             `json:"gaps"`
-	Summary        dataAPIRequestStats             `json:"summary"`
-	DataRequests   dataAPIRequestStats             `json:"data_requests"`
-	Authentication dataAPIRequestStats             `json:"authentication"`
-	ByRoute        map[string]*dataAPIRequestStats `json:"by_route"`
-	Failures       dataAPIFailureCounts            `json:"failures"`
-	RequestID      string                          `json:"request_id,omitempty"`
-	Matches        []dataAPIRequestRecord          `json:"matches,omitempty"`
+	Version              int                             `json:"version"`
+	Source               string                          `json:"source"`
+	Coverage             string                          `json:"coverage"`
+	App                  string                          `json:"app,omitempty"`
+	Deployment           string                          `json:"deployment,omitempty"`
+	Since                string                          `json:"since,omitempty"`
+	First                string                          `json:"first_request_time,omitempty"`
+	Last                 string                          `json:"last_request_time,omitempty"`
+	Partial              bool                            `json:"partial"`
+	PartialReasons       []string                        `json:"partial_reasons"`
+	InputRecords         int                             `json:"input_records"`
+	Ignored              int                             `json:"ignored"`
+	Invalid              int                             `json:"invalid"`
+	Duplicates           int                             `json:"duplicates"`
+	Filtered             int                             `json:"filtered"`
+	Gaps                 int                             `json:"gaps"`
+	Summary              dataAPIRequestStats             `json:"summary"`
+	DataRequests         dataAPIRequestStats             `json:"data_requests"`
+	Authentication       dataAPIRequestStats             `json:"authentication"`
+	ByRoute              map[string]*dataAPIRequestStats `json:"by_route"`
+	Failures             dataAPIFailureCounts            `json:"failures"`
+	RequestID            string                          `json:"request_id,omitempty"`
+	Operations           []dataAPIOperationStats         `json:"operations"`
+	QueryShapes          []dataAPIShapeStats             `json:"query_shapes"`
+	ShapedRequests       int                             `json:"shaped_requests"`
+	UnshapedDataRequests int                             `json:"unshaped_data_requests"`
+	Matches              []dataAPIRequestRecord          `json:"matches,omitempty"`
 }
 
 type dataAPIDiagnosticsCollector struct {
@@ -86,6 +95,8 @@ type dataAPIDiagnosticsCollector struct {
 	seen        map[string]bool
 	since       time.Time
 	first, last time.Time
+	shapes      map[string]*dataAPIShapeStats
+	operations  map[string]*dataAPIOperationStats
 }
 
 func cmdDataAPIDiagnostics(args []string) int {
@@ -233,8 +244,11 @@ func parseDataAPIRequestRecord(content string) (dataAPIRequestRecord, bool, erro
 	if (record.Status == nil && record.Outcome != "aborted") || (record.Status != nil && (*record.Status < 100 || *record.Status > 599)) {
 		return record, true, errors.New("invalid request status")
 	}
-	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "serving_contract_unavailable", "data_api_unavailable", "request_too_large", "query_timeout", "schema_document_too_large", "schema_contract_mismatch", "upstream_error") {
+	if record.Code != nil && !dataAPIDiagnosticAllowed(*record.Code, "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity", "serving_contract_unavailable", "data_api_unavailable", "request_too_large", "query_timeout", "schema_document_too_large", "schema_contract_mismatch", "upstream_error") {
 		return record, true, errors.New("invalid request code")
+	}
+	if err := validateDataAPIQueryShape(record); err != nil {
+		return record, true, err
 	}
 	record.Time = timestamp.UTC().Format(time.RFC3339Nano)
 	record.RequestID = strings.ToLower(record.RequestID)
@@ -297,6 +311,34 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 	c.report.ByRoute[record.Route].add(record)
 	if record.Route == "rest" || record.Route == "rpc" {
 		c.report.DataRequests.add(record)
+		if record.Shape != nil {
+			if c.shapes == nil {
+				c.shapes = map[string]*dataAPIShapeStats{}
+			}
+			key := record.Fingerprint + ":" + record.ShapeID + ":" + record.Method + ":" + record.Operation
+			stats := c.shapes[key]
+			if stats == nil {
+				stats = &dataAPIShapeStats{Operation: record.Operation, Kind: record.OperationKind, Method: record.Method, ShapeID: record.ShapeID, Fingerprint: record.Fingerprint, Shape: record.Shape, RequestIDs: []string{}}
+				c.shapes[key] = stats
+			}
+			operationKey := record.Fingerprint + ":" + record.OperationKind + ":" + record.Operation
+			if c.operations == nil {
+				c.operations = map[string]*dataAPIOperationStats{}
+			}
+			operation := c.operations[operationKey]
+			if operation == nil {
+				operation = &dataAPIOperationStats{Operation: record.Operation, Kind: record.OperationKind, Fingerprint: record.Fingerprint}
+				c.operations[operationKey] = operation
+			}
+			operation.Stats.add(record)
+			stats.Stats.add(record)
+			if len(stats.RequestIDs) < 3 {
+				stats.RequestIDs = append(stats.RequestIDs, record.RequestID)
+			}
+			c.report.ShapedRequests++
+		} else {
+			c.report.UnshapedDataRequests++
+		}
 	}
 	if record.Outcome == "authentication_failed" {
 		c.report.Authentication.add(record)
@@ -351,6 +393,49 @@ func (s *dataAPIRequestStats) finish() {
 	s.durations = nil
 }
 func (c *dataAPIDiagnosticsCollector) finish() {
+	c.report.QueryShapes = []dataAPIShapeStats{}
+	for _, stats := range c.shapes {
+		stats.Stats.finish()
+		operation := c.operations[stats.Fingerprint+":"+stats.Kind+":"+stats.Operation]
+		if operation != nil {
+			operation.ShapeCount++
+		}
+		c.report.QueryShapes = append(c.report.QueryShapes, *stats)
+	}
+	sort.Slice(c.report.QueryShapes, func(i, j int) bool {
+		a, b := c.report.QueryShapes[i], c.report.QueryShapes[j]
+		if a.Stats.Requests != b.Stats.Requests {
+			return a.Stats.Requests > b.Stats.Requests
+		}
+		if a.Operation != b.Operation {
+			return a.Operation < b.Operation
+		}
+		if a.Method != b.Method {
+			return a.Method < b.Method
+		}
+		if a.Fingerprint != b.Fingerprint {
+			return a.Fingerprint < b.Fingerprint
+		}
+		return a.ShapeID < b.ShapeID
+	})
+	c.report.Operations = []dataAPIOperationStats{}
+	for _, operation := range c.operations {
+		operation.Stats.finish()
+		c.report.Operations = append(c.report.Operations, *operation)
+	}
+	sort.Slice(c.report.Operations, func(i, j int) bool {
+		a, b := c.report.Operations[i], c.report.Operations[j]
+		if a.Stats.Requests != b.Stats.Requests {
+			return a.Stats.Requests > b.Stats.Requests
+		}
+		if a.Operation != b.Operation {
+			return a.Operation < b.Operation
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.Fingerprint < b.Fingerprint
+	})
 	c.report.Summary.finish()
 	c.report.DataRequests.finish()
 	c.report.Authentication.finish()
@@ -501,6 +586,21 @@ func writeDataAPIDiagnostics(report dataAPIDiagnosticsReport) error {
 			return err
 		}
 	}
+	fmt.Fprintf(osStdout, "Query-shape coverage: %d shaped, %d unshaped data requests\n", report.ShapedRequests, report.UnshapedDataRequests)
+	for _, operation := range report.Operations {
+		if err := writeDataAPIDiagnosticStats(operation.Operation+" ("+operation.Kind+")", operation.Stats); err != nil {
+			return err
+		}
+	}
+	for _, shape := range report.QueryShapes {
+		fmt.Fprintf(osStdout, "%s %s shape=%s schema=%s requests=%d errors=%d\n", shape.Method, shape.Operation, shape.ShapeID, shape.Fingerprint, shape.Stats.Requests, shape.Stats.Errors)
+		description, _ := json.Marshal(shape.Shape)
+		fmt.Fprintf(osStdout, "  Shape: %s; request IDs: %v\n", description, shape.RequestIDs)
+		if err := writeDataAPIDiagnosticStats("  Query shape", shape.Stats); err != nil {
+			return err
+		}
+	}
+
 	if report.RequestID != "" {
 		if len(report.Matches) == 0 {
 			_, err := fmt.Fprintln(osStdout, "No matching request in the available sample.")

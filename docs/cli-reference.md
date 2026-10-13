@@ -5720,7 +5720,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -8484,7 +8484,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -10348,6 +10348,187 @@ Create schema-generated PostgreSQL APIs and export application types
 
 `gregale data-api [<subcommand>]`
 
+### data-api transaction
+
+Build a typed atomic business-operation starter
+
+#### data-api transaction init
+
+Generate an editable tenant-scoped order/inventory RPC package
+
+`gregale data-api transaction init --name <NAME> --output <DIR>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | new function/table prefix | required |
+| `--output <DIR>` | new transaction package directory | required |
+
+### data-api verify
+
+Verify named data integrity assertions and project authorization locally
+
+`gregale data-api verify <release|coverage|init> [--directory <DIR>] [--config <FILE>] [--checks <FILE>] [--access-checks <FILE>] [--fixture <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | Data API project directory (default .) |  |
+| `--config <FILE>` | project-relative development config |  |
+| `--checks <FILE>` | version 1 named SQL assertion manifest (or use --access-checks) |  |
+| `--access-checks <FILE>` | request collection or version 3/4/5 guided RLS check manifest |  |
+| `--fixture <FILE>` | SQL fixture for the current schema (default: configured seed) |  |
+
+Examples:
+
+```sh
+gregale --json data-api verify --checks data-checks.json --fixture fixture.sql
+```
+
+#### data-api verify release
+
+Run local Data API release checks and consolidate reports
+
+`gregale data-api verify release --config <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | version 1 release-check configuration | required |
+
+#### data-api verify coverage
+
+Check customer-declared verification coverage offline
+
+`gregale data-api verify coverage --schema <FILE> --policy <FILE> [--verification <FILE>] [--plans <FILE>] [--baseline-schema <FILE>] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <FILE>` | current saved schema contract | required |
+| `--policy <FILE>` | explicit relation requirements and named check mappings | required |
+| `--verification <FILE>` | data-api verify JSON report |  |
+| `--plans <FILE>` | budget-checked data-api explain JSON report |  |
+| `--baseline-schema <FILE>` | previous contract to identify newly added relations |  |
+| `--check` | fail if customer-required coverage is missing |  |
+
+#### data-api verify init
+
+Generate editable verification templates offline
+
+`gregale data-api verify init --schema <FILE> --config <FILE> --output <DIR> [--plans <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--schema <FILE>` | saved schema contract | required |
+| `--config <FILE>` | development config containing identity names | required |
+| `--output <DIR>` | new verification package directory | required |
+| `--plans <FILE>` | successful explain JSON report for query budgets |  |
+
+### data-api explain
+
+Review saved read-query plans against a disposable local database
+
+`gregale data-api explain [--directory <DIR>] [--config <FILE>] --collection <FILE> [--fixture <FILE>] [--scenario <NAME>] [--baseline <FILE>] [--check] [--budget <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | Data API project directory (default .) |  |
+| `--config <FILE>` | project-relative development config |  |
+| `--collection <FILE>` | saved API request collection | required |
+| `--fixture <FILE>` | representative SQL fixture (default: configured seed) |  |
+| `--scenario <NAME>` | one named collection scenario |  |
+| `--baseline <FILE>` | previous explain JSON report for estimated plan comparison |  |
+| `--check` | fail when query budgets or coverage checks fail |  |
+| `--budget <FILE>` | version 1 query budget JSON (requires --check and --baseline) |  |
+
+Examples:
+
+```sh
+gregale --json data-api explain --collection data-api.requests.json --fixture fixtures/before-upgrade/fixture.sql
+```
+
+### data-api fixture
+
+Build representative migration rehearsal data
+
+#### data-api fixture build
+
+Export allowlisted and explicitly masked related rows
+
+`gregale data-api fixture build --config <FILE> --output <DIR> [--database-url-env <ENV>] [--api-role <ROLE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--config <FILE>` | JSON column allowlists, masks and root filters | required |
+| `--output <DIR>` | new fixture package directory | required |
+| `--database-url-env <ENV>` | environment variable holding the local or test PostgreSQL URL (default DATA_API_FIXTURE_DATABASE_URL) |  |
+| `--api-role <ROLE>` | source API role used for contract introspection |  |
+
+Examples:
+
+```sh
+gregale --json data-api fixture build --config fixture-policy.json --output fixtures/before-upgrade --api-role gregale_data_api
+```
+
+### data-api migration
+
+Rehearse local database migrations
+
+#### data-api migration guide
+
+Generate reviewable client migration guidance offline
+
+`gregale data-api migration guide --baseline <FILE> --current <FILE> [--requests <FILE>] [--dependencies <FILE>] [--coverage-policy <FILE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--baseline <FILE>` | previous schema contract | required |
+| `--current <FILE>` | candidate schema contract | required |
+| `--requests <FILE>` | saved API request collection |  |
+| `--dependencies <FILE>` | customer-declared consumer dependencies |  |
+| `--coverage-policy <FILE>` | explicit verification mappings to review |  |
+
+#### data-api migration preview
+
+Rebuild a disposable database and report API, types, client and replay checks
+
+`gregale data-api migration preview [--directory <DIR>] [--from-version <N>] [--fixture <FILE>] [--data-check <FILE>] --baseline <FILE> [--config <FILE>] [--output <FILE>] [--dependencies <FILE>] [--approval <FILE>] [--replay <FILE>] [--scenario <NAME>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--directory <DIR>` | Data API project directory (default .) |  |
+| `--from-version <N>` | upgrade from an existing numbered migration version |  |
+| `--fixture <FILE>` | SQL data fixture for the older schema (default: configured seed) |  |
+| `--data-check <FILE>` | JSON manifest of post-migration SQL data assertions |  |
+| `--baseline <FILE>` | read-only schema contract baseline | required |
+| `--config <FILE>` | project-relative development config |  |
+| `--output <FILE>` | committed types path (default: project config or client/src/database.types.ts) |  |
+| `--dependencies <FILE>` | customer-declared consumer dependency manifest |  |
+| `--approval <FILE>` | fingerprint-bound breaking change approvals |  |
+| `--replay <FILE>` | saved request collection |  |
+| `--scenario <NAME>` | one named replay scenario (requires --replay) |  |
+
+Examples:
+
+```sh
+gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json
+```
+
+### data-api onboard
+
+Create and verify a local typed application with two-user isolation
+
+`gregale data-api onboard [--template <NAME>] --path <DIR> --bundle <MANIFEST>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--template <NAME>` | data-api-starter or data-api-teams | one of `data-api-starter` · `data-api-teams` |
+| `--path <DIR>` | new starter project directory | required |
+| `--bundle <MANIFEST>` | approved local data-api-bundle.json | required |
+
+Examples:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
+```
+
 ### data-api install
 
 Install or restore a verified Data API SDK bundle
@@ -10374,7 +10555,7 @@ gregale data-api install --restore
 
 Run a disposable local Data API with test identities
 
-`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--approval <FILE>] [--accepted-contracts <FILE>] [--replay <FILE>] [--scenario <NAME>]`
+`gregale data-api dev [--config <FILE>] [--directory <DIR>] [--output <FILE>] [--port <PORT>] [--check] [--check-types] [--validators] [--once] [--watch] [--baseline <FILE>] [--check-breaking] [--approval <FILE>] [--accepted-contracts <FILE>] [--replay <FILE>] [--scenario <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10384,6 +10565,7 @@ Run a disposable local Data API with test identities
 | `--port <PORT>` | loopback gateway port (default 8080; 0 selects a free port) |  |
 | `--check` | run configured client checks |  |
 | `--check-types` | compare committed types without rewriting them (requires --once) |  |
+| `--validators` | generate runtime table and RPC argument validators alongside types |  |
 | `--once` | verify and exit, removing disposable containers |  |
 | `--watch` | watch migrations and refresh API/types (default true; use --watch=false to disable) |  |
 | `--baseline <FILE>` | read-only saved contract (default: last successful local contract) |  |
@@ -10421,13 +10603,14 @@ Deploy a managed PostgREST Data API
 
 Generate types in an owner-authenticated app task
 
-`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--timeout <DURATION>] <name>`
+`gregale data-api types [--output <FILE>] [--check] [--snapshot] [--validators] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--output <FILE>` | generated TypeScript or snapshot output |  |
 | `--check` | fail if the output file is stale |  |
 | `--snapshot` | export a JSON baseline for data-api diff |  |
+| `--validators` | include typed runtime table and RPC argument validators |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
 ### data-api check
@@ -10455,7 +10638,7 @@ gregale data-api check --current candidate.json --baseline schema.json --types c
 
 Compare the current schema with a saved JSON baseline
 
-`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--check-compatible] [--approval <FILE>] [--accept-contract <FILE>] [--timeout <DURATION>] [<name>]`
+`gregale data-api diff --baseline <FILE> [--current <FILE>] [--check] [--check-compatible] [--approval <FILE>] [--accept-contract <FILE>] [--dependencies <FILE>] [--timeout <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10465,6 +10648,7 @@ Compare the current schema with a saved JSON baseline
 | `--check-compatible` | fail on unapproved breaking changes (alias of --check) |  |
 | `--approval <FILE>` | reviewed changes bound to both contract fingerprints |  |
 | `--accept-contract <FILE>` | write an owner runtime policy; requires zero breaking changes |  |
+| `--dependencies <FILE>` | customer-declared saved-view and RPC dependencies for impact reporting |  |
 | `--timeout <DURATION>` | task wait deadline (default 2m) |  |
 
 Examples:
