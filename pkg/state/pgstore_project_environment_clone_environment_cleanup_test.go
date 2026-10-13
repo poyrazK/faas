@@ -291,6 +291,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"invocations.environment_id",
 		"issue_ingest_tokens.environment",
 		"managed_postgres_bindings.scope",
+		"managed_postgres_cutover_drain_plan_members.deployment_scope", // Immutable captured retirement evidence survives environment retention.
 		"managed_postgres_cutovers.scope",
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",

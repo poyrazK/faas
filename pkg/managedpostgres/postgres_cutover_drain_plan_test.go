@@ -475,3 +475,23 @@ func TestPostgresCutoverDrainPlanMissingMembershipNeverBecomesEmptySuccess(t *te
 		t.Fatal("absent membership became a successful empty loop", current, err)
 	}
 }
+
+func TestPostgresCutoverDrainPlanMalformedReceiptRemainsVisibleBlocker(t *testing.T) {
+	s, ps, c, node, _ := cutoverDrainPlanFixture(t, drainPlanInstanceSpec{"default", "normal", "running"})
+	plan := fenceDrainPlan(t, s, ps, c, node.ID)
+	// Simulate a corrupt retained receipt whose timestamp cannot represent a
+	// native authority frame. No physical effects are invoked by inspection.
+	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE managed_postgres_cutover_drains DISABLE TRIGGER managed_postgres_cutover_drain_guard`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `UPDATE managed_postgres_cutover_drains SET fenced_at='infinity' WHERE id=$1`, plan.Members[0].Drain.Frame.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE managed_postgres_cutover_drains ENABLE TRIGGER managed_postgres_cutover_drain_guard`); err != nil {
+		t.Fatal(err)
+	}
+	current, err := ps.ManagedPostgresDrainPlan(t.Context(), plan.Frame.ID)
+	if err != nil || current.State != state.ManagedPostgresDrainPlanBlocked || current.Blocked != 1 || current.Members[0].BlockerCode != "receipt_invalid" || current.Members[0].Drain != nil {
+		t.Fatal("malformed receipt concealed or accepted", current, err)
+	}
+}

@@ -59552,6 +59552,7 @@ SELECT jsonb_build_object(
  'issue_releases.deployment_id', (SELECT count(*) FROM issue_releases WHERE deployment_id=$1::uuid),
  'issue_resolutions.fixed_deployment_id', (SELECT count(*) FROM issue_resolutions WHERE fixed_deployment_id=$1::uuid),
  'log_events.deployment_id', (SELECT count(*) FROM log_events WHERE deployment_id=$1::uuid),
+ 'managed_postgres_cutover_drain_plan_members.deployment_id', (SELECT count(*) FROM managed_postgres_cutover_drain_plan_members WHERE deployment_id=$1::uuid),
  'managed_postgres_cutover_drains.deployment_id', (SELECT count(*) FROM managed_postgres_cutover_drains WHERE deployment_id=$1::uuid),
  'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=$1::uuid),
  'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=$1::uuid),

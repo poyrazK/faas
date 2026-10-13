@@ -218,10 +218,19 @@ func observeManagedPostgresDrainPlanMember(ctx context.Context, tx pgx.Tx, q *sq
 		return m, mapErr(err)
 	}
 	drain, err := managedPostgresDrainFromSQL(receipt)
+	// A malformed persisted receipt is an inspectable blocker, like a missing
+	// receipt. Unexpected decoder errors remain failures of the observation.
+	if errors.Is(err, ErrConflict) {
+		m.BlockerCode = "receipt_invalid"
+		return m, nil
+	}
+	if err != nil {
+		return m, err
+	}
 	expected := ManagedPostgresDrainFrame{ID: pgUUIDString(row.DrainID), CutoverID: f.CutoverID, AppID: f.AppID,
 		DeploymentID: m.DeploymentID, InstanceID: m.InstanceID, NodeID: m.NodeID, WakeID: m.WakeID,
 		OwnerNodeID: f.OwnerNodeID, OwnerRevision: f.OwnerRevision, FencedAt: f.FencedAt}
-	if err != nil || !drain.Frame.Equal(expected) {
+	if !drain.Frame.Equal(expected) {
 		m.BlockerCode = "receipt_invalid"
 		return m, nil
 	}

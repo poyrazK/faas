@@ -120,6 +120,14 @@ $$;
 DROP TRIGGER IF EXISTS managed_postgres_drain_plan_inventory_truncate_guard ON instances;
 CREATE TRIGGER managed_postgres_drain_plan_inventory_truncate_guard BEFORE TRUNCATE ON instances
  FOR EACH STATEMENT EXECUTE FUNCTION guard_managed_postgres_drain_plan_inventory_truncate();
+
+CREATE OR REPLACE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
+LANGUAGE plpgsql AS $$ BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
+ -- Retained PostgreSQL receipts and blocked plan members also borrow deployments.
+ LOCK TABLE managed_postgres_cutover_drains,managed_postgres_cutover_drain_plan_members IN SHARE MODE;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down
@@ -134,6 +142,12 @@ DROP TRIGGER managed_postgres_drain_plan_inventory_truncate_guard ON instances;
 DROP FUNCTION guard_managed_postgres_drain_plan_inventory();
 DROP FUNCTION guard_managed_postgres_drain_plan_inventory_truncate();
 DROP FUNCTION current_managed_postgres_drain_plan(uuid);
+-- Restore the pre-plan writer inventory before removing its referenced table.
+CREATE OR REPLACE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
+LANGUAGE plpgsql AS $$ BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
+END $$;
 DROP TABLE managed_postgres_cutover_drain_plan_members;
 DROP TABLE managed_postgres_cutover_drain_plans;
 DROP FUNCTION guard_managed_postgres_drain_plan_evidence();
