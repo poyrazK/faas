@@ -78,7 +78,7 @@ func readLineageControlPlan(path string) (lineageControlPlan, error) {
 	if !info.Mode().IsRegular() || info.Size() > api.EventExecutionLineageControlPlanMaxBytes {
 		return plan, fmt.Errorf("plan must be a regular file of at most %d bytes", api.EventExecutionLineageControlPlanMaxBytes)
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return plan, err
 	}

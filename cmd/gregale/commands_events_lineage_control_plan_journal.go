@@ -48,7 +48,7 @@ func newLineageControlPlanJournal(path string, plan lineageControlPlan) (*lineag
 		_ = f.Close()
 		return nil, err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := openCustomerDirectoryForSync(filepath.Dir(path))
 	if err != nil {
 		_ = f.Close()
 		return nil, err
@@ -105,7 +105,7 @@ func readLineageControlPlanJournal(path string, plan lineageControlPlan) (map[in
 	if !info.Mode().IsRegular() || info.Size() > int64(api.EventExecutionLineageControlReportMaxBytes) {
 		return nil, fmt.Errorf("report must be a bounded regular file")
 	}
-	f, err := os.Open(path)
+	f, err := openCustomerFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -48,7 +47,7 @@ func readLineageRetryRequestFile(path string) (lineageRetryRequestFile, error) {
 	if path == "" {
 		return out, fmt.Errorf("--file is required")
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return out, err
 	}

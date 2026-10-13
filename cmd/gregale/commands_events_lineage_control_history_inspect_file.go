@@ -23,7 +23,7 @@ func readLineageControlHistoryArtifact(path string) (lineageControlHistoryExport
 	if !info.Mode().IsRegular() || info.Size() > api.EventExecutionLineageRetryControlExportMaxBytes {
 		return out, fmt.Errorf("history must be a regular file of at most %d bytes", api.EventExecutionLineageRetryControlExportMaxBytes)
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return out, err
 	}
