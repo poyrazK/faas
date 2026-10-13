@@ -241,3 +241,64 @@ func containsName(values []string, want string) bool {
 	}
 	return false
 }
+
+// TestIdentityRowsCoverOnlyTheOwnDaemon pins that a production daemon
+// pre-creates build-info, uptime and readiness rows for itself only. Rows for
+// the other twelve names rendered on the fleet dashboard as daemons that were
+// never ready, had zero uptime and ran this binary's version.
+// spec: §12
+func TestIdentityRowsCoverOnlyTheOwnDaemon(t *testing.T) {
+	own := map[string]string{
+		"apid": "apid", "builderd": "builderd", "gatewayd": "gatewayd-internal",
+		"gatewayd_public": "gatewayd-public", "githubd": "githubd", "imaged": "imaged",
+		"meterd": "meterd", "outboundd": "outboundd", "profiled": "profiled",
+		"realtimed": "realtimed", "s3_gateway": "s3-gatewayd", "schedd": "schedd", "vmmd": "vmmd",
+	}
+	for _, prefix := range productionMetricPrefixes {
+		daemons := daemonLabelValues(t, wire.NewOpsMetrics(prefix).Registry(), prefix+"_daemon_ready")
+		if len(daemons) != 1 || daemons[0] != own[prefix] {
+			t.Errorf("%s_daemon_ready daemons = %v, want [%s]", prefix, daemons, own[prefix])
+		}
+	}
+	if daemons := daemonLabelValues(t, wire.NewOpsMetrics("owner_test").Registry(), "owner_test_daemon_ready"); len(daemons) < 13 {
+		t.Errorf("owner_test_daemon_ready daemons = %v; non-daemon prefixes keep every row", daemons)
+	}
+}
+
+// TestMarkReadyReportsRealtimedAndS3Gateway pins the two daemons the closed
+// label set used to miss: both reported as daemon="other", so the
+// FaasDaemonNotReady branches for them could never match.
+// spec: §12
+func TestMarkReadyReportsRealtimedAndS3Gateway(t *testing.T) {
+	for prefix, daemon := range map[string]string{"realtimed": "realtimed", "s3_gateway": "s3-gatewayd"} {
+		m := wire.NewOpsMetrics(prefix)
+		m.MarkReady(daemon, true, "")
+		got := daemonLabelValues(t, m.Registry(), prefix+"_daemon_ready")
+		if len(got) != 1 || got[0] != daemon {
+			t.Errorf("%s_daemon_ready daemons after MarkReady(%q) = %v, want [%s]", prefix, daemon, got, daemon)
+		}
+	}
+}
+
+func daemonLabelValues(t *testing.T, reg *prometheus.Registry, name string) []string {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	var daemons []string
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, metric := range f.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "daemon" {
+					daemons = append(daemons, label.GetValue())
+				}
+			}
+		}
+	}
+	sort.Strings(daemons)
+	return daemons
+}

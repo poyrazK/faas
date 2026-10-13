@@ -2354,7 +2354,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_daemon_ready_reason",
 		Help: "One-hot readiness reason classification (issue #586 / ADR-129), labelled by daemon and a closed reason class. reason ∈ {ready, draining, database, vmmd, grpc, storage, credentials, stale, process, other}; detailed error text remains in /readyz and logs to keep metric cardinality bounded.",
 	}, []string{"daemon", "reason"})
-	for _, daemon := range []string{"apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale", "other"} {
+	for _, daemon := range identityDaemons(prefix) {
 		daemonBuildInfo.WithLabelValues(daemon, Version, GitSHA, BuildTime).Set(1)
 		daemonUptimeSeconds.WithLabelValues(daemon).Set(0)
 		daemonReady.WithLabelValues(daemon).Set(0)
@@ -5772,12 +5772,7 @@ func (m *OpsMetrics) RecordDaemonRestart(daemon, version string, n int) {
 	if m == nil || n <= 0 {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	if version == "" {
 		version = Version
 	}
@@ -5796,12 +5791,7 @@ func (m *OpsMetrics) SetDaemonBuildInfo(daemon, version, gitSHA, buildTime strin
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	if version == "" {
 		version = Version
 	}
@@ -5819,12 +5809,7 @@ func (m *OpsMetrics) SetDaemonUptime(daemon string, seconds float64) {
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	m.daemonUptimeSeconds.WithLabelValues(daemon).Set(seconds)
 }
 
@@ -5845,12 +5830,7 @@ func (m *OpsMetrics) MarkReady(daemon string, ready bool, reason string) {
 	if m == nil {
 		return
 	}
-	switch daemon {
-	case "apid", "gatewayd-public", "gatewayd-internal", "schedd", "vmmd", "imaged", "meterd", "builderd", "githubd", "outboundd", "profiled", "gregale":
-		// closed set, admit unchanged
-	default:
-		daemon = "other"
-	}
+	daemon = daemonLabel(daemon)
 	v := 0
 	if ready {
 		v = 1
