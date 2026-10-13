@@ -119,6 +119,7 @@ func main() {
 	body = []byte(strings.TrimRight(string(body), "\n") + "\n")
 
 	mux := http.NewServeMux()
+	registerTCPFixture(mux)
 	if *durableCounter {
 		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
 	}
