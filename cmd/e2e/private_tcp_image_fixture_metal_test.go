@@ -2,7 +2,7 @@
 
 // adr: 576 — a build-free private TCP fixture: an internal TCP echo service
 // and a caller app, both deployed from images, so TCP tests do not depend on
-// builderd or the host's build-drive headroom.
+// a source build or the host's build-drive headroom.
 package e2e_test
 
 import (
@@ -52,9 +52,11 @@ func newPrivateTCPImageFixture(t *testing.T) *privateTCPImageFixture {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	// Turns on the service TCP listener and service-address DNS answers.
+	// Turns on the service TCP listener and service-address DNS answers. The
+	// harness wires the guest-facing service listeners only when builderd
+	// runs; these image deploys never ask it for a build drive.
 	t.Setenv("FAAS_E2E_SERVICE_TCP", "1")
-	h := e2etest.Start(t, pool, e2etest.DeployWake, "FAAS_SERVICE_TCP_ENABLED=1")
+	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, "FAAS_SERVICE_TCP_ENABLED=1")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	store := state.NewPgStore(pool)
