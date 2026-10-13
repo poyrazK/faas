@@ -15322,10 +15322,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name)
+ action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id))
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
@@ -20011,3 +20011,43 @@ WHERE a.id = sqlc.arg(app_id)::text::uuid
   AND e.created_at < sqlc.arg(until)::timestamptz
 ORDER BY e.created_at DESC, e.id DESC
 LIMIT sqlc.arg(row_limit)::int;
+
+-- ADR-747: customer-defined SLO definitions (apid is the only writer).
+
+-- name: InsertAppSLO :one
+-- The per-app cap is enforced inside the insert, so two concurrent creates
+-- cannot both pass a count taken before either row exists.
+INSERT INTO app_slos (account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days)
+SELECT sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(name)::text, sqlc.arg(sli)::text,
+ sqlc.narg(latency_threshold_ms)::integer, sqlc.arg(objective_bp)::integer, sqlc.arg(window_days)::integer
+WHERE (SELECT count(*) FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid) < sqlc.arg(max_per_app)::integer
+RETURNING *;
+
+-- name: ListAppSLOs :many
+SELECT * FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid ORDER BY name;
+
+-- name: GetAppSLO :one
+SELECT * FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- name: DeleteAppSLO :execrows
+DELETE FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)::uuid;
+
+-- ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+
+-- name: ListAllAppSLOs :many
+SELECT * FROM app_slos ORDER BY id;
+
+-- name: ListSLOHourStarts :many
+SELECT hour FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(since)::timestamptz;
+
+-- name: UpsertSLOHour :exec
+INSERT INTO app_slo_hourly (slo_id, hour, good, total)
+VALUES (sqlc.arg(slo_id)::uuid, sqlc.arg(hour)::timestamptz, sqlc.arg(good)::bigint, sqlc.arg(total)::bigint)
+ON CONFLICT (slo_id, hour) DO UPDATE SET good = EXCLUDED.good, total = EXCLUDED.total;
+
+-- name: SumSLOHours :one
+SELECT coalesce(sum(good), 0)::bigint AS good, coalesce(sum(total), 0)::bigint AS total, count(*)::bigint AS hours
+FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(since)::timestamptz;
+
+-- name: PurgeSLOHoursBefore :execrows
+DELETE FROM app_slo_hourly WHERE hour < sqlc.arg(before)::timestamptz;

@@ -136,7 +136,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -868,6 +868,30 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "slos",
+		DocSlug: "slos",
+		Short:   "Customer-defined SLOs and error budgets (slos list|create|status|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's SLOs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "SLO name, unique per app", Req: true, Value: "NAME"},
+				{Name: "objective", Short: "objective percentage, 90 to 99.99", Req: true, Value: "PCT"},
+				{Name: "sli", Short: "service level indicator", Value: "SLI", ClosedSet: []string{"availability", "latency"}},
+				{Name: "latency-threshold-ms", Short: "latency threshold (5|10|25|50|100|250|500|1000|2000|5000|10000)", Value: "MS"},
+				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
+			}},
+			{Name: "status", Short: "Show an SLO's attainment, budget remaining and burn rate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+		},
+	},
+	{
 		Name:    "alerts",
 		DocSlug: "alerts",
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
@@ -894,6 +918,7 @@ var cliCommands = []cliCommand{
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
 				{Name: "channel", Short: "notification channel id (repeatable); with one, the webhook is optional", Value: "CHANNEL_ID", Repeatable: true},
 				{Name: "custom-metric", Short: "Pushed custom metric to watch; required with --metric custom_metric", Value: "NAME"},
+				{Name: "slo", Short: "SLO id for slo_budget_burn or slo_budget_remaining_pct", Value: "SLO_ID"},
 				{Name: "webhook-url", Short: "https webhook URL (required unless --channel)", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},

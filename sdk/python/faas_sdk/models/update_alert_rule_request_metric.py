@@ -55,6 +55,8 @@ UpdateAlertRuleRequestMetric = Literal[
     "pre_auth_target_threshold",
     "queue_depth",
     "request_count",
+    "slo_budget_burn",
+    "slo_budget_remaining_pct",
     "slo_burn_rate",
 ]
 
@@ -113,6 +115,8 @@ UPDATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[UpdateAlertRuleRequestMetric] = {
     "pre_auth_target_threshold",
     "queue_depth",
     "request_count",
+    "slo_budget_burn",
+    "slo_budget_remaining_pct",
     "slo_burn_rate",
 }
 

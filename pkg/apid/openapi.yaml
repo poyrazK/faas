@@ -12495,6 +12495,84 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/slos:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listSLOs
+      summary: List the app's customer-defined SLOs (ADR-747)
+      description: "Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's SLO definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SLOResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSLO
+      summary: Define an SLO on the app (ADR-747)
+      description: "Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSLORequest' }
+      responses:
+        '201':
+          description: The SLO was created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SLOResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has an SLO with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The app is at its SLO cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/slos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: "SLO identifier returned when the SLO was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSLO
+      summary: Get one customer-defined SLO and its error budget (ADR-747)
+      description: "Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404."
+      tags: [apps]
+      responses:
+        '200':
+          description: The SLO definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SLOResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSLO
+      summary: Delete a customer-defined SLO (ADR-747)
+      description: "Removes the SLO and frees a slot against the per-app cap."
+      tags: [apps]
+      responses:
+        '204':
+          description: The SLO was deleted.
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -58870,6 +58948,87 @@ components:
       properties:
         delivered: { type: boolean, description: 'Whether the destination accepted the test.' }
         error: { type: string, description: 'Why delivery failed, when it did.' }
+    CreateSLORequest:
+      description: 'Defines a customer SLO on an app (ADR-747).'
+      type: object
+      required: [name, sli, objective_pct, window_days]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per app; lowercase letters, digits, dashes and underscores.'
+          example: checkout-latency
+        sli:
+          type: string
+          enum: [availability, latency]
+          description: 'availability counts non-5xx responses among 2xx and 5xx; latency counts requests completing within latency_threshold_ms.'
+        latency_threshold_ms:
+          type: integer
+          enum: [5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]
+          description: 'Required for the latency SLI and rejected otherwise; one of the gateway histogram bucket bounds.'
+        objective_pct:
+          type: number
+          format: double
+          minimum: 90
+          maximum: 99.99
+          description: 'Target share of good requests, as a percentage with at most two decimals.'
+          example: 99.9
+        window_days:
+          type: integer
+          enum: [7, 30]
+          description: 'Rolling window over which the error budget is measured.'
+    SLOResponse:
+      description: 'One customer-defined SLO (ADR-747).'
+      type: object
+      required: [id, name, sli, objective_pct, window_days, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: checkout-latency }
+        sli: { type: string, enum: [availability, latency] }
+        latency_threshold_ms:
+          type: integer
+          description: 'Threshold for a latency SLO; absent for availability.'
+        objective_pct: { type: number, format: double, example: 99.9 }
+        window_days: { type: integer, enum: [7, 30] }
+        created_at: { type: string, format: date-time }
+        status:
+          $ref: '#/components/schemas/SLOStatus'
+    SLOStatus:
+      description: 'Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id} (ADR-747).'
+      type: object
+      required: [window_start, hours_recorded, hours_expected, good, total, attainment_pct, budget_remaining_pct, burn_rate_1h, burn_rate_6h, source]
+      properties:
+        window_start:
+          type: string
+          format: date-time
+          description: 'Start of the rolling window: the later of window_days ago and the hour the SLO was created.'
+        hours_recorded:
+          type: integer
+          description: 'Completed hours meterd has recorded in the window.'
+        hours_expected:
+          type: integer
+          description: 'Completed hours in the window; fewer recorded hours means history is still being backfilled or was lost.'
+        good: { type: integer, format: int64, description: 'Requests that met the SLI in the recorded hours.' }
+        total: { type: integer, format: int64, description: 'Requests the SLI counted in the recorded hours.' }
+        attainment_pct:
+          type: [number, 'null']
+          format: double
+          description: 'good / total as a percentage; null when the window had no requests.'
+        budget_remaining_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of the error budget left: 100 when nothing failed, 0 when it is spent, negative once the objective is missed.'
+        burn_rate_1h:
+          type: [number, 'null']
+          format: double
+          description: 'Budget burn over the last hour, live from Prometheus: 1 spends exactly the budget over the window.'
+        burn_rate_6h:
+          type: [number, 'null']
+          format: double
+          description: 'Budget burn over the last six hours, live from Prometheus.'
+        source:
+          type: string
+          description: 'prometheus, or degraded: <reason> when budget history or burn rates are unavailable.'
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object
@@ -70192,6 +70351,8 @@ components:
             - custom_metric
             - log_error_lines
             - log_warn_lines
+            - slo_budget_burn
+            - slo_budget_remaining_pct
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -70208,6 +70369,10 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric.'
           example: orders_pending
+        slo_id:
+          type: string
+          format: uuid
+          description: 'The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other metrics.'
         webhook_url:
           type: string
           example: "https://example.com/hook"
@@ -70259,7 +70424,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -70275,6 +70440,10 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        slo_id:
+          type: string
+          format: uuid
+          description: 'Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and slo_budget_remaining_pct (percent of the error budget left); names one of this app''s SLOs. The rule window_spec is ignored for these metrics.'
         webhook_url:
           type: string
           format: uri
@@ -70316,7 +70485,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

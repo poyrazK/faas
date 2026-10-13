@@ -938,11 +938,16 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/apps/{slug}/alerts/{id}":  "UpdateAlertRule",
 	"DELETE /v1/apps/{slug}/alerts/{id}": "DeleteAlertRule",
 	// ADR-749 notification channels (hyphenated resource).
-	"GET /v1/notification-channels":                  "ListNotificationChannels",
-	"POST /v1/notification-channels":                 "CreateNotificationChannel",
-	"GET /v1/notification-channels/{id}":             "GetNotificationChannel",
-	"DELETE /v1/notification-channels/{id}":          "DeleteNotificationChannel",
-	"POST /v1/notification-channels/{id}/test":       "TestNotificationChannel",
+	"GET /v1/notification-channels":            "ListNotificationChannels",
+	"POST /v1/notification-channels":           "CreateNotificationChannel",
+	"GET /v1/notification-channels/{id}":       "GetNotificationChannel",
+	"DELETE /v1/notification-channels/{id}":    "DeleteNotificationChannel",
+	"POST /v1/notification-channels/{id}/test": "TestNotificationChannel",
+	// ADR-747 customer SLOs are named after the resource noun.
+	"GET /v1/apps/{slug}/slos":                       "ListSLOs",
+	"POST /v1/apps/{slug}/slos":                      "CreateSLO",
+	"GET /v1/apps/{slug}/slos/{id}":                  "GetSLO",
+	"DELETE /v1/apps/{slug}/slos/{id}":               "DeleteSLO",
 	"POST /v1/apps/{slug}/alerts/{id}/rotate-secret": "RotateAlertRuleSecret",
 	// ADR-123 PR-D — operator pane for one rule's recent
 	// alert_deliveries rows. ?include_test=true toggles the IsTest

@@ -247,6 +247,7 @@ type AlertRule struct {
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
 	CustomMetricName                pgtype.Text
+	SloID                           pgtype.UUID
 }
 
 type AlertRuleChannel struct {
@@ -988,6 +989,26 @@ type AppServiceWakeAhead struct {
 	AccountID pgtype.UUID
 	Enabled   bool
 	UpdatedAt pgtype.Timestamptz
+}
+
+type AppSlo struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+type AppSloHourly struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
 }
 
 type AppTask struct {

@@ -3430,8 +3430,8 @@ const (
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
 	// ADR-746: guest log lines vmmd classified as error / warn in the window.
-	AlertMetricLogErrorLines          AlertMetric = "log_error_lines"
-	AlertMetricLogWarnLines           AlertMetric = "log_warn_lines"
+	AlertMetricLogErrorLines AlertMetric = "log_error_lines"
+	AlertMetricLogWarnLines  AlertMetric = "log_warn_lines"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -3439,6 +3439,9 @@ const (
 	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
 	// AlertRule.CustomMetricName (ADR-745).
 	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
+	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
+	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens
@@ -3640,6 +3643,7 @@ type AlertRule struct {
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
 	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
+	SLOID                           string             // set only for the ADR-747 SLO metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL                      string
 	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged

@@ -182,6 +182,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.validateSLOAlert(r.Context(), app.ID, req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
@@ -207,6 +211,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		EventSubscriptionID:             req.EventSubscriptionID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		CustomMetricName:                req.CustomMetricName,
+		SLOID:                           req.SLOID,
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
@@ -256,6 +261,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
 		"custom_metric_name":                  row.CustomMetricName,
+		"slo_id":                              row.SLOID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
@@ -717,6 +723,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		EventSubscriptionID:             r.EventSubscriptionID,
 		FailureSource:                   string(r.FailureSource),
 		CustomMetricName:                r.CustomMetricName,
+		SLOID:                           r.SLOID,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
 		CooldownMinutes:                 r.CooldownMinutes,
@@ -1033,6 +1040,10 @@ func alertRuleFamily(m state.AlertMetric) string {
 		// The rule's custom_metric_name only means something for this
 		// metric (alert_rules_custom_metric_chk); swapping away would orphan it.
 		return api.AlertRuleMetricCustomMetric
+	}
+	if api.IsSLOAlertMetric(string(m)) {
+		// slo_id only means something for these metrics (alert_rules_slo_chk).
+		return "slo"
 	}
 	return "other"
 }

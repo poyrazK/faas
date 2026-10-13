@@ -10962,6 +10962,23 @@ func (q *Queries) DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []
 	return err
 }
 
+const deleteAppSLO = `-- name: DeleteAppSLO :execrows
+DELETE FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteAppSLO, arg.AppID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteAutomation = `-- name: DeleteAutomation :exec
 DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2
 `
@@ -18353,6 +18370,33 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 	return i, err
 }
 
+const getAppSLO = `-- name: GetAppSLO :one
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetAppSLO(ctx context.Context, db DBTX, arg GetAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, getAppSLO, arg.AppID, arg.ID)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAppSecretRevocation = `-- name: GetAppSecretRevocation :one
 SELECT id::text, account_id::text, app_id::text, scope, key, created_at
   FROM app_secret_revocations
@@ -22088,6 +22132,56 @@ func (q *Queries) InsertAppHealthHistory(ctx context.Context, db DBTX, arg Inser
 	return err
 }
 
+const insertAppSLO = `-- name: InsertAppSLO :one
+
+INSERT INTO app_slos (account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text,
+ $5::integer, $6::integer, $7::integer
+WHERE (SELECT count(*) FROM app_slos WHERE app_id = $2::uuid) < $8::integer
+RETURNING id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at
+`
+
+type InsertAppSLOParams struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	MaxPerApp          int32
+}
+
+// ADR-747: customer-defined SLO definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, so two concurrent creates
+// cannot both pass a count taken before either row exists.
+func (q *Queries) InsertAppSLO(ctx context.Context, db DBTX, arg InsertAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, insertAppSLO,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Sli,
+		arg.LatencyThresholdMs,
+		arg.ObjectiveBp,
+		arg.WindowDays,
+		arg.MaxPerApp,
+	)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertBlockedLifecycleHistory = `-- name: InsertBlockedLifecycleHistory :exec
 INSERT INTO production_lifecycle_reviews(app_id,deployment_id,decision,recovery,scope,evidence)
 VALUES($1::text::uuid,$2::text::uuid,$3::jsonb,false,$4::text,$5::jsonb)
@@ -23432,11 +23526,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name)
+ action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,
- $13,$14,$15,$16,$17)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name
+ $13,$14,$15,$16,$17,$18)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -23457,6 +23551,7 @@ type InsertCustomerAlertRuleParams struct {
 	State                           string
 	PostDeployRollbackWindowSeconds int32
 	CustomMetricName                pgtype.Text
+	SloID                           pgtype.UUID
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -23478,6 +23573,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.State,
 		arg.PostDeployRollbackWindowSeconds,
 		arg.CustomMetricName,
+		arg.SloID,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -23504,6 +23600,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.CustomMetricName,
+		&i.SloID,
 	)
 	return i, err
 }
@@ -32062,6 +32159,43 @@ func (q *Queries) ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgt
 	return items, nil
 }
 
+const listAllAppSLOs = `-- name: ListAllAppSLOs :many
+
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos ORDER BY id
+`
+
+// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+func (q *Queries) ListAllAppSLOs(ctx context.Context, db DBTX) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAllAppSLOs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
@@ -32650,6 +32784,41 @@ func (q *Queries) ListAppPendingRollbacks(ctx context.Context, db DBTX, arg List
 			return nil, err
 		}
 		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppSLOs = `-- name: ListAppSLOs :many
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAppSLOs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -33769,7 +33938,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.custom_metric_name FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.custom_metric_name, r.slo_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -33813,6 +33982,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.CustomMetricName,
+			&i.SloID,
 		); err != nil {
 			return nil, err
 		}
@@ -33825,7 +33995,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -33861,6 +34031,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.CustomMetricName,
+			&i.SloID,
 		); err != nil {
 			return nil, err
 		}
@@ -35862,7 +36033,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -35898,6 +36069,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.CustomMetricName,
+			&i.SloID,
 		); err != nil {
 			return nil, err
 		}
@@ -40332,6 +40504,35 @@ func (q *Queries) ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DB
 			return nil, err
 		}
 		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSLOHourStarts = `-- name: ListSLOHourStarts :many
+SELECT hour FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type ListSLOHourStartsParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHourStartsParams) ([]pgtype.Timestamptz, error) {
+	rows, err := db.Query(ctx, listSLOHourStarts, arg.SloID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Timestamptz{}
+	for rows.Next() {
+		var hour pgtype.Timestamptz
+		if err := rows.Scan(&hour); err != nil {
+			return nil, err
+		}
+		items = append(items, hour)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -57520,6 +57721,18 @@ func (q *Queries) PurgeAccountManagedPostgresCreationReceipts(ctx context.Contex
 	return err
 }
 
+const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
+DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
+`
+
+func (q *Queries) PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSLOHoursBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -60942,7 +61155,7 @@ func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, d
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -60972,6 +61185,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.CustomMetricName,
+		&i.SloID,
 	)
 	return i, err
 }
@@ -75931,6 +76145,29 @@ func (q *Queries) SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBT
 	return bytes, err
 }
 
+const sumSLOHours = `-- name: SumSLOHours :one
+SELECT coalesce(sum(good), 0)::bigint AS good, coalesce(sum(total), 0)::bigint AS total, count(*)::bigint AS hours
+FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type SumSLOHoursParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+type SumSLOHoursRow struct {
+	Good  int64
+	Total int64
+	Hours int64
+}
+
+func (q *Queries) SumSLOHours(ctx context.Context, db DBTX, arg SumSLOHoursParams) (SumSLOHoursRow, error) {
+	row := db.QueryRow(ctx, sumSLOHours, arg.SloID, arg.Since)
+	var i SumSLOHoursRow
+	err := row.Scan(&i.Good, &i.Total, &i.Hours)
+	return i, err
+}
+
 const summarizeCustomerOperationWorkflowAttention = `-- name: SummarizeCustomerOperationWorkflowAttention :one
 WITH eligible AS (
 SELECT jsonb_build_object(
@@ -77430,7 +77667,7 @@ UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean
  webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($10::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name
+WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, custom_metric_name, slo_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -77488,6 +77725,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.CustomMetricName,
+		&i.SloID,
 	)
 	return i, err
 }
@@ -78740,6 +78978,29 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.AffectedCount,
 		arg.RegressionFactor,
 		arg.Column8,
+	)
+	return err
+}
+
+const upsertSLOHour = `-- name: UpsertSLOHour :exec
+INSERT INTO app_slo_hourly (slo_id, hour, good, total)
+VALUES ($1::uuid, $2::timestamptz, $3::bigint, $4::bigint)
+ON CONFLICT (slo_id, hour) DO UPDATE SET good = EXCLUDED.good, total = EXCLUDED.total
+`
+
+type UpsertSLOHourParams struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
+}
+
+func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error {
+	_, err := db.Exec(ctx, upsertSLOHour,
+		arg.SloID,
+		arg.Hour,
+		arg.Good,
+		arg.Total,
 	)
 	return err
 }

@@ -191,6 +191,10 @@ or `[warn]` in the first 512 bytes. This is the same classification as
 counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
 rollback, and every window.
+## SLO alerts
+
+`slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own
+SLOs, named with `slo_id`. See [SLOs and error budgets](slos.md#alert-on-an-slo).
 
 ## Event consumer routing alerts
 

@@ -169,6 +169,9 @@ var AllowedAlertRuleMetrics = []string{
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
 	"slo_burn_rate",
+	// ADR-747: one customer SLO, named by slo_id.
+	AlertRuleMetricSLOBudgetBurn,
+	AlertRuleMetricSLOBudgetRemaining,
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against
@@ -195,6 +198,19 @@ const AlertRuleMetricCustomMetric = "custom_metric"
 // longer windows average a pushed gauge over days, which hides the incident
 // the alert exists to catch. Mirrors alert_rules_custom_metric_chk.
 var CustomMetricAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
+
+// ADR-747 SLO alert metrics. Both are app-scoped and name one SLO by slo_id.
+// slo_budget_burn is the multi-window burn rate against the SLO's own
+// objective; slo_budget_remaining_pct is the share of its budget left.
+const (
+	AlertRuleMetricSLOBudgetBurn      = "slo_budget_burn"
+	AlertRuleMetricSLOBudgetRemaining = "slo_budget_remaining_pct"
+)
+
+// IsSLOAlertMetric reports whether a metric names a customer SLO via slo_id.
+func IsSLOAlertMetric(metric string) bool {
+	return metric == AlertRuleMetricSLOBudgetBurn || metric == AlertRuleMetricSLOBudgetRemaining
+}
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
 var AllowedAlertRuleComparisons = []string{"gt", "gte", "lt", "lte"}
@@ -309,6 +325,7 @@ type CreateAlertRuleRequest struct {
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
 	CustomMetricName                string  `json:"custom_metric_name,omitempty"`
+	SLOID                           string  `json:"slo_id,omitempty"`
 	// ChannelIDs are ADR-749 notification channels the rule delivers to.
 	// With at least one channel, webhook_url and webhook_secret may be omitted.
 	ChannelIDs      []string `json:"channel_ids,omitempty"`
@@ -376,6 +393,7 @@ type AlertRuleResponse struct {
 	WindowSpec                      string   `json:"window_spec"`
 	FailureSource                   string   `json:"failure_source,omitempty"`
 	CustomMetricName                string   `json:"custom_metric_name,omitempty"`
+	SLOID                           string   `json:"slo_id,omitempty"`
 	ChannelIDs                      []string `json:"channel_ids,omitempty"`
 	Action                          string   `json:"action"`
 	WebhookURL                      string   `json:"webhook_url"`
@@ -407,6 +425,7 @@ type AlertRuleRow struct {
 	WindowSpec                      string
 	FailureSource                   string
 	CustomMetricName                string
+	SLOID                           string
 	Action                          string
 	WebhookURL                      string
 	CooldownMinutes                 int
@@ -440,6 +459,7 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		WindowSpec:                      r.WindowSpec,
 		FailureSource:                   r.FailureSource,
 		CustomMetricName:                r.CustomMetricName,
+		SLOID:                           r.SLOID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,
