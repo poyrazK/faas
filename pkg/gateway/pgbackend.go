@@ -1021,10 +1021,11 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		if target.CustomDomain {
 			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
 			if err != nil {
-				if b.log != nil {
-					b.log.Warn("gateway: custom domain cache validation failed", "host", host, "err", err)
-				}
-				return App{}, false
+				// The validation could not reach the registry. Treat it like
+				// any other route lookup error (ADR-190, ADR-1237 §5): serve
+				// the last-known-good route within the stale TTL instead of
+				// failing every request to the domain.
+				return b.lookupStale(ctx, host, err)
 			}
 			if !active {
 				b.routes.Invalidate(host)
@@ -1046,6 +1047,12 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.CustomDomainRoute = target.CustomDomain
 				if !b.prepareProductionWeights(ctx, app) {
 					return App{}, false
+				}
+				if target.CustomDomain {
+					// The registry just confirmed this route, so its stale
+					// TTL restarts from now rather than from the first
+					// resolution that filled the cache.
+					b.stale.Put(host, app)
 				}
 				return app, true
 			}
