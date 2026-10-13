@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phase 1 (the `auth` credential mode) in progress
+- **Status:** proposed; phase 1 (the `auth` credential mode) implemented, not yet qualified on a live backend
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -224,8 +224,10 @@ in `pkg/api/limits.go`.
 ## Acceptance
 
 PostgreSQL tests cover isolation, ownership, idempotency, rotation and
-revocation of the `auth` mode. Pinned GoTrue must migrate and serve against
-that credential on PostgreSQL 16. Native acceptance must show sign-up, Data
+revocation of the `auth` mode. All 75 GoTrue v2.197.0 migrations have been
+replayed through an `auth` login on PostgreSQL 16: the 16 RLS-enabled tables
+belong to the auth owner and accept its writes. The GoTrue binary must still
+migrate and serve against that credential. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits. This ADR alone
 changes no production gate.
