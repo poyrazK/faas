@@ -33,6 +33,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_APP_ERRORS_TLS_CERT_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_KEY_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_AUTH_SOCKET` | apid, gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_APID_BACKGROUND_LEASE` | apid | `default` |  |  | `` | ADR-1152; apid runs its shared-state background workers only on the node holding the apid-background lease. "0" runs them on every replica (single control node only) |
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
@@ -322,6 +323,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` | shared | `default` |  |  | `` | optional independently approved PostgreSQL qualification-bundle manifest path; supplying this path requires combined staging qualification and the native guest report; reload requires an apid restart (ADR-992) |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_METADATA_ENV_ENDPOINT` | guest, shared | `guest` |  | http://169.254.169.254/v1/metadata/env | `` | guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests |
+| `FAAS_METERD_LEASE` | meterd | `default` |  |  | `` | ADR-1152; meterd waits as a standby until it holds the meterd lease and exits when it loses it. "0" turns the gate off |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
 | `FAAS_MIGRATE_LIVE_LEASE_SECONDS` | schedd | `default` |  |  | `` |  |
@@ -476,6 +478,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_ADDR` | meterd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_APP_TASK_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded app-task worker pool; 1 by default and at most 32; only consulted when FAAS_APP_TASK_DISPATCH=1 |
+| `FAAS_SCHEDD_CENTRAL_LEASE` | schedd | `default` |  |  | `` | ADR-1152; a central schedd (empty FAAS_NODE_NAME) waits as a standby until it holds the central-scheduler lease and exits when it loses it. "0" turns the gate off |
 | `FAAS_SCHEDD_CONFIG` | schedd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_SCHEDD_FC_VERSION` | schedd | `dev-only` |  |  | `` | pins the Firecracker version instead of detecting it, so KVM-free acceptance can reach the snapshot-restore path and the ADR-005 staleness contract; must never be set on a production host, where the running binary is the only truthful source |
