@@ -2,8 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventExecutionLineageRetryJobControlReceipt } from './EventExecutionLineageRetryJobControlReceipt.js';
 import type { EventExecutionLineageRetryJobItem } from './EventExecutionLineageRetryJobItem.js';
 export type EventExecutionLineageRetryJob = {
+  /**
+   * Immutable command outcome accompanying a UUID-keyed control response; outer job fields are current observations.
+   */
+  control_receipt?: EventExecutionLineageRetryJobControlReceipt;
   request_id: string;
   subscription_id: string;
   app_id: string;

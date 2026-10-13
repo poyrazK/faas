@@ -53,6 +53,11 @@ func (s *PgStore) controlEventExecutionLineageRetryJob(ctx context.Context, acco
 	if err := validLineageJobCancellation(account, app, sub, id, api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt}); err != nil {
 		return out, err
 	}
+	var err error
+	req.CommandID, err = lineageControlCommandID(req.CommandID)
+	if err != nil {
+		return out, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return out, err
@@ -81,9 +86,39 @@ func (s *PgStore) controlEventExecutionLineageRetryJob(ctx context.Context, acco
 	if !out.RetainUntil.After(time.Now()) {
 		return out, ErrNotFound
 	}
+	if !out.CreatedAt.Equal(req.ExpectedCreatedAt) {
+		return api.EventExecutionLineageRetryJob{}, ErrConflict
+	}
+	var sequence int64
+	if req.CommandID != "" {
+		prior, e := q.GetEventExecutionLineageRetryControlReceipt(ctx, tx, sqlc.GetEventExecutionLineageRetryControlReceiptParams{AccountID: row.AccountID, AppID: row.AppID, SubscriptionID: row.SubscriptionID, JobRequestID: row.RequestID, CommandID: mustPgUUID(req.CommandID)})
+		if e == nil {
+			receipt, e := lineageControlReceiptFromRow(prior)
+			if e != nil {
+				return api.EventExecutionLineageRetryJob{}, e
+			}
+			if e = replayLineageControlReceipt(&out, receipt, action, req.ExpectedCreatedAt); e != nil {
+				return api.EventExecutionLineageRetryJob{}, e
+			}
+			if e = tx.Commit(ctx); e != nil {
+				return api.EventExecutionLineageRetryJob{}, e
+			}
+			return out, nil
+		}
+		if !errors.Is(e, pgx.ErrNoRows) {
+			return api.EventExecutionLineageRetryJob{}, e
+		}
+		sequence, err = q.EventExecutionLineageRetryControlSequence(ctx, tx, sqlc.EventExecutionLineageRetryControlSequenceParams{SubscriptionID: row.SubscriptionID, JobRequestID: row.RequestID})
+		if err != nil {
+			return api.EventExecutionLineageRetryJob{}, err
+		}
+	}
 	changed, err := controlLineageRetryJob(&out, action, req.ExpectedCreatedAt)
 	if err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
+	}
+	if req.CommandID != "" && sequence >= api.EventExecutionLineageRetryControlMaxReceipts {
+		return api.EventExecutionLineageRetryJob{}, ErrLineageControlReceiptLimit
 	}
 	if changed {
 		raw, e := json.Marshal(out)
@@ -107,6 +142,22 @@ func (s *PgStore) controlEventExecutionLineageRetryJob(ctx context.Context, acco
 			return api.EventExecutionLineageRetryJob{}, err
 		}
 	}
+	if req.CommandID != "" {
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		if !out.RetainUntil.After(at) {
+			return api.EventExecutionLineageRetryJob{}, ErrNotFound
+		}
+		receipt := newLineageControlReceipt(out, action, req.CommandID, sequence+1, at)
+		raw, e := json.Marshal(receipt)
+		if e != nil {
+			return api.EventExecutionLineageRetryJob{}, e
+		}
+		e = q.RecordEventExecutionLineageRetryControlReceipt(ctx, tx, sqlc.RecordEventExecutionLineageRetryControlReceiptParams{AccountID: row.AccountID, AppID: row.AppID, SubscriptionID: row.SubscriptionID, JobRequestID: row.RequestID, CommandID: mustPgUUID(req.CommandID), Action: action, ExpectedCreatedAt: row.CreatedAt, Sequence: receipt.Sequence, Result: raw, RecordedAt: pgtypeFromTime(at), RetainUntil: row.RetainUntil})
+		if e != nil {
+			return api.EventExecutionLineageRetryJob{}, e
+		}
+		out.ControlReceipt = &receipt
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
 	}
@@ -118,6 +169,11 @@ func (m *MemStore) controlEventExecutionLineageRetryJob(ctx context.Context, acc
 		return out, err
 	}
 	if err := validLineageJobCancellation(account, app, sub, id, api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt}); err != nil {
+		return out, err
+	}
+	var err error
+	req.CommandID, err = lineageControlCommandID(req.CommandID)
+	if err != nil {
 		return out, err
 	}
 	m.mu.Lock()
@@ -133,15 +189,57 @@ func (m *MemStore) controlEventExecutionLineageRetryJob(ctx context.Context, acc
 		return out, ErrNotFound
 	}
 	out = cloneLineageRetryJob(job)
+	if !out.CreatedAt.Equal(req.ExpectedCreatedAt) {
+		return api.EventExecutionLineageRetryJob{}, ErrConflict
+	}
+	var sequence int64
+	if req.CommandID != "" {
+		if prior, ok := coverage.controlReceipts[id][req.CommandID]; ok {
+			if err := replayLineageControlReceipt(&out, prior, action, req.ExpectedCreatedAt); err != nil {
+				return api.EventExecutionLineageRetryJob{}, err
+			}
+			return out, nil
+		}
+		for _, receipt := range coverage.controlReceipts[id] {
+			sequence = max(sequence, receipt.Sequence)
+		}
+	}
 	changed, err := controlLineageRetryJob(&out, action, req.ExpectedCreatedAt)
 	if err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
+	}
+	if req.CommandID != "" && sequence >= api.EventExecutionLineageRetryControlMaxReceipts {
+		return api.EventExecutionLineageRetryJob{}, ErrLineageControlReceiptLimit
+	}
+	var receipt *api.EventExecutionLineageRetryJobControlReceipt
+	if req.CommandID != "" {
+		at := time.Now().UTC().Truncate(time.Microsecond)
+		if !out.RetainUntil.After(at) {
+			return api.EventExecutionLineageRetryJob{}, ErrNotFound
+		}
+		value := newLineageControlReceipt(out, action, req.CommandID, sequence+1, at)
+		if _, err := json.Marshal(value); err != nil {
+			return api.EventExecutionLineageRetryJob{}, err
+		}
+		receipt = &value
 	}
 	if changed {
 		if _, err = json.Marshal(out); err != nil {
 			return api.EventExecutionLineageRetryJob{}, err
 		}
 		coverage.jobs[id] = cloneLineageRetryJob(out)
+	}
+	if receipt != nil {
+		if coverage.controlReceipts == nil {
+			coverage.controlReceipts = make(map[string]map[string]api.EventExecutionLineageRetryJobControlReceipt)
+		}
+		if coverage.controlReceipts[id] == nil {
+			coverage.controlReceipts[id] = make(map[string]api.EventExecutionLineageRetryJobControlReceipt)
+		}
+		coverage.controlReceipts[id][req.CommandID] = *receipt
+		out.ControlReceipt = receipt
+	}
+	if changed || receipt != nil {
 		m.eventExecutionCoverage[sub] = coverage
 	}
 	return out, nil

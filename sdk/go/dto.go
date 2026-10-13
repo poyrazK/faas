@@ -533,3 +533,6 @@ type EventExecutionLineageRetryJobSummary = api.EventExecutionLineageRetryJobSum
 type EventExecutionLineageRetryJobs = api.EventExecutionLineageRetryJobs
 
 type ControlEventExecutionLineageRetryJobRequest = api.ControlEventExecutionLineageRetryJobRequest
+
+type EventExecutionLineageRetryJobControlReceipt = api.EventExecutionLineageRetryJobControlReceipt
+type EventExecutionLineageRetryJobControls = api.EventExecutionLineageRetryJobControls

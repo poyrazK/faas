@@ -15,6 +15,7 @@ import (
 )
 
 type EventExecutionLineageRetryJobsStore interface {
+	ListEventExecutionLineageRetryJobControls(context.Context, string, string, string, string, time.Time, int64, int) (api.EventExecutionLineageRetryJobControls, error)
 	ControlEventExecutionLineageRetryJob(context.Context, string, string, string, string, string, api.ControlEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error)
 	ListEventExecutionLineageRetryJobs(context.Context, string, string, string, string, string, int) (api.EventExecutionLineageRetryJobs, error)
 	PreviewEventExecutionLineageRetries(context.Context, string, string, string, string, int64, int) (api.EventExecutionLineageCases, error)
@@ -69,6 +70,10 @@ func newLineageRetryJob(app, sub string, req api.CreateEventExecutionLineageRetr
 	return job
 }
 func cloneLineageRetryJob(job api.EventExecutionLineageRetryJob) api.EventExecutionLineageRetryJob {
+	if job.ControlReceipt != nil {
+		receipt := *job.ControlReceipt
+		job.ControlReceipt = &receipt
+	}
 	job.Items = append([]api.EventExecutionLineageRetryJobItem(nil), job.Items...)
 	for i, item := range job.Items {
 		if item.Result != nil {

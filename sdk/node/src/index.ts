@@ -406,3 +406,6 @@ export type { EventExecutionLineageRetryJobSummary } from './generated/models/Ev
 export type { EventExecutionLineageRetryJobs } from './generated/models/EventExecutionLineageRetryJobs.js';
 
 export type { ControlEventExecutionLineageRetryJobRequest } from './generated/models/ControlEventExecutionLineageRetryJobRequest.js';
+
+export type { EventExecutionLineageRetryJobControlReceipt } from './generated/models/EventExecutionLineageRetryJobControlReceipt.js';
+export type { EventExecutionLineageRetryJobControls } from './generated/models/EventExecutionLineageRetryJobControls.js';

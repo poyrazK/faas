@@ -742,6 +742,7 @@ type Querier interface {
 	// Admission roots include settled receipts and materialized backfill recipients.
 	EventExecutionLineageRepairReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageRepairReceiptsParams) ([]EventExecutionLineageRepairReceiptsRow, error)
 	EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairRootParams) (EventExecutionLineageRepairRootRow, error)
+	EventExecutionLineageRetryControlSequence(ctx context.Context, db DBTX, arg EventExecutionLineageRetryControlSequenceParams) (int64, error)
 	EventExecutionLineageRetryJobIdentity(ctx context.Context, db DBTX, arg EventExecutionLineageRetryJobIdentityParams) (EventExecutionLineageRetryJob, error)
 	EventExecutionLineageRetryResult(ctx context.Context, db DBTX, arg EventExecutionLineageRetryResultParams) (EventExecutionLineageRetryResultRow, error)
 	EventExecutionRecoveryBoundary(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1143,6 +1144,7 @@ type Querier interface {
 	GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetEnvironmentGitSourceParams) (EnvironmentGitSource, error)
 	GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error)
 	GetEventExecutionLineageBackfillProgress(ctx context.Context, db DBTX, arg GetEventExecutionLineageBackfillProgressParams) ([]byte, error)
+	GetEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryControlReceiptParams) (EventExecutionLineageRetryControlReceipt, error)
 	GetEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryJobParams) (EventExecutionLineageRetryJob, error)
 	GetEventExecutionReconciliation(ctx context.Context, db DBTX, arg GetEventExecutionReconciliationParams) (GetEventExecutionReconciliationRow, error)
 	GetEventWorkflowReceipt(ctx context.Context, db DBTX, arg GetEventWorkflowReceiptParams) (pgtype.UUID, error)
@@ -1935,6 +1937,7 @@ type Querier interface {
 	// and cohort under source/app/request locks before issuing a new attempt.
 	ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationsForDispatchParams) ([]pgtype.UUID, error)
 	ListEventExecutionLineageCases(ctx context.Context, db DBTX, arg ListEventExecutionLineageCasesParams) ([]EventExecutionLineageCase, error)
+	ListEventExecutionLineageRetryControlReceipts(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryControlReceiptsParams) ([]EventExecutionLineageRetryControlReceipt, error)
 	ListEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryJobsParams) ([]ListEventExecutionLineageRetryJobsRow, error)
 	// EPIC #1278 / Workstream B — durable internal event subscriptions.
 	// A subscription is app-owned but keeps account_id denormalized so scheduler
@@ -3215,6 +3218,7 @@ type Querier interface {
 	RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
 	RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error
 	RecordEventExecutionLineageCase(ctx context.Context, db DBTX, arg RecordEventExecutionLineageCaseParams) (int64, error)
+	RecordEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg RecordEventExecutionLineageRetryControlReceiptParams) error
 	RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list

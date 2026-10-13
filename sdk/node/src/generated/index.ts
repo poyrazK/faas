@@ -573,6 +573,8 @@ export type { EventExecutionLineageCase } from './models/EventExecutionLineageCa
 export type { EventExecutionLineageCaseBackfill } from './models/EventExecutionLineageCaseBackfill.js';
 export type { EventExecutionLineageCases } from './models/EventExecutionLineageCases.js';
 export type { EventExecutionLineageRetryJob } from './models/EventExecutionLineageRetryJob.js';
+export type { EventExecutionLineageRetryJobControlReceipt } from './models/EventExecutionLineageRetryJobControlReceipt.js';
+export type { EventExecutionLineageRetryJobControls } from './models/EventExecutionLineageRetryJobControls.js';
 export type { EventExecutionLineageRetryJobItem } from './models/EventExecutionLineageRetryJobItem.js';
 export type { EventExecutionLineageRetryJobs } from './models/EventExecutionLineageRetryJobs.js';
 export type { EventExecutionLineageRetryJobSummary } from './models/EventExecutionLineageRetryJobSummary.js';

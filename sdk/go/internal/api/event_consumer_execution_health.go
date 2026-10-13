@@ -153,15 +153,16 @@ type EventExecutionLineageRetryJobItem struct {
 	Result    *EventExecutionLineageCase          `json:"result,omitempty"`
 }
 type EventExecutionLineageRetryJob struct {
-	RequestID      string                              `json:"request_id"`
-	SubscriptionID string                              `json:"subscription_id"`
-	AppID          string                              `json:"app_id"`
-	Status         string                              `json:"status"`
-	Processed      int                                 `json:"processed"`
-	Items          []EventExecutionLineageRetryJobItem `json:"items"`
-	CreatedAt      time.Time                           `json:"created_at"`
-	UpdatedAt      time.Time                           `json:"updated_at"`
-	RetainUntil    time.Time                           `json:"retain_until"`
+	ControlReceipt *EventExecutionLineageRetryJobControlReceipt `json:"control_receipt,omitempty"`
+	RequestID      string                                       `json:"request_id"`
+	SubscriptionID string                                       `json:"subscription_id"`
+	AppID          string                                       `json:"app_id"`
+	Status         string                                       `json:"status"`
+	Processed      int                                          `json:"processed"`
+	Items          []EventExecutionLineageRetryJobItem          `json:"items"`
+	CreatedAt      time.Time                                    `json:"created_at"`
+	UpdatedAt      time.Time                                    `json:"updated_at"`
+	RetainUntil    time.Time                                    `json:"retain_until"`
 }
 
 func (c *Client) PreviewEventExecutionLineageRetries(ctx context.Context, app, sub, reason string, after int64, limit int) (EventExecutionLineageCases, error) {
@@ -193,6 +194,7 @@ func (c *Client) CancelEventExecutionLineageRetryJob(ctx context.Context, app, s
 
 // ControlEventExecutionLineageRetryJobRequest fences the original bulk job incarnation.
 type ControlEventExecutionLineageRetryJobRequest struct {
+	CommandID         string    `json:"command_id,omitempty"`
 	ExpectedCreatedAt time.Time `json:"expected_created_at"`
 }
 
@@ -205,6 +207,33 @@ func (c *Client) ResumeEventExecutionLineageRetryJob(ctx context.Context, app, s
 func (c *Client) controlEventExecutionLineageRetryJob(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
 	var out EventExecutionLineageRetryJob
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(id)+"/"+action, req, &out)
+	return out, err
+}
+
+// EventExecutionLineageRetryJobControlReceipt is the immutable outcome of a UUID-keyed control.
+type EventExecutionLineageRetryJobControlReceipt struct {
+	CommandID         string    `json:"command_id"`
+	Sequence          int64     `json:"sequence"`
+	JobRequestID      string    `json:"job_request_id"`
+	SubscriptionID    string    `json:"subscription_id"`
+	AppID             string    `json:"app_id"`
+	Action            string    `json:"action"`
+	ExpectedCreatedAt time.Time `json:"expected_created_at"`
+	ResultStatus      string    `json:"result_status"`
+	Processed         int       `json:"processed"`
+	Selected          int       `json:"selected"`
+	JobUpdatedAt      time.Time `json:"job_updated_at"`
+	RecordedAt        time.Time `json:"recorded_at"`
+	RetainUntil       time.Time `json:"retain_until"`
+}
+type EventExecutionLineageRetryJobControls struct {
+	Controls  []EventExecutionLineageRetryJobControlReceipt `json:"controls"`
+	NextAfter int64                                         `json:"next_after,omitempty"`
+}
+
+func (c *Client) ListEventExecutionLineageRetryJobControls(ctx context.Context, app, sub, id string, expected time.Time, after int64, limit int) (EventExecutionLineageRetryJobControls, error) {
+	var out EventExecutionLineageRetryJobControls
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(id)+"/controls?expected_created_at="+url.QueryEscape(expected.Format(time.RFC3339Nano))+"&after="+strconv.FormatInt(after, 10)+"&limit="+strconv.Itoa(limit), nil, &out)
 	return out, err
 }
 

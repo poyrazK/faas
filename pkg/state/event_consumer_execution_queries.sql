@@ -350,3 +350,24 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
  AND (sqlc.arg(status)::text='' OR state=sqlc.arg(status)::text)
  AND (NOT sqlc.arg(has_after)::boolean OR (created_at,request_id)<(sqlc.arg(after_created_at)::timestamptz,sqlc.arg(after_request_id)::uuid))
 ORDER BY created_at DESC,request_id DESC LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: GetEventExecutionLineageRetryControlReceipt :one
+SELECT * FROM event_execution_lineage_retry_control_receipts
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND job_request_id=sqlc.arg(job_request_id)::uuid AND command_id=sqlc.arg(command_id)::uuid;
+
+-- name: EventExecutionLineageRetryControlSequence :one
+SELECT coalesce(max(sequence),0)::bigint FROM event_execution_lineage_retry_control_receipts
+WHERE subscription_id=sqlc.arg(subscription_id)::uuid AND job_request_id=sqlc.arg(job_request_id)::uuid;
+
+-- name: RecordEventExecutionLineageRetryControlReceipt :exec
+INSERT INTO event_execution_lineage_retry_control_receipts(subscription_id,job_request_id,command_id,account_id,app_id,action,expected_created_at,sequence,result,recorded_at,retain_until)
+VALUES(sqlc.arg(subscription_id)::uuid,sqlc.arg(job_request_id)::uuid,sqlc.arg(command_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(action)::text,sqlc.arg(expected_created_at)::timestamptz,sqlc.arg(sequence)::bigint,sqlc.arg(result)::jsonb,sqlc.arg(recorded_at)::timestamptz,sqlc.arg(retain_until)::timestamptz);
+
+-- name: ListEventExecutionLineageRetryControlReceipts :many
+SELECT * FROM event_execution_lineage_retry_control_receipts
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND job_request_id=sqlc.arg(job_request_id)::uuid
+ AND expected_created_at=sqlc.arg(expected_created_at)::timestamptz AND retain_until>statement_timestamp()
+ AND sequence>sqlc.arg(after_sequence)::bigint
+ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;

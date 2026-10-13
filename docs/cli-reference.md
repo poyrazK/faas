@@ -2388,25 +2388,39 @@ Submit a reviewed fixed lineage retry selection
 |---|---|---|
 | `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
 
+### events subscription-lineage-retry-job-controls
+
+List retained immutable pause/resume command receipts
+
+`gregale events subscription-lineage-retry-job-controls [--expected-created-at <TIMESTAMP>] [--limit <N>] [--after <SEQUENCE>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <SEQUENCE>` | exclusive recorded command sequence |  |
+
 ### events subscription-lineage-retry-job-pause
 
 Pause unprocessed bulk lineage retries
 
-`gregale events subscription-lineage-retry-job-pause [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+`gregale events subscription-lineage-retry-job-pause [--expected-created-at <TIMESTAMP>] [--command-id <UUID>] <app> <subscription-id> <request-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+| `--command-id <UUID>` | optional immutable receipt identity; reuse after timeouts |  |
 
 ### events subscription-lineage-retry-job-resume
 
 Resume a paused bulk lineage retry job
 
-`gregale events subscription-lineage-retry-job-resume [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+`gregale events subscription-lineage-retry-job-resume [--expected-created-at <TIMESTAMP>] [--command-id <UUID>] <app> <subscription-id> <request-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+| `--command-id <UUID>` | optional immutable receipt identity; reuse after timeouts |  |
 
 ### events subscription-lineage-retry-job-cancel
 

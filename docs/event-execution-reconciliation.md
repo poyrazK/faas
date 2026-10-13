@@ -461,8 +461,8 @@ requests remain `already_submitted` in preflight. Paused jobs count as unfinishe
 bulk work, so diagnostic case scans still wait until those jobs finish, are
 cancelled or expire. Normal forward repair and delivery execution remain independent.
 
-These are desired-state controls. Conflicting pause/resume actions follow server
-lock order; a delayed repeated action can reapply after an opposite action. After
+Without a command UUID these remain desired-state controls. Conflicting
+pause/resume actions follow server lock order; a delayed repeated action can reapply after an opposite action. After
 a timeout or lost response, read current state before repeating the desired control
 with the original UUID and creation timestamp. Cancelled jobs remain terminal.
 
@@ -470,6 +470,70 @@ Apply the state-check migration and upgrade API/scheduler writers before enablin
 controls. Older CLI/SDK versions may reject paused states. Downgrade deliberately
 fails while paused rows remain: explicitly resume/cancel them or expire and prune
 them first. The migration does not resume work on its own.
+
+## Repeat a control safely after a lost response
+
+Choose a fresh command UUID for each deliberate pause/resume action and preserve
+it with the job's original creation guard:
+
+```sh
+gregale events subscription-lineage-retry-job-pause APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id PAUSE_COMMAND_UUID
+gregale events subscription-lineage-retry-job-resume APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id RESUME_COMMAND_UUID
+# A repeat of the original pause UUID acknowledges that command without pausing again:
+gregale --json events subscription-lineage-retry-job-pause APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --command-id PAUSE_COMMAND_UUID
+```
+
+API bodies add optional `command_id` alongside `expected_created_at`. Nonempty
+command IDs must be nonzero UUIDs; casing is normalized. A UUID is scoped to this
+subscription/job incarnation. Reuse it only with its original action and creation
+guard. An opposite action returns 409 `event_lineage_retry_control_command_changed`;
+a stale job creation guard retains 409 `event_lineage_retry_job_changed`.
+
+State changes and the successful command receipt commit atomically under the
+worker's job lock. A repeat looks up the receipt before attempting another state
+transition, including when the job has since resumed, completed or been cancelled.
+The response's outer job fields are current observations. Its `control_receipt`
+is the original immutable command outcome, with action, sequence, result_status,
+selected/processed counts, observed job update time, recording time, target IDs,
+creation guard and expiry. A repeated pause may therefore return current job status
+`pending` with receipt result_status `paused`. Inspect these fields separately.
+The receipt contains metadata only and is not saved in the current job snapshot.
+
+At most 128 receipts are retained per job. Successful new-UUID no-ops also record
+a receipt and consume a slot; repeats of an existing UUID do not. New UUIDs beyond
+the cap return 429 `event_lineage_retry_control_limit` without changing the job.
+Existing UUID repeats, legacy controls and cancellation remain available. Failed
+requests create no receipt. Receipts expire with the job's unchanged original
+retention deadline and are deleted when that job is pruned. Old creation guards
+prevent commands targeting a replacement after physical pruning and UUID reuse.
+
+To inspect retained receipts:
+
+```sh
+gregale --json events subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --limit 50
+# Continue with the returned sequence cursor:
+gregale --json events subscription-lineage-retry-job-controls APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --after NEXT_AFTER
+```
+
+GET `execution-reconciliation/retry-jobs/{requestID}/controls` requires read scope,
+MFA and query `expected_created_at`. The default limit is 50 (zero also selects the
+default), maximum 200. `after` is an exclusive sequence, default 0. Receipts appear
+in ascending per-job sequence, assigned under the job lock; timestamps are
+informational and do not determine ordering. The response has `controls` and,
+when another page was observed, `next_after`. A retained job with no UUID-keyed
+commands returns an empty array. Missing/expired jobs return 404 and stale creation
+guards 409. Pagination observes live appended receipts and does not reserve future
+commands or extend retention. Legacy controls without command IDs and failed
+requests are absent; this is not a complete historical audit.
+
+Go exposes `ListEventExecutionLineageRetryJobControls`; Node and Python expose the
+corresponding events operation. Pause/resume SDK bodies accept command_id and job
+responses expose optional control_receipt. Without command_id, the previous
+response shape and desired-state semantics remain. After a timeout with a command
+UUID, repeat the same UUID/action/guard; without one, read current state first.
+Apply the receipt migration and upgrade API writers before using this field.
+Downgrade refuses while receipts remain; stop UUID-keyed controls and expire/prune
+their parent jobs first to avoid discarding live deduplication evidence.
 
 ## Cancel a bulk retry job
 

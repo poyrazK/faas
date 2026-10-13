@@ -11,8 +11,10 @@ from ..models.event_execution_lineage_retry_job_status import (
     EventExecutionLineageRetryJobStatus,
     check_event_execution_lineage_retry_job_status,
 )
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.event_execution_lineage_retry_job_control_receipt import EventExecutionLineageRetryJobControlReceipt
     from ..models.event_execution_lineage_retry_job_item import EventExecutionLineageRetryJobItem
 
 
@@ -31,6 +33,7 @@ class EventExecutionLineageRetryJob:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     retain_until: datetime.datetime
+    control_receipt: EventExecutionLineageRetryJobControlReceipt | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)
@@ -54,6 +57,10 @@ class EventExecutionLineageRetryJob:
 
         retain_until = self.retain_until.isoformat()
 
+        control_receipt: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.control_receipt, Unset):
+            control_receipt = self.control_receipt.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -69,11 +76,16 @@ class EventExecutionLineageRetryJob:
                 "retain_until": retain_until,
             }
         )
+        if control_receipt is not UNSET:
+            field_dict["control_receipt"] = control_receipt
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_execution_lineage_retry_job_control_receipt import (
+            EventExecutionLineageRetryJobControlReceipt,
+        )
         from ..models.event_execution_lineage_retry_job_item import EventExecutionLineageRetryJobItem
 
         d = dict(src_dict)
@@ -100,6 +112,13 @@ class EventExecutionLineageRetryJob:
 
         retain_until = datetime.datetime.fromisoformat(d.pop("retain_until"))
 
+        _control_receipt = d.pop("control_receipt", UNSET)
+        control_receipt: EventExecutionLineageRetryJobControlReceipt | Unset
+        if isinstance(_control_receipt, Unset):
+            control_receipt = UNSET
+        else:
+            control_receipt = EventExecutionLineageRetryJobControlReceipt.from_dict(_control_receipt)
+
         event_execution_lineage_retry_job = cls(
             request_id=request_id,
             subscription_id=subscription_id,
@@ -110,6 +129,7 @@ class EventExecutionLineageRetryJob:
             created_at=created_at,
             updated_at=updated_at,
             retain_until=retain_until,
+            control_receipt=control_receipt,
         )
 
         return event_execution_lineage_retry_job

@@ -4,6 +4,10 @@
 /* eslint-disable */
 export type ControlEventExecutionLineageRetryJobRequest = {
   /**
+   * Optional nonzero command UUID; reuse it with the original action and creation guard after a lost response.
+   */
+  command_id?: string;
+  /**
    * Original nonzero creation timestamp from the reviewed job.
    */
   expected_created_at: string;

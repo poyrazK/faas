@@ -6,6 +6,7 @@ import (
 )
 
 type executionCoverage struct {
+	controlReceipts         map[string]map[string]api.EventExecutionLineageRetryJobControlReceipt
 	jobs                    map[string]api.EventExecutionLineageRetryJob
 	cases                   map[int64]api.EventExecutionLineageCase
 	retries                 map[string]lineageCaseRetry

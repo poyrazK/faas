@@ -914,6 +914,23 @@ func (q *Queries) EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, 
 	return i, err
 }
 
+const eventExecutionLineageRetryControlSequence = `-- name: EventExecutionLineageRetryControlSequence :one
+SELECT coalesce(max(sequence),0)::bigint FROM event_execution_lineage_retry_control_receipts
+WHERE subscription_id=$1::uuid AND job_request_id=$2::uuid
+`
+
+type EventExecutionLineageRetryControlSequenceParams struct {
+	SubscriptionID pgtype.UUID
+	JobRequestID   pgtype.UUID
+}
+
+func (q *Queries) EventExecutionLineageRetryControlSequence(ctx context.Context, db DBTX, arg EventExecutionLineageRetryControlSequenceParams) (int64, error) {
+	row := db.QueryRow(ctx, eventExecutionLineageRetryControlSequence, arg.SubscriptionID, arg.JobRequestID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const eventExecutionLineageRetryJobIdentity = `-- name: EventExecutionLineageRetryJobIdentity :one
 SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
  AND subscription_id=$3::uuid AND request_id=$4::uuid
@@ -985,6 +1002,45 @@ func (q *Queries) GetEventExecutionLineageBackfillProgress(ctx context.Context, 
 	var lineage_repair_progress []byte
 	err := row.Scan(&lineage_repair_progress)
 	return lineage_repair_progress, err
+}
+
+const getEventExecutionLineageRetryControlReceipt = `-- name: GetEventExecutionLineageRetryControlReceipt :one
+SELECT subscription_id, job_request_id, command_id, account_id, app_id, action, expected_created_at, sequence, result, recorded_at, retain_until FROM event_execution_lineage_retry_control_receipts
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND job_request_id=$4::uuid AND command_id=$5::uuid
+`
+
+type GetEventExecutionLineageRetryControlReceiptParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	JobRequestID   pgtype.UUID
+	CommandID      pgtype.UUID
+}
+
+func (q *Queries) GetEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg GetEventExecutionLineageRetryControlReceiptParams) (EventExecutionLineageRetryControlReceipt, error) {
+	row := db.QueryRow(ctx, getEventExecutionLineageRetryControlReceipt,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.JobRequestID,
+		arg.CommandID,
+	)
+	var i EventExecutionLineageRetryControlReceipt
+	err := row.Scan(
+		&i.SubscriptionID,
+		&i.JobRequestID,
+		&i.CommandID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Action,
+		&i.ExpectedCreatedAt,
+		&i.Sequence,
+		&i.Result,
+		&i.RecordedAt,
+		&i.RetainUntil,
+	)
+	return i, err
 }
 
 const getEventExecutionLineageRetryJob = `-- name: GetEventExecutionLineageRetryJob :one
@@ -1140,6 +1196,65 @@ func (q *Queries) ListEventExecutionLineageCases(ctx context.Context, db DBTX, a
 			&i.Reason,
 			&i.Revision,
 			&i.RetryCount,
+			&i.RecordedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventExecutionLineageRetryControlReceipts = `-- name: ListEventExecutionLineageRetryControlReceipts :many
+SELECT subscription_id, job_request_id, command_id, account_id, app_id, action, expected_created_at, sequence, result, recorded_at, retain_until FROM event_execution_lineage_retry_control_receipts
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND job_request_id=$4::uuid
+ AND expected_created_at=$5::timestamptz AND retain_until>statement_timestamp()
+ AND sequence>$6::bigint
+ORDER BY sequence LIMIT $7::integer
+`
+
+type ListEventExecutionLineageRetryControlReceiptsParams struct {
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	SubscriptionID    pgtype.UUID
+	JobRequestID      pgtype.UUID
+	ExpectedCreatedAt pgtype.Timestamptz
+	AfterSequence     int64
+	PageLimit         int32
+}
+
+func (q *Queries) ListEventExecutionLineageRetryControlReceipts(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryControlReceiptsParams) ([]EventExecutionLineageRetryControlReceipt, error) {
+	rows, err := db.Query(ctx, listEventExecutionLineageRetryControlReceipts,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.JobRequestID,
+		arg.ExpectedCreatedAt,
+		arg.AfterSequence,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageRetryControlReceipt{}
+	for rows.Next() {
+		var i EventExecutionLineageRetryControlReceipt
+		if err := rows.Scan(
+			&i.SubscriptionID,
+			&i.JobRequestID,
+			&i.CommandID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Action,
+			&i.ExpectedCreatedAt,
+			&i.Sequence,
+			&i.Result,
 			&i.RecordedAt,
 			&i.RetainUntil,
 		); err != nil {
@@ -1548,6 +1663,42 @@ func (q *Queries) RecordEventExecutionLineageCase(ctx context.Context, db DBTX, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordEventExecutionLineageRetryControlReceipt = `-- name: RecordEventExecutionLineageRetryControlReceipt :exec
+INSERT INTO event_execution_lineage_retry_control_receipts(subscription_id,job_request_id,command_id,account_id,app_id,action,expected_created_at,sequence,result,recorded_at,retain_until)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::text,$7::timestamptz,$8::bigint,$9::jsonb,$10::timestamptz,$11::timestamptz)
+`
+
+type RecordEventExecutionLineageRetryControlReceiptParams struct {
+	SubscriptionID    pgtype.UUID
+	JobRequestID      pgtype.UUID
+	CommandID         pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Action            string
+	ExpectedCreatedAt pgtype.Timestamptz
+	Sequence          int64
+	Result            []byte
+	RecordedAt        pgtype.Timestamptz
+	RetainUntil       pgtype.Timestamptz
+}
+
+func (q *Queries) RecordEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg RecordEventExecutionLineageRetryControlReceiptParams) error {
+	_, err := db.Exec(ctx, recordEventExecutionLineageRetryControlReceipt,
+		arg.SubscriptionID,
+		arg.JobRequestID,
+		arg.CommandID,
+		arg.AccountID,
+		arg.AppID,
+		arg.Action,
+		arg.ExpectedCreatedAt,
+		arg.Sequence,
+		arg.Result,
+		arg.RecordedAt,
+		arg.RetainUntil,
+	)
+	return err
 }
 
 const requestEventExecutionReconciliation = `-- name: RequestEventExecutionReconciliation :exec

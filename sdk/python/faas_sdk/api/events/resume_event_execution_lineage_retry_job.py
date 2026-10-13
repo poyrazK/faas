@@ -77,6 +77,11 @@ def _parse_response(
 
         return response_413
 
+    if response.status_code == 429:
+        response_429 = Problem.from_dict(response.json())
+
+        return response_429
+
     if response.status_code == 504:
         response_504 = Problem.from_dict(response.json())
 
@@ -109,14 +114,18 @@ def sync_detailed(
 ) -> Response[EventExecutionLineageRetryJob | Problem]:
     """Resume unprocessed cases in a paused bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls
-    share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending.
-    Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs
-    reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the
-    original retention deadline; stale case guards remain checked by the worker. A worker already
-    holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed,
-    cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an
-    opposite control; read current state after a timeout.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional
+    command_id enables an immutable successful-control receipt scoped to this job incarnation. The job
+    lock commits state and receipt together. Repeating the same command UUID and original inputs returns
+    current job state with its original control_receipt and never reapplies the action, including after
+    another action or terminal completion. Reusing a command UUID with another action returns 409. At
+    most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job.
+    New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the
+    job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields
+    describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
+    selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
+    already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
+    until finished, cancelled or expired.
 
     Args:
         slug (str):
@@ -156,14 +165,18 @@ def sync(
 ) -> EventExecutionLineageRetryJob | Problem | None:
     """Resume unprocessed cases in a paused bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls
-    share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending.
-    Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs
-    reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the
-    original retention deadline; stale case guards remain checked by the worker. A worker already
-    holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed,
-    cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an
-    opposite control; read current state after a timeout.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional
+    command_id enables an immutable successful-control receipt scoped to this job incarnation. The job
+    lock commits state and receipt together. Repeating the same command UUID and original inputs returns
+    current job state with its original control_receipt and never reapplies the action, including after
+    another action or terminal completion. Reusing a command UUID with another action returns 409. At
+    most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job.
+    New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the
+    job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields
+    describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
+    selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
+    already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
+    until finished, cancelled or expired.
 
     Args:
         slug (str):
@@ -198,14 +211,18 @@ async def asyncio_detailed(
 ) -> Response[EventExecutionLineageRetryJob | Problem]:
     """Resume unprocessed cases in a paused bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls
-    share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending.
-    Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs
-    reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the
-    original retention deadline; stale case guards remain checked by the worker. A worker already
-    holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed,
-    cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an
-    opposite control; read current state after a timeout.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional
+    command_id enables an immutable successful-control receipt scoped to this job incarnation. The job
+    lock commits state and receipt together. Repeating the same command UUID and original inputs returns
+    current job state with its original control_receipt and never reapplies the action, including after
+    another action or terminal completion. Reusing a command UUID with another action returns 409. At
+    most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job.
+    New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the
+    job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields
+    describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
+    selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
+    already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
+    until finished, cancelled or expired.
 
     Args:
         slug (str):
@@ -243,14 +260,18 @@ async def asyncio(
 ) -> EventExecutionLineageRetryJob | Problem | None:
     """Resume unprocessed cases in a paused bulk lineage retry job.
 
-     Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls
-    share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending.
-    Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs
-    reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the
-    original retention deadline; stale case guards remain checked by the worker. A worker already
-    holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed,
-    cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an
-    opposite control; read current state after a timeout.
+     Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional
+    command_id enables an immutable successful-control receipt scoped to this job incarnation. The job
+    lock commits state and receipt together. Repeating the same command UUID and original inputs returns
+    current job state with its original control_receipt and never reapplies the action, including after
+    another action or terminal completion. Reusing a command UUID with another action returns 409. At
+    most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job.
+    New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the
+    job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields
+    describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
+    selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
+    already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
+    until finished, cancelled or expired.
 
     Args:
         slug (str):

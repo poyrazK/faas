@@ -2859,6 +2859,20 @@ type EventExecutionLineageRetry struct {
 	RetainUntil      pgtype.Timestamptz
 }
 
+type EventExecutionLineageRetryControlReceipt struct {
+	SubscriptionID    pgtype.UUID
+	JobRequestID      pgtype.UUID
+	CommandID         pgtype.UUID
+	AccountID         pgtype.UUID
+	AppID             pgtype.UUID
+	Action            string
+	ExpectedCreatedAt pgtype.Timestamptz
+	Sequence          int64
+	Result            []byte
+	RecordedAt        pgtype.Timestamptz
+	RetainUntil       pgtype.Timestamptz
+}
+
 type EventExecutionLineageRetryJob struct {
 	SubscriptionID pgtype.UUID
 	RequestID      pgtype.UUID

@@ -15,7 +15,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 	fs := newFlagSet(mode, flag.ContinueOnError)
 	var limit int
 	var after int64
-	var reason, file, expectedCreated string
+	var reason, file, expectedCreated, commandID string
 	switch mode {
 	case "subscription-lineage-retry-preview":
 		fs.IntVar(&limit, "limit", api.EventExecutionLineageCasesPageDefault, "page size")
@@ -25,6 +25,9 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		fs.StringVar(&expectedCreated, "expected-created-at", "", "original creation timestamp from the reviewed job")
 	case "subscription-lineage-retry-job-create":
 		fs.StringVar(&file, "file", "", "JSON request path")
+	}
+	if mode == "subscription-lineage-retry-job-pause" || mode == "subscription-lineage-retry-job-resume" {
+		fs.StringVar(&commandID, "command-id", "", "optional reusable UUID for an immutable control receipt")
 	}
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -81,9 +84,9 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		}
 		switch mode {
 		case "subscription-lineage-retry-job-pause":
-			out, err = client.PauseEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+			out, err = client.PauseEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created, CommandID: commandID})
 		case "subscription-lineage-retry-job-resume":
-			out, err = client.ResumeEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+			out, err = client.ResumeEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created, CommandID: commandID})
 		default:
 			out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
 		}
@@ -95,6 +98,9 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
+	}
+	if receipt := out.ControlReceipt; receipt != nil {
+		_, _ = fmt.Fprintf(osStdout, "Control %s | sequence %d | %s | recorded result %s | processed %d/%d\n", receipt.CommandID, receipt.Sequence, receipt.Action, receipt.ResultStatus, receipt.Processed, receipt.Selected)
 	}
 	_, _ = fmt.Fprintf(osStdout, "Job %s | %s | processed %d/%d\n", oneLine(out.RequestID), oneLine(out.Status), out.Processed, len(out.Items))
 	for _, item := range out.Items {

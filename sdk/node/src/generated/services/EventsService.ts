@@ -22,6 +22,7 @@ import type { EventExecutionLineageCase } from '../models/EventExecutionLineageC
 import type { EventExecutionLineageCaseBackfill } from '../models/EventExecutionLineageCaseBackfill.js';
 import type { EventExecutionLineageCases } from '../models/EventExecutionLineageCases.js';
 import type { EventExecutionLineageRetryJob } from '../models/EventExecutionLineageRetryJob.js';
+import type { EventExecutionLineageRetryJobControls } from '../models/EventExecutionLineageRetryJobControls.js';
 import type { EventExecutionLineageRetryJobs } from '../models/EventExecutionLineageRetryJobs.js';
 import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
@@ -1864,9 +1865,56 @@ export class EventsService {
     });
   }
   /**
+   * List retained immutable bulk retry control receipts.
+   * Requires read scope and MFA. Fences the original job incarnation with expected_created_at. Successful UUID-keyed pause/resume commands, including new-command no-ops, are ordered by their increasing per-job sequence. Duplicate commands create no new receipt. Legacy controls without a UUID and failed requests are absent. Receipts are immutable metadata observations, expire with the original job and cascade on job deletion. Pagination is a live append-only listing, not a reservation; timestamps are informational and sequence defines order. An existing retained job with no receipts returns an empty controls array. Expired/missing jobs return 404 and stale creation guards return 409.
+   * @returns EventExecutionLineageRetryJobControls Immutable command receipts, oldest sequence first.
+   * @throws ApiError
+   */
+  public static listEventExecutionLineageRetryJobControls({
+    slug,
+    subscriptionId,
+    requestId,
+    expectedCreatedAt,
+    after,
+    limit = 50,
+  }: {
+    slug: string,
+    subscriptionId: string,
+    requestId: string,
+    /**
+     * Original nonzero creation timestamp from the reviewed job.
+     */
+    expectedCreatedAt: string,
+    after?: number,
+    limit?: number,
+  }): CancelablePromise<EventExecutionLineageRetryJobControls> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/controls',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'requestID': requestId,
+      },
+      query: {
+        'expected_created_at': expectedCreatedAt,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid identifier, creation guard or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Job creation guard changed; event_lineage_retry_job_changed.`,
+        504: `History read timed out.`,
+      },
+    });
+  }
+  /**
    * Pause unprocessed cases in a retained bulk lineage retry job.
-   * Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending. Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the original retention deadline; stale case guards remain checked by the worker. A worker already holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed, cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an opposite control; read current state after a timeout.
-   * @returns EventExecutionLineageRetryJob Current job with preserved selection, results and progress.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired.
+   * @returns EventExecutionLineageRetryJob Current job; control_receipt contains the immutable original outcome when command_id was supplied.
    * @throws ApiError
    */
   public static pauseEventExecutionLineageRetryJob({
@@ -1904,16 +1952,17 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Creation timestamp changed or job is terminal; stable code event_lineage_retry_job_changed.`,
+        409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).`,
         413: `Request exceeds the 65536-byte body limit.`,
-        504: `Control timed out; read current state before repeating the desired control with the original UUID and creation timestamp.`,
+        429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.`,
+        504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
       },
     });
   }
   /**
    * Resume unprocessed cases in a paused bulk lineage retry job.
-   * Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending. Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the original retention deadline; stale case guards remain checked by the worker. A worker already holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed, cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an opposite control; read current state after a timeout.
-   * @returns EventExecutionLineageRetryJob Current job with preserved selection, results and progress.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired.
+   * @returns EventExecutionLineageRetryJob Current job; control_receipt contains the immutable original outcome when command_id was supplied.
    * @throws ApiError
    */
   public static resumeEventExecutionLineageRetryJob({
@@ -1951,9 +2000,10 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Creation timestamp changed or job is terminal; stable code event_lineage_retry_job_changed.`,
+        409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).`,
         413: `Request exceeds the 65536-byte body limit.`,
-        504: `Control timed out; read current state before repeating the desired control with the original UUID and creation timestamp.`,
+        429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.`,
+        504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
       },
     });
   }

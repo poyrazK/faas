@@ -10410,3 +10410,8 @@ const EventExecutionLineageCaseBackfillBatch = 100
 const EventExecutionLineageRetryJobsPageDefault = 50
 const EventExecutionLineageRetryJobsPageMax = 200
 const EventExecutionLineageRetryJobsCursorMaxBytes = 128
+
+// Control receipts live until the parent retry job expires; repeated command IDs spend no new slot.
+const EventExecutionLineageRetryControlMaxReceipts = 128
+const EventExecutionLineageRetryControlPageDefault = 50
+const EventExecutionLineageRetryControlPageMax = 200

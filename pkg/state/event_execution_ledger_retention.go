@@ -71,6 +71,7 @@ func (m *MemStore) PruneEventExecutionLedger(ctx context.Context, now time.Time,
 		for id, job := range c.jobs {
 			if jobPruned < limit && !job.RetainUntil.After(now) {
 				delete(c.jobs, id)
+				delete(c.controlReceipts, id)
 				jobPruned++
 			}
 		}
