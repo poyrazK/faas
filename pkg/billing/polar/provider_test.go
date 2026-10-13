@@ -183,13 +183,17 @@ func TestPublishObjectStorageLineItemUsesExactMillicentQuantity(t *testing.T) {
 		StorageMillicents: 1200, RequestsMillicents: 34, EgressMillicents: 5, TotalMillicents: 1239,
 		FinalizedAt: period.AddDate(0, 1, 0).Add(time.Minute),
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), record); err != nil {
+	if err := p.PublishObjectStorageLineItem(context.Background(), record, record.TotalMillicents+1); err == nil {
+		t.Fatal("a charge above the record total was published")
+	}
+	// ADR-1200: the overage cap held the charge to 1000 of 1239 millicents.
+	if err := p.PublishObjectStorageLineItem(context.Background(), record, 1000); err != nil {
 		t.Fatal(err)
 	}
 	if got.Name != "object_storage_usage" || got.ExternalID != "faas-object-storage-record-1" || got.ExternalCustomerID != "acct-1" {
 		t.Fatalf("object storage event = %+v", got)
 	}
-	if got.Metadata["charge_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
+	if got.Metadata["charge_millicents"] != float64(1000) || got.Metadata["uncapped_millicents"] != float64(1239) || got.Metadata["storage_millicents"] != float64(1200) {
 		t.Fatalf("object storage event metadata = %+v", got.Metadata)
 	}
 }
@@ -199,7 +203,7 @@ func TestObjectStorageShadowCannotPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}); err == nil || !strings.Contains(err.Error(), "not live") {
+	if err := p.PublishObjectStorageLineItem(context.Background(), state.ObjectStorageBillingRecord{}, 0); err == nil || !strings.Contains(err.Error(), "not live") {
 		t.Fatalf("shadow publish error = %v", err)
 	}
 }

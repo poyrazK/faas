@@ -21,6 +21,7 @@ func (s objectStorageBillingAccounts) ListAllAccounts(context.Context) ([]state.
 
 type objectStorageLineItemRecorder struct {
 	records []state.ObjectStorageBillingRecord
+	charges []int64
 	err     error
 	policy  ObjectStorageLineItemPolicy
 }
@@ -36,11 +37,12 @@ func (s *objectStorageLineItemRecorder) ObjectStorageLineItemPolicy() (ObjectSto
 	return s.policy, true
 }
 
-func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.Context, record state.ObjectStorageBillingRecord) error {
+func (s *objectStorageLineItemRecorder) PublishObjectStorageLineItem(_ context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error {
 	if s.err != nil {
 		return s.err
 	}
 	s.records = append(s.records, record)
+	s.charges = append(s.charges, chargeMillicents)
 	return nil
 }
 
@@ -48,6 +50,25 @@ type objectStorageBillingStore struct {
 	snapshots  map[string]state.ObjectUsageSnapshot
 	records    map[string]state.ObjectStorageBillingRecord
 	deliveries map[string]state.ObjectStorageBillingDelivery
+	// caps and usage back the overage cap reads (ADR-1200); usage rows
+	// carry their hour in Month.
+	caps  map[string]int64
+	usage map[string][]state.Usage
+}
+
+func (s *objectStorageBillingStore) GetAccountOverageCapCents(_ context.Context, account string) (int64, bool, error) {
+	capCents, capped := s.caps[account]
+	return capCents, capped, nil
+}
+
+func (s *objectStorageBillingStore) UsageByHour(_ context.Context, account string, start, end time.Time) ([]state.Usage, error) {
+	var out []state.Usage
+	for _, row := range s.usage[account] {
+		if !row.Month.Before(start) && row.Month.Before(end) {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func (s *objectStorageBillingStore) GetObjectStorageBillingDelivery(_ context.Context, provider, recordID string) (state.ObjectStorageBillingDelivery, error) {
