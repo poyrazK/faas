@@ -100,7 +100,7 @@ func (c OAuthConfig) token(ctx context.Context, values url.Values) (Tokens, erro
 	if err != nil {
 		return Tokens{}, fmt.Errorf("%w: token request failed", ErrUnavailable)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return Tokens{}, fmt.Errorf("%w: token status %d", ErrUnavailable, response.StatusCode)
 	}
@@ -139,7 +139,7 @@ func (c Client) CurrentUser(ctx context.Context, token string) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	var user User
 	if json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&user) != nil || user.ID <= 0 || user.Username == "" {
 		return User{}, ErrUnavailable

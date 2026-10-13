@@ -40,7 +40,7 @@ func (s *server) resolveVerifiedGitLabCommit(ctx context.Context, accountID stri
 		return client, "", "", fmt.Errorf("GitLab connection unavailable: %w", err)
 	}
 	if _, err := client.VerifyRepository(ctx, token, source.Spec.Repository, source.Spec.RepositoryID); err != nil {
-		return client, "", "", fmt.Errorf("%w: %v", errGitLabRepositoryUnavailable, err)
+		return client, "", "", fmt.Errorf("%w: %w", errGitLabRepositoryUnavailable, err)
 	}
 	sha, err := client.ResolveCommit(ctx, token, source.Spec.RepositoryID, ref)
 	if err != nil || !isCanonicalCommitSHA(sha) {
@@ -67,10 +67,10 @@ func (s *server) readGitLabDefinitionAtCommit(ctx context.Context, account state
 		return environmentsync.DesiredState{}, fmt.Errorf("GitLab source stream unavailable: %w", closeErr)
 	}
 	if parseErr != nil {
-		return environmentsync.DesiredState{}, fmt.Errorf("%w: %v", errGitLabDefinitionInvalid, parseErr)
+		return environmentsync.DesiredState{}, fmt.Errorf("%w: %w", errGitLabDefinitionInvalid, parseErr)
 	}
 	if err := s.verifyEnvironmentGitDefinitionScope(ctx, source, desired); err != nil {
-		return environmentsync.DesiredState{}, fmt.Errorf("%w: %v", errGitLabScopeMismatch, err)
+		return environmentsync.DesiredState{}, fmt.Errorf("%w: %w", errGitLabScopeMismatch, err)
 	}
 	return desired, nil
 }

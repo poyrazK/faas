@@ -2884,6 +2884,7 @@
       "manifest_path",
       "mode",
       "project_id",
+      "provider",
       "prune",
       "repository",
       "repository_id",
@@ -4160,6 +4161,20 @@
       "secret_value",
       "upgraded_at",
       "upgraded_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "gitlab_oauth_connections",
+    "columns": [
+      "account_id",
+      "connected_at",
+      "credentials_sealed",
+      "expires_at",
+      "gitlab_user_id",
+      "updated_at",
+      "username",
+      "version"
     ],
     "kind": "account_identity"
   },

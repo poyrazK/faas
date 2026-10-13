@@ -105,7 +105,7 @@ func (c Client) VerifyRepository(ctx context.Context, token, path string, expect
 	if err != nil {
 		return Repository{}, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	var repository Repository
 	if json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&repository) != nil || repository.ID <= 0 || repository.Path != path ||
 		(expectedID > 0 && repository.ID != expectedID) || repository.Archived {
@@ -160,7 +160,7 @@ func (c Client) ResolveCommit(ctx context.Context, token string, repositoryID in
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(target) != nil {
 		return "", ErrUnavailable
 	}
