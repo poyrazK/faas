@@ -83,7 +83,7 @@
 | Wake success, per cell, monthly | 99.9% |
 | Control-plane API availability | 99.9% |
 | Node or zone loss | RPO 0, RTO ≤ 60 s |
-| Region loss | RPO ≤ 60 s, RTO ≤ 30 min (manual promotion at first) |
+| Region loss | RPO ≤ 60 s, RTO about 2–4 h: rebuild from off-region backups, no warm standby |
 | Planned operations | zero failed requests; long-lived streams get a close signal and can resume |
 
 ### Where main is today (e1bfe3368f)
@@ -234,8 +234,8 @@ specifies what runs inside it:
 
 **The directory is HA too.**
 - Its home region is US East. It runs as a three-zone deployment of the
-  same shape: Patroni + etcd, N directory apid replicas, and a
-  `standby_cluster` in the US DR region.
+  same shape: Patroni + etcd and N directory apid replicas. Its off-region
+  backups follow the same rule as a cell's.
 - **Initial placement.** The directory may start as a separate, unbound
   database on the US East cell's Patroni cluster, which the branch's
   identity checks allow.
@@ -271,21 +271,36 @@ two reasons:
   inter-region round trip.
 - **Blast radius.** A partition between regions would split one database.
 
-**Region disaster recovery:**
-- Each cell's Patroni cluster streams asynchronously to a
-  `standby_cluster` in a paired region, and pgBackRest keeps a second
-  repository there.
+**Region disaster recovery: off-region backups, no standby machines**
+(owner decision).
+
+Zones cover host, rack and building failures. Two risks remain that zones
+cannot cover:
+- **Region-wide outages.** Zones in one region share the provider's
+  regional control plane, network and storage.
+- **Our own mistakes.** Synchronous replicas copy a bad migration or
+  delete instantly; only point-in-time recovery undoes it.
+
+Off-region backups cover both:
+- **Database.** pgBackRest's second repository lives in a paired region
+  and receives WAL at least every 60 s (`archive_timeout`).
+- **Artifacts.** The app layers and build artifacts that cold boot needs
+  replicate to the paired region. Snapshots are a cache (ADR-005) and do
+  not need to.
 - **Pairing:**
   - US East pairs with a second US region, so US data stays in the US.
-    This is an assumption the owner should confirm.
   - The EU cell pairs with a second EU region, so EU data stays in the EU.
-- A standby cluster can start as a single node and grows to three when
-  promoted.
-- Snapshots are a cache and cold boot always works (ADR-005). To evacuate
-  a region: promote the standby cluster, re-point the cell's edge pool,
-  and let apps cold-boot.
-- Cell identity (729) is preserved, because the promoted database is the
+- **Recovery.** To recover a lost region:
+  1. stand the cell up in the paired region from the manifest;
+  2. restore Postgres to the latest WAL;
+  3. re-point the cell's edge pool;
+  4. let apps cold-boot.
+
+  Cell identity (729) is preserved, because the restored database is the
   same cell.
+- **Targets:** RPO ≤ 60 s, RTO about 2–4 hours.
+- A warm `standby_cluster` in the paired region is the upgrade path if an
+  SLA later needs about 30 minutes; it is not built now.
 
 ### 3. Postgres per cell and for the directory: self-run Patroni
 
@@ -334,7 +349,7 @@ two reasons:
   - The data plane keeps serving warm traffic throughout (§5).
 - **Ownership:** a new `postgres_ha` Ansible role replaces the `postgres`
   role, with runbooks for failover, switchover, member rebuild, etcd
-  quorum loss and standby promotion.
+  quorum loss and restoring a cell into its paired region.
 
 ### 4. Leases and fencing epochs
 
@@ -481,12 +496,12 @@ Required mechanisms:
 |---|---|---|
 | P0 · Proof | SLO dashboards. Native drills for partition, zone loss, Postgres failover and node drain, run nightly (wire `CmdFaultInjector.Partition`). Multi-host load test. | Every drill automated, with a baseline recorded |
 | P1 · Static stability | §5, `archive_timeout`, pgbouncer, per-node Firecracker staleness | Postgres down 5 min: zero errors on warm traffic; no recovery storm afterwards |
-| P2 · Cell HA across zones | §3 Patroni; ≥2 edges behind a Cloudflare Load Balancer; N apid replicas; leases for singletons; monitoring off the database hosts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0 |
+| P2 · Cell HA across zones | §3 Patroni; ≥2 edges behind a Cloudflare Load Balancer; N apid replicas; leases for singletons; monitoring off the database hosts; off-region backups of the database and artifacts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0. Region-rebuild drill: restore the cell into its paired region within RPO ≤ 60 s and RTO about 2–4 h |
 | P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis, zone-loss certificate | Partition drill: zero duplicate at-most-once executions; quota never released without stop proof |
 | P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
 | P5 · Scale within a cell | §7 | Load test at the §7 targets within SLO |
 | R · Land the regional branch | Renumber its ADRs past 1152 on the branch, then land it in dark, dependency-ordered PRs. Order: regions, builds, cell identity and directory, image releases, quota protocol, vmmd/sched/fcvm runtime, ingress, provisioning, billing. New apid code goes in `pkg/apid/<domain>` (ADR-982). | Each PR default-off with CI green; no behaviour change while dark |
-| P6 · Activate multi-region (EU cell after launch) | EU cell with its own EU DR pair; directory HA (§2), every-edge ingress, the branch's remaining work: sealed usage minutes, meterd wiring, global caps and egress, shared organizations, native KVM regional acceptance. Then lift `CHECK (NOT admission_enabled)`. | Region-loss drill: RPO ≤ 60 s, RTO ≤ 30 min, other cells unaffected; global app keeps serving from the surviving region |
+| P6 · Activate multi-region (EU cell after launch) | EU cell with off-region backups in a second EU region; directory HA (§2), every-edge ingress, the branch's remaining work: sealed usage minutes, meterd wiring, global caps and egress, shared organizations, native KVM regional acceptance. Then lift `CHECK (NOT admission_enabled)`. | Region-loss drill: other cells unaffected; global app keeps serving from the surviving region; the lost cell is restored from off-region backups within the RPO/RTO targets |
 
 **Order** (owner decision):
 - P1 → P2 → P3 → P4 in the US East cell.
@@ -495,8 +510,8 @@ Required mechanisms:
 - P6 activates multi-region after launch.
 
 **Public-release gate:**
-- P0, P1 and P2, plus P4's lossless drain, in US East with its
-  second-US-region standby.
+- P0, P1 and P2, plus P4's lossless drain, in US East, with off-region
+  backups in a second US region and a passed region-rebuild drill.
 - P3 must land before jobs, cron, services or realtime are marketed as
   generally available.
 
@@ -504,12 +519,12 @@ Required mechanisms:
 
 - **Footprint:**
   - At launch, US East has 3 control nodes and at least 6 compute nodes
-    (3 zones × N+1), plus a 1-node standby cluster in the US DR region.
-    Today the fleet is 1 + 2.
+    (3 zones × N+1). Off-region backups add object storage only, no
+    machines. Today the fleet is 1 + 2.
   - At P6:
-    - the EU cell adds the same shape plus its EU standby;
+    - the EU cell adds the same shape plus EU off-region backups;
     - the directory starts inside the US East cluster, and later moves to
-      3 nodes of its own plus a standby.
+      3 nodes of its own.
   - The financial-model addendum (CLAUDE.md, source of truth 3) must
     price this before P2 hardware.
 - **Operations:**
@@ -560,6 +575,13 @@ Required mechanisms:
   are parked, so this breaks the zero-downtime contract.
 - **Multi-region before launch.** It is the longest path to launch, and
   it puts the least-qualified surface live on day one.
+- **Warm standby cluster per region at launch.** It cuts region recovery
+  from hours to about 30 minutes. But it needs always-on machines and
+  failover drills for a rare event. It is the upgrade path when an SLA
+  requires it.
+- **Zones only, with backups kept in-region.** Zones share a region's
+  control plane, network and storage. A regional outage would mean
+  waiting it out, and a permanent loss of the region would lose data.
 - **Releasing quota on lease expiry.** It would break the branch's
   guarantee that capacity is released only by proof of absence.
   Conservative charging during partitions is the accepted cost.
@@ -579,6 +601,7 @@ Required mechanisms:
 | etcd placement | Co-located on the control nodes, on its own disk and with I/O priority. Moves to dedicated nodes on a size or latency trigger. |
 | Major Postgres upgrades | Logical-replication blue/green, built before the first major upgrade. The replica-identity CI check starts now. |
 | Order of work | Single-region HA (P1–P4) first, the regional branch dark in parallel (R), multi-region activation (P6) after launch. |
+| Region loss | Off-region backups only, in a second US region: the database's second pgBackRest repository plus replicated cold-boot artifacts. No warm standby. RPO ≤ 60 s, RTO about 2–4 h. |
 
-**To confirm:** the US DR region for US East's standby clusters. The
-assumption is a second US region.
+**To confirm:** which second US region holds the backups. This is a
+storage location only; no machines run there.
