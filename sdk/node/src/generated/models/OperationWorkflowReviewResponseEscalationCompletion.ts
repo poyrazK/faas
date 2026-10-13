@@ -9,6 +9,14 @@ import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowRev
  */
 export type OperationWorkflowReviewResponseEscalationCompletion = {
   /**
+   * One-shot evidence check time pinned at completion. Ordinary edits and manual evidence reviews do not postpone it.
+   */
+  review_due_at?: string;
+  /**
+   * Scheduled evidence check delivery marker committed atomically with its observation and durable inbox notification. Existing notification retention bounds apply.
+   */
+  scheduled_review_at?: string;
+  /**
    * OperationWorkflowReviewResponseEscalationCompletion.review. Scoped evidence review for completed coordinator work, separate from business success.
    */
   review?: OperationWorkflowReviewResponseEscalationActionReview;

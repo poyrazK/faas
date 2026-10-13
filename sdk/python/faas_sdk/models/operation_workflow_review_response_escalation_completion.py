@@ -30,6 +30,12 @@ class OperationWorkflowReviewResponseEscalationCompletion:
     evidence: list[OperationWorkflowReviewResponseLink]
     at: datetime.datetime
     actor: str
+    review_due_at: datetime.datetime | Unset = UNSET
+    """One-shot evidence check time pinned at completion. Ordinary edits and manual evidence reviews do not
+    postpone it."""
+    scheduled_review_at: datetime.datetime | Unset = UNSET
+    """Scheduled evidence check delivery marker committed atomically with its observation and durable inbox
+    notification. Existing notification retention bounds apply."""
     review: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
     """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
     completion evidence order. A clear observation does not establish causality or business completion; observation
@@ -50,6 +56,14 @@ class OperationWorkflowReviewResponseEscalationCompletion:
 
         actor = self.actor
 
+        review_due_at: str | Unset = UNSET
+        if not isinstance(self.review_due_at, Unset):
+            review_due_at = self.review_due_at.isoformat()
+
+        scheduled_review_at: str | Unset = UNSET
+        if not isinstance(self.scheduled_review_at, Unset):
+            scheduled_review_at = self.scheduled_review_at.isoformat()
+
         review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review, Unset):
             review = self.review.to_dict()
@@ -65,6 +79,10 @@ class OperationWorkflowReviewResponseEscalationCompletion:
                 "actor": actor,
             }
         )
+        if review_due_at is not UNSET:
+            field_dict["review_due_at"] = review_due_at
+        if scheduled_review_at is not UNSET:
+            field_dict["scheduled_review_at"] = scheduled_review_at
         if review is not UNSET:
             field_dict["review"] = review
 
@@ -93,6 +111,20 @@ class OperationWorkflowReviewResponseEscalationCompletion:
 
         actor = d.pop("actor")
 
+        _review_due_at = d.pop("review_due_at", UNSET)
+        review_due_at: datetime.datetime | Unset
+        if isinstance(_review_due_at, Unset):
+            review_due_at = UNSET
+        else:
+            review_due_at = datetime.datetime.fromisoformat(_review_due_at)
+
+        _scheduled_review_at = d.pop("scheduled_review_at", UNSET)
+        scheduled_review_at: datetime.datetime | Unset
+        if isinstance(_scheduled_review_at, Unset):
+            scheduled_review_at = UNSET
+        else:
+            scheduled_review_at = datetime.datetime.fromisoformat(_scheduled_review_at)
+
         _review = d.pop("review", UNSET)
         review: OperationWorkflowReviewResponseEscalationActionReview | Unset
         if isinstance(_review, Unset):
@@ -106,6 +138,8 @@ class OperationWorkflowReviewResponseEscalationCompletion:
             evidence=evidence,
             at=at,
             actor=actor,
+            review_due_at=review_due_at,
+            scheduled_review_at=scheduled_review_at,
             review=review,
         )
 

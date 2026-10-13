@@ -189,6 +189,10 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 				evidence = append(evidence, n.ReviewResponse.Reviews[index])
 			}
 			completionForHistory = &api.OperationWorkflowReviewResponseEscalationCompletion{AcknowledgedAt: completion.AcknowledgedAt, Summary: completion.Summary, Evidence: evidence, At: now, Actor: actor}
+			if completion.ReviewAfterSeconds != nil {
+				due := now.Add(time.Duration(*completion.ReviewAfterSeconds) * time.Second)
+				completionForHistory.ReviewDueAt = &due
+			}
 			ack := *response.DecisionReview.EscalationAcknowledgment
 			ack.Completion = completionForHistory
 			response.DecisionReview.EscalationAcknowledgment = &ack

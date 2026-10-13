@@ -79371,6 +79371,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - review_response_escalation_action_checked
           - review_response_escalation_commitment_overdue
           - review_response_handoff_acceptance_escalated
           - review_response_handoff_acceptance_overdue
@@ -80882,6 +80883,12 @@ components:
       description: Complete one current escalation coordinator commitment with an action summary and saved review evidence. Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with acknowledgment, decision, acceptance, decline or reassignment. Accepted or declined handoffs can still record completed work for the same retained episode, but replaced or resolved episodes cannot. Does not establish application success.
       required: [decision_at, required_at, handed_off_at, escalated_at, acknowledged_at, summary, review_indices]
       properties:
+        review_after_seconds:
+          type: integer
+          format: int64
+          minimum: 60
+          maximum: 604800
+          description: Optional one-shot evidence check delay from server completion time, 60 seconds to seven days. Omission leaves the completion unscheduled.
         decision_at:
           type: string
           format: date-time
@@ -80917,6 +80924,14 @@ components:
       description: Immutable human completion of escalation coordination work, with linked review references and server actor and time. Existing overdue markers remain historical.
       required: [acknowledged_at, summary, evidence, at, actor]
       properties:
+        review_due_at:
+          type: string
+          format: date-time
+          description: One-shot evidence check time pinned at completion. Ordinary edits and manual evidence reviews do not postpone it.
+        scheduled_review_at:
+          type: string
+          format: date-time
+          description: Scheduled evidence check delivery marker committed atomically with its observation and durable inbox notification. Existing notification retention bounds apply.
         review:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationActionReview'
           description: OperationWorkflowReviewResponseEscalationCompletion.review. Scoped evidence review for completed coordinator work, separate from business success.

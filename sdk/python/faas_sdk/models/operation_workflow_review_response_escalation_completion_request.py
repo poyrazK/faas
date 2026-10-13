@@ -6,6 +6,8 @@ from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="OperationWorkflowReviewResponseEscalationCompletionRequest")
 
 
@@ -29,6 +31,9 @@ class OperationWorkflowReviewResponseEscalationCompletionRequest:
     review_indices: list[int]
     """Zero-based indices into the current parent response reviews. References are copied into immutable evidence;
     they are not fresh application verification or a claim that blockers cleared."""
+    review_after_seconds: int | Unset = UNSET
+    """Optional one-shot evidence check delay from server completion time, 60 seconds to seven days. Omission
+    leaves the completion unscheduled."""
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()
@@ -45,6 +50,8 @@ class OperationWorkflowReviewResponseEscalationCompletionRequest:
 
         review_indices = self.review_indices
 
+        review_after_seconds = self.review_after_seconds
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -58,6 +65,8 @@ class OperationWorkflowReviewResponseEscalationCompletionRequest:
                 "review_indices": review_indices,
             }
         )
+        if review_after_seconds is not UNSET:
+            field_dict["review_after_seconds"] = review_after_seconds
 
         return field_dict
 
@@ -78,6 +87,8 @@ class OperationWorkflowReviewResponseEscalationCompletionRequest:
 
         review_indices = cast(list[int], d.pop("review_indices"))
 
+        review_after_seconds = d.pop("review_after_seconds", UNSET)
+
         operation_workflow_review_response_escalation_completion_request = cls(
             decision_at=decision_at,
             required_at=required_at,
@@ -86,6 +97,7 @@ class OperationWorkflowReviewResponseEscalationCompletionRequest:
             acknowledged_at=acknowledged_at,
             summary=summary,
             review_indices=review_indices,
+            review_after_seconds=review_after_seconds,
         )
 
         return operation_workflow_review_response_escalation_completion_request

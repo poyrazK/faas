@@ -9,25 +9,26 @@ import (
 )
 
 type readinessWatchUpdate struct {
-	EscalationCommitment *reviewEscalationCommitmentUpdate
-	HandoffReassignment  *reviewHandoffReassignmentUpdate
-	HandoffDecline       *reviewHandoffDeclineUpdate
-	HandoffDeadline      *reviewHandoffDeadlineUpdate
-	DecisionDeadline     *reviewDecisionDeadlineUpdate
-	ReviewBlockage       *reviewResponseBlockageUpdate
-	ReviewCheckInAt      *time.Time
-	CompletionReview     *api.OperationWorkflowPlaybookCompletionReview
-	Playbook             *playbookEvidenceWatchUpdate
-	ResponseWatchID      string
-	OutcomeWatch         *api.OperationWorkflowReadinessBusinessOutcomeWatch
-	OutcomeEvents        []api.OperationWorkflowReadinessBusinessOutcomeEvent
-	SourceID             string
-	Sequence             int64
-	WatchID              string
-	Revision             int64
-	Watch                api.OperationWorkflowReadinessVerificationWatch
-	Events               []api.OperationWorkflowReadinessVerificationEvent
-	Kinds                []string
+	ScheduledActionReview *scheduledActionReviewUpdate
+	EscalationCommitment  *reviewEscalationCommitmentUpdate
+	HandoffReassignment   *reviewHandoffReassignmentUpdate
+	HandoffDecline        *reviewHandoffDeclineUpdate
+	HandoffDeadline       *reviewHandoffDeadlineUpdate
+	DecisionDeadline      *reviewDecisionDeadlineUpdate
+	ReviewBlockage        *reviewResponseBlockageUpdate
+	ReviewCheckInAt       *time.Time
+	CompletionReview      *api.OperationWorkflowPlaybookCompletionReview
+	Playbook              *playbookEvidenceWatchUpdate
+	ResponseWatchID       string
+	OutcomeWatch          *api.OperationWorkflowReadinessBusinessOutcomeWatch
+	OutcomeEvents         []api.OperationWorkflowReadinessBusinessOutcomeEvent
+	SourceID              string
+	Sequence              int64
+	WatchID               string
+	Revision              int64
+	Watch                 api.OperationWorkflowReadinessVerificationWatch
+	Events                []api.OperationWorkflowReadinessVerificationEvent
+	Kinds                 []string
 }
 
 // Rotate through retained source notifications independently of readiness discovery filters.
@@ -148,6 +149,9 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
 func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+	if u.ScheduledActionReview != nil {
+		return applyScheduledActionReview(r, n, u)
+	}
 	if u.EscalationCommitment != nil {
 		return applyReviewEscalationCommitmentDeadline(r, n, u)
 	}

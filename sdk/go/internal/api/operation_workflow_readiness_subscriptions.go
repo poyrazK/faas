@@ -746,21 +746,24 @@ type OperationWorkflowReviewResponseEscalationAcknowledgment struct {
 
 // Completion records human coordination work, not an application outcome.
 type OperationWorkflowReviewResponseEscalationCompletionRequest struct {
-	DecisionAt     time.Time `json:"decision_at"`
-	RequiredAt     time.Time `json:"required_at"`
-	HandedOffAt    time.Time `json:"handed_off_at"`
-	EscalatedAt    time.Time `json:"escalated_at"`
-	AcknowledgedAt time.Time `json:"acknowledged_at"`
-	Summary        string    `json:"summary"`
-	ReviewIndices  []int     `json:"review_indices"`
+	ReviewAfterSeconds *int64    `json:"review_after_seconds,omitempty"`
+	DecisionAt         time.Time `json:"decision_at"`
+	RequiredAt         time.Time `json:"required_at"`
+	HandedOffAt        time.Time `json:"handed_off_at"`
+	EscalatedAt        time.Time `json:"escalated_at"`
+	AcknowledgedAt     time.Time `json:"acknowledged_at"`
+	Summary            string    `json:"summary"`
+	ReviewIndices      []int     `json:"review_indices"`
 }
 type OperationWorkflowReviewResponseEscalationCompletion struct {
-	Review         *OperationWorkflowReviewResponseEscalationActionReview `json:"review,omitempty"`
-	AcknowledgedAt time.Time                                              `json:"acknowledged_at"`
-	Summary        string                                                 `json:"summary"`
-	Evidence       []OperationWorkflowReviewResponseLink                  `json:"evidence"`
-	At             time.Time                                              `json:"at"`
-	Actor          string                                                 `json:"actor"`
+	ReviewDueAt       *time.Time                                             `json:"review_due_at,omitempty"`
+	ScheduledReviewAt *time.Time                                             `json:"scheduled_review_at,omitempty"`
+	Review            *OperationWorkflowReviewResponseEscalationActionReview `json:"review,omitempty"`
+	AcknowledgedAt    time.Time                                              `json:"acknowledged_at"`
+	Summary           string                                                 `json:"summary"`
+	Evidence          []OperationWorkflowReviewResponseLink                  `json:"evidence"`
+	At                time.Time                                              `json:"at"`
+	Actor             string                                                 `json:"actor"`
 }
 
 type OperationWorkflowReviewResponseEscalationActionReviewRequest struct {

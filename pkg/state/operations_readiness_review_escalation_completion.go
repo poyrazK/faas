@@ -14,6 +14,9 @@ func validateReviewEscalationCompletion(n api.OperationWorkflowReadinessNotifica
 	if completion == nil {
 		return nil
 	}
+	if completion.ReviewAfterSeconds != nil && (*completion.ReviewAfterSeconds < 60 || *completion.ReviewAfterSeconds > 604800) {
+		return ErrInvalidArgument
+	}
 	if input.EscalationAcknowledgment != nil || input.EscalationActionReview != nil || input.EscalationRevision != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.HandoffReassignment != nil || input.Status != "active" || len(input.Reviews) != 0 || strings.TrimSpace(completion.Summary) == "" || len(completion.Summary) > 1024 || !utf8.ValidString(completion.Summary) || strings.IndexFunc(completion.Summary, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 || len(completion.ReviewIndices) < 1 || len(completion.ReviewIndices) > 8 {
 		return ErrInvalidArgument
 	}
