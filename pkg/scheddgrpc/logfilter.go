@@ -3,6 +3,8 @@ package scheddgrpc
 import (
 	"fmt"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/loglevel"
 )
 
 // LogFilter narrows the per-instance log stream before the per-instance
@@ -115,26 +117,11 @@ func (f LogFilter) MatchLineWithLevel(line, level string) bool {
 // Construct via NewLevelMatcher (validates the level string against
 // api.IsValidLogLevel).
 type LevelMatcher struct {
-	// floor is the requested level (info | warn | error).
+	// floor is the requested level (info | warn | error). A line passes
+	// when its detected level ranks at or above it (loglevel.Rank); the
+	// detection heuristic is shared with vmmd's log line counter
+	// (ADR-746) so alerts and this filter agree.
 	floor string
-	// ranks assigns each level a number; the matcher passes a line
-	// when its detected level rank >= floor rank. The mapping is
-	// inclusive above the floor (warn filter passes warn + error).
-	//
-	// The "detected" level is the highest level any of the
-	// heuristic patterns match. A line matching both an error
-	// pattern and an info pattern is classified as error (we
-	// err on the side of "loud").
-	ranks map[string]int
-	// patterns is the list of (level, substring) heuristic hits
-	// applied case-insensitively to each line. Pre-lowercased at
-	// construction so the per-line hot path stays cheap.
-	patterns []levelPattern
-}
-
-type levelPattern struct {
-	level string
-	hit   string // pre-lowercased substring
 }
 
 // NewLevelMatcher returns a LevelMatcher for the given floor level.
@@ -146,32 +133,10 @@ type levelPattern struct {
 // "warn" all behave identically.
 func NewLevelMatcher(level string) (*LevelMatcher, error) {
 	floor := strings.ToLower(level)
-	switch floor {
-	case "info", "warn", "error":
-	default:
+	if loglevel.Rank(floor) < 0 {
 		return nil, fmt.Errorf("invalid level %q (must be one of: info, warn, error)", level)
 	}
-	m := &LevelMatcher{
-		floor: floor,
-		ranks: map[string]int{"info": 0, "warn": 1, "error": 2},
-	}
-	// Heuristic patterns per level. Pre-lowercased. Order does
-	// not matter — Match() picks the highest detected level.
-	//
-	// Patterns are deliberately conservative: a single false
-	// positive (a `[INFO]` substring inside an error message)
-	// is more annoying than a single false negative (a
-	// customer-emitted level=warn that's missing the prefix).
-	for _, hit := range []string{"[error]", "[err]", "level=error", `"level":"error"`, `"level": "error"`, `"severity":"error"`} {
-		m.patterns = append(m.patterns, levelPattern{level: "error", hit: hit})
-	}
-	for _, hit := range []string{"[warn]", "[warning]", "level=warn", `"level":"warn"`, `"level": "warn"`, `"severity":"warn"`} {
-		m.patterns = append(m.patterns, levelPattern{level: "warn", hit: hit})
-	}
-	for _, hit := range []string{"[info]", "[notice]", "level=info", `"level":"info"`, `"level": "info"`, `"severity":"info"`} {
-		m.patterns = append(m.patterns, levelPattern{level: "info", hit: hit})
-	}
-	return m, nil
+	return &LevelMatcher{floor: floor}, nil
 }
 
 // Match returns true when the line is at the floor level or higher.
@@ -182,26 +147,8 @@ func (m *LevelMatcher) Match(line string) bool {
 	if m == nil {
 		return true // no filter
 	}
-	lower := strings.ToLower(line)
-	// detectedRank starts at -1 so any match (info = rank 0)
-	// strictly exceeds it. Without the -1 seed, m.ranks[""]
-	// returns the zero value 0 which equals the info rank, and
-	// a strict-greater compare would never fire for info-level
-	// patterns.
-	detected := ""
-	detectedRank := -1
-	for _, p := range m.patterns {
-		if strings.Contains(lower, p.hit) {
-			if r := m.ranks[p.level]; r > detectedRank {
-				detected = p.level
-				detectedRank = r
-			}
-		}
-	}
-	if detected == "" {
-		return false
-	}
-	return detectedRank >= m.ranks[m.floor]
+	detected := loglevel.Detect(line)
+	return detected != "" && loglevel.Rank(detected) >= loglevel.Rank(m.floor)
 }
 
 // MatchLevelOrLine prefers a canonical level parsed at ring intake and falls
@@ -211,8 +158,7 @@ func (m *LevelMatcher) MatchLevelOrLine(level, line string) bool {
 		return true
 	}
 	if level != "" {
-		rank, ok := m.ranks[level]
-		return ok && rank >= m.ranks[m.floor]
+		return loglevel.Rank(level) >= loglevel.Rank(m.floor)
 	}
 	return m.Match(line)
 }
