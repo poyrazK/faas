@@ -59,6 +59,12 @@ func CustomerWorkflowImage(repo string) (fakeImage, string) {
 	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-workflow"})
 }
 
+// CustomerHTTPImage serves an ordinary HTTP Operation handler (ADR-521) that
+// reports progress and uploads a private file under its invocation claim.
+func CustomerHTTPImage(repo string) (fakeImage, string) {
+	return nativeFixtureImage(repo, []string{"/job-fixture", "customer-http"})
+}
+
 func nativeFixtureImage(repo string, command []string) (fakeImage, string) {
 	binary, err := jobFixtureBinary()
 	if err != nil {

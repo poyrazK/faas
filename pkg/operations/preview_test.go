@@ -124,6 +124,42 @@ func TestOperationPreviewPolicyBoundsAndOwnership(t *testing.T) {
 	}
 }
 
+// A pilot cohort runs for weeks under one operator-authored window (ADR-521
+// pilot window amendment); anything beyond the bound still closes admission.
+func TestOperationPreviewPilotWindow(t *testing.T) {
+	now := time.Now().UTC()
+	cohort := PreviewCohort{AccountID: uuid.NewString(), AppID: uuid.NewString(), Scope: api.DefaultEnvScope, PlatformTenantIDs: []string{uuid.NewString()}}
+	path := filepath.Join(t.TempDir(), "preview.json")
+	gate, err := NewPreviewAdmission(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		window time.Duration
+		open   bool
+	}{
+		{"three-week pilot", 21 * 24 * time.Hour, true},
+		{"exact bound", api.OperationPreviewWindowMax, true},
+		{"beyond bound", api.OperationPreviewWindowMax + time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			notBefore := now.Add(-time.Minute)
+			raw, err := json.Marshal(PreviewPolicy{Version: 1, Enabled: true, NotBefore: notBefore, ExpiresAt: notBefore.Add(tc.window), Cohorts: []PreviewCohort{cohort}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			gate.Now = func() time.Time { return now.Add(tc.window / 2) }
+			if got := gate.AllowsTenant(cohort.AccountID, cohort.AppID, cohort.Scope, cohort.PlatformTenantIDs[0]); got != tc.open {
+				t.Fatalf("admission open = %v, want %v", got, tc.open)
+			}
+		})
+	}
+}
+
 func TestOperationPreviewConcurrentAtomicRollback(t *testing.T) {
 	now := time.Now().UTC()
 	cohort := PreviewCohort{AccountID: uuid.NewString(), AppID: uuid.NewString(), Scope: api.DefaultEnvScope, PlatformTenantIDs: []string{uuid.NewString()}}

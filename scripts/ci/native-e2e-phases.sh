@@ -78,6 +78,7 @@ native_e2e_phase_files() {
       durable_entities_restore_metal_test.go \
       managed_operation_workflow_metal_test.go \
       customer_workflow_operations_metal_test.go \
+      customer_http_operations_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
@@ -194,7 +195,9 @@ native_e2e_assert_phase_partition() {
 # Missing or skipped scenarios fail its dedicated blocking verdict.
 # customer-workflow-operations-only derives every native workflow scenario;
 # its selected tests are blocking independently of the full matrix's phases.
-NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only)
+# customer-http-operations-only derives every ordinary HTTP Operations scenario
+# (ADR-521); it is the native gate before a customer preview cohort opens.
+NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -248,6 +251,10 @@ native_e2e_lane_tests() {
       ;;
     customer-workflow-operations-only)
       grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/customer_workflow_operations_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    customer-http-operations-only)
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/customer_http_operations_metal_test.go" |
         sed -E 's/^func //; s/\($//' | sort -u
       ;;
     *) echo "native-e2e-phases: unknown lane: ${lane}" >&2; return 1 ;;

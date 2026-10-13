@@ -444,7 +444,8 @@ if [[ -n "${phase}" ]]; then
     managed-operation-only) phase_timeout=35m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
-    # Includes native workflow Operations image/guest/recovery scenarios.
+    customer-http-operations-only) phase_timeout=35m ;;
+    # Includes native workflow and HTTP Operations image/guest/recovery scenarios.
     wake) phase_timeout=30m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;

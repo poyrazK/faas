@@ -625,7 +625,7 @@ const (
 	OperationPreviewPolicyMaxBytes                           = 64 << 10
 	OperationPreviewCohortsMax                               = 10
 	OperationPreviewTenantsPerCohortMax                      = 10
-	OperationPreviewWindowMax                                = time.Hour
+	OperationPreviewWindowMax                                = 30 * 24 * time.Hour // a pilot runs for weeks; still forces reauthorization (ADR-521)
 	OperationControlPollIntervalMS                           = 1000
 	OperationControlPollMinIntervalMS                        = 100
 	WorkflowStepDefaultTimeout                               = 30 * time.Second
