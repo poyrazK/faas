@@ -3261,6 +3261,7 @@
       "ledger_started_at",
       "loss_reason",
       "lost_at",
+      "reconciliation_requested_at",
       "started_at",
       "subscription_id"
     ],
