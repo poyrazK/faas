@@ -220,5 +220,14 @@ the builder VM. That is the only case that waits for a build.
      mention it.
    - The rebuild explainer suggests `--watch`, with the command it would
      run, only when the CLI can pick one for the app.
+   - Checked against the real servers (2026-10-13, local): Vite 8.3.4's
+     `npm run dev` listens on `[::1]` only; `npm run dev -- --host 0.0.0.0`
+     listens on every interface but answers 403 to the app hostname, and
+     with `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` set it serves the page
+     (200) and accepts the HMR websocket (101; 400 without it). Next.js
+     16.4.0's `next dev` listens on every interface and serves the page for
+     the app hostname, but drops the HMR websocket (`/_next/hmr`) from that
+     origin unless `allowedDevOrigins` lists it;
+     `allowedDevOrigins: [process.env.GREGALE_DEV_HOST]` opens it (101).
 4. **Python.** `uvicorn --reload` / Flask debug for uv projects, whose
    `uv sync` over the full source makes them non-verbatim today.
