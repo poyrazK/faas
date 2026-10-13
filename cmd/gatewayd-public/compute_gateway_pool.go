@@ -171,7 +171,7 @@ func (p *computeGatewayPool) WatchInvalidations(ctx context.Context, pool *pgxpo
 		p.log.Warn("compute_gateway_pool: WatchInvalidations called with nil pool; no-op")
 		return
 	}
-	notif, err := db.SubscribeWithReconnect(ctx, pool, []string{db.NotifyComputeNodeChanged}, p.log)
+	notif, err := db.SubscribeWithResync(ctx, pool, []string{db.NotifyComputeNodeChanged}, p.log)
 	if err != nil {
 		p.log.Error("compute_gateway_pool: subscribe compute_node_changed", "err", err)
 		return
@@ -183,6 +183,15 @@ func (p *computeGatewayPool) WatchInvalidations(ctx context.Context, pool *pgxpo
 		case got, ok := <-notif:
 			if !ok {
 				return
+			}
+			if got.Channel == db.ResyncChannel {
+				// Node changes may have been missed while LISTEN was
+				// down (ADR-1237 §5 rule 3): drop the snapshot so the
+				// next Dial re-reads before routing.
+				p.mu.Lock()
+				p.refreshed = time.Time{}
+				p.mu.Unlock()
+				continue
 			}
 			var payload struct {
 				NodeID string `json:"node_id"`
