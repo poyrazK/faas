@@ -27,6 +27,7 @@ func customerOperationCLIManifest() []cliSub {
 		makeSub("inspect", "Inspect confirmed steps, uncertain attempts, retained files and retry blockers"),
 		makeSub("events", "Read durable event evidence and resync marker", after),
 		makeSub("executions", "Read retained execution generations and attempt counts", after, limit),
+		{Name: "timeline", Short: "Read one chronological history of events, attempts and deliveries", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "owned application; account mode only", Req: true}, common[1], limit, {Name: "cursor", Value: "CURSOR", Short: "next timeline page cursor"}, {Name: "all", Short: "follow cursors to the end"}, {Name: "logs", Short: "print archived instance log lines inside each HTTP attempt"}}},
 		makeSub("watch", "Watch changed status; exit 0 success, 1 failure/cancel, 4 reconciliation, 124 timeout, 130 interrupt", cliFlag{Name: "interval", Value: "D", Short: "polling interval, default 1s"}),
 		makeSub("download", "Publish verified artifact bytes to a new private file", cliFlag{Name: "artifact", Value: "UUID", Short: "artifact ID; optional only when one artifact exists"}, cliFlag{Name: "output", Value: "PATH", Short: "new output file", Req: true}),
 		makeSub("cancel", "Request cancellation at an observed generation", generation),

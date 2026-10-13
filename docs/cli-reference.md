@@ -9801,6 +9801,21 @@ Read retained execution generations and attempt counts
 | `--after <N>` | event sequence or execution generation watermark |  |
 | `--limit <N>` | page size, 1–100 |  |
 
+### customer-operations timeline
+
+Read one chronological history of events, attempts and deliveries
+
+`gregale customer-operations timeline --app <SLUG> [--timeout <D>] [--limit <N>] [--cursor <CURSOR>] [--all] [--logs] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application; account mode only | required |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--limit <N>` | page size, 1–100 |  |
+| `--cursor <CURSOR>` | next timeline page cursor |  |
+| `--all` | follow cursors to the end |  |
+| `--logs` | print archived instance log lines inside each HTTP attempt |  |
+
 ### customer-operations watch
 
 Watch changed status; exit 0 success, 1 failure/cancel, 4 reconciliation, 124 timeout, 130 interrupt
