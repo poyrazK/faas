@@ -1123,6 +1123,10 @@ gregale --json events subscription-lineage-retry-control-plan-apply APP SUB --fi
 gregale --json events subscription-lineage-retry-control-plan-apply APP SUB --file controls.json --resume-report run-1.jsonl --report run-2.jsonl
 ```
 
+Recovery request, plan, history, and report readers require regular files and
+refuse a symlink in the final path component. Journal directory syncing checks
+the directory identity before and after opening it.
+
 Reports are new private append-only files (0600), capped at 1 MiB. Apply syncs a
 command intent before its POST and the verified result afterward. File creation,
 directory sync or persistence failures prevent further control requests and exit
