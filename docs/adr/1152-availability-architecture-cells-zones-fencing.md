@@ -354,16 +354,30 @@ Off-region backups cover both:
 ### 4. Leases and fencing epochs
 
 **The lease primitive.** One primitive in `pkg/state`:
-`leases(name, holder, epoch, expires_at)`, in a dedicated table.
+`control_plane_leases(name, holder, epoch, acquired_at, renewed_at,
+expires_at)`, in a dedicated table.
 - Expiry uses the database's `now()`.
 - `epoch` comes from a sequence and increases on every change of holder.
-- Fenced writes include `epoch = $current`.
-- The claim and stale-finish pattern of the branch's quota delivery outbox
-  is the template.
+- Fenced writes check `state.ControlPlaneLeaseHeld(name, epoch)`.
+- Timings live in `pkg/api/limits.go`: 20 s TTL, renewal every 5 s, and the
+  holder stops its own work 5 s before the TTL, timed from the start of its
+  last successful renewal, so a holder cut off from the database stops
+  before a standby can take over.
+
+`pkg/singleton` wraps it. `Runner.Run` runs in-process work while the lease
+is held. `Runner.AcquireAsService` makes a whole daemon wait as a standby,
+reporting READY with a standby STATUS and feeding the systemd watchdog, and
+exit when the lease is lost so systemd restarts it as a standby.
 
 The primitive is used for:
 
-- **Singletons** in every cell and in the directory.
+- **Singletons** in every cell and in the directory. Phase 2 gates:
+  - the central schedd (empty `FAAS_NODE_NAME`), whole process, lease
+    `central-scheduler`;
+  - meterd, whole process, lease `meterd`;
+  - apid's shared-state background workers (rollbacks, reconcilers,
+    retention, grace, outboxes, the audit bridge), lease `apid-background`;
+    apid keeps serving HTTP on every replica.
 - **Node leases.** Each compute node holds `node/<name>`.
   - It renews every 10 s with a 30 s TTL, in its own table, not on
     `compute_nodes.last_heartbeat_at`. That row takes the regional
@@ -520,7 +534,7 @@ Required mechanisms:
 |---|---|---|
 | P0 · Proof | SLO dashboards. Native drills for partition, zone loss, Postgres failover and node drain, run nightly (wire `CmdFaultInjector.Partition`). Multi-host load test. | Every drill automated, with a baseline recorded |
 | P1 · Static stability | §5, `archive_timeout` and WAL-archive alerts, per-node Firecracker staleness. pgbouncer and a fixed `max_connections` move to P2: the pooler costs more connections than it saves below four compute nodes (`postgres_capacity` README). | Postgres down 5 min: zero errors on warm traffic; no recovery storm afterwards |
-| P2 · Cell HA across zones | §3 Patroni; ≥2 edges behind a Cloudflare Load Balancer; N apid replicas; leases for singletons; monitoring off the database hosts; off-region backups of the database and artifacts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0. Region-rebuild drill: restore the cell into its paired region within RPO ≤ 60 s and RTO about 2–4 h |
+| P2 · Cell HA across zones | §3 Patroni; ≥2 edges behind a Cloudflare Load Balancer; N apid replicas; leases for singletons; monitoring off the database hosts; off-region backups of the database and artifacts; land the branch's cell identity (729) dark. **Built (code and roles, no infrastructure):** the lease primitive and the three singleton gates (§4); apid replica fixes (no per-replica grace-window cache, a shared TOTP failure window, resumable uploads off on multi-node cells, shared HMAC keys); a manifest with zones and three control nodes; the `/edgez` edge signal and the Cloudflare Load Balancer objects; the `postgres_ha` role (etcd, Patroni, HAProxy, pgBackRest with a second-region repository) selected by `postgresql.ha`. **Remaining:** provisioning, monitoring off the database hosts, CA distribution, pgbouncer through HAProxy, resumable-upload chunks in object storage, artifact replication to the second region, cell identity (729), and the drills. | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0. Region-rebuild drill: restore the cell into its paired region within RPO ≤ 60 s and RTO about 2–4 h |
 | P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis, zone-loss certificate | Partition drill: zero duplicate at-most-once executions; quota never released without stop proof |
 | P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
 | P5 · Scale within a cell | §7 | Load test at the §7 targets within SLO |
