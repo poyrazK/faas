@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
@@ -39,6 +37,17 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		PrintUsage(os.Stderr, "usage: gregale events "+mode+" APP SUB [REQUEST_ID] [--file PATH] [--reason CODE] [--limit N] [--after ID] [--expected-created-at TIMESTAMP]", "events")
 		return 1
 	}
+	var input lineageRetryRequestFile
+	if mode == "subscription-lineage-retry-job-create" {
+		var err error
+		input, err = readLineageRetryRequestFile(file)
+		if err == nil {
+			err = input.validateSubscription(positional[1])
+		}
+		if err != nil {
+			return printErr("Invalid job request or target", err)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -61,11 +70,10 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 	}
 	var out api.EventExecutionLineageRetryJob
 	if mode == "subscription-lineage-retry-job-create" {
-		req, e := readLineageRetryJobRequest(file)
-		if e != nil {
-			return printErr("Invalid job request", e)
+		if err := input.validateApp(context.Background(), client, positional[0]); err != nil {
+			return printErr("Retry file app target mismatch", err)
 		}
-		out, err = client.CreateEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], req)
+		out, err = client.CreateEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], input.Request)
 	} else if mode == "subscription-lineage-retry-job-cancel" {
 		created, e := time.Parse(time.RFC3339Nano, expectedCreated)
 		if e != nil || created.IsZero() {
@@ -86,24 +94,4 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		_, _ = fmt.Fprintf(osStdout, "Case %d | %s (%s)\n", item.Selection.OutboxID, oneLine(item.Status), oneLine(item.Reason))
 	}
 	return 0
-}
-func readLineageRetryJobRequest(path string) (api.CreateEventExecutionLineageRetryJobRequest, error) {
-	var req api.CreateEventExecutionLineageRetryJobRequest
-	if path == "" {
-		return req, fmt.Errorf("--file is required")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return req, err
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, api.EventExecutionLineageRetryJobBodyMaxBytes+1))
-	if err != nil {
-		return req, err
-	}
-	if len(raw) > api.EventExecutionLineageRetryJobBodyMaxBytes {
-		return req, fmt.Errorf("request exceeds %d bytes", api.EventExecutionLineageRetryJobBodyMaxBytes)
-	}
-	err = json.Unmarshal(raw, &req)
-	return req, err
 }

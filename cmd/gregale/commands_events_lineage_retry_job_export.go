@@ -22,6 +22,8 @@ type lineageJobExportSkip struct {
 }
 
 type lineageJobExportSummary struct {
+	Format          string                 `json:"format,omitempty"`
+	AppID           string                 `json:"app_id"`
 	File            string                 `json:"file,omitempty"`
 	RequestID       string                 `json:"request_id,omitempty"`
 	SourceRequestID string                 `json:"source_request_id"`
@@ -35,8 +37,9 @@ type lineageJobExportSummary struct {
 }
 
 func cmdEventsLineageRetryJobExport(args []string) int {
-	flags, positional := splitArgsForFlags(args)
+	flags, positional := splitArgsForFlags(args, "raw")
 	fs := newFlagSet("subscription-lineage-retry-job-export", flag.ContinueOnError)
+	rawOutput := fs.Bool("raw", false, "export a legacy unscoped API request body")
 	file := fs.String("file", "", "new request JSON path; never overwrite")
 	outcomes := fs.String("outcomes", "unresolved,conflict,changed,unavailable", "comma-separated original outcomes; cancelled also allowed")
 	expected := fs.String("expected-created-at", "", "required original creation timestamp from the reviewed source job")
@@ -45,7 +48,7 @@ func cmdEventsLineageRetryJobExport(args []string) int {
 		return 1
 	}
 	if len(positional) != 3 || rejectUnexpectedFlagArgs(fs) || *file == "" || *expected == "" {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at TIMESTAMP --file PATH [--outcomes unresolved,conflict,changed,unavailable] [--timeout 2m]", "events")
+		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at TIMESTAMP --file PATH [--outcomes unresolved,conflict,changed,unavailable] [--timeout 2m] [--raw]", "events")
 		return 1
 	}
 	sub, subErr := uuid.Parse(positional[1])
@@ -66,7 +69,7 @@ func cmdEventsLineageRetryJobExport(args []string) int {
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, *timeout)
 	defer cancel()
-	return exportLineageRetryJob(ctx, client, positional[0], sub.String(), id.String(), created, *file, selectedOutcomes)
+	return exportLineageRetryJob(ctx, client, positional[0], sub.String(), id.String(), created, *file, selectedOutcomes, *rawOutput)
 }
 
 func lineageJobExportOutcomes(raw string) (map[string]bool, error) {
@@ -154,12 +157,12 @@ func currentLineageJobExportCase(ctx context.Context, client *api.Client, app, s
 	}
 }
 
-func exportLineageRetryJob(ctx context.Context, client *api.Client, app, sub, id string, expected time.Time, file string, outcomes map[string]bool) int {
+func exportLineageRetryJob(ctx context.Context, client *api.Client, app, sub, id string, expected time.Time, file string, outcomes map[string]bool, rawOutput bool) int {
 	source, err := readLineageJobExportSource(ctx, client, app, sub, id, expected)
 	if err != nil {
 		return printErr("Source lineage retry job unavailable", err)
 	}
-	summary := lineageJobExportSummary{SourceRequestID: id, SourceCreatedAt: source.CreatedAt, App: app, SubscriptionID: sub, SourceOutcomes: make(map[string]int), Reasons: make(map[string]int), Skipped: []lineageJobExportSkip{}}
+	summary := lineageJobExportSummary{SourceRequestID: id, SourceCreatedAt: source.CreatedAt, AppID: source.AppID, App: app, SubscriptionID: sub, SourceOutcomes: make(map[string]int), Reasons: make(map[string]int), Skipped: []lineageJobExportSkip{}}
 	preview := api.EventExecutionLineageCases{Cases: []api.EventExecutionLineageCase{}}
 	for _, item := range source.Items {
 		if !outcomes[item.Status] {
@@ -198,7 +201,14 @@ func exportLineageRetryJob(ctx context.Context, client *api.Client, app, sub, id
 	if err := ctx.Err(); err != nil {
 		return printErr("Lineage job export stopped; no request file written", err)
 	}
-	if err := writeLineageRetryExport(file, req); err != nil {
+	summary.Format = lineageRetryBundleFormat
+	if rawOutput {
+		summary.Format = "raw"
+		err = writeLineageRetryExport(file, req)
+	} else {
+		err = writeScopedLineageRetryExport(file, req, source.AppID, sub, &lineageRetryFileSource{RequestID: source.RequestID, CreatedAt: source.CreatedAt})
+	}
+	if err != nil {
 		return printErr("Lineage job export failed", err)
 	}
 	summary.File, summary.RequestID, summary.Selected, summary.Reasons = file, req.RequestID, len(req.Cases), reasons
@@ -214,7 +224,7 @@ func renderLineageJobExportSummary(summary lineageJobExportSummary) int {
 		_, _ = fmt.Fprintf(osStdout, "Skipped case %d | original %s | %s\n", item.OutboxID, oneLine(item.SourceOutcome), oneLine(item.Reason))
 	}
 	if summary.File != "" {
-		_, _ = fmt.Fprintf(osStdout, "Saved %s | request %s | app %s | subscription %s\nReview before submitting with subscription-lineage-retry-job-create; reuse this file after a timeout.\n", oneLine(summary.File), summary.RequestID, oneLine(summary.App), summary.SubscriptionID)
+		_, _ = fmt.Fprintf(osStdout, "Saved %s | %s | request %s | app %s (%s) | subscription %s\nReview before submitting with subscription-lineage-retry-job-create; reuse this file after a timeout.\n", oneLine(summary.File), summary.Format, summary.RequestID, oneLine(summary.App), summary.AppID, summary.SubscriptionID)
 	}
 	return 0
 }

@@ -2345,11 +2345,12 @@ Preview retained unresolved lineage cases
 
 Save a guarded preview as a reviewable retry request
 
-`gregale events subscription-lineage-retry-export [--file <PATH>] [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
+`gregale events subscription-lineage-retry-export [--file <PATH>] [--raw] [--limit <N>] [--after <ID>] [--reason <CODE>] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--file <PATH>` | new JSON request file (never overwrite) |  |
+| `--file <PATH>` | new scoped retry file (never overwrite) |  |
+| `--raw` | legacy unscoped API body |  |
 | `--limit <N>` | selected cases (default 50, maximum 200) |  |
 | `--after <ID>` | exclusive outbox cursor |  |
 | `--reason <CODE>` | exact case reason filter |  |
@@ -2374,7 +2375,7 @@ Check a saved retry request without changing it
 
 | Flag | Meaning | |
 |---|---|---|
-| `--file <PATH>` | saved JSON request with original UUID and guards |  |
+| `--file <PATH>` | scoped retry file or legacy request body |  |
 | `--timeout <DURATION>` | maximum preflight duration (default 2m) |  |
 
 ### events subscription-lineage-retry-job-create
@@ -2385,7 +2386,7 @@ Submit a reviewed fixed lineage retry selection
 
 | Flag | Meaning | |
 |---|---|---|
-| `--file <PATH>` | JSON request with request_id and guarded cases (maximum 200) |  |
+| `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
 
 ### events subscription-lineage-retry-job-cancel
 
@@ -2401,11 +2402,12 @@ Cancel unprocessed lineage retries
 
 Export current guards for remaining cases from a finished job
 
-`gregale events subscription-lineage-retry-job-export [--file <PATH>] [--expected-created-at <TIMESTAMP>] [--outcomes <STATES>] [--timeout <DURATION>] <app> <subscription-id> <source-request-id>`
+`gregale events subscription-lineage-retry-job-export [--file <PATH>] [--raw] [--expected-created-at <TIMESTAMP>] [--outcomes <STATES>] [--timeout <DURATION>] <app> <subscription-id> <source-request-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--file <PATH>` | new JSON request file (never overwrite) |  |
+| `--file <PATH>` | new scoped retry file (never overwrite) |  |
+| `--raw` | legacy unscoped API body without provenance |  |
 | `--expected-created-at <TIMESTAMP>` | required reviewed source creation timestamp |  |
 | `--outcomes <STATES>` | original outcomes (default unresolved,conflict,changed,unavailable; cancelled also allowed) |  |
 | `--timeout <DURATION>` | maximum export duration (default 2m) |  |

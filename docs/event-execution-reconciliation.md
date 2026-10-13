@@ -114,9 +114,9 @@ gregale events subscription-lineage-retry-export APP SUB --reason missing_root -
 ```
 
 The command reads the existing preview API and creates no retry job. It copies
-each case's revision, original
-acceptance timestamp and diagnostic ID (when present), generates a request UUID,
-and saves an indented JSON file with owner-only permissions. It refuses to
+each case's revision, original acceptance timestamp and diagnostic ID (when
+present), generates a request UUID, and saves a versioned scoped file with
+owner-only permissions. The file includes the app and subscription UUIDs. It refuses to
 replace an existing file or export an empty selection. The summary identifies
 the app/subscription, selected count, reason counts and any next-page cursor;
 `--json` returns that summary. Only this page is selected: use `--after` and a
@@ -126,7 +126,8 @@ still validates every guard against current state.
 Review the file and submit it using the create command below. Keep the same file
 and request UUID after a lost response or timeout. Exporting again creates a new
 request identity; use a new export only for a deliberate new selection. The
-request file contains the API body, so supply the same APP and SUB when submitting.
+scoped file includes its target, which create and preflight validate before use.
+Pass `--raw` to export a legacy API-body file for older clients or direct SDK use.
 
 Alternatively, create a JSON request containing a new UUID and the exact reviewed identities:
 
@@ -175,6 +176,58 @@ acceptance and known root incarnation remain fenced. Bulk retries record lineage
 only and preserve scan counters, history-loss markers and established coverage
 boundaries. They never rerun handlers or recreate missing historical evidence.
 
+## Scope-bound retry files
+
+Both preview export and finished-job export now default to a versioned scoped
+file. It binds the saved selection to a stable app UUID and subscription UUID:
+
+```json
+{
+  "format": "gregale.event-lineage-retry",
+  "version": 1,
+  "app_id": "22222222-2222-4222-8222-222222222222",
+  "subscription_id": "33333333-3333-4333-8333-333333333333",
+  "request": {
+    "request_id": "11111111-1111-4111-8111-111111111111",
+    "cases": [
+      {"outbox_id": 123, "expected_revision": 1, "accepted_at": "2026-10-13T10:00:00Z"}
+    ]
+  }
+}
+```
+
+Finished-job exports add `source_job` with the reviewed source `request_id` and
+original `created_at`. This is retained local provenance; submission does not
+require the source job to remain available. Preview exports omit it. Export
+summaries identify the format and stable app UUID; preflight reports include
+`scope` and any `source_job` metadata.
+
+Use the same create and preflight commands with these files. A different
+subscription is rejected locally before authentication or API requests. For the
+app, the CLI reads metadata for the supplied slug and compares its stable UUID
+before case checks or submission. App renames are supported when the supplied
+slug resolves to the same ID. This metadata read requires read scope in addition
+to the existing deploy/write permission for create. Preflight pins subsequent
+job/case observations to the file's app identity too. Scope mismatches return
+exit 1, leave the file untouched and never submit a job.
+
+Only the nested `request` is sent to the unchanged API; scope and provenance
+remain local. The CLI rejects unsupported formats/versions, missing required
+scope IDs, malformed request guards, unknown bundle fields and duplicate field
+names (including alternate casing). Files containing reserved bundle keys (`format`, `version`,
+`app_id`, `subscription_id`, `request` or `source_job`) are handled as bundles;
+an invalid bundle never falls back to an unscoped body. File size remains capped
+at the existing 64 KiB request-file limit. Exports retain owner-only permissions,
+exclusive creation and cleanup of incomplete writes.
+
+Existing raw API-body files remain readable by create and preflight. Add `--raw`
+to either exporter when an older CLI or a direct API/SDK consumer needs that
+format. Raw files carry no target binding or source provenance, so the operator
+must supply the intended APP and SUB. Scoped files require the updated CLI, or
+an integration that validates their target and extracts `request` before calling
+the API. Files are editable local artifacts; server authorization, ownership,
+current guard checks and retained-request idempotency remain authoritative.
+
 ## Preflight a saved retry request
 
 Check a reviewed export before submission, preserving the original file and UUID:
@@ -220,7 +273,8 @@ malformed responses emit an incomplete report with `complete: false` and
 `ready: false`, then a diagnostic on stderr with the normal CLI error code.
 Timeout returns 3 and Ctrl-C 130. `--timeout` defaults to 2 minutes and must be
 positive; individual reads also have the existing control timeout. At most 202
-read requests are made for a full 200-case file; no unbounded case scan occurs.
+read requests are made for a full 200-case raw file, or 203 for a scoped file
+including its app-identity check; no unbounded case scan occurs.
 
 Preflight is advisory and read-only. Reads are live observations, not a
 transaction, reservation or guarantee that submission will succeed. A 404 request
@@ -347,7 +401,8 @@ that a diagnostic-free case was not recreated.
 
 The JSON summary contains source UUID/creation time, destination file/new UUID,
 app/subscription, selected count, selected source-outcome counts, current reason
-counts and skipped items. The request file contains only the API submission body.
+counts and skipped items. The default request file also includes target UUIDs and
+source-job provenance. Pass `--raw` for the legacy API body without those fields.
 Cases appear once in ascending outbox order. If none remain retryable, print the
 summary and exit 1 without creating a file or request UUID. Read failures,
 malformed responses, timeout or Ctrl-C during the read phase abort before writing

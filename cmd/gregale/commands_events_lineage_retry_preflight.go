@@ -24,6 +24,8 @@ type lineageRetryPreflightCase struct {
 }
 
 type lineageRetryPreflightReport struct {
+	Scope          *lineageRetryFileScope                    `json:"scope,omitempty"`
+	SourceJob      *lineageRetryFileSource                   `json:"source_job,omitempty"`
 	File           string                                    `json:"file"`
 	App            string                                    `json:"app"`
 	SubscriptionID string                                    `json:"subscription_id"`
@@ -54,9 +56,9 @@ func cmdEventsLineageRetryPreflight(args []string) int {
 	if err != nil || sub == uuid.Nil || *timeout <= 0 {
 		return printErr("Invalid preflight options", fmt.Errorf("subscription must be a nonzero UUID and timeout must be positive"))
 	}
-	req, err := readLineageRetryJobRequest(*file)
+	input, err := readLineageRetryRequestFile(*file)
 	if err == nil {
-		req, err = normalizeLineagePreflightRequest(req)
+		err = input.validateSubscription(sub.String())
 	}
 	if err != nil {
 		return printErr("Invalid retry request", err)
@@ -69,7 +71,10 @@ func cmdEventsLineageRetryPreflight(args []string) int {
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, *timeout)
 	defer cancel()
-	return preflightLineageRetryRequest(ctx, client, positional[0], sub.String(), *file, req)
+	if err := input.validateApp(ctx, client, positional[0]); err != nil {
+		return printErr("Retry file app target mismatch", err)
+	}
+	return preflightLineageRetryRequest(ctx, client, positional[0], sub.String(), *file, input)
 }
 
 // Normalize in memory only, matching submission's UUID, ordering and timestamp semantics.
@@ -194,15 +199,22 @@ func lineagePreflightJobMatches(job api.EventExecutionLineageRetryJob, req api.C
 	return true, nil
 }
 
-func preflightLineageRetryRequest(ctx context.Context, client *api.Client, app, sub, file string, req api.CreateEventExecutionLineageRetryJobRequest) int {
-	report := lineageRetryPreflightReport{File: file, App: app, SubscriptionID: sub, RequestID: req.RequestID, Total: len(req.Cases), RequestState: "unverified", Cases: []lineageRetryPreflightCase{}}
+func preflightLineageRetryRequest(ctx context.Context, client *api.Client, app, sub, file string, input lineageRetryRequestFile) int {
+	req := input.Request
+	report := lineageRetryPreflightReport{Scope: input.Scope, SourceJob: input.SourceJob, File: file, App: app, SubscriptionID: sub, RequestID: req.RequestID, Total: len(req.Cases), RequestState: "unverified", Cases: []lineageRetryPreflightCase{}}
 	first, err := readLineagePreflightJob(ctx, client, app, sub, req.RequestID)
 	if err != nil {
 		return failLineagePreflight(report, err)
 	}
 	// Pin the app identity observed through these subscription-scoped reads.
 	appID := ""
+	if input.Scope != nil {
+		appID = input.Scope.AppID
+	}
 	if first != nil {
+		if appID != "" && !sameBindingDeployment(first.AppID, appID) {
+			return failLineagePreflight(report, fmt.Errorf("job app identity differs from scoped retry file"))
+		}
 		appID = first.AppID
 	}
 	for _, selection := range req.Cases {
