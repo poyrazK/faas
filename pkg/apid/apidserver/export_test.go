@@ -255,6 +255,7 @@ var AggregateWakeTimeline = aggregateWakeTimeline
 var AlertChannelItem = alertChannelItem
 var AlertRuleReq = alertRuleReq
 var AllocateRequestAnalyticsRouteCost = allocateRequestAnalyticsRouteCost
+var AllocateRequestAnalyticsRouteCostByTime = allocateRequestAnalyticsRouteCostByTime
 var AnnotateDeploymentCPURegressions = annotateDeploymentCPURegressions
 var AnnotateRouteDeploymentCPURegressions = annotateRouteDeploymentCPURegressions
 var ApiManifestFromState = apiManifestFromState

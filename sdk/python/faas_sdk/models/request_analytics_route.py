@@ -66,9 +66,13 @@ class RequestAnalyticsRoute:
     other_deployment_estimated_compute_cost_millicents: int | Unset = UNSET
     """This route's estimated compute value allocated to deployments outside the top-five list by request share."""
     estimated_compute_cost_millicents: int | Unset = UNSET
-    """Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level
-    included allowance and egress."""
+    """Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by
+    request share when no timing exists; excludes account-level included allowance and egress."""
     request_share_pct: float | Unset = UNSET
+    request_time_ms: int | Unset = UNSET
+    """Total gateway-observed request time for this route in the window, in milliseconds."""
+    request_time_share_pct: float | Unset = UNSET
+    """This route's share of all observed app request time in the window."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,6 +162,10 @@ class RequestAnalyticsRoute:
 
         request_share_pct = self.request_share_pct
 
+        request_time_ms = self.request_time_ms
+
+        request_time_share_pct = self.request_time_share_pct
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -205,6 +213,10 @@ class RequestAnalyticsRoute:
             field_dict["estimated_compute_cost_millicents"] = estimated_compute_cost_millicents
         if request_share_pct is not UNSET:
             field_dict["request_share_pct"] = request_share_pct
+        if request_time_ms is not UNSET:
+            field_dict["request_time_ms"] = request_time_ms
+        if request_time_share_pct is not UNSET:
+            field_dict["request_time_share_pct"] = request_time_share_pct
 
         return field_dict
 
@@ -329,6 +341,10 @@ class RequestAnalyticsRoute:
 
         request_share_pct = d.pop("request_share_pct", UNSET)
 
+        request_time_ms = d.pop("request_time_ms", UNSET)
+
+        request_time_share_pct = d.pop("request_time_share_pct", UNSET)
+
         request_analytics_route = cls(
             route=route,
             method=method,
@@ -354,6 +370,8 @@ class RequestAnalyticsRoute:
             other_deployment_estimated_compute_cost_millicents=other_deployment_estimated_compute_cost_millicents,
             estimated_compute_cost_millicents=estimated_compute_cost_millicents,
             request_share_pct=request_share_pct,
+            request_time_ms=request_time_ms,
+            request_time_share_pct=request_time_share_pct,
         )
 
         request_analytics_route.additional_properties = d
