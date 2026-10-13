@@ -162,6 +162,32 @@ const (
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
 )
 
+// Billing runs (ADR-1301).
+const (
+	// BillingRunSettleDelay is how long after month end a run may start, so
+	// gateway usage outboxes have delivered the month's last minutes.
+	BillingRunSettleDelay = time.Hour
+	// Schedules start a month's run delay_hours after month end.
+	BillingRunScheduleMinDelayHours     = 1
+	BillingRunScheduleMaxDelayHours     = 240
+	BillingRunScheduleDefaultDelayHours = 24
+	// The worker leases one run per tick and processes a bounded batch of
+	// its items; a crashed worker's lease expires after BillingRunLeaseTTL.
+	BillingRunTickInterval      = 15 * time.Second
+	BillingRunLeaseTTL          = 2 * time.Minute
+	BillingRunBatchSize         = 25
+	BillingRunScheduleBatchSize = 100
+	// A transient failure retries the item with exponential backoff from
+	// BillingRunRetryBase, failing it after BillingRunItemMaxAttempts.
+	BillingRunItemMaxAttempts = 5
+	BillingRunRetryBase       = time.Minute
+	// List page sizes.
+	BillingRunListDefault     = 20
+	BillingRunListMax         = 100
+	BillingRunItemListDefault = 100
+	BillingRunItemListMax     = 500
+)
+
 type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int

@@ -14,9 +14,15 @@ import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
 import type { BillingConnectionResponse } from '../models/BillingConnectionResponse.js';
+import type { BillingRunItemListResponse } from '../models/BillingRunItemListResponse.js';
+import type { BillingRunListResponse } from '../models/BillingRunListResponse.js';
+import type { BillingRunResponse } from '../models/BillingRunResponse.js';
+import type { BillingRunScheduleResponse } from '../models/BillingRunScheduleResponse.js';
 import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
+import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
 import type { PutStripeConnectionRequest } from '../models/PutStripeConnectionRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
@@ -618,6 +624,201 @@ export class AccountService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/billing-connections/stripe',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List the account's month-end billing runs, newest first.
+   * @returns BillingRunListResponse Billing runs with their item counts.
+   * @throws ApiError
+   */
+  public static listBillingRuns({
+    limit,
+  }: {
+    /**
+     * Runs to return (1–100, default 20).
+     */
+    limit?: number,
+  }): CancelablePromise<BillingRunListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs',
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+      },
+    });
+  }
+  /**
+   * Bill one ended month for every customer (ADR-1301).
+   * Starts a background run for one UTC calendar month that ended at least
+   * an hour ago. For every app consumer and platform tenant with billable
+   * usage, it drafts the month's statement, holds consumers whose ledger
+   * misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
+   * `export: stripe` creates draft Stripe invoices. Usage attributed to a
+   * platform tenant is billed on the tenant's statement. One run per
+   * account can be queued or running at a time.
+   *
+   * @returns BillingRunResponse The queued run; poll it or list its items for progress.
+   * @throws ApiError
+   */
+  public static createBillingRun({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: CreateBillingRunRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<BillingRunResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/billing-runs',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        409: `Another run is in progress, or \`export\` is \`stripe\` without a connected Stripe key.`,
+        422: `The month has not ended, or the options are invalid.`,
+      },
+    });
+  }
+  /**
+   * Get a billing run and how many customers reached each outcome.
+   * @returns BillingRunResponse The billing run.
+   * @throws ApiError
+   */
+  public static getBillingRun({
+    id,
+  }: {
+    /**
+     * Billing run ID.
+     */
+    id: string,
+  }): CancelablePromise<BillingRunResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List what a billing run did for each customer.
+   * @returns BillingRunItemListResponse One page of the run's items.
+   * @throws ApiError
+   */
+  public static listBillingRunItems({
+    id,
+    outcome,
+    cursor,
+    limit,
+  }: {
+    /**
+     * Billing run whose customers are listed.
+     */
+    id: string,
+    /**
+     * Only items with this outcome, such as `held` or `failed`.
+     */
+    outcome?: 'pending' | 'drafted' | 'finalized' | 'exported' | 'up_to_date' | 'held' | 'skipped' | 'failed',
+    /**
+     * The previous page's `next_cursor`.
+     */
+    cursor?: string,
+    /**
+     * Items to return (1–500, default 100).
+     */
+    limit?: number,
+  }): CancelablePromise<BillingRunItemListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-runs/{id}/items',
+      path: {
+        'id': id,
+      },
+      query: {
+        'outcome': outcome,
+        'cursor': cursor,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Get the account's monthly billing run schedule.
+   * @returns BillingRunScheduleResponse The schedule and when it next starts a run.
+   * @throws ApiError
+   */
+  public static getBillingRunSchedule(): CancelablePromise<BillingRunScheduleResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/billing-run-schedule',
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Start a billing run automatically after each month ends.
+   * A new schedule starts with the current month: its run starts
+   * `delay_hours` after the month ends. Replacing a schedule keeps its
+   * next month. If a run is already in progress, the scheduled run
+   * starts once it completes.
+   *
+   * @returns BillingRunScheduleResponse The saved schedule.
+   * @throws ApiError
+   */
+  public static putBillingRunSchedule({
+    requestBody,
+  }: {
+    requestBody: PutBillingRunScheduleRequest,
+  }): CancelablePromise<BillingRunScheduleResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/account/billing-run-schedule',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        409: `\`export\` is \`stripe\` without a connected Stripe key.`,
+        422: `Invalid schedule options or delay.`,
+      },
+    });
+  }
+  /**
+   * Stop scheduled billing runs; a run already started continues.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteBillingRunSchedule(): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/billing-run-schedule',
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,

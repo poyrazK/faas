@@ -9,7 +9,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
 | [`menu`](#menu) | Choose a common task and open its guided command |
 | [`start`](#start) | Get your first app live with a few guided prompts |
-| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo\|stripe) |
+| [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo\|stripe\|billing-run) |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
@@ -717,7 +717,7 @@ gregale start
 
 ## account
 
-Manage the local account (account export|delete|restore|status|dpa|slo|stripe)
+Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run)
 
 `gregale account [<subcommand>]`
 
@@ -771,6 +771,83 @@ Account-wide SLO panel
 Connect, show, or disconnect the Stripe key for statement invoice exports; connect reads the key from stdin
 
 `gregale account stripe {connect|status|disconnect}`
+
+### account billing-run
+
+Bill an ended month for every API customer: draft, check, finalize and optionally export each statement
+
+#### account billing-run start
+
+Start a run for one ended UTC month
+
+`gregale account billing-run start [--month <YYYY-MM>] [--sources <LIST>] [--no-finalize] [--export <TARGET>] [--no-hold-on-gaps] [--wait]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--month <YYYY-MM>` | UTC calendar month to bill (default: last month) |  |
+| `--sources <LIST>` | comma-separated app_consumers,platform_tenants (default: both) |  |
+| `--no-finalize` | only draft statements |  |
+| `--export <TARGET>` | none or stripe (default none) |  |
+| `--no-hold-on-gaps` | finalize consumers even when request telemetry shows unbilled requests |  |
+| `--wait` | wait until the run completes and list its customers |  |
+
+Examples:
+
+```sh
+gregale account billing-run start --month 2026-09 --export stripe --wait
+```
+
+#### account billing-run list
+
+List billing runs, newest first
+
+`gregale account billing-run list [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | runs to list (1-100) |  |
+
+#### account billing-run show
+
+Show a run and what it did for each customer
+
+`gregale account billing-run show [--outcome <OUTCOME>] RUN_ID`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--outcome <OUTCOME>` | only customers with this outcome, e.g. held or failed |  |
+
+#### account billing-run schedule
+
+Show the monthly billing run schedule
+
+`gregale account billing-run schedule`
+
+#### account billing-run schedule-set
+
+Start a run automatically after each month ends
+
+`gregale account billing-run schedule-set [--sources <LIST>] [--no-finalize] [--export <TARGET>] [--no-hold-on-gaps] [--delay-hours <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--sources <LIST>` | comma-separated app_consumers,platform_tenants for scheduled runs (default: both) |  |
+| `--no-finalize` | scheduled runs only draft statements |  |
+| `--export <TARGET>` | none or stripe for scheduled runs (default none) |  |
+| `--no-hold-on-gaps` | scheduled runs finalize consumers with completeness gaps |  |
+| `--delay-hours <N>` | hours after month end before the run starts (1-240, default 24) |  |
+
+Examples:
+
+```sh
+gregale account billing-run schedule-set --export stripe --delay-hours 6
+```
+
+#### account billing-run schedule-delete
+
+Stop scheduled runs; a started run continues
+
+`gregale account billing-run schedule-delete`
 
 
 ## add

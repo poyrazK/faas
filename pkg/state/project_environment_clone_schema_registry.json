@@ -1379,6 +1379,68 @@
     "kind": "operational"
   },
   {
+    "table": "billing_run_items",
+    "columns": [
+      "amount_millicents",
+      "app_id",
+      "attempts",
+      "completeness",
+      "currency",
+      "exported_count",
+      "external_ref",
+      "invoice_id",
+      "next_attempt_at",
+      "outcome",
+      "reason",
+      "revision",
+      "run_id",
+      "source_id",
+      "source_kind",
+      "statement_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_run_schedules",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delay_hours",
+      "export_provider",
+      "finalize",
+      "hold_on_gaps",
+      "last_period_start",
+      "next_period_start",
+      "next_run_at",
+      "sources",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "billing_runs",
+    "columns": [
+      "account_id",
+      "completed_at",
+      "created_at",
+      "discovered_at",
+      "export_provider",
+      "finalize",
+      "hold_on_gaps",
+      "id",
+      "lease_owner",
+      "lease_until",
+      "period_end",
+      "period_start",
+      "sources",
+      "started_at",
+      "status",
+      "trigger"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "billing_usage_deliveries",
     "columns": [
       "account_id",

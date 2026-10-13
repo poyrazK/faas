@@ -824,6 +824,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
+		srv.billingRuns.Start(ctx, log) // ADR-1301
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion

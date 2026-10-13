@@ -257,6 +257,58 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
 - **Currencies.** Only two-decimal currencies are supported, such as EUR, USD
   and GBP.
 
+### Bill a month for every customer
+
+A billing run does the steps above for every customer with billable usage in
+one ended UTC month. It covers app consumers and
+[platform tenants](#customers-across-several-apps), and runs in the
+background:
+
+```bash
+gregale account billing-run start --month 2026-09 --export stripe --wait
+gregale account billing-run show RUN_ID --outcome held
+```
+
+For each customer the run drafts the month's statement and checks
+completeness. It then finalizes the statement and, with `--export stripe`,
+creates its draft Stripe invoice.
+
+- **When.** A run can start one hour after the month ends, once late usage
+  has arrived. Only one run per account is in progress at a time.
+- **Outcomes.** Each customer ends up with one of these outcomes:
+
+  | Outcome | Meaning |
+  |---|---|
+  | `exported` | Draft Stripe invoices were created. |
+  | `finalized` | The statement was finalized and not exported. |
+  | `drafted` | The statement was drafted only (`--no-finalize`). |
+  | `up_to_date` | Nothing new to bill since the last run. |
+  | `held` | Needs your attention, for example unpriced usage or a completeness gap. |
+  | `skipped` | Billed through a platform tenant, or already invoiced another way. |
+  | `failed` | Stripe or Gregale kept failing after retries. |
+
+  Held and failed customers don't stop the run. Fix the cause, then start
+  another run for the same month.
+- **Completeness gaps.** A consumer whose usage ledger misses requests that
+  telemetry saw is held before finalizing. Use `--no-hold-on-gaps` to
+  finalize anyway.
+- **Platform tenants.** Usage attributed to a platform tenant is billed on the
+  tenant's statement, so those consumers are skipped in the app part of the
+  run. Use `--sources app_consumers` to bill every consumer by app statement
+  instead.
+- **Running a month again.** Late usage becomes adjustment statements.
+  Statements already invoiced stay `up_to_date`. Every finalized statement of
+  the month without a handoff is exported, oldest first. Statements with a
+  zero total are never exported.
+
+To bill every month automatically, set a schedule. Each month's run starts
+`--delay-hours` after the month ends (default 24 hours), beginning with the
+current month:
+
+```bash
+gregale account billing-run schedule-set --export stripe --delay-hours 6
+```
+
 ## Customers across several apps
 
 To bill one customer across several apps, link their consumers to a
@@ -306,8 +358,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-953](adr/953-api-consumer-plans.md),
 [ADR-954](adr/954-api-consumer-usage-completeness.md),
 [ADR-849](adr/849-api-consumer-usage-alerts.md),
-[ADR-975](adr/975-platform-tenant-allowances-and-tiers.md), and
-[ADR-1300](adr/1300-stripe-statement-invoice-exports.md) for the billing rules.
+[ADR-975](adr/975-platform-tenant-allowances-and-tiers.md),
+[ADR-1300](adr/1300-stripe-statement-invoice-exports.md), and
+[ADR-1301](adr/1301-month-end-billing-runs.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

@@ -26,7 +26,7 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo|stripe}", "account")
+		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo|stripe|billing-run}", "account")
 		return 1
 	}
 	switch args[0] {
@@ -48,6 +48,9 @@ func cmdAccount(args []string) int {
 	case "stripe":
 		// ADR-1300: the account's Stripe key for statement invoice exports.
 		return cmdAccountStripe(args[1:])
+	case "billing-run":
+		// ADR-1301: bill a month for every customer, or schedule it.
+		return cmdAccountBillingRun(args[1:])
 	case "slo":
 		// Move 2 PR-A: CLI twin for GET /v1/account/slo
 		// (issue #696 / ADR-082). Account-wide SLO rollup.

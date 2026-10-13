@@ -225,6 +225,11 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	if src.existingHandoff != "" && (err != nil || prior.ProviderInvoiceID != src.existingHandoff) {
 		return state.StatementInvoiceExport{}, exportConflict("the statement was already handed off to another invoice")
 	}
+	if src.existingHandoff == "" {
+		if problem := s.checkHandoffAllowed(ctx, acct, src); problem != nil {
+			return state.StatementInvoiceExport{}, problem
+		}
+	}
 	conn, err := store.GetBillingConnection(ctx, acct.ID, state.BillingProviderStripe)
 	if errors.Is(err, state.ErrNotFound) {
 		return state.StatementInvoiceExport{}, exportConflict("connect Stripe first: PUT /v1/account/billing-connections/stripe")
@@ -259,6 +264,27 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 		return state.StatementInvoiceExport{}, api.ErrInternal("could not complete the statement invoice export")
 	}
 	return done, nil
+}
+
+// ErrHandoffOverlapDetail is the detail of the 409 an export returns when
+// another statement already invoiced part of this statement's usage.
+const ErrHandoffOverlapDetail = "another statement already handed off part of this usage to an invoice"
+
+// checkHandoffAllowed refuses an export whose handoff ADR-238's overlap
+// rules would reject, before any Stripe invoice exists (ADR-1301).
+func (s *Service) checkHandoffAllowed(ctx context.Context, acct state.Account, src statementInvoiceSource) *api.Problem {
+	checker, ok := s.Host.Store().(state.StatementHandoffChecker)
+	if !ok {
+		return nil
+	}
+	blocked, err := checker.StatementHandoffBlocked(ctx, acct.ID, src.kind, src.statementID)
+	if err != nil {
+		return api.ErrInternal("could not check the statement handoff")
+	}
+	if blocked {
+		return exportConflict(ErrHandoffOverlapDetail)
+	}
+	return nil
 }
 
 func (s *Service) openStripeKey(accountID string, conn state.BillingConnection) (string, *api.Problem) {

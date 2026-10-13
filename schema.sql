@@ -17322,6 +17322,117 @@ CREATE TABLE public.billing_meter_usage_deliveries (
 
 
 --
+-- Name: billing_run_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_run_items (
+    run_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    source_id uuid NOT NULL,
+    app_id uuid,
+    external_ref text DEFAULT ''::text NOT NULL,
+    outcome text DEFAULT 'pending'::text NOT NULL,
+    statement_id uuid,
+    revision integer,
+    currency text,
+    amount_millicents bigint,
+    completeness text,
+    invoice_id text,
+    exported_count integer DEFAULT 0 NOT NULL,
+    reason text,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_run_items_app_chk CHECK (((source_kind = 'app_consumer'::text) = (app_id IS NOT NULL))),
+    CONSTRAINT billing_run_items_completeness_chk CHECK (((completeness IS NULL) OR (completeness = ANY (ARRAY['verified'::text, 'partial'::text, 'gaps_detected'::text, 'unverifiable'::text])))),
+    CONSTRAINT billing_run_items_counts_chk CHECK (((attempts >= 0) AND (exported_count >= 0) AND ((revision IS NULL) OR (revision >= 1)))),
+    CONSTRAINT billing_run_items_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
+    CONSTRAINT billing_run_items_external_ref_chk CHECK ((char_length(external_ref) <= 256)),
+    CONSTRAINT billing_run_items_outcome_chk CHECK ((outcome = ANY (ARRAY['pending'::text, 'drafted'::text, 'finalized'::text, 'exported'::text, 'up_to_date'::text, 'held'::text, 'skipped'::text, 'failed'::text]))),
+    CONSTRAINT billing_run_items_reason_chk CHECK (((reason IS NULL) OR (char_length(reason) <= 1000))),
+    CONSTRAINT billing_run_items_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text])))
+);
+
+
+--
+-- Name: TABLE billing_run_items; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_run_items IS 'One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.';
+
+
+--
+-- Name: billing_run_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_run_schedules (
+    account_id uuid NOT NULL,
+    sources text[] NOT NULL,
+    finalize boolean NOT NULL,
+    export_provider text NOT NULL,
+    hold_on_gaps boolean NOT NULL,
+    delay_hours integer NOT NULL,
+    next_period_start timestamp with time zone NOT NULL,
+    next_run_at timestamp with time zone NOT NULL,
+    last_period_start timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_run_schedules_delay_chk CHECK (((delay_hours >= 1) AND (delay_hours <= 240))),
+    CONSTRAINT billing_run_schedules_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text]))),
+    CONSTRAINT billing_run_schedules_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
+    CONSTRAINT billing_run_schedules_last_month_chk CHECK (((last_period_start IS NULL) OR (last_period_start = (date_trunc('month'::text, (last_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT billing_run_schedules_next_month_chk CHECK (((next_period_start = (date_trunc('month'::text, (next_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (next_run_at > next_period_start))),
+    CONSTRAINT billing_run_schedules_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 2)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text])))
+);
+
+
+--
+-- Name: TABLE billing_run_schedules; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_run_schedules IS 'Per-account schedule that starts a billing run for each month after month end plus delay_hours.';
+
+
+--
+-- Name: billing_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    sources text[] NOT NULL,
+    finalize boolean NOT NULL,
+    export_provider text NOT NULL,
+    hold_on_gaps boolean NOT NULL,
+    trigger text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    discovered_at timestamp with time zone,
+    lease_owner text,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    CONSTRAINT billing_runs_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
+    CONSTRAINT billing_runs_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text]))),
+    CONSTRAINT billing_runs_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
+    CONSTRAINT billing_runs_lease_chk CHECK (((lease_owner IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT billing_runs_month_chk CHECK (((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (period_end = ((date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) + '1 mon'::interval) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT billing_runs_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 2)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text]))),
+    CONSTRAINT billing_runs_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text]))),
+    CONSTRAINT billing_runs_trigger_chk CHECK ((trigger = ANY (ARRAY['api'::text, 'schedule'::text])))
+);
+
+
+--
+-- Name: TABLE billing_runs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_runs IS 'Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.';
+
+
+--
 -- Name: billing_usage_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32453,6 +32564,30 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 
 --
+-- Name: billing_run_items billing_run_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_items
+    ADD CONSTRAINT billing_run_items_pkey PRIMARY KEY (run_id, source_kind, source_id);
+
+
+--
+-- Name: billing_run_schedules billing_run_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_schedules
+    ADD CONSTRAINT billing_run_schedules_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: billing_runs billing_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_runs
+    ADD CONSTRAINT billing_runs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: billing_usage_deliveries billing_usage_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39757,6 +39892,48 @@ CREATE UNIQUE INDEX billing_identities_provider_subscription_idx ON public.billi
 --
 
 CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_usage_deliveries USING btree (window_start);
+
+
+--
+-- Name: billing_run_items_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_run_items_pending_idx ON public.billing_run_items USING btree (run_id, next_attempt_at) WHERE (outcome = 'pending'::text);
+
+
+--
+-- Name: billing_run_schedules_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_run_schedules_due_idx ON public.billing_run_schedules USING btree (next_run_at);
+
+
+--
+-- Name: billing_runs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_runs_account_idx ON public.billing_runs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: billing_runs_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_runs_claim_idx ON public.billing_runs USING btree (created_at) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: billing_runs_one_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX billing_runs_one_active_idx ON public.billing_runs USING btree (account_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: billing_runs_scheduled_month_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX billing_runs_scheduled_month_idx ON public.billing_runs USING btree (account_id, period_start) WHERE (trigger = 'schedule'::text);
 
 
 --
@@ -50933,6 +51110,30 @@ ALTER TABLE ONLY public.billing_identities
 
 ALTER TABLE ONLY public.billing_meter_usage_deliveries
     ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_run_items billing_run_items_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_items
+    ADD CONSTRAINT billing_run_items_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.billing_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_run_schedules billing_run_schedules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_schedules
+    ADD CONSTRAINT billing_run_schedules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_runs billing_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_runs
+    ADD CONSTRAINT billing_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

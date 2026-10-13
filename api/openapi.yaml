@@ -7972,6 +7972,174 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/account/billing-runs:
+    get:
+      tags: [account]
+      operationId: listBillingRuns
+      summary: List the account's month-end billing runs, newest first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Runs to return (1–100, default 20).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Billing runs with their item counts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [account]
+      operationId: createBillingRun
+      summary: Bill one ended month for every customer (ADR-1301).
+      description: |
+        Starts a background run for one UTC calendar month that ended at least
+        an hour ago. For every app consumer and platform tenant with billable
+        usage, it drafts the month's statement, holds consumers whose ledger
+        misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
+        `export: stripe` creates draft Stripe invoices. Usage attributed to a
+        platform tenant is billed on the tenant's statement. One run per
+        account can be queued or running at a time.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBillingRunRequest' }
+      responses:
+        '202':
+          description: The queued run; poll it or list its items for progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Another run is in progress, or `export` is `stripe` without a connected Stripe key.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The month has not ended, or the options are invalid.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/account/billing-runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Billing run ID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: getBillingRun
+      summary: Get a billing run and how many customers reached each outcome.
+      responses:
+        '200':
+          description: The billing run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/billing-runs/{id}/items:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Billing run whose customers are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [account]
+      operationId: listBillingRunItems
+      summary: List what a billing run did for each customer.
+      parameters:
+        - name: outcome
+          in: query
+          required: false
+          description: Only items with this outcome, such as `held` or `failed`.
+          schema: { type: string, enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed] }
+        - name: cursor
+          in: query
+          required: false
+          description: The previous page's `next_cursor`.
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          description: Items to return (1–500, default 100).
+          schema: { type: integer, minimum: 1, maximum: 500 }
+      responses:
+        '200':
+          description: One page of the run's items.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunItemListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/account/billing-run-schedule:
+    get:
+      tags: [account]
+      operationId: getBillingRunSchedule
+      summary: Get the account's monthly billing run schedule.
+      responses:
+        '200':
+          description: The schedule and when it next starts a run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunScheduleResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [account]
+      operationId: putBillingRunSchedule
+      summary: Start a billing run automatically after each month ends.
+      description: |
+        A new schedule starts with the current month: its run starts
+        `delay_hours` after the month ends. Replacing a schedule keeps its
+        next month. If a run is already in progress, the scheduled run
+        starts once it completes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutBillingRunScheduleRequest' }
+      responses:
+        '200':
+          description: The saved schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BillingRunScheduleResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: '`export` is `stripe` without a connected Stripe key.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: Invalid schedule options or delay.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [account]
+      operationId: deleteBillingRunSchedule
+      summary: Stop scheduled billing runs; a run already started continues.
+      responses:
+        '204': { description: Schedule removed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/account/platform-tenants/{id}/webhooks:
     parameters:
       - name: id
@@ -78903,6 +79071,134 @@ components:
         livemode: { type: boolean }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
+
+    CreateBillingRunRequest:
+      description: "A month-end billing run (ADR-1301). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
+      type: object
+      required: [month]
+      properties:
+        month: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$', description: "UTC calendar month to bill, YYYY-MM; it must have ended at least an hour ago." }
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean, description: "Finalize each drafted statement (default true)." }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean, description: "Hold an app consumer whose usage ledger misses requests telemetry saw (default true)." }
+
+    BillingRunSources:
+      description: "Which customers a run bills. With platform_tenants, a consumer's tenant-attributed usage is billed on the tenant statement and its app item is skipped."
+      type: array
+      minItems: 1
+      maxItems: 2
+      uniqueItems: true
+      items: { type: string, enum: [app_consumers, platform_tenants] }
+
+    BillingRunExport:
+      description: "Where finalized statements go: none, or draft invoices in the account's Stripe (requires finalize and a connected key)."
+      type: string
+      enum: [none, stripe]
+
+    BillingRunCounts:
+      description: "How many of a run's customers reached each outcome."
+      type: object
+      required: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
+      properties:
+        pending: { type: integer, minimum: 0 }
+        drafted: { type: integer, minimum: 0 }
+        finalized: { type: integer, minimum: 0 }
+        exported: { type: integer, minimum: 0 }
+        up_to_date: { type: integer, minimum: 0 }
+        held: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+
+    BillingRunResponse:
+      description: "A billing run and its progress. A run completes when no customer is pending; held and failed customers do not fail it."
+      type: object
+      required: [id, month, period_start, period_end, sources, finalize, export, hold_on_gaps, trigger, status, counts, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean }
+        trigger: { type: string, enum: [api, schedule] }
+        status: { type: string, enum: [queued, running, completed] }
+        counts: { $ref: '#/components/schemas/BillingRunCounts' }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    BillingRunListResponse:
+      description: "An account's billing runs, newest first."
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunResponse' }
+
+    BillingRunItemResponse:
+      description: "What a billing run did for one app consumer or platform tenant."
+      type: object
+      required: [source_kind, external_ref, outcome, exported_invoices, attempts, updated_at]
+      properties:
+        source_kind: { type: string, enum: [app_consumer, platform_tenant] }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        platform_tenant_id: { type: string, format: uuid }
+        external_ref: { type: string, description: "The consumer's or tenant's external_ref when the run started." }
+        outcome:
+          type: string
+          enum: [pending, drafted, finalized, exported, up_to_date, held, skipped, failed]
+          description: "up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness gap. skipped: billed through a platform tenant, or already invoiced through the other path."
+        statement_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        amount_millicents: { type: integer, format: int64, description: "The statement revision's amount in millicents." }
+        completeness: { type: string, enum: [verified, partial, gaps_detected, unverifiable] }
+        invoice_id: { type: string, description: "The last Stripe invoice this run created for the customer." }
+        exported_invoices: { type: integer, minimum: 0, description: "Draft Stripe invoices this run created for the customer." }
+        reason: { type: string, description: "Why the customer was held, skipped or failed, or why a retry is pending." }
+        attempts: { type: integer, minimum: 0 }
+        updated_at: { type: string, format: date-time }
+
+    BillingRunItemListResponse:
+      description: "One page of a billing run's customers, ordered by kind and ID."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BillingRunItemResponse' }
+        next_cursor: { type: string, description: "Pass as cursor to read the next page; absent on the last page." }
+
+    PutBillingRunScheduleRequest:
+      description: "A monthly billing run schedule. Options default like a run's; delay_hours defaults to 24."
+      type: object
+      properties:
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean, description: "Finalize each drafted statement in scheduled runs (default true)." }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean, description: "Hold app consumers with completeness gaps in scheduled runs (default true)." }
+        delay_hours: { type: integer, minimum: 1, maximum: 240, description: "Hours after month end before the run starts (default 24)." }
+
+    BillingRunScheduleResponse:
+      description: "The account's billing run schedule and the month it bills next."
+      type: object
+      required: [sources, finalize, export, hold_on_gaps, delay_hours, next_month, next_run_at, created_at, updated_at]
+      properties:
+        sources: { $ref: '#/components/schemas/BillingRunSources' }
+        finalize: { type: boolean }
+        export: { $ref: '#/components/schemas/BillingRunExport' }
+        hold_on_gaps: { type: boolean }
+        delay_hours: { type: integer, minimum: 1, maximum: 240 }
+        next_month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+        next_run_at: { type: string, format: date-time }
+        last_month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The last month the schedule started a run for." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     APIConsumerUsageStatementFinalizedWebhookPayload:
       type: object

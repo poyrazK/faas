@@ -511,7 +511,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "account",
 		DocSlug: "account",
-		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe)",
+		Short:   "Manage the local account (account export|delete|restore|status|dpa|slo|stripe|billing-run)",
 		Subcommands: []cliSub{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
@@ -529,6 +529,29 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
 			{Name: "stripe", Short: "Connect, show, or disconnect the Stripe key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}"}},
+			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
+				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
+					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
+					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants (default: both)", Value: "LIST"},
+					{Name: "no-finalize", Short: "only draft statements", Bool: true},
+					{Name: "export", Short: "none or stripe (default none)", Value: "TARGET"},
+					{Name: "no-hold-on-gaps", Short: "finalize consumers even when request telemetry shows unbilled requests", Bool: true},
+					{Name: "wait", Short: "wait until the run completes and list its customers", Bool: true},
+				}, Examples: []string{"gregale account billing-run start --month 2026-09 --export stripe --wait"}},
+				{Name: "list", Short: "List billing runs, newest first", Flags: []cliFlag{{Name: "limit", Short: "runs to list (1-100)", Value: "N"}}},
+				{Name: "show", Short: "Show a run and what it did for each customer", Positionals: []string{"RUN_ID"}, Flags: []cliFlag{
+					{Name: "outcome", Short: "only customers with this outcome, e.g. held or failed", Value: "OUTCOME"},
+				}},
+				{Name: "schedule", Short: "Show the monthly billing run schedule"},
+				{Name: "schedule-set", Short: "Start a run automatically after each month ends", Flags: []cliFlag{
+					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants for scheduled runs (default: both)", Value: "LIST"},
+					{Name: "no-finalize", Short: "scheduled runs only draft statements", Bool: true},
+					{Name: "export", Short: "none or stripe for scheduled runs (default none)", Value: "TARGET"},
+					{Name: "no-hold-on-gaps", Short: "scheduled runs finalize consumers with completeness gaps", Bool: true},
+					{Name: "delay-hours", Short: "hours after month end before the run starts (1-240, default 24)", Value: "N"},
+				}, Examples: []string{"gregale account billing-run schedule-set --export stripe --delay-hours 6"}},
+				{Name: "schedule-delete", Short: "Stop scheduled runs; a started run continues"},
+			}},
 		},
 	},
 	{

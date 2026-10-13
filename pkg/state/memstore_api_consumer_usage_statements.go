@@ -184,29 +184,8 @@ func (m *MemStore) CreateAPIConsumerUsageStatementHandoff(_ context.Context, inp
 		}
 		return cloneAPIConsumerUsageStatementHandoff(existing), false, nil
 	}
-	for _, existing := range m.apiConsumerUsageStatementHandoffs {
-		if existing.AccountID == input.AccountID && existing.ExternalInvoiceID == input.ExternalInvoiceID {
-			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
-		}
-		other := m.apiConsumerUsageStatements[existing.StatementID]
-		samePeriod := other.PeriodStart.Equal(statement.PeriodStart) && other.PeriodEnd.Equal(statement.PeriodEnd)
-		if other.AppID == statement.AppID && other.ConsumerID == statement.ConsumerID && !samePeriod &&
-			windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) {
-			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
-		}
-	}
-	for _, existing := range m.platformTenantStatementHandoffs {
-		if existing.AccountID != input.AccountID {
-			continue
-		}
-		if existing.ExternalInvoiceID == input.ExternalInvoiceID {
-			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
-		}
-		other := m.platformTenantStatements[existing.StatementID]
-		if windowsOverlap(statement.PeriodStart, statement.PeriodEnd, other.PeriodStart, other.PeriodEnd) &&
-			tenantStatementIncludesConsumer(other, statement.AppID, statement.ConsumerID) {
-			return APIConsumerUsageStatementHandoff{}, false, ErrConflict
-		}
+	if m.externalInvoiceHandedOffLocked(input.AccountID, input.ExternalInvoiceID) || m.apiConsumerHandoffOverlapLocked(statement) {
+		return APIConsumerUsageStatementHandoff{}, false, ErrConflict
 	}
 	handoff := APIConsumerUsageStatementHandoff{
 		ID: uuid.NewString(), AccountID: input.AccountID, AppID: input.AppID,

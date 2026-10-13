@@ -30,14 +30,39 @@ func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Requ
 		}
 		return
 	}
-	export, problem := s.exportStatementInvoice(r.Context(), acct, exports, *src)
+	export, problem := s.exportAppConsumer(r.Context(), acct, exports, *src)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	s.Host.Audit(r.Context(), "api_consumer_usage_statement.stripe_invoice_exported", acct.ID, map[string]any{
-		"statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode})
 	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
+}
+
+// ExportAppConsumer exports a finalized app consumer statement without an
+// HTTP request; billing runs (ADR-1301) use it. An empty customer uses the
+// consumer's external_ref.
+func (s *Service) ExportAppConsumer(ctx context.Context, acct state.Account, consumer state.APIConsumer,
+	statement state.APIConsumerUsageStatement, customer string) (state.StatementInvoiceExport, *api.Problem) {
+	exports, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return state.StatementInvoiceExport{}, api.ErrInternal("statement invoice exports are unavailable")
+	}
+	src, problem := s.appConsumerInvoiceSource(ctx, acct, consumer, statement, customer)
+	if problem != nil {
+		return state.StatementInvoiceExport{}, problem
+	}
+	return s.exportAppConsumer(ctx, acct, exports, src)
+}
+
+func (s *Service) exportAppConsumer(ctx context.Context, acct state.Account, exports state.StatementInvoiceExportStore,
+	src statementInvoiceSource) (state.StatementInvoiceExport, *api.Problem) {
+	export, problem := s.exportStatementInvoice(ctx, acct, exports, src)
+	if problem != nil {
+		return export, problem
+	}
+	s.Host.Audit(ctx, "api_consumer_usage_statement.stripe_invoice_exported", acct.ID, map[string]any{
+		"statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode})
+	return export, nil
 }
 
 // apiConsumerStatementInvoiceSource loads a finalized app consumer
@@ -47,11 +72,6 @@ func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *ht
 	app, consumer, statements, ok := s.Host.ConsumerStatements(w, r, acct)
 	if !ok {
 		return nil, nil
-	}
-	handoffs, okHandoffs := s.Host.Store().(state.APIConsumerUsageStatementHandoffStore)
-	cards, okCards := s.Host.Store().(state.APIConsumerRateCardStore)
-	if !okHandoffs || !okCards {
-		return nil, api.ErrInternal("API consumer usage statements are unavailable")
 	}
 	statement, err := statements.GetAPIConsumerUsageStatement(r.Context(), acct.ID, app.ID, consumer.ID, r.PathValue("statement_id"))
 	if errors.Is(err, state.ErrNotFound) {
@@ -68,26 +88,45 @@ func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *ht
 	if problem != nil {
 		return nil, problem
 	}
-	customer, problem := statementInvoiceCustomer(req.Customer, consumer.ExternalRef)
+	src, problem := s.appConsumerInvoiceSource(r.Context(), acct, consumer, statement, req.Customer)
 	if problem != nil {
 		return nil, problem
 	}
-	appCards, err := cards.ListAPIConsumerRateCardsForApp(r.Context(), acct.ID, app.ID)
+	return &src, nil
+}
+
+// appConsumerInvoiceSource prices a finalized app consumer statement's
+// invoice lines and binds its handoff.
+func (s *Service) appConsumerInvoiceSource(ctx context.Context, acct state.Account, consumer state.APIConsumer,
+	statement state.APIConsumerUsageStatement, requestedCustomer string) (statementInvoiceSource, *api.Problem) {
+	handoffs, okHandoffs := s.Host.Store().(state.APIConsumerUsageStatementHandoffStore)
+	cards, okCards := s.Host.Store().(state.APIConsumerRateCardStore)
+	if !okHandoffs || !okCards {
+		return statementInvoiceSource{}, api.ErrInternal("API consumer usage statements are unavailable")
+	}
+	if statement.Status != state.APIConsumerUsageStatementFinalized {
+		return statementInvoiceSource{}, notFinalizedProblem()
+	}
+	customer, problem := statementInvoiceCustomer(requestedCustomer, consumer.ExternalRef)
+	if problem != nil {
+		return statementInvoiceSource{}, problem
+	}
+	appCards, err := cards.ListAPIConsumerRateCardsForApp(ctx, acct.ID, statement.AppID)
 	if err != nil {
-		return nil, api.ErrInternal("could not load API consumer rate cards")
+		return statementInvoiceSource{}, api.ErrInternal("could not load API consumer rate cards")
 	}
 	invoice, err := billing.AppStatementInvoice(statement, appCards)
 	if err != nil {
-		return nil, statementInvoiceProblem(err)
+		return statementInvoiceSource{}, statementInvoiceProblem(err)
 	}
-	src := &statementInvoiceSource{kind: state.StatementSourceAppConsumer, statementID: statement.ID, revision: statement.Revision,
+	src := statementInvoiceSource{kind: state.StatementSourceAppConsumer, statementID: statement.ID, revision: statement.Revision,
 		start: statement.PeriodStart, end: statement.PeriodEnd, customer: customer, invoice: invoice}
-	if handoff, err := handoffs.GetAPIConsumerUsageStatementHandoff(r.Context(), acct.ID, app.ID, consumer.ID, statement.ID); err == nil {
+	if handoff, err := handoffs.GetAPIConsumerUsageStatementHandoff(ctx, acct.ID, statement.AppID, statement.ConsumerID, statement.ID); err == nil {
 		src.existingHandoff = handoff.ExternalInvoiceID
 	}
 	src.handoff = func(ctx context.Context, invoiceID string) error {
 		_, _, err := handoffs.CreateAPIConsumerUsageStatementHandoff(ctx, state.APIConsumerUsageStatementHandoffInput{
-			AccountID: acct.ID, AppID: app.ID, ConsumerID: consumer.ID, StatementID: statement.ID, ExternalInvoiceID: invoiceID})
+			AccountID: acct.ID, AppID: statement.AppID, ConsumerID: statement.ConsumerID, StatementID: statement.ID, ExternalInvoiceID: invoiceID})
 		return err
 	}
 	return src, nil
@@ -142,31 +181,58 @@ func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrInternal("could not load platform tenant statement"))
 		return
 	}
-	src, problem := tenantStatementInvoiceSource(r, acct, tenant, statement, statements)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	export, problem := s.exportStatementInvoice(r.Context(), acct, exports, src)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	s.Host.Audit(r.Context(), "platform_tenant_statement.stripe_invoice_exported", acct.ID, map[string]any{
-		"tenant_id": tenant.ID, "statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode})
-	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
-}
-
-func tenantStatementInvoiceSource(r *http.Request, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement,
-	statements state.PlatformTenantStatementStore) (statementInvoiceSource, *api.Problem) {
 	if statement.Status != state.APIConsumerUsageStatementFinalized {
-		return statementInvoiceSource{}, notFinalizedProblem()
+		api.WriteProblem(w, notFinalizedProblem())
+		return
 	}
 	req, problem := decodeStatementInvoiceRequest(r)
 	if problem != nil {
-		return statementInvoiceSource{}, problem
+		api.WriteProblem(w, problem)
+		return
 	}
-	customer, problem := statementInvoiceCustomer(req.Customer, tenant.ExternalRef)
+	export, problem := s.exportPlatformTenant(r.Context(), acct, exports, tenant, statement, statements, req.Customer)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
+}
+
+// ExportPlatformTenant exports a finalized platform tenant statement
+// without an HTTP request; billing runs (ADR-1301) use it. An empty customer
+// uses the tenant's external_ref.
+func (s *Service) ExportPlatformTenant(ctx context.Context, acct state.Account, tenant state.PlatformTenant,
+	statement state.PlatformTenantStatement, customer string) (state.StatementInvoiceExport, *api.Problem) {
+	exports, okExports := s.Host.Store().(state.StatementInvoiceExportStore)
+	statements, okStatements := s.Host.Store().(state.PlatformTenantStatementStore)
+	if !okExports || !okStatements {
+		return state.StatementInvoiceExport{}, api.ErrInternal("statement invoice exports are unavailable")
+	}
+	return s.exportPlatformTenant(ctx, acct, exports, tenant, statement, statements, customer)
+}
+
+func (s *Service) exportPlatformTenant(ctx context.Context, acct state.Account, exports state.StatementInvoiceExportStore,
+	tenant state.PlatformTenant, statement state.PlatformTenantStatement, statements state.PlatformTenantStatementStore,
+	customer string) (state.StatementInvoiceExport, *api.Problem) {
+	src, problem := tenantStatementInvoiceSource(ctx, acct, tenant, statement, statements, customer)
+	if problem != nil {
+		return state.StatementInvoiceExport{}, problem
+	}
+	export, problem := s.exportStatementInvoice(ctx, acct, exports, src)
+	if problem != nil {
+		return export, problem
+	}
+	s.Host.Audit(ctx, "platform_tenant_statement.stripe_invoice_exported", acct.ID, map[string]any{
+		"tenant_id": tenant.ID, "statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode})
+	return export, nil
+}
+
+func tenantStatementInvoiceSource(ctx context.Context, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement,
+	statements state.PlatformTenantStatementStore, requestedCustomer string) (statementInvoiceSource, *api.Problem) {
+	if statement.Status != state.APIConsumerUsageStatementFinalized {
+		return statementInvoiceSource{}, notFinalizedProblem()
+	}
+	customer, problem := statementInvoiceCustomer(requestedCustomer, tenant.ExternalRef)
 	if problem != nil {
 		return statementInvoiceSource{}, problem
 	}
@@ -176,7 +242,7 @@ func tenantStatementInvoiceSource(r *http.Request, acct state.Account, tenant st
 	}
 	src := statementInvoiceSource{kind: state.StatementSourcePlatformTenant, statementID: statement.ID, revision: statement.Revision,
 		start: statement.PeriodStart, end: statement.PeriodEnd, customer: customer, invoice: invoice}
-	if handoff, err := statements.GetPlatformTenantStatementHandoff(r.Context(), acct.ID, tenant.ID, statement.ID); err == nil {
+	if handoff, err := statements.GetPlatformTenantStatementHandoff(ctx, acct.ID, tenant.ID, statement.ID); err == nil {
 		src.existingHandoff = handoff.ExternalInvoiceID
 	}
 	src.handoff = func(ctx context.Context, invoiceID string) error {

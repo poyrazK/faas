@@ -1239,6 +1239,62 @@ type BillingMeterUsageDelivery struct {
 	DeliveredAt pgtype.Timestamptz
 }
 
+// Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.
+type BillingRun struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	PeriodStart    pgtype.Timestamptz
+	PeriodEnd      pgtype.Timestamptz
+	Sources        []string
+	Finalize       bool
+	ExportProvider string
+	HoldOnGaps     bool
+	Trigger        string
+	Status         string
+	DiscoveredAt   pgtype.Timestamptz
+	LeaseOwner     pgtype.Text
+	LeaseUntil     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+}
+
+// One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.
+type BillingRunItem struct {
+	RunID            pgtype.UUID
+	SourceKind       string
+	SourceID         pgtype.UUID
+	AppID            pgtype.UUID
+	ExternalRef      string
+	Outcome          string
+	StatementID      pgtype.UUID
+	Revision         pgtype.Int4
+	Currency         pgtype.Text
+	AmountMillicents pgtype.Int8
+	Completeness     pgtype.Text
+	InvoiceID        pgtype.Text
+	ExportedCount    int32
+	Reason           pgtype.Text
+	Attempts         int32
+	NextAttemptAt    pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// Per-account schedule that starts a billing run for each month after month end plus delay_hours.
+type BillingRunSchedule struct {
+	AccountID       pgtype.UUID
+	Sources         []string
+	Finalize        bool
+	ExportProvider  string
+	HoldOnGaps      bool
+	DelayHours      int32
+	NextPeriodStart pgtype.Timestamptz
+	NextRunAt       pgtype.Timestamptz
+	LastPeriodStart pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type BillingUsageDelivery struct {
 	Provider    string
 	AccountID   pgtype.UUID

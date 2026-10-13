@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -227,7 +228,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 	}
 	cards, err := cardsStore.ListAPIConsumerRateCardsForApp(r.Context(), acct.ID, app.ID)
 	if err == nil {
-		cards, err = s.consumerPriceHistory(r, cards, acct.ID, app.ID, consumer.ID)
+		cards, err = s.consumerPriceHistory(r.Context(), cards, acct.ID, app.ID, consumer.ID)
 	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer rate cards"))
@@ -245,7 +246,7 @@ func (s *server) getAPIConsumerUsageQuote(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	if usage, err = s.weightConsumerUsage(r, cards, usage, acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until); err != nil {
+	if usage, err = s.weightConsumerUsage(r.Context(), cards, usage, acct.ID, app.ID, consumer.ID, billing.MonthStart(since), until); err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not load API consumer route usage"))
 		return
 	}
@@ -285,7 +286,7 @@ func isUpperASCIICurrency(currency string) bool {
 
 // weightConsumerUsage applies the effective cards' route weights (ADR-952).
 // Route rows are read only when some card weights routes.
-func (s *server) weightConsumerUsage(r *http.Request, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket,
+func (s *server) weightConsumerUsage(ctx context.Context, cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket,
 	accountID, appID, consumerID string, since, until time.Time) ([]state.APIConsumerUsageBucket, error) {
 	weighted := false
 	for _, card := range cards {
@@ -295,7 +296,7 @@ func (s *server) weightConsumerUsage(r *http.Request, cards []state.APIConsumerR
 	if !weighted || !ok || !until.After(since) {
 		return usage, nil
 	}
-	routes, err := routeStore.ListAPIConsumerRouteUsage(r.Context(), accountID, appID, consumerID, since, until)
+	routes, err := routeStore.ListAPIConsumerRouteUsage(ctx, accountID, appID, consumerID, since, until)
 	if err != nil {
 		return nil, err
 	}

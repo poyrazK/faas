@@ -515,32 +515,7 @@ func (s *PgStore) CreatePlatformTenantStatementHandoff(ctx context.Context, in P
 		return PlatformTenantStatementHandoff{}, false, ErrConflict
 	}
 	var conflict bool
-	err = tx.QueryRow(ctx, `select
-		exists (select 1 from api_consumer_usage_statement_handoffs h
-		  join api_consumer_usage_statements a on a.id = h.statement_id
-		  join platform_tenant_statement_consumers c on c.app_id = a.app_id and c.consumer_id = a.consumer_id
-		 where c.statement_id = $1::uuid and a.period_start < $3 and a.period_end > $2)
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_consumers mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_consumers theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.consumer_id = mine.consumer_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_surfaces mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_surfaces theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.surface_id = mine.surface_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
-		or exists (select 1 from platform_tenant_statement_handoffs h
-		  join platform_tenant_statements p on p.id = h.statement_id
-		  join platform_tenant_statement_jwt_rules mine on mine.statement_id = $1::uuid
-		  join platform_tenant_statement_jwt_rules theirs on theirs.statement_id = p.id
-		    and theirs.app_id = mine.app_id and theirs.authorization_rule_id = mine.authorization_rule_id
-		 where p.period_start < $3 and p.period_end > $2
-		   and not (p.platform_tenant_id = $4::uuid and p.period_start = $2 and p.period_end = $3))
+	err = tx.QueryRow(ctx, `select `+tenantHandoffOverlapSQL+`
 		or exists (select 1 from api_consumer_usage_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)
 		or exists (select 1 from platform_tenant_statement_handoffs where account_id = $5::uuid and external_invoice_id = $6)`,
 		in.StatementID, statement.PeriodStart, statement.PeriodEnd, in.TenantID, in.AccountID, in.ExternalInvoiceID).Scan(&conflict)
