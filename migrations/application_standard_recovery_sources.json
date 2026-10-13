@@ -22,7 +22,7 @@
     {
       "version": 20260930191537001,
       "filename": "20260930191537001_application_standard_enrollment.sql",
-      "sha256": "4b3950872282f757b16d9e4f523a885d8f1cd4eece5050e9ad1e81bb36848a01",
+      "sha256": "3380f77c49b895f655e10a90e6a22288e09ef90ca106c9b3bd841f62940d4888",
       "postcondition": "enrollment-coverage"
     },
     {

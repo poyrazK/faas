@@ -130,11 +130,14 @@ WHEN (OLD.org_id IS DISTINCT FROM NEW.org_id OR OLD.project_id IS DISTINCT FROM 
       OR (OLD.status = 'deleted' AND NEW.status <> 'deleted'))
 EXECUTE FUNCTION application_standard_enroll_app();
 
+-- Unowned legacy apps have no organization to enroll under; the recovery
+-- enrollment postcondition likewise covers only apps with an org_id.
 INSERT INTO app_application_standards (app_id, org_id, project_id, base_settings)
 SELECT id, org_id, project_id,
        jsonb_build_object('require_signed', require_signed, 'security_policy', security_policy,
                           'egress_cidrs', to_jsonb(egress_allowlist::text[]), 'egress_extra_ports', to_jsonb(egress_ports))
-FROM apps;
+FROM apps
+WHERE org_id IS NOT NULL;
 
 -- Pending or failed enrollment cannot be bypassed by a different deployment
 -- entry point. The app row lock serializes this check with materialization.
