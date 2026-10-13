@@ -168,13 +168,25 @@ func (f httpFixtureServer) readyControl(ctx context.Context, id string, proof ap
 	}
 }
 
+// Reports for one attempt are spaced by ReportMinIntervalMS; a stable report
+// ID makes the bounded retry after 429 idempotent.
 func (f httpFixtureServer) progress(ctx context.Context, id string, proof api.OperationRuntimeProof, stage string) error {
-	client, err := f.client(ctx)
-	if err != nil {
-		return err
+	for retry := 0; ; retry++ {
+		client, err := f.client(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = client.ReportOperationProgress(ctx, id, proof, api.OperationReportRequest{ReportID: stage, Stage: stage, Completed: 1, Total: 1})
+		var problem *api.APIError
+		if err == nil || retry == 2 || !errors.As(err, &problem) || problem.Problem.Status != http.StatusTooManyRequests {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
-	_, err = client.ReportOperationProgress(ctx, id, proof, api.OperationReportRequest{ReportID: stage, Stage: stage, Completed: 1, Total: 1})
-	return err
 }
 
 func (f httpFixtureServer) upload(ctx context.Context, id string, proof api.OperationRuntimeProof) (*api.OperationResultArtifact, error) {
