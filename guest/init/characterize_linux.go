@@ -149,8 +149,9 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 	}()
 
 	// 1. Observe the bind: watch /proc/net/tcp{,6} filtered to the
-	// supervisor's child PID's socket inodes. First LISTEN entry
-	// wins; cap the wait at the characterization deadline.
+	// supervisor's child PID's socket inodes. The expected port wins
+	// when the app listens on it, else the first LISTEN entry after a
+	// short grace; cap the wait at the characterization deadline.
 	obs, observedAddr, exitCode, exited := waitForBind(ctx, args, &res)
 	if exited {
 		res.ExitCode = exitCode
@@ -261,10 +262,21 @@ func deriveGuestCharacterizationClass(port int, l7Hint string, exitCode int, exi
 // host's wait in pkg/fcvm/manager.go.
 func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult) (bool, string, int, bool) {
 	deadline := args.Now().Add(api.CharacterizationDeadline)
+	want := args.Manifest.EffectivePort()
+	var firstSeen time.Time
 	for {
-		if port, addr, ok := probeListening(args.AppPID()); ok {
-			res.Port = port
-			return true, addr, 0, false
+		if row, ok, preferred := pickListener(probeListening(args.AppPID()), want); ok {
+			// Another listener (a private TCP port, an admin port) may come
+			// up before the serving port; give the expected port a short
+			// grace before settling on it.
+			now := args.Now()
+			if firstSeen.IsZero() {
+				firstSeen = now
+			}
+			if preferred || now.Sub(firstSeen) >= api.CharacterizationPreferredPortGrace || now.After(deadline) {
+				res.Port = row.port
+				return true, row.addr, 0, false
+			}
 		}
 		if args.ExitStatus != nil {
 			if code, exited := args.ExitStatus(); exited {
@@ -287,18 +299,12 @@ func waitForBind(ctx context.Context, args RunArgs, res *CharacterizationResult)
 // no-child early-out passes. Cross-platform callers always go
 // through probeListening; the unit test pins the early-out
 // contract there.
-func probeListeningLinux(pid int) (int, string, bool) {
+func probeListeningLinux(pid int) []listenRow {
 	ownedInodes := ownedSocketInodes(pid)
 	if len(ownedInodes) == 0 {
-		return 0, "", false
+		return nil
 	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp", ownedInodes); ok {
-		return port, addr, true
-	}
-	if port, addr, ok := scanListeningFile("/proc/net/tcp6", ownedInodes); ok {
-		return port, addr, true
-	}
-	return 0, "", false
+	return append(scanListeningRows("/proc/net/tcp", ownedInodes), scanListeningRows("/proc/net/tcp6", ownedInodes)...)
 }
 
 // countOutboundLinux returns the number of ESTABLISHED TCP

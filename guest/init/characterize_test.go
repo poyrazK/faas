@@ -274,13 +274,36 @@ func TestScanEstablishedFile_MissingFileIsZero(t *testing.T) {
 	}
 }
 
+func TestPickListener(t *testing.T) {
+	echo := listenRow{port: 5432, addr: "0.0.0.0:5432"}
+	app := listenRow{port: 8080, addr: "0.0.0.0:8080"}
+	for _, tc := range []struct {
+		name          string
+		rows          []listenRow
+		want          int
+		got           listenRow
+		ok, preferred bool
+	}{
+		{name: "expected port listed after another", rows: []listenRow{echo, app}, want: 8080, got: app, ok: true, preferred: true},
+		{name: "expected port listed first", rows: []listenRow{app, echo}, want: 8080, got: app, ok: true, preferred: true},
+		{name: "only another port", rows: []listenRow{echo}, want: 8080, got: echo, ok: true},
+		{name: "normalized app on its own port", rows: []listenRow{{port: 3000, addr: "0.0.0.0:3000"}}, want: 8080, got: listenRow{port: 3000, addr: "0.0.0.0:3000"}, ok: true},
+		{name: "no listener", want: 8080},
+	} {
+		got, ok, preferred := pickListener(tc.rows, tc.want)
+		if got != tc.got || ok != tc.ok || preferred != tc.preferred {
+			t.Errorf("%s: pickListener = %+v ok=%v preferred=%v, want %+v ok=%v preferred=%v", tc.name, got, ok, preferred, tc.got, tc.ok, tc.preferred)
+		}
+	}
+}
+
 func TestProbeListening_NoChildEarlyOut(t *testing.T) {
 	// pid <= 0 short-circuits — caller polls again. Pin the contract
 	// so a regression to "scan all inodes anyway" doesn't silently
 	// observe an init-script-spawned daemon and misclassify.
 	for _, pid := range []int{-1, 0} {
-		if port, _, ok := probeListening(pid); ok || port != 0 {
-			t.Errorf("probeListening(%d) = (%d, _, %v), want (0, _, false)", pid, port, ok)
+		if rows := probeListening(pid); rows != nil {
+			t.Errorf("probeListening(%d) = %v, want nil", pid, rows)
 		}
 	}
 }

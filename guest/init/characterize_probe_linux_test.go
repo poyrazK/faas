@@ -26,7 +26,8 @@ func probeSelf(t *testing.T, network, addr string) (int, string, bool) {
 		t.Skipf("cannot listen on %s %s: %v", network, addr, err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	return probeListeningLinux(os.Getpid())
+	row, ok, _ := pickListener(probeListeningLinux(os.Getpid()), ln.Addr().(*net.TCPAddr).Port)
+	return row.port, row.addr, ok
 }
 
 func TestProbeListeningLinux_FindsIPv4Listener(t *testing.T) {
@@ -47,12 +48,33 @@ func TestProbeListeningLinux_FindsDualStackListener(t *testing.T) {
 }
 
 func TestProbeListeningLinux_NoListenerIsNotFound(t *testing.T) {
-	if port, _, ok := probeListeningLinux(os.Getpid()); ok && port != 0 {
+	if rows := probeListeningLinux(os.Getpid()); len(rows) > 0 {
 		// Another test in this binary may still hold a listener; only fail if
 		// nothing else could explain it.
-		t.Logf("probe found port %d with no listener of ours; another test's listener?", port)
+		t.Logf("probe found %v with no listener of ours; another test's listener?", rows)
 	}
-	if _, _, ok := probeListeningLinux(-1); ok {
+	if rows := probeListeningLinux(-1); len(rows) > 0 {
 		t.Fatal("probe reported a listener for pid -1")
+	}
+}
+
+// An app that also listens on a private TCP port: whichever socket /proc
+// lists first, the expected serving port is the one characterized.
+func TestProbeListeningLinux_PrefersExpectedPort(t *testing.T) {
+	var ports []int
+	for range 2 {
+		ln, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Skipf("cannot listen: %v", err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		ports = append(ports, ln.Addr().(*net.TCPAddr).Port)
+	}
+	rows := probeListeningLinux(os.Getpid())
+	for _, want := range ports {
+		row, ok, preferred := pickListener(rows, want)
+		if !ok || !preferred || row.port != want {
+			t.Fatalf("want port %d among %v: got %+v ok=%v preferred=%v", want, rows, row, ok, preferred)
+		}
 	}
 }

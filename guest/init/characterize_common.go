@@ -31,9 +31,24 @@ func containsNat(data []byte) bool {
 	return false
 }
 
-// scanListeningFile parses one /proc/net/tcp{,6} for the first
-// LISTEN entry (state 0A) whose inode is in `owned`. Returns
-// (port, "ip:port", true) on hit. /proc/net/tcp format:
+// listenRow is one LISTEN socket owned by the app's process tree.
+type listenRow struct {
+	port int
+	addr string // "ip:port"
+}
+
+// scanListeningFile returns the first owned LISTEN row of one
+// /proc/net/tcp{,6} file; see scanListeningRows.
+func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, bool) {
+	rows := scanListeningRows(path, owned)
+	if len(rows) == 0 {
+		return 0, "", false
+	}
+	return rows[0].port, rows[0].addr, true
+}
+
+// scanListeningRows parses one /proc/net/tcp{,6} for the LISTEN entries
+// (state 0A) whose inode is in `owned`, in file order. /proc/net/tcp format:
 //
 //	sl  local_address:port  rem_address  st  tx_queue:rx_queue  ...
 //	0:  0100007F:1F90 00000000:0000 0A ...
@@ -47,15 +62,16 @@ func containsNat(data []byte) bool {
 // sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
 const procNetInodeColumn = 9
 
-func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, bool) {
+func scanListeningRows(path string, owned map[uint64]struct{}) []listenRow {
 	//nolint:forbidigo // /proc/net/tcp{,6} is a vetted kernel path inside the
 	// guest; the customer-path guard (openCustomerFile) is for host daemons
 	// reading customer bytes — this reads in-guest kernel state only.
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, "", false
+		return nil
 	}
 	defer func() { _ = f.Close() }()
+	var rows []listenRow
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
@@ -98,10 +114,27 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 			continue
 		}
 		ip := hexIPToString(ipHex)
-		addr := fmt.Sprintf("%s:%d", ip, port)
-		return int(port), addr, true
+		rows = append(rows, listenRow{port: int(port), addr: fmt.Sprintf("%s:%d", ip, port)})
 	}
-	return 0, "", false
+	return rows
+}
+
+// pickListener chooses the app's serving port among its listeners: the
+// expected port (the manifest's, or DefaultAppPort) when the app listens on
+// it, otherwise the first listener. An app may also listen on a private TCP
+// port (ADR-576), a metrics or admin port; which of them /proc lists first
+// is kernel hash order, not the app's intent. preferred reports a match on
+// the expected port.
+func pickListener(rows []listenRow, want int) (row listenRow, ok, preferred bool) {
+	for _, r := range rows {
+		if r.port == want {
+			return r, true, true
+		}
+	}
+	if len(rows) == 0 {
+		return listenRow{}, false, false
+	}
+	return rows[0], true, false
 }
 
 // scanEstablishedFile parses one /proc/net/tcp{,6} for the count of
@@ -190,15 +223,15 @@ func truncateLog(s string, n int) string {
 // choosePortNormMode lives in portnorm_common.go (it depends on the
 // PortNormMode type + ladder constants, which are platform-agnostic).
 
-// probeListening is the cross-platform entry point. The no-child
-// early-out is here (testable on every platform); the /proc walk
-// is delegated to probeListeningLinux (gated `//go:build linux`)
-// on linux. On non-linux builds, pid > 0 always returns
-// (0, "", false) — there is no /proc to walk, and the caller
-// polls until deadline.
-func probeListening(pid int) (int, string, bool) {
+// probeListening is the cross-platform entry point: the app's
+// listeners, /proc/net/tcp rows before /proc/net/tcp6 rows. The
+// no-child early-out is here (testable on every platform); the /proc
+// walk is delegated to probeListeningLinux (gated `//go:build linux`)
+// on linux. On non-linux builds, pid > 0 always returns nil — there
+// is no /proc to walk, and the caller polls until deadline.
+func probeListening(pid int) []listenRow {
 	if pid <= 0 {
-		return 0, "", false
+		return nil
 	}
 	return probeListeningLinux(pid)
 }
