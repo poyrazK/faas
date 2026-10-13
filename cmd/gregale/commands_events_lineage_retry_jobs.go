@@ -21,7 +21,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		fs.IntVar(&limit, "limit", api.EventExecutionLineageCasesPageDefault, "page size")
 		fs.Int64Var(&after, "after", 0, "exclusive cursor")
 		fs.StringVar(&reason, "reason", "", "exact reason code")
-	case "subscription-lineage-retry-job-cancel":
+	case "subscription-lineage-retry-job-cancel", "subscription-lineage-retry-job-pause", "subscription-lineage-retry-job-resume":
 		fs.StringVar(&expectedCreated, "expected-created-at", "", "original creation timestamp from the reviewed job")
 	case "subscription-lineage-retry-job-create":
 		fs.StringVar(&file, "file", "", "JSON request path")
@@ -30,7 +30,7 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 		return 1
 	}
 	n := 2
-	if mode == "subscription-lineage-retry-job" || mode == "subscription-lineage-retry-job-cancel" {
+	if mode == "subscription-lineage-retry-job" || mode == "subscription-lineage-retry-job-cancel" || mode == "subscription-lineage-retry-job-pause" || mode == "subscription-lineage-retry-job-resume" {
 		n = 3
 	}
 	if len(positional) != n || rejectUnexpectedFlagArgs(fs) {
@@ -74,12 +74,19 @@ func cmdEventsLineageRetryJob(args []string, mode string) int {
 			return printErr("Retry file app target mismatch", err)
 		}
 		out, err = client.CreateEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], input.Request)
-	} else if mode == "subscription-lineage-retry-job-cancel" {
+	} else if mode == "subscription-lineage-retry-job-cancel" || mode == "subscription-lineage-retry-job-pause" || mode == "subscription-lineage-retry-job-resume" {
 		created, e := time.Parse(time.RFC3339Nano, expectedCreated)
 		if e != nil || created.IsZero() {
-			return printErr("Invalid cancellation guard", fmt.Errorf("--expected-created-at must be the original RFC3339 creation timestamp from the reviewed job"))
+			return printErr("Invalid job control guard", fmt.Errorf("--expected-created-at must be the original RFC3339 creation timestamp from the reviewed job"))
 		}
-		out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+		switch mode {
+		case "subscription-lineage-retry-job-pause":
+			out, err = client.PauseEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+		case "subscription-lineage-retry-job-resume":
+			out, err = client.ResumeEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.ControlEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+		default:
+			out, err = client.CancelEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2], api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: created})
+		}
 	} else {
 		out, err = client.GetEventExecutionLineageRetryJob(context.Background(), positional[0], positional[1], positional[2])
 	}

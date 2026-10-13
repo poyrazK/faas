@@ -15,7 +15,7 @@ func cmdEventsLineageRetryJobs(args []string) int {
 	fs := newFlagSet("subscription-lineage-retry-jobs", flag.ContinueOnError)
 	limit := fs.Int("limit", api.EventExecutionLineageRetryJobsPageDefault, "page size (maximum 200)")
 	after := fs.String("after", "", "continuation cursor from the previous page")
-	status := fs.String("status", "", "pending, completed or cancelled; omit for all")
+	status := fs.String("status", "", "pending, paused, completed or cancelled; omit for all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}

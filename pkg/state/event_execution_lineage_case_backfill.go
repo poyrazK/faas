@@ -406,7 +406,7 @@ func (m *MemStore) AdvanceEventExecutionLineageCaseBackfills(ctx context.Context
 		app, _ := m.eventSubscriptionAppLocked(job.AppID)
 		pending := false
 		for _, retry := range c.jobs {
-			if retry.Status == "pending" && retry.RetainUntil.After(time.Now()) {
+			if (retry.Status == "pending" || retry.Status == "paused") && retry.RetainUntil.After(time.Now()) {
 				pending = true
 				break
 			}

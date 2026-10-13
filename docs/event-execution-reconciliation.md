@@ -158,7 +158,8 @@ The API uses GET `execution-reconciliation/retry-preview`, POST
 submission requires deploy/write scope. Go exposes
 `PreviewEventExecutionLineageRetries`, `CreateEventExecutionLineageRetryJob` and
 `GetEventExecutionLineageRetryJob`, with matching Node and Python operations.
-POST returns 202 while pending or 200 for a previously completed job.
+POST returns 202 while pending or 200 for a previously paused, completed or
+cancelled job. Repeating submission never resumes paused work.
 
 The scheduler evaluates at most 100 selected cases across jobs per normal retention
 sweep. Each evaluation commits together with its durable progress checkpoint;
@@ -297,8 +298,8 @@ gregale --json events subscription-lineage-retry-jobs APP SUB --status pending -
 ```
 
 The API uses GET `execution-reconciliation/retry-jobs` with optional `status`,
-`limit` and `after`. Read scope and MFA apply. Status accepts `pending`, `completed`
-or `cancelled`; omit it for all retained jobs. The default limit is 50 (zero also
+`limit` and `after`. Read scope and MFA apply. Status accepts `pending`, `paused`,
+`completed` or `cancelled`; omit it for all retained jobs. The default limit is 50 (zero also
 selects 50), maximum 200. The response contains `jobs` and, when another page was
 observed, `next_after`. An existing subscription with no retained jobs returns
 `jobs: []`, including before execution coverage exists. Unknown or inaccessible subscription
@@ -337,8 +338,10 @@ gregale --json events subscription-lineage-retry-job-watch APP SUB REQUEST_UUID 
 The watcher uses the existing individual GET API and requires read scope. It
 reads immediately, then delays between reads (default 2 seconds, allowed 1 second
 to 1 hour). The total watch timeout defaults to 10 minutes and must be positive;
-each read also has the existing subscription-control timeout. Progress is emitted
-only when job state, processed count or case outcome counts change. Summaries
+each read also has the existing subscription-control timeout. Watching continues
+through paused state until a terminal state, unavailability or the original watch
+deadline. Progress is emitted only when job state, processed count or case outcome
+counts change. Summaries
 include pending, repaired, already-associated, unresolved, conflicting, changed,
 unavailable and cancelled cases. These are recorded results, not live case status.
 
@@ -376,7 +379,8 @@ gregale --json events subscription-lineage-retry-job-export APP SUB SOURCE_UUID 
 gregale events subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at ORIGINAL_CREATED_AT --outcomes unresolved,changed,cancelled --file next-retry.json
 ```
 
-The source must be completed or cancelled. `--expected-created-at` is required
+The source must be completed or cancelled; a paused source must resume or be
+cancelled before exporting remaining cases. `--expected-created-at` is required
 and fences its original incarnation on both the initial read and the final read
 before writing. Pending, expired, missing, inaccessible or replaced source jobs
 produce no file. Export only uses existing read APIs; it does not evaluate cases,
@@ -422,6 +426,51 @@ refusing existing destinations. Review the file and summary, then submit through
 file and UUID for retries after a lost submission response; another export is a
 new deliberate request identity.
 
+## Pause or resume bulk retry work
+
+Read the job and copy its original `created_at`, then control that incarnation:
+
+```sh
+gregale events subscription-lineage-retry-job-pause APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+gregale events subscription-lineage-retry-job-resume APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT
+gregale --json events subscription-lineage-retry-jobs APP SUB --status paused
+```
+
+The API uses POST `execution-reconciliation/retry-jobs/{requestID}/pause` and
+`/resume` with `{"expected_created_at": "ORIGINAL_CREATED_AT"}`. Both require
+existing deploy/write scope and MFA, returning 200 with current job progress.
+Go exposes `PauseEventExecutionLineageRetryJob` and
+`ResumeEventExecutionLineageRetryJob`; Node and Python expose corresponding events
+operations. Controls wait for the worker's job lock and recheck expiry after any
+lock wait. Missing/expired jobs return 404. A different original creation timestamp
+or a completed/cancelled job returns 409, code `event_lineage_retry_job_changed`.
+
+Pause changes pending to paused. An evaluation already holding the lock may commit
+before pause; after pause commits, no new evaluation for that job starts. Resume
+changes paused to pending and preserves the saved selection, committed per-case
+results, pending items, processed count and original expiry. Evaluation continues
+at the next unprocessed item with the same guards. Other repairs can change those
+cases while paused, so resumed work may report changed or unavailable items.
+Pause does not freeze evidence or extend the 30-day retention deadline.
+
+Repeated pause on paused or resume on pending preserves state and update time.
+Repeating original submission also returns paused progress without resuming it.
+Cancellation accepts pending or paused jobs and retains its original creation guard
+and committed results. Watchers continue through paused state; matching saved
+requests remain `already_submitted` in preflight. Paused jobs count as unfinished
+bulk work, so diagnostic case scans still wait until those jobs finish, are
+cancelled or expire. Normal forward repair and delivery execution remain independent.
+
+These are desired-state controls. Conflicting pause/resume actions follow server
+lock order; a delayed repeated action can reapply after an opposite action. After
+a timeout or lost response, read current state before repeating the desired control
+with the original UUID and creation timestamp. Cancelled jobs remain terminal.
+
+Apply the state-check migration and upgrade API/scheduler writers before enabling
+controls. Older CLI/SDK versions may reject paused states. Downgrade deliberately
+fails while paused rows remain: explicitly resume/cancel them or expire and prune
+them first. The migration does not resume work on its own.
+
 ## Cancel a bulk retry job
 
 Read the retained job and copy its original `created_at`, then cancel with that
@@ -448,8 +497,8 @@ For jobs created before cancellation support, obtain the timestamp from GET.
 
 Cancellation waits for the same job lock as scheduler evaluations. An evaluation
 already holding the lock may commit before cancellation takes effect. Once
-cancellation commits, further evaluations for this job stop. The job becomes
-`cancelled`, and each remaining item becomes `cancelled` with reason
+cancellation commits, further evaluations for this job stop. A pending or paused
+job becomes `cancelled`, and each remaining item becomes `cancelled` with reason
 `job_cancelled`. Committed results and the fixed selection remain inspectable.
 `processed` still counts only evaluated/skipped items; cancellation does not
 increment it or mutate unprocessed cases. Other jobs and individual retries remain
@@ -498,8 +547,8 @@ even if their invocation has expired. A proven root missing its association is
 recorded as unresolved with reason `lineage_association_missing`; use the existing
 guarded retry workflow after reviewing that case.
 
-Status becomes `waiting_for_retry_jobs` while a retained pending bulk lineage
-retry job exists for this subscription. Its queued case guards remain protected;
+Status becomes `waiting_for_retry_jobs` while a retained pending or paused bulk
+lineage retry job exists for this subscription. Its queued case guards remain protected;
 once those jobs finish, are cancelled or expire, scanning can continue. The
 30-day diagnostic work deadline still applies while waiting. `expired` is visible
 immediately at that deadline. The latest small scan metadata remains available

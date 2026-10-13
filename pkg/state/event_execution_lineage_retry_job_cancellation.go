@@ -29,7 +29,7 @@ func cancelLineageRetryJob(job *api.EventExecutionLineageRetryJob, expected time
 	if job.Status == "completed" || job.Status == "cancelled" {
 		return false, nil
 	}
-	if job.Status != "pending" || job.Processed < 0 || job.Processed >= len(job.Items) || len(job.Items) > api.EventExecutionLineageRetryJobMaxCases {
+	if (job.Status != "pending" && job.Status != "paused") || job.Processed < 0 || job.Processed >= len(job.Items) || len(job.Items) > api.EventExecutionLineageRetryJobMaxCases {
 		return false, ErrInvalidArgument
 	}
 	for _, item := range job.Items[job.Processed:] {
@@ -46,11 +46,11 @@ func cancelLineageRetryJob(job *api.EventExecutionLineageRetryJob, expected time
 	return true, nil
 }
 
-// Cancellation takes only the job lock, in common with the worker's first lock.
+// Controls take only the job lock, in common with the worker's first lock.
 // It never takes coverage before the job, avoiding an inversion with the worker.
-func (s *PgStore) CancelEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id string, req api.CancelEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
+func (s *PgStore) controlEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id, action string, req api.ControlEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
 	var out api.EventExecutionLineageRetryJob
-	if err := validLineageJobCancellation(account, app, sub, id, req); err != nil {
+	if err := validLineageJobCancellation(account, app, sub, id, api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt}); err != nil {
 		return out, err
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -81,7 +81,7 @@ func (s *PgStore) CancelEventExecutionLineageRetryJob(ctx context.Context, accou
 	if !out.RetainUntil.After(time.Now()) {
 		return out, ErrNotFound
 	}
-	changed, err := cancelLineageRetryJob(&out, req.ExpectedCreatedAt)
+	changed, err := controlLineageRetryJob(&out, action, req.ExpectedCreatedAt)
 	if err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
 	}
@@ -112,12 +112,12 @@ func (s *PgStore) CancelEventExecutionLineageRetryJob(ctx context.Context, accou
 	}
 	return out, nil
 }
-func (m *MemStore) CancelEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id string, req api.CancelEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
+func (m *MemStore) controlEventExecutionLineageRetryJob(ctx context.Context, account, app, sub, id, action string, req api.ControlEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error) {
 	var out api.EventExecutionLineageRetryJob
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
-	if err := validLineageJobCancellation(account, app, sub, id, req); err != nil {
+	if err := validLineageJobCancellation(account, app, sub, id, api.CancelEventExecutionLineageRetryJobRequest{ExpectedCreatedAt: req.ExpectedCreatedAt}); err != nil {
 		return out, err
 	}
 	m.mu.Lock()
@@ -133,7 +133,7 @@ func (m *MemStore) CancelEventExecutionLineageRetryJob(ctx context.Context, acco
 		return out, ErrNotFound
 	}
 	out = cloneLineageRetryJob(job)
-	changed, err := cancelLineageRetryJob(&out, req.ExpectedCreatedAt)
+	changed, err := controlLineageRetryJob(&out, action, req.ExpectedCreatedAt)
 	if err != nil {
 		return api.EventExecutionLineageRetryJob{}, err
 	}

@@ -2363,7 +2363,7 @@ List retained bulk lineage retry job summaries
 
 | Flag | Meaning | |
 |---|---|---|
-| `--status <STATE>` | pending, completed or cancelled (default all) |  |
+| `--status <STATE>` | pending, paused, completed or cancelled (default all) |  |
 | `--limit <N>` | page size (default 50, maximum 200) |  |
 | `--after <CURSOR>` | continuation cursor from the previous page |  |
 
@@ -2387,6 +2387,26 @@ Submit a reviewed fixed lineage retry selection
 | Flag | Meaning | |
 |---|---|---|
 | `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
+
+### events subscription-lineage-retry-job-pause
+
+Pause unprocessed bulk lineage retries
+
+`gregale events subscription-lineage-retry-job-pause [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
+
+### events subscription-lineage-retry-job-resume
+
+Resume a paused bulk lineage retry job
+
+`gregale events subscription-lineage-retry-job-resume [--expected-created-at <TIMESTAMP>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
 
 ### events subscription-lineage-retry-job-cancel
 

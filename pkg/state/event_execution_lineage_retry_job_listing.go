@@ -21,7 +21,7 @@ type lineageRetryJobsPage struct {
 
 func lineageRetryJobsPagination(status, after string, limit int) (lineageRetryJobsPage, error) {
 	page := lineageRetryJobsPage{limit: limit, requestID: uuid.Nil.String()}
-	if status != "" && status != "pending" && status != "completed" && status != "cancelled" {
+	if status != "" && status != "pending" && status != "paused" && status != "completed" && status != "cancelled" {
 		return page, ErrInvalidArgument
 	}
 	if limit == 0 {

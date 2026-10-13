@@ -327,7 +327,7 @@ ORDER BY (c.lineage_repair_progress->'case_backfill'->>'updated_at')::timestampt
 FOR UPDATE OF c SKIP LOCKED LIMIT sqlc.arg(job_limit)::integer;
 
 -- name: EventExecutionLineageBackfillRetryPending :one
-SELECT EXISTS(SELECT 1 FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND state='pending' AND retain_until>clock_timestamp());
+SELECT EXISTS(SELECT 1 FROM event_execution_lineage_retry_jobs WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND state IN ('pending','paused') AND retain_until>clock_timestamp());
 
 -- name: EventExecutionLineageBackfillCaseExists :one
 SELECT EXISTS(SELECT 1 FROM event_execution_lineage_cases WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid AND outbox_id=sqlc.arg(outbox_id)::bigint);

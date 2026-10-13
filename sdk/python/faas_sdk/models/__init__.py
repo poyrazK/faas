@@ -518,6 +518,7 @@ from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
 from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
+from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
@@ -4570,6 +4571,7 @@ __all__ = (
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
     "ControlEventExecutionLineageCaseBackfillRequest",
+    "ControlEventExecutionLineageRetryJobRequest",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",

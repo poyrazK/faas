@@ -7,7 +7,7 @@ export type EventExecutionLineageRetryJob = {
   request_id: string;
   subscription_id: string;
   app_id: string;
-  status: 'pending' | 'completed' | 'cancelled';
+  status: 'pending' | 'paused' | 'completed' | 'cancelled';
   /**
    * Cases evaluated or skipped before cancellation; cancelled items are not counted.
    */

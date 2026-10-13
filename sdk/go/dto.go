@@ -531,3 +531,5 @@ type ControlEventExecutionLineageCaseBackfillRequest = api.ControlEventExecution
 
 type EventExecutionLineageRetryJobSummary = api.EventExecutionLineageRetryJobSummary
 type EventExecutionLineageRetryJobs = api.EventExecutionLineageRetryJobs
+
+type ControlEventExecutionLineageRetryJobRequest = api.ControlEventExecutionLineageRetryJobRequest

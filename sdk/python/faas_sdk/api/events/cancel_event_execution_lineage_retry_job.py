@@ -110,12 +110,13 @@ def sync_detailed(
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
      Requires deploy/write scope. The original creation timestamp fences the job incarnation.
-    Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining
-    items cancelled. Processed counts evaluated items only. Repeating cancellation with the same
-    original timestamp returns the unchanged terminal job; a completed job stays completed. No
-    evaluation can start for this job after cancellation commits. Existing repairs remain applied.
-    Cancellation does not extend retention, change case revisions or reset coverage. Reusing the
-    original submission UUID and selection returns the cancelled job without restarting it.
+    Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
+    committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
+    Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
+    completed job stays completed. No evaluation can start for this job after cancellation commits.
+    Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
+    reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
+    restarting it.
 
     Args:
         slug (str):
@@ -156,12 +157,13 @@ def sync(
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
      Requires deploy/write scope. The original creation timestamp fences the job incarnation.
-    Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining
-    items cancelled. Processed counts evaluated items only. Repeating cancellation with the same
-    original timestamp returns the unchanged terminal job; a completed job stays completed. No
-    evaluation can start for this job after cancellation commits. Existing repairs remain applied.
-    Cancellation does not extend retention, change case revisions or reset coverage. Reusing the
-    original submission UUID and selection returns the cancelled job without restarting it.
+    Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
+    committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
+    Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
+    completed job stays completed. No evaluation can start for this job after cancellation commits.
+    Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
+    reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
+    restarting it.
 
     Args:
         slug (str):
@@ -197,12 +199,13 @@ async def asyncio_detailed(
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
      Requires deploy/write scope. The original creation timestamp fences the job incarnation.
-    Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining
-    items cancelled. Processed counts evaluated items only. Repeating cancellation with the same
-    original timestamp returns the unchanged terminal job; a completed job stays completed. No
-    evaluation can start for this job after cancellation commits. Existing repairs remain applied.
-    Cancellation does not extend retention, change case revisions or reset coverage. Reusing the
-    original submission UUID and selection returns the cancelled job without restarting it.
+    Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
+    committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
+    Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
+    completed job stays completed. No evaluation can start for this job after cancellation commits.
+    Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
+    reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
+    restarting it.
 
     Args:
         slug (str):
@@ -241,12 +244,13 @@ async def asyncio(
     """Cancel unprocessed cases in a retained bulk lineage retry job.
 
      Requires deploy/write scope. The original creation timestamp fences the job incarnation.
-    Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining
-    items cancelled. Processed counts evaluated items only. Repeating cancellation with the same
-    original timestamp returns the unchanged terminal job; a completed job stays completed. No
-    evaluation can start for this job after cancellation commits. Existing repairs remain applied.
-    Cancellation does not extend retention, change case revisions or reset coverage. Reusing the
-    original submission UUID and selection returns the cancelled job without restarting it.
+    Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves
+    committed evaluations and marks remaining items cancelled. Processed counts evaluated items only.
+    Repeating cancellation with the same original timestamp returns the unchanged terminal job; a
+    completed job stays completed. No evaluation can start for this job after cancellation commits.
+    Existing repairs remain applied. Cancellation does not extend retention, change case revisions or
+    reset coverage. Reusing the original submission UUID and selection returns the cancelled job without
+    restarting it.
 
     Args:
         slug (str):

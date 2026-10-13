@@ -274,6 +274,7 @@ export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js'
 export type { ConsumerKeyListResponse } from './models/ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './models/ConsumerKeyResponse.js';
 export type { ControlEventExecutionLineageCaseBackfillRequest } from './models/ControlEventExecutionLineageCaseBackfillRequest.js';
+export type { ControlEventExecutionLineageRetryJobRequest } from './models/ControlEventExecutionLineageRetryJobRequest.js';
 export type { ControlWorkflowRecoveryPolicyRequest } from './models/ControlWorkflowRecoveryPolicyRequest.js';
 export type { CookieSession } from './models/CookieSession.js';
 export type { CorsPresetListResponse } from './models/CorsPresetListResponse.js';

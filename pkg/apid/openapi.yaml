@@ -33903,7 +33903,7 @@ paths:
         - name: status
           in: query
           description: Omit for all retained states.
-          schema: { type: string, enum: [pending, completed, cancelled] }
+          schema: { type: string, enum: [pending, paused, completed, cancelled] }
         - name: after
           in: query
           description: Continuation cursor returned by next_after; pass unchanged with the same status filter.
@@ -33959,7 +33959,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
         '200':
-          description: Previously completed or cancelled job.
+          description: Previously paused, completed or cancelled job.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
@@ -33982,12 +33982,128 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/pause:
+    post:
+      tags: [events]
+      operationId: pauseEventExecutionLineageRetryJob
+      summary: Pause unprocessed cases in a retained bulk lineage retry job.
+      description: Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending. Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the original retention deadline; stale case guards remain checked by the worker. A worker already holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed, cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an opposite control; read current state after a timeout.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Original nonzero submission UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageRetryJobRequest' }
+      responses:
+        '200':
+          description: Current job with preserved selection, results and progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Creation timestamp changed or job is terminal; stable code event_lineage_retry_job_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; read current state before repeating the desired control with the original UUID and creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/resume:
+    post:
+      tags: [events]
+      operationId: resumeEventExecutionLineageRetryJob
+      summary: Resume unprocessed cases in a paused bulk lineage retry job.
+      description: Requires deploy/write scope. The original creation timestamp fences the job incarnation. Controls share the scheduler job lock. Pause changes pending to paused; resume changes paused to pending. Repeating the currently desired state is a no-op preserving update time. Completed or cancelled jobs reject pause/resume with 409. Resume preserves selection, per-case results, processed count and the original retention deadline; stale case guards remain checked by the worker. A worker already holding the lock can commit before pause. Paused jobs block diagnostic case backfills until resumed, cancelled or expired. These are desired-state controls, so a delayed repeat can reapply after an opposite control; read current state after a timeout.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: requestID
+          in: path
+          required: true
+          description: Original nonzero submission UUID.
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlEventExecutionLineageRetryJobRequest' }
+      responses:
+        '200':
+          description: Current job with preserved selection, results and progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJob' }
+        '400':
+          description: Invalid identifier or missing original creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Creation timestamp changed or job is terminal; stable code event_lineage_retry_job_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Control timed out; read current state before repeating the desired control with the original UUID and creation timestamp.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel:
     post:
       tags: [events]
       operationId: cancelEventExecutionLineageRetryJob
       summary: Cancel unprocessed cases in a retained bulk lineage retry job.
-      description: Requires deploy/write scope. The original creation timestamp fences the job incarnation. Cancellation waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it.
+      description: Requires deploy/write scope. The original creation timestamp fences the job incarnation. Cancellation accepts pending or paused jobs and waits for the scheduler job lock, preserves committed evaluations and marks remaining items cancelled. Processed counts evaluated items only. Repeating cancellation with the same original timestamp returns the unchanged terminal job; a completed job stays completed. No evaluation can start for this job after cancellation commits. Existing repairs remain applied. Cancellation does not extend retention, change case revisions or reset coverage. Reusing the original submission UUID and selection returns the cancelled job without restarting it.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -34045,7 +34161,7 @@ paths:
       tags: [events]
       operationId: getEventExecutionLineageRetryJob
       summary: Inspect retained bulk lineage retry progress and per-case results.
-      description: Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage status.
+      description: Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated results and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage status.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -63063,6 +63179,12 @@ components:
         status: { type: string, enum: [pending, cancelled, changed, unavailable, unresolved, conflict, repaired, already_associated] }
         reason: { type: string }
         result: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+    ControlEventExecutionLineageRetryJobRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_created_at]
+      properties:
+        expected_created_at: { type: string, format: date-time, description: Original nonzero creation timestamp from the reviewed job. }
     EventExecutionLineageRetryJobSummary:
       type: object
       additionalProperties: false
@@ -63071,7 +63193,7 @@ components:
         request_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        status: { type: string, enum: [pending, completed, cancelled] }
+        status: { type: string, enum: [pending, paused, completed, cancelled] }
         selected: { type: integer, minimum: 1, maximum: 200 }
         processed: { type: integer, minimum: 0, maximum: 200, description: Cases evaluated or skipped; cancelled items are not counted. }
         created_at: { type: string, format: date-time }
@@ -63095,7 +63217,7 @@ components:
         request_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
-        status: { type: string, enum: [pending, completed, cancelled] }
+        status: { type: string, enum: [pending, paused, completed, cancelled] }
         processed: { type: integer, minimum: 0, maximum: 200, description: Cases evaluated or skipped before cancellation; cancelled items are not counted. }
         items:
           type: array

@@ -95,9 +95,10 @@ def sync_detailed(
     """Inspect retained bulk lineage retry progress and per-case results.
 
      Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases
-    may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results
-    and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage
-    status.
+    may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave
+    unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated
+    results and mark unprocessed items cancelled. Results describe recorded evaluations, not live
+    lineage status.
 
     Args:
         slug (str):
@@ -135,9 +136,10 @@ def sync(
     """Inspect retained bulk lineage retry progress and per-case results.
 
      Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases
-    may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results
-    and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage
-    status.
+    may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave
+    unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated
+    results and mark unprocessed items cancelled. Results describe recorded evaluations, not live
+    lineage status.
 
     Args:
         slug (str):
@@ -170,9 +172,10 @@ async def asyncio_detailed(
     """Inspect retained bulk lineage retry progress and per-case results.
 
      Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases
-    may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results
-    and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage
-    status.
+    may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave
+    unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated
+    results and mark unprocessed items cancelled. Results describe recorded evaluations, not live
+    lineage status.
 
     Args:
         slug (str):
@@ -208,9 +211,10 @@ async def asyncio(
     """Inspect retained bulk lineage retry progress and per-case results.
 
      Requires read scope. Completed means all selected cases were evaluated or skipped; individual cases
-    may remain unresolved, conflicted, changed or unavailable. Cancelled jobs preserve evaluated results
-    and mark unprocessed items cancelled. Results describe recorded evaluations, not live lineage
-    status.
+    may remain unresolved, conflicted, changed or unavailable. Paused jobs preserve results and leave
+    unprocessed items pending until resumed, cancelled or expired. Cancelled jobs preserve evaluated
+    results and mark unprocessed items cancelled. Results describe recorded evaluations, not live
+    lineage status.
 
     Args:
         slug (str):

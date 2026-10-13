@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventExecutionLineageRetryJobSummaryStatus = Literal["cancelled", "completed", "pending"]
+EventExecutionLineageRetryJobSummaryStatus = Literal["cancelled", "completed", "paused", "pending"]
 
 EVENT_EXECUTION_LINEAGE_RETRY_JOB_SUMMARY_STATUS_VALUES: set[EventExecutionLineageRetryJobSummaryStatus] = {
     "cancelled",
     "completed",
+    "paused",
     "pending",
 }
 

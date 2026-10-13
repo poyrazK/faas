@@ -269,6 +269,7 @@ export type { ConsumedCreditRow } from './ConsumedCreditRow.js';
 export type { ConsumerKeyListResponse } from './ConsumerKeyListResponse.js';
 export type { ConsumerKeyResponse } from './ConsumerKeyResponse.js';
 export type { ControlEventExecutionLineageCaseBackfillRequest } from './ControlEventExecutionLineageCaseBackfillRequest.js';
+export type { ControlEventExecutionLineageRetryJobRequest } from './ControlEventExecutionLineageRetryJobRequest.js';
 export type { ControlWorkflowRecoveryPolicyRequest } from './ControlWorkflowRecoveryPolicyRequest.js';
 export type { CookieSession } from './CookieSession.js';
 export type { CorsPresetListResponse } from './CorsPresetListResponse.js';

@@ -91,7 +91,7 @@ func summarizeLineageRetryWatch(job api.EventExecutionLineageRetryJob) (lineageR
 	if out.Selected < 1 || out.Selected > api.EventExecutionLineageRetryJobMaxCases || out.Processed < 0 || out.Processed > out.Selected || job.CreatedAt.IsZero() || !job.RetainUntil.After(job.CreatedAt) {
 		return out, fmt.Errorf("invalid job progress or retention")
 	}
-	if job.Status != "pending" && job.Status != "completed" && job.Status != "cancelled" {
+	if job.Status != "pending" && job.Status != "paused" && job.Status != "completed" && job.Status != "cancelled" {
 		return out, fmt.Errorf("unsupported job state %q", job.Status)
 	}
 	for _, item := range job.Items {
@@ -116,7 +116,7 @@ func summarizeLineageRetryWatch(job api.EventExecutionLineageRetryJob) (lineageR
 			return out, fmt.Errorf("unsupported case state %q", item.Status)
 		}
 	}
-	if out.Processed != out.Selected-out.Counts.Pending-out.Counts.Cancelled || (job.Status == "completed" && out.Processed != out.Selected) || (job.Status == "cancelled" && out.Counts.Pending != 0) || (job.Status == "pending" && out.Counts.Cancelled != 0) {
+	if out.Processed != out.Selected-out.Counts.Pending-out.Counts.Cancelled || (job.Status == "completed" && out.Processed != out.Selected) || (job.Status == "cancelled" && out.Counts.Pending != 0) || ((job.Status == "pending" || job.Status == "paused") && out.Counts.Cancelled != 0) {
 		return out, fmt.Errorf("job state and outcome counts disagree")
 	}
 	return out, nil
@@ -144,7 +144,7 @@ func watchLineageRetryJob(ctx context.Context, client *api.Client, app, sub, id 
 		}
 		changed := record.Job == nil || *record.Job != summary
 		record.Job = &summary
-		if job.Status != "pending" {
+		if job.Status == "completed" || job.Status == "cancelled" {
 			record.Event = job.Status
 			if err := renderLineageRetryWatch(record); err != nil {
 				return printErr("Watch output failed", err)

@@ -191,6 +191,23 @@ func (c *Client) CancelEventExecutionLineageRetryJob(ctx context.Context, app, s
 	return out, err
 }
 
+// ControlEventExecutionLineageRetryJobRequest fences the original bulk job incarnation.
+type ControlEventExecutionLineageRetryJobRequest struct {
+	ExpectedCreatedAt time.Time `json:"expected_created_at"`
+}
+
+func (c *Client) PauseEventExecutionLineageRetryJob(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+	return c.controlEventExecutionLineageRetryJob(ctx, app, sub, id, "pause", req)
+}
+func (c *Client) ResumeEventExecutionLineageRetryJob(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+	return c.controlEventExecutionLineageRetryJob(ctx, app, sub, id, "resume", req)
+}
+func (c *Client) controlEventExecutionLineageRetryJob(ctx context.Context, app, sub, id, action string, req ControlEventExecutionLineageRetryJobRequest) (EventExecutionLineageRetryJob, error) {
+	var out EventExecutionLineageRetryJob
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs/"+url.PathEscape(id)+"/"+action, req, &out)
+	return out, err
+}
+
 // EventExecutionLineageRetryJobSummary omits case selections and individual results.
 type EventExecutionLineageRetryJobSummary struct {
 	RequestID      string    `json:"request_id"`

@@ -46,7 +46,7 @@ func cmdEvents(args []string) int {
 		return cmdEventsLineageRetryJobs(args[1:])
 	case "subscription-lineage-retry-export":
 		return cmdEventsLineageRetryExport(args[1:])
-	case "subscription-lineage-retry-preview", "subscription-lineage-retry-job-create", "subscription-lineage-retry-job", "subscription-lineage-retry-job-cancel":
+	case "subscription-lineage-retry-preview", "subscription-lineage-retry-job-create", "subscription-lineage-retry-job", "subscription-lineage-retry-job-cancel", "subscription-lineage-retry-job-pause", "subscription-lineage-retry-job-resume":
 		return cmdEventsLineageRetryJob(args[1:], args[0])
 	case "subscription-lineage-cases":
 		return cmdEventsLineageCases(args[1:], false)

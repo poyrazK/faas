@@ -604,7 +604,7 @@ func (q *Queries) EventExecutionLineageBackfillReceipts(ctx context.Context, db 
 }
 
 const eventExecutionLineageBackfillRetryPending = `-- name: EventExecutionLineageBackfillRetryPending :one
-SELECT EXISTS(SELECT 1 FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND state='pending' AND retain_until>clock_timestamp())
+SELECT EXISTS(SELECT 1 FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND state IN ('pending','paused') AND retain_until>clock_timestamp())
 `
 
 type EventExecutionLineageBackfillRetryPendingParams struct {
