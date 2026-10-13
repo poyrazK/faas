@@ -100,7 +100,7 @@ func validateReviewHandoffReassignment(n api.OperationWorkflowReadinessNotificat
 	if request == nil {
 		return nil
 	}
-	if input.EscalationAcknowledgment != nil || input.EscalationCompletion != nil || input.EscalationActionReview != nil || input.EscalationRevision != nil || input.ScheduledReviewCancellation != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.Status != "active" || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1024 || !utf8.ValidString(request.Reason) || strings.IndexFunc(request.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
+	if input.EscalationAcknowledgment != nil || input.EscalationCompletion != nil || input.EscalationActionReview != nil || input.EscalationRevision != nil || input.ScheduledReviewCancellation != nil || input.ScheduledReviewReschedule != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.Status != "active" || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1024 || !utf8.ValidString(request.Reason) || strings.IndexFunc(request.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
 		return ErrInvalidArgument
 	}
 	response := n.ReviewResponse

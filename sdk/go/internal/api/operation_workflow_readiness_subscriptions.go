@@ -485,6 +485,7 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
+	ScheduledReviewReschedule        *OperationWorkflowReviewResponseScheduledReviewRescheduleRequest   `json:"scheduled_review_reschedule,omitempty"`
 	ScheduledReviewCancellation      *OperationWorkflowReviewResponseScheduledReviewCancellationRequest `json:"scheduled_review_cancellation,omitempty"`
 	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReviewRequest      `json:"escalation_action_review,omitempty"`
 	EscalationRevision               *OperationWorkflowReviewResponseEscalationRevisionRequest          `json:"escalation_revision,omitempty"`
@@ -548,6 +549,7 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated                 bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
+	ScheduledReviewReschedule        *OperationWorkflowReviewResponseScheduledReviewReschedule   `json:"scheduled_review_reschedule,omitempty"`
 	ScheduledReviewCancellation      *OperationWorkflowReviewResponseScheduledReviewCancellation `json:"scheduled_review_cancellation,omitempty"`
 	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReview      `json:"escalation_action_review,omitempty"`
 	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletion        `json:"escalation_completion,omitempty"`
@@ -758,15 +760,17 @@ type OperationWorkflowReviewResponseEscalationCompletionRequest struct {
 	ReviewIndices      []int     `json:"review_indices"`
 }
 type OperationWorkflowReviewResponseEscalationCompletion struct {
-	ReviewCancellation *OperationWorkflowReviewResponseScheduledReviewCancellation `json:"review_cancellation,omitempty"`
-	ReviewDueAt        *time.Time                                                  `json:"review_due_at,omitempty"`
-	ScheduledReviewAt  *time.Time                                                  `json:"scheduled_review_at,omitempty"`
-	Review             *OperationWorkflowReviewResponseEscalationActionReview      `json:"review,omitempty"`
-	AcknowledgedAt     time.Time                                                   `json:"acknowledged_at"`
-	Summary            string                                                      `json:"summary"`
-	Evidence           []OperationWorkflowReviewResponseLink                       `json:"evidence"`
-	At                 time.Time                                                   `json:"at"`
-	Actor              string                                                      `json:"actor"`
+	OriginalReviewDueAt *time.Time                                                  `json:"original_review_due_at,omitempty"`
+	ReviewReschedule    *OperationWorkflowReviewResponseScheduledReviewReschedule   `json:"review_reschedule,omitempty"`
+	ReviewCancellation  *OperationWorkflowReviewResponseScheduledReviewCancellation `json:"review_cancellation,omitempty"`
+	ReviewDueAt         *time.Time                                                  `json:"review_due_at,omitempty"`
+	ScheduledReviewAt   *time.Time                                                  `json:"scheduled_review_at,omitempty"`
+	Review              *OperationWorkflowReviewResponseEscalationActionReview      `json:"review,omitempty"`
+	AcknowledgedAt      time.Time                                                   `json:"acknowledged_at"`
+	Summary             string                                                      `json:"summary"`
+	Evidence            []OperationWorkflowReviewResponseLink                       `json:"evidence"`
+	At                  time.Time                                                   `json:"at"`
+	Actor               string                                                      `json:"actor"`
 }
 
 type OperationWorkflowReviewResponseEscalationActionReviewRequest struct {
@@ -802,4 +806,19 @@ type OperationWorkflowReviewResponseScheduledReviewCancellation struct {
 	Reason      string    `json:"reason"`
 	Actor       string    `json:"actor"`
 	At          time.Time `json:"at"`
+}
+
+type OperationWorkflowReviewResponseScheduledReviewRescheduleRequest struct {
+	OperationWorkflowReviewResponseEscalationActionReviewRequest
+	DueAt    time.Time `json:"due_at"`
+	NewDueAt time.Time `json:"new_due_at"`
+	Reason   string    `json:"reason"`
+}
+type OperationWorkflowReviewResponseScheduledReviewReschedule struct {
+	CompletedAt   time.Time `json:"completed_at"`
+	PreviousDueAt time.Time `json:"previous_due_at"`
+	DueAt         time.Time `json:"due_at"`
+	Reason        string    `json:"reason"`
+	Actor         string    `json:"actor"`
+	At            time.Time `json:"at"`
 }

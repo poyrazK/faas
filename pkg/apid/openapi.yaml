@@ -80928,6 +80928,63 @@ components:
         at:
           type: string
           format: date-time
+    OperationWorkflowReviewResponseScheduledReviewRescheduleRequest:
+      type: object
+      additionalProperties: false
+      description: Reschedule a pending evidence check using exact current episode, completion and due timestamps. New time must differ from current due time and be future within seven days. Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with other response actions. Published or canceled checks reject rescheduling; no source observation is required.
+      required: [decision_at, required_at, handed_off_at, escalated_at, acknowledged_at, completed_at, due_at, new_due_at, reason]
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+        required_at:
+          type: string
+          format: date-time
+        handed_off_at:
+          type: string
+          format: date-time
+        escalated_at:
+          type: string
+          format: date-time
+        acknowledged_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        due_at:
+          type: string
+          format: date-time
+        new_due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          maxLength: 1024
+          description: Nonblank UTF-8 explanation for the schedule change, at most 1024 bytes; line breaks and tabs allowed.
+    OperationWorkflowReviewResponseScheduledReviewReschedule:
+      type: object
+      additionalProperties: false
+      description: Immutable schedule change audit with previous and replacement due times, completion identity, human reason and server actor and time. Retained change history records each reschedule; current completion keeps the latest change and original due time.
+      required: [completed_at, previous_due_at, due_at, reason, actor, at]
+      properties:
+        completed_at:
+          type: string
+          format: date-time
+        previous_due_at:
+          type: string
+          format: date-time
+        due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          maxLength: 1024
+        actor:
+          type: string
+        at:
+          type: string
+          format: date-time
     OperationWorkflowReviewResponseEscalationCompletionRequest:
       type: object
       additionalProperties: false
@@ -80975,13 +81032,20 @@ components:
       description: Immutable human completion of escalation coordination work, with linked review references and server actor and time. Existing overdue markers remain historical.
       required: [acknowledged_at, summary, evidence, at, actor]
       properties:
+        original_review_due_at:
+          type: string
+          format: date-time
+          description: Original schedule time retained across explicit reschedules, even if older change history is pruned. Legacy completions initialize this from their current due time on first reschedule.
+        review_reschedule:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewReschedule'
+          description: OperationWorkflowReviewResponseEscalationCompletion.review_reschedule. Explicit audited change of a pending evidence check time, preserving completed work and review obligations.
         review_cancellation:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewCancellation'
           description: OperationWorkflowReviewResponseEscalationCompletion.review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
         review_due_at:
           type: string
           format: date-time
-          description: One-shot evidence check time pinned at completion. Ordinary edits and manual evidence reviews do not postpone it.
+          description: Current one-shot evidence check time. Only explicit rescheduling changes it; ordinary edits and manual evidence reviews do not.
         scheduled_review_at:
           type: string
           format: date-time
@@ -81275,6 +81339,9 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        scheduled_review_reschedule:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewRescheduleRequest'
+          description: OperationWorkflowReviewResponseRequest.scheduled_review_reschedule. Explicit audited change of a pending evidence check time, preserving completed work and review obligations.
         scheduled_review_cancellation:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewCancellationRequest'
           description: OperationWorkflowReviewResponseRequest.scheduled_review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
@@ -81602,6 +81669,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        scheduled_review_reschedule:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewReschedule'
+          description: OperationWorkflowReviewResponseChange.scheduled_review_reschedule. Explicit audited change of a pending evidence check time, preserving completed work and review obligations.
         scheduled_review_cancellation:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewCancellation'
           description: OperationWorkflowReviewResponseChange.scheduled_review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
@@ -81651,7 +81721,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged, escalation_commitment_completed, escalation_action_reviewed, escalation_commitment_revised, scheduled_review_canceled]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged, escalation_commitment_completed, escalation_action_reviewed, escalation_commitment_revised, scheduled_review_canceled, scheduled_review_rescheduled]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

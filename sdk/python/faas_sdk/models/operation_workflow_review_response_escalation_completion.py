@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_scheduled_review_cancellation import (
         OperationWorkflowReviewResponseScheduledReviewCancellation,
     )
+    from ..models.operation_workflow_review_response_scheduled_review_reschedule import (
+        OperationWorkflowReviewResponseScheduledReviewReschedule,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseEscalationCompletion")
@@ -33,13 +36,20 @@ class OperationWorkflowReviewResponseEscalationCompletion:
     evidence: list[OperationWorkflowReviewResponseLink]
     at: datetime.datetime
     actor: str
+    original_review_due_at: datetime.datetime | Unset = UNSET
+    """Original schedule time retained across explicit reschedules, even if older change history is pruned. Legacy
+    completions initialize this from their current due time on first reschedule."""
+    review_reschedule: OperationWorkflowReviewResponseScheduledReviewReschedule | Unset = UNSET
+    """Immutable schedule change audit with previous and replacement due times, completion identity, human reason
+    and server actor and time. Retained change history records each reschedule; current completion keeps the latest
+    change and original due time."""
     review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset = UNSET
     """Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
     timestamps, server actor and time, and human reason. Does not change completion evidence, ownership or review
     obligations."""
     review_due_at: datetime.datetime | Unset = UNSET
-    """One-shot evidence check time pinned at completion. Ordinary edits and manual evidence reviews do not
-    postpone it."""
+    """Current one-shot evidence check time. Only explicit rescheduling changes it; ordinary edits and manual
+    evidence reviews do not."""
     scheduled_review_at: datetime.datetime | Unset = UNSET
     """Scheduled evidence check delivery marker committed atomically with its observation and durable inbox
     notification. Existing notification retention bounds apply."""
@@ -62,6 +72,14 @@ class OperationWorkflowReviewResponseEscalationCompletion:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        original_review_due_at: str | Unset = UNSET
+        if not isinstance(self.original_review_due_at, Unset):
+            original_review_due_at = self.original_review_due_at.isoformat()
+
+        review_reschedule: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review_reschedule, Unset):
+            review_reschedule = self.review_reschedule.to_dict()
 
         review_cancellation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.review_cancellation, Unset):
@@ -90,6 +108,10 @@ class OperationWorkflowReviewResponseEscalationCompletion:
                 "actor": actor,
             }
         )
+        if original_review_due_at is not UNSET:
+            field_dict["original_review_due_at"] = original_review_due_at
+        if review_reschedule is not UNSET:
+            field_dict["review_reschedule"] = review_reschedule
         if review_cancellation is not UNSET:
             field_dict["review_cancellation"] = review_cancellation
         if review_due_at is not UNSET:
@@ -110,6 +132,9 @@ class OperationWorkflowReviewResponseEscalationCompletion:
         from ..models.operation_workflow_review_response_scheduled_review_cancellation import (
             OperationWorkflowReviewResponseScheduledReviewCancellation,
         )
+        from ..models.operation_workflow_review_response_scheduled_review_reschedule import (
+            OperationWorkflowReviewResponseScheduledReviewReschedule,
+        )
 
         d = dict(src_dict)
         acknowledged_at = datetime.datetime.fromisoformat(d.pop("acknowledged_at"))
@@ -126,6 +151,20 @@ class OperationWorkflowReviewResponseEscalationCompletion:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _original_review_due_at = d.pop("original_review_due_at", UNSET)
+        original_review_due_at: datetime.datetime | Unset
+        if isinstance(_original_review_due_at, Unset):
+            original_review_due_at = UNSET
+        else:
+            original_review_due_at = datetime.datetime.fromisoformat(_original_review_due_at)
+
+        _review_reschedule = d.pop("review_reschedule", UNSET)
+        review_reschedule: OperationWorkflowReviewResponseScheduledReviewReschedule | Unset
+        if isinstance(_review_reschedule, Unset):
+            review_reschedule = UNSET
+        else:
+            review_reschedule = OperationWorkflowReviewResponseScheduledReviewReschedule.from_dict(_review_reschedule)
 
         _review_cancellation = d.pop("review_cancellation", UNSET)
         review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset
@@ -163,6 +202,8 @@ class OperationWorkflowReviewResponseEscalationCompletion:
             evidence=evidence,
             at=at,
             actor=actor,
+            original_review_due_at=original_review_due_at,
+            review_reschedule=review_reschedule,
             review_cancellation=review_cancellation,
             review_due_at=review_due_at,
             scheduled_review_at=scheduled_review_at,

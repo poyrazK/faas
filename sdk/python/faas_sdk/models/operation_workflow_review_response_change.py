@@ -39,6 +39,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_scheduled_review_cancellation import (
         OperationWorkflowReviewResponseScheduledReviewCancellation,
     )
+    from ..models.operation_workflow_review_response_scheduled_review_reschedule import (
+        OperationWorkflowReviewResponseScheduledReviewReschedule,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseChange")
@@ -61,6 +64,10 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    scheduled_review_reschedule: OperationWorkflowReviewResponseScheduledReviewReschedule | Unset = UNSET
+    """Immutable schedule change audit with previous and replacement due times, completion identity, human reason
+    and server actor and time. Retained change history records each reschedule; current completion keeps the latest
+    change and original due time."""
     scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset = UNSET
     """Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
     timestamps, server actor and time, and human reason. Does not change completion evidence, ownership or review
@@ -124,6 +131,10 @@ class OperationWorkflowReviewResponseChange:
 
         actor = self.actor
 
+        scheduled_review_reschedule: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduled_review_reschedule, Unset):
+            scheduled_review_reschedule = self.scheduled_review_reschedule.to_dict()
+
         scheduled_review_cancellation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.scheduled_review_cancellation, Unset):
             scheduled_review_cancellation = self.scheduled_review_cancellation.to_dict()
@@ -185,6 +196,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if scheduled_review_reschedule is not UNSET:
+            field_dict["scheduled_review_reschedule"] = scheduled_review_reschedule
         if scheduled_review_cancellation is not UNSET:
             field_dict["scheduled_review_cancellation"] = scheduled_review_cancellation
         if escalation_action_review is not UNSET:
@@ -242,6 +255,9 @@ class OperationWorkflowReviewResponseChange:
         from ..models.operation_workflow_review_response_scheduled_review_cancellation import (
             OperationWorkflowReviewResponseScheduledReviewCancellation,
         )
+        from ..models.operation_workflow_review_response_scheduled_review_reschedule import (
+            OperationWorkflowReviewResponseScheduledReviewReschedule,
+        )
 
         d = dict(src_dict)
         owner = d.pop("owner")
@@ -253,6 +269,15 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _scheduled_review_reschedule = d.pop("scheduled_review_reschedule", UNSET)
+        scheduled_review_reschedule: OperationWorkflowReviewResponseScheduledReviewReschedule | Unset
+        if isinstance(_scheduled_review_reschedule, Unset):
+            scheduled_review_reschedule = UNSET
+        else:
+            scheduled_review_reschedule = OperationWorkflowReviewResponseScheduledReviewReschedule.from_dict(
+                _scheduled_review_reschedule
+            )
 
         _scheduled_review_cancellation = d.pop("scheduled_review_cancellation", UNSET)
         scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset
@@ -348,6 +373,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            scheduled_review_reschedule=scheduled_review_reschedule,
             scheduled_review_cancellation=scheduled_review_cancellation,
             escalation_action_review=escalation_action_review,
             escalation_completion=escalation_completion,

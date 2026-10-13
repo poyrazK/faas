@@ -25,7 +25,7 @@ func validateEscalationActionReview(n api.OperationWorkflowReadinessNotification
 	if identity == nil {
 		return nil
 	}
-	if input.EscalationActionReview != nil && input.EscalationRevision != nil || input.EscalationCompletion != nil || input.EscalationAcknowledgment != nil || input.ScheduledReviewCancellation != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.HandoffReassignment != nil || input.Status != "active" || len(input.Reviews) != 0 {
+	if input.EscalationActionReview != nil && input.EscalationRevision != nil || input.EscalationCompletion != nil || input.EscalationAcknowledgment != nil || input.ScheduledReviewCancellation != nil || input.ScheduledReviewReschedule != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.HandoffReassignment != nil || input.Status != "active" || len(input.Reviews) != 0 {
 		return ErrInvalidArgument
 	}
 	response := n.ReviewResponse

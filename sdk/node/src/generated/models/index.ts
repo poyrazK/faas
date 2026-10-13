@@ -1330,6 +1330,8 @@ export type { OperationWorkflowReviewResponseLinkRequest } from './OperationWork
 export type { OperationWorkflowReviewResponseRequest } from './OperationWorkflowReviewResponseRequest.js';
 export type { OperationWorkflowReviewResponseScheduledReviewCancellation } from './OperationWorkflowReviewResponseScheduledReviewCancellation.js';
 export type { OperationWorkflowReviewResponseScheduledReviewCancellationRequest } from './OperationWorkflowReviewResponseScheduledReviewCancellationRequest.js';
+export type { OperationWorkflowReviewResponseScheduledReviewReschedule } from './OperationWorkflowReviewResponseScheduledReviewReschedule.js';
+export type { OperationWorkflowReviewResponseScheduledReviewRescheduleRequest } from './OperationWorkflowReviewResponseScheduledReviewRescheduleRequest.js';
 export type { OperationWorkflowReviewResponseSourceHealth } from './OperationWorkflowReviewResponseSourceHealth.js';
 export type { OperationWorkflowRevisionChange } from './OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';
