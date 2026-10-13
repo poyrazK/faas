@@ -1489,6 +1489,15 @@ type ControlPlaneChangeLog struct {
 	CreatedAt    pgtype.Timestamptz
 }
 
+type ControlPlaneLease struct {
+	Name       string
+	Holder     string
+	Epoch      int64
+	AcquiredAt pgtype.Timestamptz
+	RenewedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
 type CorsPreset struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID

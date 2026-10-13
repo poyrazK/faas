@@ -5628,6 +5628,35 @@ ON CONFLICT (singleton) DO UPDATE SET
 SELECT EXISTS(SELECT 1 FROM safe_release_worker_lease
               WHERE singleton = true AND expires_at > now()) AS ready;
 
+-- name: AcquireControlPlaneLease :one
+-- ADR-1152 §4. Acquires name for holder, or renews it when holder already
+-- holds it. Another holder's row is taken over only once it has expired by
+-- the database clock. A takeover, or re-acquisition after the holder's own
+-- row expired, draws a new epoch. No row means another holder still holds it.
+INSERT INTO control_plane_leases AS lease (name, holder, epoch, acquired_at, renewed_at, expires_at)
+VALUES (sqlc.arg(name)::text, sqlc.arg(holder)::text, nextval('control_plane_lease_epoch_seq'),
+        now(), now(), now() + (sqlc.arg(ttl_seconds)::bigint * interval '1 second'))
+ON CONFLICT (name) DO UPDATE SET
+    holder = EXCLUDED.holder,
+    epoch = CASE WHEN lease.holder = EXCLUDED.holder AND lease.expires_at > now()
+                 THEN lease.epoch ELSE EXCLUDED.epoch END,
+    acquired_at = CASE WHEN lease.holder = EXCLUDED.holder AND lease.expires_at > now()
+                       THEN lease.acquired_at ELSE now() END,
+    renewed_at = now(),
+    expires_at = EXCLUDED.expires_at
+WHERE lease.holder = EXCLUDED.holder OR lease.expires_at <= now()
+RETURNING lease.epoch, lease.acquired_at, lease.expires_at, now()::timestamptz AS checked_at;
+
+-- name: ReleaseControlPlaneLease :execrows
+DELETE FROM control_plane_leases
+WHERE name = sqlc.arg(name)::text AND holder = sqlc.arg(holder)::text AND epoch = sqlc.arg(epoch)::bigint;
+
+-- name: ControlPlaneLeaseHeld :one
+-- Fencing check: true only while epoch is the current, unexpired holder's.
+SELECT EXISTS(SELECT 1 FROM control_plane_leases
+              WHERE name = sqlc.arg(name)::text AND epoch = sqlc.arg(epoch)::bigint
+                AND expires_at > now()) AS held;
+
 -- name: RecordRequestIDJournal :one
 -- The request-ID journal is independent from sampled request telemetry. Only
 -- insert when the app is still owned by the authenticated account. The

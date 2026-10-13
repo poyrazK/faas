@@ -17565,6 +17565,36 @@ ALTER TABLE public.cors_preset_change_log ALTER COLUMN id ADD GENERATED ALWAYS A
 
 
 --
+-- Name: control_plane_lease_epoch_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.control_plane_lease_epoch_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: control_plane_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.control_plane_leases (
+    name text NOT NULL,
+    holder text NOT NULL,
+    epoch bigint NOT NULL,
+    acquired_at timestamp with time zone NOT NULL,
+    renewed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT control_plane_leases_epoch_check CHECK ((epoch > 0)),
+    CONSTRAINT control_plane_leases_expiry CHECK ((expires_at > renewed_at)),
+    CONSTRAINT control_plane_leases_holder_check CHECK ((holder <> ''::text)),
+    CONSTRAINT control_plane_leases_name_check CHECK ((name <> ''::text))
+);
+
+
+--
 -- Name: cors_presets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32174,6 +32204,14 @@ ALTER TABLE ONLY public.container_host_port_leases
 
 ALTER TABLE ONLY public.control_plane_change_log
     ADD CONSTRAINT control_plane_change_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: control_plane_leases control_plane_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.control_plane_leases
+    ADD CONSTRAINT control_plane_leases_pkey PRIMARY KEY (name);
 
 
 --

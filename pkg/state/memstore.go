@@ -190,6 +190,8 @@ type MemStore struct {
 	devBridgeWebhookReplays              map[string]devbridge.WebhookReplay
 	featureFlagVersions                  map[string][]FeatureFlagVersion
 	safeReleaseWorkerLeaseUntil          time.Time
+	controlPlaneLeases                   map[string]ControlPlaneLease // lazily created; see control_plane_lease.go
+	controlPlaneLeaseEpoch               int64
 	requestAuditEvents                   map[string]RequestAuditRecord
 	discoveredAPIRoutes                  map[string]DiscoveredAPIRoute
 	discoveryReceipts                    map[string]struct{}

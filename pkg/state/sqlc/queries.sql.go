@@ -395,6 +395,51 @@ func (q *Queries) AcknowledgePendingNotification(ctx context.Context, db DBTX, i
 	return err
 }
 
+const acquireControlPlaneLease = `-- name: AcquireControlPlaneLease :one
+INSERT INTO control_plane_leases AS lease (name, holder, epoch, acquired_at, renewed_at, expires_at)
+VALUES ($1::text, $2::text, nextval('control_plane_lease_epoch_seq'),
+        now(), now(), now() + ($3::bigint * interval '1 second'))
+ON CONFLICT (name) DO UPDATE SET
+    holder = EXCLUDED.holder,
+    epoch = CASE WHEN lease.holder = EXCLUDED.holder AND lease.expires_at > now()
+                 THEN lease.epoch ELSE EXCLUDED.epoch END,
+    acquired_at = CASE WHEN lease.holder = EXCLUDED.holder AND lease.expires_at > now()
+                       THEN lease.acquired_at ELSE now() END,
+    renewed_at = now(),
+    expires_at = EXCLUDED.expires_at
+WHERE lease.holder = EXCLUDED.holder OR lease.expires_at <= now()
+RETURNING lease.epoch, lease.acquired_at, lease.expires_at, now()::timestamptz AS checked_at
+`
+
+type AcquireControlPlaneLeaseParams struct {
+	Name       string
+	Holder     string
+	TtlSeconds int64
+}
+
+type AcquireControlPlaneLeaseRow struct {
+	Epoch      int64
+	AcquiredAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	CheckedAt  pgtype.Timestamptz
+}
+
+// ADR-1152 §4. Acquires name for holder, or renews it when holder already
+// holds it. Another holder's row is taken over only once it has expired by
+// the database clock. A takeover, or re-acquisition after the holder's own
+// row expired, draws a new epoch. No row means another holder still holds it.
+func (q *Queries) AcquireControlPlaneLease(ctx context.Context, db DBTX, arg AcquireControlPlaneLeaseParams) (AcquireControlPlaneLeaseRow, error) {
+	row := db.QueryRow(ctx, acquireControlPlaneLease, arg.Name, arg.Holder, arg.TtlSeconds)
+	var i AcquireControlPlaneLeaseRow
+	err := row.Scan(
+		&i.Epoch,
+		&i.AcquiredAt,
+		&i.ExpiresAt,
+		&i.CheckedAt,
+	)
+	return i, err
+}
+
 const activateRetainedRollbackDeployment = `-- name: ActivateRetainedRollbackDeployment :execrows
 UPDATE deployments SET status='live',error='',traffic_percent=100,
     canary_step=canary_total_steps,
@@ -7907,6 +7952,25 @@ func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const controlPlaneLeaseHeld = `-- name: ControlPlaneLeaseHeld :one
+SELECT EXISTS(SELECT 1 FROM control_plane_leases
+              WHERE name = $1::text AND epoch = $2::bigint
+                AND expires_at > now()) AS held
+`
+
+type ControlPlaneLeaseHeldParams struct {
+	Name  string
+	Epoch int64
+}
+
+// Fencing check: true only while epoch is the current, unexpired holder's.
+func (q *Queries) ControlPlaneLeaseHeld(ctx context.Context, db DBTX, arg ControlPlaneLeaseHeldParams) (bool, error) {
+	row := db.QueryRow(ctx, controlPlaneLeaseHeld, arg.Name, arg.Epoch)
+	var held bool
+	err := row.Scan(&held)
+	return held, err
 }
 
 const copyDeploymentRuntimeUpgradeBaseline = `-- name: CopyDeploymentRuntimeUpgradeBaseline :exec
@@ -68241,6 +68305,25 @@ func (q *Queries) ReleaseCloneCheckpointPostgresFence(ctx context.Context, db DB
 		arg.ExpectedRevision,
 		arg.WorkerToken,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const releaseControlPlaneLease = `-- name: ReleaseControlPlaneLease :execrows
+DELETE FROM control_plane_leases
+WHERE name = $1::text AND holder = $2::text AND epoch = $3::bigint
+`
+
+type ReleaseControlPlaneLeaseParams struct {
+	Name   string
+	Holder string
+	Epoch  int64
+}
+
+func (q *Queries) ReleaseControlPlaneLease(ctx context.Context, db DBTX, arg ReleaseControlPlaneLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseControlPlaneLease, arg.Name, arg.Holder, arg.Epoch)
 	if err != nil {
 		return 0, err
 	}
