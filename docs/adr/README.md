@@ -488,7 +488,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
 | 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
-| 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | proposed | Keep 23 of 96 page alerts, decide 4, demote 69 to warn, add near-expiry certificate pages; authentication edge-rule compile errors page |
+| 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

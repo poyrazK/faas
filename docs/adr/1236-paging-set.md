@@ -1,8 +1,8 @@
 # ADR-1236: Paging set — page only on symptoms that need a human now
 
-- **Status:** proposed (awaiting owner decision)
+- **Status:** accepted (owner decision, 2026-10-13: all four case-by-case rows as proposed)
 - **Date:** 2026-10-13
-- **Decision:** Keep 23 of the 96 page alerts, decide 4 case by case, demote the other 69 to warn, and add two near-expiry certificate pages. The five ADR-1235 alerts the spec marks page stay warn, except compile errors on authentication rules, which page.
+- **Decision:** Keep 24 of the 96 page alerts, demote the other 72 to warn, and add three pages: two near-expiry certificate pages and compile errors on access-gating edge rules. The result is 27 page alerts, each with a promtool fixture that fires it.
 - **Why:** One operator receives every page. At 96, most pages are causes, trends or backlogs that wait safely for business hours, so a real outage page arrives among routine ones and paging stops meaning "act now".
 
 ## Rule
@@ -48,12 +48,12 @@ Everything else is warn and is reviewed once a day.
 | `FaasRealtimeCallbackOutboxAdmissionFailed` | Same loss, caused by local storage. |
 | `FaasSafeReleaseEmergencyRecoveryFailed` | The automatic canary recovery failed; customer traffic needs a human. |
 
-## Owner's call (4)
+## Owner's call (4), decided as proposed
 
-| Alert | For page | For warn | Proposal |
+| Alert | For page | For warn | Decision |
 |---|---|---|---|
 | `FaasApiAvailabilityLow` | Fires within 10 minutes of a sharp outage. | Duplicates the burn-rate page and is noisy at low traffic. | warn |
-| `PgBackupStale` | Backups silently failing for days is the classic unrecoverable loss. | Nothing is lost in the next few hours; a daily review catches it. | warn, if the warn route is reviewed daily |
+| `PgBackupStale` | Backups silently failing for days is the classic unrecoverable loss. | Nothing is lost in the next few hours; a daily review catches it. | warn; the warn route is reviewed daily |
 | `FaasOutboundAdmissionUnavailable` | outboundd fails closed, so that integration is fully down for customers. | One integration, not the platform. | page |
 | `FaasFleetSealDomainUnverified` | A node is serving without proved access to customer secrets. | It appears at node join, when an operator is present. | warn |
 
@@ -114,12 +114,17 @@ Pages for components that are not deployed in production (Loki, GCP Ops Agent) o
 
 ## Consequences
 
-- 26 pages (23 kept, `FaasOutboundAdmissionUnavailable`, and the two new
-  near-expiry pages) plus `FaasEdgeRuleCompileError` for authentication kinds.
-- Demotion is a severity label change. The promtool fixtures assert the
-  severity, so each change updates its fixture.
-  `TestPageAlertsHaveFiringFixture` drops a demoted alert's baseline line
-  automatically, because the test rejects stale entries.
+- 27 page alerts: the 23 kept above, `FaasOutboundAdmissionUnavailable`,
+  `FaasTLSCertExpiryImminent`, `FaasInternalMTLSLeafExpiryImminent` and
+  `FaasEdgeRuleAuthCompileError` (`kind=~"jwt|ip|waf"`).
+  `FaasEdgeRuleCompileError` keeps the other kinds at warn.
+- Every page alert has a promtool fixture that fires it.
+  `pkg/promqlrules/testdata/page_alerts_without_fixture.txt` is empty, and
+  `TestPageAlertsHaveFiringFixture` keeps it that way.
+- Demotion was a severity label change; the fixtures that asserted
+  `severity: page` for a demoted alert now assert warn, and the runbooks
+  that called those alerts pages say warn and name the page that covers
+  the incident, where one does.
 - Warn alerts are only safe to demote to if someone reads them. This ADR
   assumes a daily review of the warn route; without one, `PgBackupStale` and
-  the backlog alerts should stay page.
+  the backlog alerts should go back to page.

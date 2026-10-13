@@ -1,8 +1,8 @@
-# Firing and quiet coverage for core page alerts that shipped without a
+# Firing and quiet coverage for core alerts that shipped without a
 # promtool fixture: daemon liveness and readiness, restart loops, the
 # resident-RAM / lv-fc / snapshot-size floors, host OOM, DB pool starvation,
 # TLS and internal mTLS expiry, billing drift and schedd instance-stats
-# collection. TestPageAlertsHaveFiringFixture requires one per page alert.
+# collection. Seven of them are warn since ADR-1236; the rest still page.
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -108,7 +108,7 @@ tests:
               job: "schedd"
               instance: "127.0.0.1:9103"
               loop: "reconcile"
-              severity: "page"
+              severity: "warn"
               component: "platform"
               family: "daemon_liveness"
             exp_annotations:
@@ -197,7 +197,7 @@ tests:
         alertname: FaasSnapshotFleetAvgHighPage
         exp_alerts:
           - exp_labels:
-              severity: "page"
+              severity: "warn"
               component: "vmmd"
               family: "snapshot_fleet"
               public_status: "internal"
@@ -257,7 +257,7 @@ tests:
               job: "node-compute"
               instance: "fsn-2.gregale.dev:9100"
               node: "fsn-2.faas"
-              severity: "page"
+              severity: "warn"
               component: "node"
               family: "host_memory"
               public_status: "internal"
@@ -318,7 +318,7 @@ tests:
           - exp_labels:
               job: "gatewayd"
               instance: "127.0.0.1:9092"
-              severity: "page"
+              severity: "warn"
               component: "gatewayd-public"
               family: "tls_cert_expiry"
             exp_annotations:
@@ -347,7 +347,7 @@ tests:
         exp_alerts:
           - exp_labels:
               provider: "stripe"
-              severity: "page"
+              severity: "warn"
               component: "meterd"
               family: "billing_drift"
               public_status: "internal"
@@ -380,7 +380,7 @@ tests:
               instance: "fsn-2.gregale.dev:9100"
               daemon: "vmmd"
               host: "fsn-2.faas"
-              severity: "page"
+              severity: "warn"
               component: "gregalectl"
               family: "internal_mtls_lifecycle"
               public_status: "internal"
@@ -412,7 +412,7 @@ tests:
               job: "schedd-compute"
               instance: "fsn-2.gregale.dev:9103"
               node: "fsn-2.faas"
-              severity: "page"
+              severity: "warn"
               component: "schedd"
               family: "instance_stats"
               public_status: "degraded"

@@ -1641,7 +1641,9 @@ with no rule behind it now have one, in the `faas_spec12_operator_signals`
 group of `deploy/ansible/roles/prometheus/files/faas.rules.yml`, each with a
 promtool fixture. The two `schedd_instance_*` rows marked not implemented are
 the exceptions. These rules all ship at warn with `public_status: internal`,
-including rows that say page, until the paging set is triaged. The safe-deploy
+including rows that say page. ADR-1236 then triaged the whole paging set:
+where a severity in this table differs from the rule, the rule and ADR-1236
+are authoritative. The safe-deploy
 and deployment-audit counters are registered per daemon; only meterd runs the
 orchestrator, so rules and dashboards read `meterd_safedeploy_*` and
 `meterd_deployment_audit_*`.

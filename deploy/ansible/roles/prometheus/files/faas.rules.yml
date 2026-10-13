@@ -206,7 +206,7 @@ groups:
         expr: increase(realtimed_callback_unpersisted_failures_total[5m]) > 0
         for: 0m
         labels:
-          severity: page
+          severity: warn
           component: realtimed
           family: realtime_callbacks
         annotations:
@@ -445,7 +445,7 @@ groups:
         expr: increase(apid_ops_total{op="managed_realtime_drain_claim",code="err"}[5m]) > 0
         for: 2m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: durable_background_workers
           public_status: degraded
@@ -458,7 +458,7 @@ groups:
         expr: imaged_ops_total{op="job_materialization_claim",code="err"} > 0
         for: 2m
         labels:
-          severity: page
+          severity: warn
           component: imaged
           family: durable_background_workers
           public_status: degraded
@@ -471,7 +471,7 @@ groups:
         expr: increase(meterd_ops_total{op="usage_daily_rollup",code="err"}[15m]) > 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: durable_background_workers
           public_status: degraded
@@ -500,7 +500,7 @@ groups:
         expr: (faas_safe_release_worker_lease_ready == 0 or faas_safe_release_worker_lease_check_success == 0) and on(job, instance) faas_safe_release_serving_canaries > 0
         for: 30s
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: safe_release
           public_status: degraded
@@ -525,7 +525,7 @@ groups:
         expr: increase(faas_safe_release_emergency_abort_total{outcome="aborted"}[5m]) > 0 or (faas_safe_release_emergency_abort_total{outcome="aborted"} > 0 unless faas_safe_release_emergency_abort_total{outcome="aborted"} offset 5m)
         for: 0m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: safe_release
           public_status: degraded
@@ -604,7 +604,7 @@ groups:
         expr: increase(schedd_account_lifecycle_violations_total[10m]) > 0
         for: 1m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: account_lifecycle
           public_status: internal
@@ -645,7 +645,7 @@ groups:
       - alert: FaasPublicStatusEvaluationStalled
         expr: (apid_status_rollup_last_success_timestamp_seconds == 0 and time() - process_start_time_seconds{job="apid"} > 900) or (apid_status_rollup_last_success_timestamp_seconds > 0 and time() - apid_status_rollup_last_success_timestamp_seconds > 900)
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: public_status
         annotations:
@@ -663,7 +663,7 @@ groups:
           faas_fleet_seal_domain_ready == 1
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: fleet_seal_domain
         annotations:
@@ -693,7 +693,7 @@ groups:
           node_systemd_unit_state{job="node-compute",name="google-cloud-ops-agent.service",state="active"} == 1
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: gcp-ops-agent
           family: off_host_telemetry
           public_status: internal
@@ -956,7 +956,7 @@ groups:
         expr: up{job=~"node|node-compute"} == 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: node
           family: host_exporter
           public_status: internal
@@ -1014,7 +1014,7 @@ groups:
         expr: up{job=~"promtail|promtail-compute"} == 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: promtail
           family: loki_pipeline
         annotations:
@@ -1026,7 +1026,7 @@ groups:
         expr: increase(promtail_dropped_entries_total[10m]) > 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: promtail
           family: loki_pipeline
         annotations:
@@ -1057,7 +1057,7 @@ groups:
         expr: up{job="loki"} == 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: loki
           family: loki_pipeline
         annotations:
@@ -1352,7 +1352,7 @@ groups:
         expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: prometheus
           family: prometheus_health
         annotations:
@@ -1381,7 +1381,7 @@ groups:
           ) > 0.8
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: prometheus
           family: prometheus_health
         annotations:
@@ -1594,7 +1594,7 @@ groups:
         expr: increase(schedd_job_instance_reconcile_total{outcome="error"}[10m]) > 0
         for: 1m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: job_instance_lifecycle
           public_status: internal
@@ -1613,7 +1613,7 @@ groups:
         expr: max(fcvm_snapshot_fleet_avg_bytes) / 1024 / 1024 > 200
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: vmmd
           family: snapshot_fleet
           public_status: internal
@@ -1688,7 +1688,7 @@ groups:
         expr: increase(builderd_builder_slice_oom_kills_total[10m]) > 0
         for: 1m
         labels:
-          severity: page
+          severity: warn
           component: builderd
           family: builder_memory
           public_status: internal
@@ -1701,7 +1701,7 @@ groups:
         expr: increase(node_vmstat_oom_kill[10m]) > 0
         for: 1m
         labels:
-          severity: page
+          severity: warn
           component: node
           family: host_memory
           public_status: internal
@@ -1809,7 +1809,7 @@ groups:
           and sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m])) > 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: gatewayd-internal
           family: api_availability
         annotations:
@@ -1964,7 +1964,7 @@ groups:
         expr: time() - timestamp(apid_audit_events_retention_lag_seconds) > 93600
         for: 30m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: audit_retention
         annotations:
@@ -2063,7 +2063,7 @@ groups:
       - alert: FaasTenantEgressAbuse
         expr: sum by (app, reason) (increase(schedd_egress_abuse_recycles_total{app!=""}[15m])) > 0
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: tenant_abuse
         annotations:
@@ -2089,7 +2089,7 @@ groups:
       - alert: FaasImageAbuseBlocked
         expr: sum by (category) (increase(imaged_abuse_scan_findings_total{action="block"}[15m])) > 0
         labels:
-          severity: page
+          severity: warn
           component: imaged
           family: tenant_abuse
         annotations:
@@ -2114,7 +2114,7 @@ groups:
       - alert: FaasAccountAbuseHold
         expr: sum by (reason) (increase(schedd_account_abuse_holds_total[15m])) > 0
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: tenant_abuse
         annotations:
@@ -2188,7 +2188,7 @@ groups:
         expr: max by (job, instance, loop) ({__name__=~".+_loop_stalled"}) == 1
         for: 30s
         labels:
-          severity: page
+          severity: warn
           component: platform
           family: daemon_liveness
         annotations:
@@ -2254,7 +2254,7 @@ groups:
         expr: meterd_fleet_egress_expected_streams > meterd_fleet_egress_connected_streams
         for: 2m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: usage_collection
         annotations:
@@ -2349,7 +2349,7 @@ groups:
             / sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes_max$"}) > 0.8
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: platform
           family: log_archive
         annotations:
@@ -2402,7 +2402,7 @@ groups:
           (faas_apid_request_rate_5m:by_route > 1)
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: traffic_anomaly
           mode: fleet
@@ -2419,7 +2419,7 @@ groups:
           (faas_apid_request_rate_5m:by_route > 0.1)
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: traffic_anomaly
           mode: fleet
@@ -2480,7 +2480,7 @@ groups:
           ) >= 10
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: traffic_anomaly
           mode: platform
@@ -2504,7 +2504,7 @@ groups:
         expr: faas_apid_error_rate_ratio:by_route{route!="unmatched"} > 2
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: traffic_anomaly
           mode: fleet
@@ -2522,7 +2522,7 @@ groups:
           (faas_apid_error_rate_5m:by_route{route!="unmatched"} > 0.001)
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: traffic_anomaly
           mode: fleet
@@ -2551,12 +2551,26 @@ groups:
         expr: gateway_tls_cert_expiry_seconds < (14 * 86400)
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: gatewayd-public
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in ≤14 days"
           description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
+
+      # ADR-1236: the 14-day alert above is warn; this is the page, sized
+      # so a failed renewal still leaves time to issue by hand.
+      - alert: FaasTLSCertExpiryImminent
+        expr: gateway_tls_cert_expiry_seconds < (3 * 86400)
+        for: 5m
+        labels:
+          severity: page
+          component: gatewayd-public
+          family: tls_cert_expiry
+        annotations:
+          summary: "TLS cert expires in under 72 hours"
+          description: "The smallest remaining lifetime across cached certs is below 72 hours, so renewal has failed for at least eleven days. HTTPS for the affected hosts fails when the cert expires; renew it now."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       - alert: FaasTLSCertExpiryWarn
@@ -2585,7 +2599,7 @@ groups:
         expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (14 * 86400)
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: gatewayd-public
           family: tls_cert_expiry
           hostname: "{{ $labels.hostname }}"
@@ -2777,7 +2791,7 @@ groups:
         expr: sum(rate(githubd_path_filter_total{mode=~"error|breaker_open"}[5m])) > 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: githubd
           family: path_filter
         annotations:
@@ -2831,7 +2845,7 @@ groups:
         expr: githubd_recovery_queue_items{queue="webhook_delivery",status="dead"} > 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: githubd
           family: github_recovery
         annotations:
@@ -2855,7 +2869,7 @@ groups:
         expr: githubd_recovery_oldest_actionable_seconds{status=~"pending|processing"} > 900
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: githubd
           family: github_recovery
         annotations:
@@ -2888,7 +2902,7 @@ groups:
         expr: max by (provider) (meterd_billing_drift_ratio) > 0.005
         for: 1h
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: billing_drift
           public_status: internal
@@ -2912,7 +2926,7 @@ groups:
         expr: sum by (provider) (rate(meterd_billing_drift_reconcile_failures_total[10m])) > 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: billing_drift
           public_status: internal
@@ -2924,7 +2938,7 @@ groups:
         expr: meterd_billing_mode_enabled == 1 and on(provider) meterd_billing_reconcile_supported == 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: billing_drift
           public_status: internal
@@ -2952,7 +2966,7 @@ groups:
         expr: absent(apid_domain_doctor_cycles_total{outcome="success"}) or sum(increase(apid_domain_doctor_cycles_total{outcome="success"}[5m])) < 1
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: domain_doctor
         annotations:
@@ -2964,7 +2978,7 @@ groups:
         expr: absent(apid_domain_verification_last_success_unixtime) or apid_domain_verification_last_success_unixtime == 0 or (apid_domain_verification_backlog > 0 and time() - apid_domain_verification_last_success_unixtime > 120)
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: domain_verification
         annotations:
@@ -3046,7 +3060,7 @@ groups:
         expr: vmmd_cold_boot_ratio > 0.30
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: vmmd
           family: cold_boot_ratio
         annotations:
@@ -3072,7 +3086,7 @@ groups:
         expr: time() - timestamp(apid_debug_regression_oldest_pass_seconds) > 1560
         for: 30m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: debug_regression
         annotations:
@@ -3115,7 +3129,7 @@ groups:
         expr: increase(apid_debug_regression_detected_total[5m]) > 0
         for: 1m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: debug_regression
         annotations:
@@ -3161,7 +3175,7 @@ groups:
           meterd_request_telemetry_partition_covered_months < 3
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: debug_telemetry
         annotations:
@@ -3184,7 +3198,7 @@ groups:
           )
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: debug_telemetry
         annotations:
@@ -3199,7 +3213,7 @@ groups:
           time() - meterd_request_telemetry_default_latest_received_timestamp_seconds < 600
         for: 2m
         labels:
-          severity: page
+          severity: warn
           component: meterd
           family: debug_telemetry
         annotations:
@@ -3337,7 +3351,7 @@ groups:
         expr: node_systemd_unit_state{name=~"faas-.*\\.service", state="activating"} == 1
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: controlplane
           family: daemon_lifecycle
         annotations:
@@ -3358,7 +3372,7 @@ groups:
         expr: increase(meterd_cve_check_total{result="new_cve", severity=~"medium|high|critical"}[1h]) > 0
         for: 1m
         labels:
-          severity: page
+          severity: warn
           component: controlplane
           family: cve
         annotations:
@@ -3387,7 +3401,7 @@ groups:
         expr: faas_build_queue_depth > 50
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: builderd
           family: build_queue_stuck
         annotations:
@@ -3479,7 +3493,7 @@ groups:
         expr: obs:operator_action_trace_completeness_ratio < 0.50
         for: 10m
         labels:
-          severity: page
+          severity: warn
           family: obs_trace
           component: schedd
         annotations:
@@ -3523,7 +3537,7 @@ groups:
         expr: schedd_operator_action_trace_completeness_first_tick_completed_total == 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           family: obs_trace
           component: schedd
         annotations:
@@ -3859,7 +3873,7 @@ groups:
           )
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: managed_postgres
         annotations:
@@ -3929,7 +3943,7 @@ groups:
         expr: max(imaged_stale_deployment_oldest_age_seconds) > 7200
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: imaged
           family: stale_deployment
         annotations:
@@ -3947,7 +3961,7 @@ groups:
           or absent(schedd_compute_heartbeat_retention_last_success_timestamp_seconds)
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: compute_heartbeat_retention
           public_status: internal
@@ -4003,7 +4017,7 @@ groups:
         expr: apid_app_grace_missing_deadlines > 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: apid
           family: app_deletion_grace
           public_status: internal
@@ -4032,7 +4046,7 @@ groups:
         expr: schedd_compute_node_trusted_keys > 2
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: compute_node_key_lifecycle
           public_status: internal
@@ -4090,7 +4104,7 @@ groups:
         expr: faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds - time() < 1209600
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: gregalectl
           family: internal_mtls_lifecycle
           public_status: internal
@@ -4099,11 +4113,26 @@ groups:
           description: "The scheduled renewal has not restored a safe validity window for {{ $labels.host }}/{{ $labels.daemon }}. Internal RPCs will fail when the leaf expires."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
 
+      # ADR-1236: the 14-day alert above is warn; this pages while a
+      # manual reissue can still finish before internal RPCs fail.
+      - alert: FaasInternalMTLSLeafExpiryImminent
+        expr: faas_internal_mtls_leaf_earliest_expiry_timestamp_seconds - time() < 259200
+        for: 15m
+        labels:
+          severity: page
+          component: gregalectl
+          family: internal_mtls_lifecycle
+          public_status: internal
+        annotations:
+          summary: "An internal mTLS leaf expires within 72 hours"
+          description: "Renewal has not restored a safe validity window for {{ $labels.host }}/{{ $labels.daemon }}, and the leaf expires within 72 hours. Internal RPCs to and from that daemon fail when it does; reissue it now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
       - alert: FaasInternalMTLSExpiryMetricsStale
         expr: absent(faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds) or time() - faas_internal_mtls_expiry_metrics_last_success_timestamp_seconds > 900
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: gregalectl
           family: internal_mtls_lifecycle
           public_status: internal
@@ -4116,7 +4145,7 @@ groups:
         expr: faas_internal_mtls_renewal_partial == 1 or faas_internal_mtls_renewal_last_failure_timestamp_seconds > faas_internal_mtls_renewal_last_success_timestamp_seconds
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: gregalectl
           family: internal_mtls_lifecycle
           public_status: internal
@@ -4139,7 +4168,7 @@ groups:
           )
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: gregalectl
           family: internal_mtls_lifecycle
           public_status: internal
@@ -4168,7 +4197,7 @@ groups:
         expr: increase(schedd_instance_stats_partial_errors_total[1m]) > 5
         for: 2m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: instance_stats
           public_status: degraded
@@ -4184,7 +4213,7 @@ groups:
         expr: schedd_snapshot_disk_drift_consecutive_failures > 0
         for: 5m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: snapshot_integrity
           public_status: degraded
@@ -4206,7 +4235,7 @@ groups:
           )
         for: 15m
         labels:
-          severity: page
+          severity: warn
           component: schedd
           family: snapshot_integrity
           public_status: degraded
@@ -4347,7 +4376,7 @@ groups:
         expr: sum(increase(gateway_tls_on_demand_ask_total{decision="deny_error"}[10m])) > 0
         for: 10m
         labels:
-          severity: page
+          severity: warn
           component: gatewayd-public
           family: custom_domain_tls
         annotations:
@@ -4619,8 +4648,22 @@ groups:
           summary: "Edge rule kind {{ $labels.kind }} is failing more than one request per minute"
           description: "gateway_edge_rule_apply_total{result=\"error\"} for kind {{ $labels.kind }} has exceeded 1/min for 5m. Each error is a non-2xx response the edge wrote for a rule, so customers are seeing it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleApplyHigh.md"
+      # ADR-1236: an access-gating rule that fails to compile is dropped
+      # and its route serves without the check, so those kinds page.
+      - alert: FaasEdgeRuleAuthCompileError
+        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total{kind=~"jwt|ip|waf"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: page
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "An access-gating {{ $labels.kind }} edge rule failed to compile"
+          description: "gatewayd-internal dropped a {{ $labels.kind }} edge rule at load time in the last 10m. A dropped access rule is not enforced, so the route it protected is serving without that check. Fix or disable the rule now."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
       - alert: FaasEdgeRuleCompileError
-        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total[10m])) > 0
+        expr: sum by (kind) (increase(gateway_edge_rule_compile_error_total{kind!~"jwt|ip|waf"}[10m])) > 0
         for: 1m
         labels:
           severity: warn

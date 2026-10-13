@@ -20,7 +20,7 @@ tests:
           - exp_labels:
               job: "apid"
               instance: "127.0.0.1:9101"
-              severity: "page"
+              severity: "warn"
               family: "pg_backup"
             exp_annotations:
               summary: "Postgres basebackup has no recent verified off-host copy"
@@ -39,7 +39,7 @@ tests:
           - exp_labels:
               job: "apid"
               instance: "127.0.0.1:9101"
-              severity: "page"
+              severity: "warn"
               family: "pg_backup"
             exp_annotations:
               summary: "Postgres basebackup has no recent verified off-host copy"

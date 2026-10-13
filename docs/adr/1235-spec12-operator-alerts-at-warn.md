@@ -1,6 +1,6 @@
 # ADR-1235: Spec §12 operator alerts ship at warn until paging is triaged
 
-- **Status:** accepted
+- **Status:** accepted; severities amended by ADR-1236 (`FaasEdgeRuleAuthCompileError` pages for jwt/ip/waf)
 - **Date:** 2026-10-13
 - **Decision:** Implement the §12 operator alerts that had no rule, all at `severity: warn` and `public_status: internal`, including the rows the spec marks page.
 - **Why:** The rows were written, and several had runbooks, but nothing evaluated them. The fleet already carries 96 page alerts for one operator, so adding five more pages before that set is triaged would make paging worse.
