@@ -828,6 +828,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1115: HTTP SSE subscriptions for retained realtime channels](1115-realtime-sse-subscriptions.md)
 - [ADR-1116: Transactional retained-channel webhooks](1116-realtime-channel-webhooks.md)
 - [ADR-1117: Short-lived channel subscription tickets](1117-realtime-subscription-tickets.md)
+- [ADR-1237: Realtime channels as function triggers](1237-realtime-channel-function-triggers.md)
 - [ADR-1027: Receive-only SDK transport fallback](1027-realtime-transport-fallback.md)
 - [ADR-1028: Realtime event inspector](1028-realtime-event-inspector.md)
 - [ADR 1029: Backend-visible channel processing acknowledgements](1029-realtime-processing-acknowledgement-status.md)
