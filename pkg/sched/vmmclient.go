@@ -390,7 +390,7 @@ type VMInstanceStat struct {
 	// writes 0 to net_rx_bytes — safe under additive-merge).
 	NetRxBytes       *int64
 	InflightRequests int64
-	// QuietPaused (ADR-957): vmmd holds the instance paused between requests.
+	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused   bool
 	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
@@ -513,7 +513,7 @@ type AppSpec struct {
 	// override (ADR-078). Empty keeps the plan defaults.
 	LivenessProbeJSON string
 	// QuietPauseAfterMS asks vmmd to pause the instance's vCPUs between
-	// requests (ADR-957); 0 keeps it running. See quietPauseAfterMS.
+	// requests (ADR-1151); 0 keeps it running. See quietPauseAfterMS.
 	QuietPauseAfterMS int64
 	// Runtime (issue #470 / PR #470-FU-B) is the runner id inside
 	// the guest (e.g. "node22", "python312"). vmmd stamps it on

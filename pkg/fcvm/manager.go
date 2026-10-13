@@ -443,7 +443,7 @@ type Instance struct {
 	// vmmd's live map but do not start liveness/framework monitors until the
 	// scheduler explicitly resumes them.
 	Paused bool
-	// QuietPauseAfter is the ADR-957 quiet pause delay; zero means the
+	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
@@ -1169,7 +1169,7 @@ type Manager struct {
 	// cannot overwrite each other's fields.
 	hostPolicyMu sync.Mutex
 
-	// Quiet pause (ADR-957; quiet_pause.go). quietActivity is nil unless
+	// Quiet pause (ADR-1151; quiet_pause.go). quietActivity is nil unless
 	// vmmd.toml enables quiet pause. quietMu guards quietStates and is a
 	// leaf lock: it is never held while m.mu or a quietState lock is taken.
 	quietActivity QuietActivity
@@ -3388,7 +3388,7 @@ type WakeRequest struct {
 	// guest. It is intentionally valid only with Snapshot; cold boots cannot
 	// produce a paused pool entry.
 	KeepPaused bool
-	// QuietPauseAfter (ADR-957) pauses the instance's vCPUs after this long
+	// QuietPauseAfter (ADR-1151) pauses the instance's vCPUs after this long
 	// without a forwarded request, stream or tail task in flight, and resumes
 	// it on the next one. Zero keeps it running between requests. The
 	// Manager ignores it for instances that cannot be paused safely; see
@@ -5759,7 +5759,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 	if !owner {
 		return flight.killSignal, int32(flight.exitCode), flight.err
 	}
-	// A quiet-paused guest (ADR-957) cannot act on the signal. The stop is
+	// A quiet-paused guest (ADR-1151) cannot act on the signal. The stop is
 	// registered now, so the pause pass will not pause it again.
 	m.quietResumeBestEffort(ctx, instance)
 	interruptOnly := false

@@ -181,7 +181,7 @@ type Config struct {
 	// check either way.
 	MeasuredAdmission bool `toml:"measured_admission"`
 
-	// QuietPauseAdmission (ADR-957) makes the vCPU and CPU gates count only
+	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
 	// active instances: bookings less those vmmd reports quiet-paused, with
 	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
 	// budget. Off by default; turn it on together with vmmd's quiet_pause on

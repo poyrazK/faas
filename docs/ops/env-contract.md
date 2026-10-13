@@ -414,7 +414,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
-| `FAAS_QUIET_PAUSE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-957 quiet pause between requests; production default is off |
+| `FAAS_QUIET_PAUSE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause between requests; production default is off |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |

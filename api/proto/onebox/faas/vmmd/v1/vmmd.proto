@@ -720,7 +720,7 @@ message AppSpec {
   // Empty keeps the plan defaults. production-us hunt #8: without this field
   // apid stored the override and every VM still ran the plan defaults.
   string liveness_probe_json = 31;
-  // ADR-957 quiet pause: pause this instance's vCPUs after this many
+  // ADR-1151 quiet pause: pause this instance's vCPUs after this many
   // milliseconds with no forwarded request, stream or tail task in flight,
   // and resume it on the next one. schedd sets it only for eligible
   // function apps; 0 keeps the instance running between requests. vmmd
@@ -1476,7 +1476,7 @@ message InstanceStats {
   // the per-destination rate, and the plan's flood ceiling (0 = none).
   google.protobuf.Int64Value egress_flood_drops_per_min = 19;
   int64 egress_flood_drops_limit_per_min = 20;
-  // ADR-957: true while vmmd holds the instance quiet-paused between
+  // ADR-1151: true while vmmd holds the instance quiet-paused between
   // requests. The row stays RUNNING and billed; schedd stops counting a
   // quiet-paused instance's vCPUs toward the node's active vCPU.
   bool quiet_paused = 21;

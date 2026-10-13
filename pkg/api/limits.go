@@ -4587,7 +4587,7 @@ const (
 	MeasuredChargeHeadroomPercent = 25
 	// QuietPauseAfterMillis is how long an eligible function instance sits
 	// with nothing in flight before vmmd pauses its vCPUs until the next
-	// request (ADR-957). The instance stays RUNNING and billed. In the
+	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
 	// The sample a measured charge starts from is the larger of an
@@ -4610,7 +4610,7 @@ const (
 	MeasuredEvictionTargetPercent = 90
 	// QuietPauseMaxVCPUOvercommitPercent caps a node's booked vCPU and CPU
 	// millicores, quiet-paused instances included, at this share of its
-	// budget under quiet pause admission (ADR-957); the gates otherwise
+	// budget under quiet pause admission (ADR-1151); the gates otherwise
 	// count only active instances. The ADR's simulation peaked at 265%.
 	QuietPauseMaxVCPUOvercommitPercent = 300
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
