@@ -3552,6 +3552,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
+		QuietPauseAfterMS:        quietPauseAfterMS(app, mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22"). Threaded onto the vmmd AppSpec so
 		// the framework_ready DGRAM receipt path can label
@@ -5451,6 +5452,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep),
 		ReadinessProbeJSON:       string(dep.OverrideReadinessProbe),
 		LivenessProbeJSON:        string(dep.OverrideLivenessProbe),
+		QuietPauseAfterMS:        quietPauseAfterMS(app, ins.Mode, privateNetwork.NetworkID),
 		// Issue #470 / PR #470-FU-B: per-deployment runner id
 		// (e.g. "node22", "python312"). The sched sources it
 		// from the apps row at Wake time and threads it onto
