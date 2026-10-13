@@ -31,6 +31,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -65,6 +66,9 @@ func main() {
 	probeContract := flag.Bool("probe-contract", false, "report this exec probe process to the local fixture server")
 	noHealthz := flag.Bool("no-healthz", false, "omit the /healthz endpoint")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
+	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
+	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
 	flag.Parse()
 	if *addr == "" {
 		port := os.Getenv("PORT")
@@ -158,7 +162,33 @@ func main() {
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
+	// /livez is a separate liveness endpoint so a release can pass its
+	// startup /healthz gate and still fail its liveness probe afterwards.
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		if *failLivez {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	// A bad release that still passes the platform's post-readiness smoke
+	// (which probes / and the health path) and fails real API traffic.
+	mux.HandleFunc("/api", func(w http.ResponseWriter, _ *http.Request) {
+		if *failAPI {
+			http.Error(w, "fixture bad release", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write(body)
+	})
+	// A release that passes its post-readiness smoke and then fails /, which
+	// only synthetic probes see on a quiet app (ADR-1160).
+	var rootRequests atomic.Int64
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		if *failRootAfter > 0 && rootRequests.Add(1) > *failRootAfter {
+			http.Error(w, "fixture delayed failure", http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write(body)
 	})

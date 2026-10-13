@@ -454,7 +454,30 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		// current weight and retry the same safe decision on the next tick.
 		return false
 	default:
-		if now.Sub(row.CanaryStepStarted) < stageDuration {
+		held := now.Sub(row.CanaryStepStarted) - stageDuration
+		if held < 0 {
+			return true
+		}
+		if ProbeEvidenceAdvanceAllowed(decision, observation) {
+			p.Log.Info("canary: advancing low-traffic stage on synthetic probe evidence",
+				"deployment_id", row.ID,
+				"stable_deployment_id", observation.StableDeploymentID,
+				"candidate_probes", observation.Candidate.ProbeRequests,
+				"candidate_probe_5xx", observation.Candidate.ProbeServerErrors,
+				"stable_probes", observation.Stable.ProbeRequests,
+				"stable_probe_5xx", observation.Stable.ProbeServerErrors)
+			stats.ProbeEvidenceAdvanced++
+			p.recordCircuitBreakerEvent("advance_probe_evidence")
+			return true
+		}
+		if held >= api.CanaryLowTrafficMaxHold && LowTrafficAdvanceAllowed(decision, observation) {
+			p.Log.Info("canary: advancing low-traffic stage on clean evidence",
+				"deployment_id", row.ID,
+				"stable_deployment_id", observation.StableDeploymentID,
+				"reason", decision.Reason,
+				"held", held.Round(time.Second).String())
+			stats.LowTrafficAdvanced++
+			p.recordCircuitBreakerEvent("advance_low_traffic")
 			return true
 		}
 		p.Log.Warn("canary: circuit breaker is inconclusive; holding promotion",
@@ -493,6 +516,8 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		reason = "circuit breaker: CPU per request regression; restoring predecessor " + observation.StableDeploymentID
 	case strings.HasPrefix(decision.Reason, "dependency error regression"):
 		reason = "circuit breaker: managed dependency error regression; restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "crash loop"):
+		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
 	if _, err := recovery.RecoverDeploymentRolloutAndIdempotencyKey(ctx, row.ID, observation.StableDeploymentID, "abort", reason, key); err != nil {
@@ -525,7 +550,9 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		"stable_dependency_calls", observation.Stable.DependencyCalls,
 		"candidate_dependency_errors", observation.Candidate.DependencyErrors,
 		"stable_dependency_errors", observation.Stable.DependencyErrors,
-		"oom_kills", observation.OOMKills)
+		"oom_kills", observation.OOMKills,
+		"candidate_liveness_restarts", observation.CandidateLivenessRestarts,
+		"stable_liveness_restarts", observation.StableLivenessRestarts)
 	stats.Aborted++
 	stats.CircuitBreakerAborted++
 	p.recordCircuitBreakerEvent(circuitBreakerAbortEvent(decision.Reason))
@@ -546,6 +573,8 @@ func circuitBreakerAbortEvent(reason string) string {
 		return "abort_dependency_errors"
 	case strings.HasPrefix(reason, "workload OOM"):
 		return "abort_oom"
+	case strings.HasPrefix(reason, "crash loop"):
+		return "abort_crash_loop"
 	default:
 		return "hold_recovery_failed"
 	}
@@ -556,6 +585,8 @@ func circuitBreakerHoldEvent(reason string) string {
 	case strings.HasPrefix(reason, "insufficient request samples"):
 		return "hold_insufficient_samples"
 	case strings.HasPrefix(reason, "workload OOM signal unavailable"):
+		return "hold_signal_unavailable"
+	case strings.HasPrefix(reason, "liveness restart signal unavailable"):
 		return "hold_signal_unavailable"
 	case strings.HasPrefix(reason, "CPU/request signal unavailable"):
 		return "hold_signal_unavailable"
@@ -613,6 +644,8 @@ type Stats struct {
 	Aborted                int
 	CircuitBreakerAborted  int
 	SkippedCircuitBreaker  int
+	LowTrafficAdvanced     int
+	ProbeEvidenceAdvanced  int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int

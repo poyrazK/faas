@@ -7,6 +7,19 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Safe releases by default — 2026-10-12
+
+[ADR-1160](adr/1160-safe-releases-by-default.md) makes the balanced health-gated
+canary with first-wake 5xx rollback the default for production releases,
+bounds low-traffic canary holds, adds a crash-loop gate, and fixes plain
+rollback of image, GitHub, and preview deployments, which the latest-revision
+promotion fence had silently superseded. The metal drill suite
+(`cmd/e2e/safe_release_drill_metal_test.go`) passed on the n2 node:
+safe default, low-traffic advance (336–356 s), 5xx abort, crash-loop abort,
+canary-worker fallback, and rollback recovery in 8.3–11.8 s with a verified
+`complete` rollback receipt ([drill record](drills/2026-10-10-safe-release-drill.md)). Progressive rollouts
+are `beta` in the product registry.
+
 ## Combined PostgreSQL rollout readiness — 2026-10-12
 
 [ADR-992](adr/992-managed-postgres-combined-rollout-readiness.md) combines provider

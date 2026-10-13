@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -666,6 +667,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
+	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, &req)
 	if p := validateDeploymentTrafficOptions(&req, acct.Plan); p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -952,6 +954,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
 			VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
 			RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
+			ReleasePolicy:                a.Manifest.ReleasePolicy,
 		},
 		ServiceBindings:           append([]api.AppServiceBinding(nil), a.Manifest.ServiceBindings...),
 		ServiceReliability:        a.Manifest.ServiceReliability,
@@ -980,6 +983,7 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 		VersionAffinityCookie:        a.Manifest.VersionAffinityCookie,
 		VersionAffinityManagedCookie: a.Manifest.VersionAffinityManagedCookie,
 		RevisionPinTTLSeconds:        a.Manifest.RevisionPinTTLSeconds,
+		ReleasePolicy:                api.EffectiveReleasePolicy(a.Manifest.ReleasePolicy),
 		// ADR-093: per-route observability opt-in (DB round-trip).
 		// Surfaced so dashboards can show "per-route metrics on /
 		// off" alongside the streaming + websocket pills and so a
