@@ -1149,6 +1149,18 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			}
 			continue
 		}
+		// ADR-1162: an account at its monthly spend cap starts no new job
+		// task. The task stays queued until the cap is raised or the month
+		// rolls over; it is never failed for the cap.
+		if e.spendCapReached(ctx, run.AccountID) {
+			if run.ExecutionClass == "flexible" {
+				e.jobFlexibleMetrics.DeferredTask("spend_cap")
+			}
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(api.SpendCapJobDeferInterval)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer spend-capped job task: %w", err)
+			}
+			continue
+		}
 		if _, err := e.WakeJob(ctx, run.AccountID, t.RunID, t.TaskIndex); err != nil {
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("wake_error")

@@ -17,10 +17,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type inventoryReadStore struct {
-	*state.MemStore
+	MemStore                                              *state.MemStore
 	objects                                               []state.ObjectStorageBindingInventory
 	objectErr, consumerErr, queueErr, outboundErr         error
 	objectCalls, consumerCalls, queueCalls, outboundCalls atomic.Int32
@@ -143,7 +144,7 @@ func TestAppBindingInventoryCombinesMetadataAndObservedStatus(t *testing.T) {
 		{BucketName: "assets", Scope: "production", Prefix: "GREGALE_S3_ASSETS", Permission: "read", State: "active", RotationPending: true},
 		{BucketName: "assets-stage", Scope: "staging", Prefix: "GREGALE_S3_ASSETS", Permission: "read_write", State: "active"},
 	}}
-	e.s.store = reads
+	e.s.store = statetest.NewMem(reads)
 	rec := e.do(t, http.MethodGet, "/v1/apps/inventory/bindings?scope=production", nil, nil)
 	got := decodeBindingInventory(t, rec)
 	if !got.Complete || got.HasErrors() || got.Scope != "production" || len(got.Bindings) != 6 || got.GeneratedAt.IsZero() {
@@ -203,7 +204,7 @@ func TestAppBindingInventoryPreservesOtherSectionsAndQueueConfiguration(t *testi
 			case "consumer":
 				reads.consumerErr = failure
 			}
-			e.s.store = reads
+			e.s.store = statetest.NewMem(reads)
 			rec := e.do(t, http.MethodGet, "/v1/apps/partial-inventory/bindings", nil, nil)
 			got := decodeBindingInventory(t, rec)
 			if got.Complete || !got.HasErrors() || len(got.Issues) != 2 {
@@ -241,7 +242,7 @@ func TestAppBindingInventoryPermissionBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			reads := &inventoryReadStore{MemStore: e.store, objects: []state.ObjectStorageBindingInventory{{BucketName: "PRIVATE_BUCKET", Scope: "production"}}}
-			e.s.store = reads
+			e.s.store = statetest.NewMem(reads)
 			got := decodeBindingInventory(t, e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings", nil, nil))
 			forbidden := 0
 			for _, issue := range got.Issues {
@@ -271,7 +272,7 @@ func TestAppBindingInventoryRejectsCrossAccountAndInvalidScope(t *testing.T) {
 	assertProblem(t, e.do(t, http.MethodGet, "/v1/apps/other-inventory/bindings", nil, nil), http.StatusNotFound, api.CodeNotFound)
 	app := createApp(t, e, "valid-inventory")
 	reads := &inventoryReadStore{MemStore: e.store}
-	e.s.store = reads
+	e.s.store = statetest.NewMem(reads)
 	rec := e.do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/bindings?scope=__all__", nil, nil)
 	if rec.Code != http.StatusBadRequest || reads.queueCalls.Load() != 0 || reads.objectCalls.Load() != 0 {
 		t.Fatalf("invalid scope status=%d body=%s", rec.Code, rec.Body.String())
@@ -298,7 +299,7 @@ func TestAppBindingInventoryQueueReadsStayBatched(t *testing.T) {
 		}
 	}
 	reads := &inventoryReadStore{MemStore: e.store}
-	e.s.store = reads
+	e.s.store = statetest.NewMem(reads)
 	got := decodeBindingInventory(t, e.do(t, http.MethodGet, "/v1/apps/many-bindings/bindings", nil, nil))
 	if len(got.Bindings) != 30 || got.HasErrors() || reads.queueCalls.Load() != 1 || reads.consumerCalls.Load() != 1 {
 		t.Fatalf("inventory=%+v queue reads=%d consumer reads=%d", got, reads.queueCalls.Load(), reads.consumerCalls.Load())

@@ -339,6 +339,9 @@ const (
 type (
 	IssueEvent                          = api.IssueEvent
 	IssueFrame                          = api.IssueFrame
+	IssueCause                          = api.IssueCause
+	IssueGroupingFrame                  = api.IssueGroupingFrame
+	IssueGroupingExplanation            = api.IssueGroupingExplanation
 	Issue                               = api.Issue
 	IssueOccurrence                     = api.IssueOccurrence
 	IssueRelease                        = api.IssueRelease
@@ -374,6 +377,13 @@ type CreateCommitSourceRequest = api.CreateCommitSourceRequest
 
 type CommitBlockedEventResponse = api.CommitBlockedEventResponse
 type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse
+
+type IssueSplitMatcher = api.IssueSplitMatcher
+type IssueSplitPreview = api.IssueSplitPreview
+
+type IssueSplitRule = api.IssueSplitRule
+type IssueSplitRuleUndoRequest = api.IssueSplitRuleUndoRequest
+type IssueSplitRuleUpdate = api.IssueSplitRuleUpdate
 
 type CommitPublicationHistoryItem = api.CommitPublicationHistoryItem
 type CommitPublicationHistoryResponse = api.CommitPublicationHistoryResponse

@@ -555,9 +555,10 @@ func timeOrZero(value *time.Time) time.Time {
 }
 
 type messageRequest struct {
-	DataBase64       string `json:"data_base64"`
-	Binary           bool   `json:"binary"`
-	RetainedSequence int64  `json:"retained_sequence,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	DataBase64       string     `json:"data_base64"`
+	Binary           bool       `json:"binary"`
+	RetainedSequence int64      `json:"retained_sequence,omitempty"`
 }
 
 type closeRequest struct {
@@ -569,7 +570,7 @@ func (r messageRequest) message() (Message, error) {
 	if err != nil {
 		return Message{}, fmt.Errorf("invalid data_base64: %w", err)
 	}
-	return Message{Data: data, Binary: r.Binary}, nil
+	return Message{ExpiresAt: r.ExpiresAt, Data: data, Binary: r.Binary}, nil
 }
 
 func (m *Manager) internalHandler() http.Handler {

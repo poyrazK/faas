@@ -18,7 +18,7 @@ func TestPGCloneCheckpointObjectCredentialInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention); !errors.Is(err, state.ErrNotFound) {
+	if _, err = s.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("unverified bucket admitted", err)
 	}
 	f.lease, err = f.srv.verifyCheckpointObjects(t.Context(), f.lease, d)
@@ -29,11 +29,11 @@ func TestPGCloneCheckpointObjectCredentialInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := s.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention)
+	original, err := s.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention)
 	if err != nil || len(original.Buckets) != 2 {
 		t.Fatal("verified graph", err)
 	}
-	views, err := s.ProjectEnvironmentCloneBindings(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID)
+	views, err := s.PgStore.ProjectEnvironmentCloneBindings(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestPGCloneCheckpointObjectCredentialInputs(t *testing.T) {
 	}
 	old := f.lease
 	reclaimCommonCheckpointWorker(t, f)
-	if _, err = s.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) {
+	if _, err = s.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("stale worker accepted", err)
 	}
 	f.lease, _, err = f.srv.checkpointObjectTargetsForLease(t.Context(), f.lease, d)
@@ -71,20 +71,20 @@ func TestPGCloneCheckpointObjectCredentialInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := s.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention)
+	recovered, err := s.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention)
 	if err != nil || !reflect.DeepEqual(original, recovered) {
 		t.Fatal("handoff changed roster", err)
 	}
 	expired := retention
 	expired.RetainedUntil = time.Now()
-	if _, err = s.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, expired); !errors.Is(err, state.ErrConflict) {
+	if _, err = s.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, expired); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("expired retention accepted", err)
 	}
 	target := original.Buckets[0].Target.TargetBucketID
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set public_read=true where id=$1", target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) {
+	if _, err = s.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialInputs(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("public target accepted", err)
 	}
 }

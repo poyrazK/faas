@@ -259,6 +259,14 @@ func (s *PgStore) PrepareEnvironmentGitOpsWorkloadServing(ctx context.Context, l
 	receiptGateways := gateways
 	if len(routes) == 0 {
 		receiptGateways = []string{}
+	} else {
+		currentGateways, err := sqlc.New().ListEnvironmentServingGatewayNames(ctx, tx)
+		if err != nil {
+			return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)
+		}
+		if !slices.Equal(gateways, currentGateways) {
+			return EnvironmentWorkloadServingReceipt{}, false, ErrConflict
+		}
 	}
 	slices.SortFunc(routes, func(a, b EnvironmentWorkloadServingRoute) int { return strings.Compare(a.AppID, b.AppID) })
 	q := sqlc.New()

@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointWorkloadRetirementFailureStore struct {
-	*state.PgStore
+	PgStore                            *state.PgStore
 	loseReserve, loseClaim, loseFinish bool
 }
 
@@ -98,7 +99,7 @@ func TestPGCloneCheckpointWorkloadRetirementCoordinatorRecovery(t *testing.T) {
 			f, captured, _ := checkpointCaptureRetirementFixture(t, "captured")
 			base := captured.PgStore
 			store := &checkpointWorkloadRetirementFailureStore{PgStore: base, loseReserve: fault == "reserve", loseClaim: fault == "claim", loseFinish: fault == "finish"}
-			f.srv.store = store
+			f.srv.store = statetest.NewPg(store)
 			d := &checkpointWorkloadRetirementTestDriver{t: t, f: f, loseNative: fault == "native", loseObserve: fault == "observe"}
 			var err error
 			f.lease, err = f.srv.retireCheckpointWorkloads(t.Context(), f.lease, d)

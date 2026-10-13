@@ -10,11 +10,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type imageRecoverySnapshotStore struct {
-	state.Store
-	fail bool
+	Store state.Store
+	fail  bool
 }
 
 func (s *imageRecoverySnapshotStore) MarkSnapshotStale(ctx context.Context, id string) error {
@@ -32,7 +33,7 @@ func TestImageHealthcheckRecoveryStopsServingAndForcesColdBoot(t *testing.T) {
 			wrapper := &imageRecoverySnapshotStore{Store: store, fail: failInvalidation}
 			vmm := &fakeVMM{}
 			window := NewLivenessWindow(5*time.Minute, 3)
-			engine := newEngine(t, wrapper, vmm, &fakeNotifier{}, "1.10.0").WithLivenessWindow(window)
+			engine := newEngine(t, statetest.NewStore(wrapper), vmm, &fakeNotifier{}, "1.10.0").WithLivenessWindow(window)
 			for _, tier := range []string{state.SnapshotTierInit, state.SnapshotTierWarm} {
 				_, err := store.CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: tier, MemBytes: 512 << 20, DiskBytes: 1 << 20, StorageKey: state.SnapshotCaptureMemKey(dep.ID, tier, "image-recovery")})
 				if err != nil {

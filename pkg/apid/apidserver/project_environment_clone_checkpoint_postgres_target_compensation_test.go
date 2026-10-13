@@ -15,10 +15,11 @@ import (
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointPgTargetCompensationFailureStore struct {
-	*state.PgStore
+	PgStore                            *state.PgStore
 	loseReserve, loseClaim, loseFinish bool
 }
 
@@ -106,7 +107,7 @@ func checkpointPgTargetCompensationFixture(t *testing.T, phase string) (*cloneCo
 	switch phase {
 	case "absent":
 	case "reserved":
-		_, err = base.ReserveProjectEnvironmentClonePostgresSnapshotRestore(t.Context(), f.lease, id, 10)
+		_, err = base.PgStore.ReserveProjectEnvironmentClonePostgresSnapshotRestore(t.Context(), f.lease, id, 10)
 	case "unknown":
 		driver.loseCreate = true
 		f.lease, _, err = f.srv.restoreCheckpointPostgres(t.Context(), f.lease, driver, 10)
@@ -118,7 +119,7 @@ func checkpointPgTargetCompensationFixture(t *testing.T, phase string) (*cloneCo
 		if err == nil && phase != "restored" {
 			iso := &checkpointIsolationTestDriver{checkpointPostgresRestoreTestDriver: driver, f: f}
 			if phase == "isolation-planned" {
-				_, err = base.ReserveProjectEnvironmentCloneCheckpointPostgresIsolation(t.Context(), f.lease, id)
+				_, err = base.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresIsolation(t.Context(), f.lease, id)
 			} else {
 				if phase == "isolation-unknown" {
 					iso.loseIsolation = true
@@ -134,23 +135,23 @@ func checkpointPgTargetCompensationFixture(t *testing.T, phase string) (*cloneCo
 		t.Fatal("target setup", err)
 	}
 	op := f.lease.Operation
-	f.lease.Operation, err = base.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = base.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	reclaimCommonCheckpointWorker(t, f)
 	store := &checkpointPgTargetCompensationFailureStore{PgStore: base.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, &checkpointPgTargetCompensationTestDriver{t: t, f: f}, id
 }
 func assertCheckpointPgTargetCompensation(t *testing.T, f *cloneCoordinatorFixture, s *checkpointPgTargetCompensationFailureStore, id, want string) state.ProjectEnvironmentCloneCheckpointPostgresTargetCompensation {
 	t.Helper()
-	in, err := s.ProjectEnvironmentCloneCheckpointPostgresTargetCompensationForLease(t.Context(), f.lease, id)
+	in, err := s.PgStore.ProjectEnvironmentCloneCheckpointPostgresTargetCompensationForLease(t.Context(), f.lease, id)
 	if err != nil || in.State != want {
 		t.Fatal("compensation journal", in.State, err)
 	}
 	if want == "compensated" {
-		fork, err := s.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
+		fork, err := s.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
 		if err != nil || fork.State != "deleted" {
 			t.Fatal("fork not retired", fork.State, err)
 		}
@@ -184,10 +185,10 @@ func TestPGCloneCheckpointPgTargetCompensationOriginalStates(t *testing.T) {
 				t.Fatal("native dispatch count", d.calls)
 			}
 			if phase == "adopted" {
-				if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotCleanup(t.Context(), f.lease, id); err != nil {
+				if _, err = s.PgStore.BeginProjectEnvironmentClonePostgresSnapshotCleanup(t.Context(), f.lease, id); err != nil {
 					t.Fatal("snapshot cleanup after target retirement", err)
 				}
-				if _, err = s.FinishProjectEnvironmentClonePostgresSnapshotCleanup(t.Context(), f.lease, id); err != nil {
+				if _, err = s.PgStore.FinishProjectEnvironmentClonePostgresSnapshotCleanup(t.Context(), f.lease, id); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -281,10 +282,10 @@ func TestPGCloneCheckpointPgTargetCompensationProofAndLegacyGuards(t *testing.T)
 			t.Fatal("invalid proof accepted", err)
 		}
 	}
-	if _, err = s.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+	if _, err = s.PgStore.BeginProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("legacy abandonment accepted", err)
 	}
-	if _, err = s.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{Done: true}); !errors.Is(err, state.ErrConflict) {
+	if _, err = s.PgStore.FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(t.Context(), f.lease, id, state.ProjectEnvironmentClonePostgresSnapshotRestoreDeletion{Done: true}); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("legacy deletion accepted", err)
 	}
 	assertCheckpointPgTargetCompensation(t, f, s, id, "requested")

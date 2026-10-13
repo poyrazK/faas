@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointObjectValueLostReplyStore struct {
@@ -27,7 +28,7 @@ type checkpointObjectValueLostReplyStore struct {
 }
 
 func (s *checkpointObjectValueLostReplyStore) PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(ctx context.Context, l state.ProjectEnvironmentCloneLease, in state.ProjectEnvironmentCloneCheckpointObjectCredentialValues, retention state.ProjectEnvironmentCloneCheckpointReleaseObservation) (state.ProjectEnvironmentCloneCheckpointObjectCredentialValues, error) {
-	out, err := s.checkpointObjectVerificationTestStore.PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(ctx, l, in, retention)
+	out, err := s.checkpointObjectVerificationTestStore.PgStore.PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(ctx, l, in, retention)
 	if err == nil && s.lose {
 		s.lose = false
 		return state.ProjectEnvironmentCloneCheckpointObjectCredentialValues{}, objectstorage.ErrUnavailable
@@ -51,7 +52,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	f, base, d := checkpointObjectVerificationFixture(t)
 	identity := checkpointObjectValueIdentity(t)
 	store := &checkpointObjectValueLostReplyStore{checkpointObjectVerificationTestStore: base, lose: true}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	var err error
 	f.lease, err = f.srv.verifyCheckpointObjects(t.Context(), f.lease, d)
 	if err != nil {
@@ -65,11 +66,11 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := store.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention)
+	original, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention)
 	if err != nil || len(original.Preparations) == 0 {
 		t.Fatal("sealed matrix", err)
 	}
-	plan, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention)
+	plan, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention)
 	if err != nil || plan.ValuesSHA256 != original.SHA256 || len(plan.Buckets) == 0 {
 		t.Fatal("authenticated publication plan", err)
 	}
@@ -126,7 +127,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), "select count(*) from app_secrets where scope='stage'").Scan(&rows); err != nil || rows != 0 {
 		t.Fatal("secrets published during sealing", rows, err)
 	}
-	r, err := store.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
+	r, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,10 +141,10 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	}
 	old := f.lease
 	reclaimCommonCheckpointWorker(t, f)
-	if out, err := store.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("stale worker read sealed material", err)
 	}
-	if out, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), old, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("stale worker read publication plan", err)
 	}
 	setSecretRecipient = func() *age.X25519Recipient { return nil }
@@ -158,14 +159,14 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention); err != nil || !reflect.DeepEqual(plan, replay) {
+	if replay, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention); err != nil || !reflect.DeepEqual(plan, replay) {
 		t.Fatal("handoff changed publication plan", err)
 	}
 	target := r.Inputs.Buckets[0].Target.TargetBucketID
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set name='changed' where id=$1", target); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := store.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("renamed target returned sealed values", err)
 	}
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set name=$2 where id=$1", target, state.ProjectEnvironmentCloneObjectBucketName(f.lease.Operation, r.Inputs.Buckets[0].AppID, r.Inputs.Buckets[0].Source.ID)); err != nil {
@@ -189,10 +190,10 @@ func TestPGCloneCheckpointObjectCredentialValuesRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), "update project_environment_clone_checkpoint_object_values set payload_sha256=repeat('a',64) where operation_id=$1", f.lease.Operation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := store.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("tampered journal returned keys", err)
 	}
-	if out, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("tampered journal returned publication plan", err)
 	}
 }
@@ -209,7 +210,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRollbackAndMigration(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := store.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
+	r, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectCredentials(t.Context(), f.lease, retention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRollbackAndMigration(t *testing.
 	if _, err = f.pool.Exec(t.Context(), `create function expire_object_value_worker() returns trigger language plpgsql as $$ begin update project_environment_clone_operations set lease_until=clock_timestamp()-interval '1 second' where id=NEW.operation_id; return NEW; end $$; create trigger expire_object_value_worker after insert on project_environment_clone_checkpoint_object_values for each row execute function expire_object_value_worker()`); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := store.PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, in, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
+	if out, err := store.PgStore.PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, in, retention); !errors.Is(err, state.ErrConflict) || out.SHA256 != "" {
 		t.Fatal("late worker expiry returned values", err)
 	}
 	var count int
@@ -253,7 +254,7 @@ func TestPGCloneCheckpointObjectCredentialValuesRollbackAndMigration(t *testing.
 		t.Fatal("upgrade", err)
 	}
 	_ = tx.Rollback(t.Context())
-	if _, err = store.PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, in, retention); err != nil {
+	if _, err = store.PgStore.PrepareProjectEnvironmentCloneCheckpointObjectCredentialValues(t.Context(), f.lease, in, retention); err != nil {
 		t.Fatal("rollback recovery", err)
 	}
 }

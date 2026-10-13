@@ -139,6 +139,23 @@ func TestPostgresEndUserDailyTokenLimit(t *testing.T) {
 	if err := store.ExportOutboundAIUserUsage(ctx, account.ID, offer.ID, "2001-01-01", "", func(state.OutboundAIUserUsageRow) error { return nil }); err == nil {
 		t.Fatal("an export outside the retention was accepted")
 	}
+	// ADR-996: once the day tracks the maximum number of end users, a new
+	// end user is refused while per-user limits are set; tracked users are
+	// still admitted.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO outbound_ai_user_usage_daily (integration_id, usage_date, end_user, requests)
+		SELECT $1, (now() AT TIME ZONE 'UTC')::date, 'filler-' || n, 1 FROM generate_series(2, $2::int) AS n`,
+		offer.ID, api.OutboundAIUsersPerDay); err != nil {
+		t.Fatal(err)
+	}
+	if decision := admit("newcomer", 1); decision.Granted || decision.Reason != outbound.ReasonUserTrackingFull {
+		t.Fatalf("a new end user beyond the tracking cap = %+v", decision)
+	}
+	if decision := admit("alice", 1); !decision.Granted {
+		t.Fatalf("a tracked end user = %+v", decision)
+	} else if err := backend.Release(ctx, offer.ID, decision.LeaseID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := backend.PruneAIUsage(ctx); err != nil {
 		t.Fatal(err)
 	}

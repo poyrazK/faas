@@ -46,7 +46,10 @@ type NodeLedger struct {
 	// node's measured charge and when it was taken. nil keeps invariant 2's
 	// reservation check.
 	measured MeasuredMemory
-	now      func() time.Time // nil means time.Now; tests set it
+	// quietPaused, when set, lets the vCPU and CPU gates count only active
+	// instances (ADR-1151, admission_quiet.go).
+	quietPaused QuietPaused
+	now         func() time.Time // nil means time.Now; tests set it
 }
 
 func (l *NodeLedger) clock() time.Time {
@@ -444,10 +447,12 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible {
 		vcpuCeiling -= flexibleAppReserveVCPU
 	}
-	if node.usedVCPU+r.VCPU > vcpuCeiling {
+	quietVCPU, quietCPU := l.quietDiscount_locked(r.NodeID)
+	vcpuUsed := quietEffective(node.usedVCPU, quietVCPU, vcpuCeiling)
+	if vcpuUsed+r.VCPU > vcpuCeiling {
 		return api.ErrCapacity(fmt.Sprintf(
 			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
-			r.NodeID, node.usedVCPU, r.VCPU, vcpuCeiling))
+			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling))
 	}
 
 	// Host CPU admission is distinct from guest-visible vCPU topology.
@@ -464,12 +469,13 @@ func (l *NodeLedger) Admit(r Request) error {
 	if r.Kind == KindJob && r.Flexible && cpuCeiling > 0 {
 		cpuCeiling -= flexibleAppReserveCPUMillicores
 	}
+	cpuUsed := quietEffective(node.usedCPUMillicores, quietCPU, cpuCeiling)
 	if reservedCPU > 0 && r.CPUBudgetMillicores > 0 &&
-		node.usedCPUMillicores+reservedCPU > cpuCeiling &&
+		cpuUsed+reservedCPU > cpuCeiling &&
 		!r.AllowCPUOvercommitRecovery {
 		return api.ErrCapacity(fmt.Sprintf(
 			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
-			r.NodeID, node.usedCPUMillicores, reservedCPU, cpuCeiling))
+			r.NodeID, cpuUsed, reservedCPU, cpuCeiling))
 	}
 
 	l.entries[r.Instance] = &reservation{

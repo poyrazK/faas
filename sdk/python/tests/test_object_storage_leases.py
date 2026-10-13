@@ -25,8 +25,9 @@ class Client:
 
 class ObjectStorageLeaseTest(unittest.TestCase):
     def binding(self, retire=None):
-        return ObjectStorageBinding("ASSETS", lambda config: Client(config.secret_access_key),
-                                    retire=retire or (lambda client: client.close()))
+        return ObjectStorageBinding(
+            "ASSETS", lambda config: Client(config.secret_access_key), retire=retire or (lambda client: client.close())
+        )
 
     def worker(self, operation, name=None):
         errors = []
@@ -36,6 +37,7 @@ class ObjectStorageLeaseTest(unittest.TestCase):
                 operation()
             except BaseException as error:
                 errors.append(error)
+
         thread = threading.Thread(target=run, name=name)
         thread.start()
         self.addCleanup(lambda: thread.join(3))
@@ -107,6 +109,7 @@ class ObjectStorageLeaseTest(unittest.TestCase):
                 if not finish.wait(3):
                     raise TimeoutError("owned callback timed out")
             client.close()
+
         binding = self.binding(retire)
         binding.reload(values())
         lease = binding.acquire()
@@ -145,6 +148,7 @@ class ObjectStorageLeaseTest(unittest.TestCase):
                     if not finish.wait(3):
                         raise TimeoutError("owned factory timed out")
                     return candidate
+
                 binding = ObjectStorageBinding("ASSETS", factory, retire=lambda client: client.close())
                 queued_admission = threading.Event()
                 inner = binding._reloads
@@ -157,11 +161,16 @@ class ObjectStorageLeaseTest(unittest.TestCase):
 
                     def release(self):
                         inner.release()
+
                 binding._reloads = ObservedAdmission()
                 cancel = threading.Event()
                 thread, errors = self.worker(lambda: binding.reload(values(), cancel))
                 self.wait(entered)
-                queued = self.worker(lambda: binding.reload(values()), name="queued-lease-reload") if mode == "invalidate" else None
+                queued = (
+                    self.worker(lambda: binding.reload(values()), name="queued-lease-reload")
+                    if mode == "invalidate"
+                    else None
+                )
                 if queued is not None:
                     self.wait(queued_admission)  # Captured epoch precedes admission.
                     binding.invalidate()
@@ -196,6 +205,7 @@ class ObjectStorageLeaseTest(unittest.TestCase):
             observed.append(error)
             notification.set()
             raise RuntimeError("private-observer")
+
         binding = ObjectStorageBinding("ASSETS", lambda _config: Client(), retire=retire, on_retire_error=observer)
         binding.reload(values())
         binding.invalidate()
@@ -236,6 +246,7 @@ class ObjectStorageLeaseTest(unittest.TestCase):
 
             def log_message(self, *_args):
                 pass
+
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         worker = threading.Thread(target=server.serve_forever)
         worker.start()

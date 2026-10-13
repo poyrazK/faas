@@ -289,8 +289,11 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"invocation_work_environment_domains.environment_id",
 		"invocations.deployment_scope",
 		"invocations.environment_id",
+		"issue_group_links.environment", // Scoped foreign keys require app_issues parents; their deletion guard retains these links.
 		"issue_ingest_tokens.environment",
+		"issue_split_rules.environment", // Scoped foreign keys require app_issues parents; their deletion guard retains these rules.
 		"managed_postgres_bindings.scope",
+		"managed_postgres_cutover_drain_plan_members.deployment_scope", // Immutable captured retirement evidence survives environment retention.
 		"managed_postgres_cutovers.scope",
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",

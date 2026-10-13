@@ -186,6 +186,14 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "invalid_frame"})
 			continue
 		}
+		if c.ticketToken != "" && ((frame.Type != "subscribe" && frame.Type != "unsubscribe" && frame.Type != "ack") || frame.Subscription != "" || frame.PresenceScope != "" || frame.State != nil || frame.Data != nil || frame.DirectMessages || frame.ReadReceipts) {
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "ticket_read_only"})
+			continue
+		}
+		if frame.Type != "unsubscribe" && !c.accessAllows(ctx, frame.Channel) {
+			m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Code: "access_revoked", Channel: frame.Channel})
+			continue
+		}
 		c.mu.Lock()
 		c.info.LastSeen = time.Now().UTC()
 		c.mu.Unlock()
@@ -371,6 +379,10 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	if page.HistoryUnavailable {
 		m.queueResumeResync(ctx, c, resumeServerFrame{Type: "resync_required", Channel: frame.Channel,
 			Subscription: frame.Subscription, OldestSequence: page.OldestSequence, LatestSequence: page.LatestSequence}, resumeResyncCursorExpired)
+		return
+	}
+	if c.ticketToken != "" {
+		release = !m.startTicketSubscription(ctx, c, frame, page)
 		return
 	}
 	var fleetMember PresenceMember
@@ -818,6 +830,12 @@ func durableCursorErrorCode(err error) string {
 }
 
 func (m *Manager) authorizeResumeChannel(ctx context.Context, c *connection, channel string) bool {
+	if !c.accessAllows(ctx, channel) {
+		return false
+	}
+	if c.ticketToken != "" {
+		return true
+	}
 	authorizer := m.hooks.(ChannelAuthorizer) // checked before WebSocket upgrade
 	event := Event{
 		ID: "evt_" + uuid.NewString(), Type: EventAuthorizeChannel,
@@ -880,18 +898,26 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 					break
 				}
 			}
-			if !matches {
-				if err := m.queueResume(ctx, c, resumeServerFrame{Type: "checkpoint", Channel: channel, Sequence: message.Sequence}); err != nil {
+			expired := message.Expired(time.Now().UTC())
+			if !matches || expired {
+				code := ""
+				if expired {
+					code = "message_expired"
+				}
+				if err := m.queueResume(ctx, c, resumeServerFrame{Type: "checkpoint", Channel: channel, Sequence: message.Sequence, Code: code}); err != nil {
 					c.mu.Unlock()
 					_ = c.close(websocket.CloseTryAgainLater, resumeOutputQueueFullReason)
 					return
+				}
+				if expired {
+					m.expiredWebSocketCheckpoints.Add(1)
 				}
 				subscription.lastSent = message.Sequence
 				c.mu.Unlock()
 				continue
 			}
 			if err := m.queueResume(ctx, c, resumeServerFrame{
-				Metadata: message.Metadata, Type: "message", Channel: channel, Sequence: message.Sequence, TargetMessageID: message.TargetMessageID, Version: message.Version, MessageEvent: message.MessageEvent, Deleted: message.Deleted,
+				ExpiresAt: message.ExpiresAt, Metadata: message.Metadata, Type: "message", Channel: channel, Sequence: message.Sequence, TargetMessageID: message.TargetMessageID, Version: message.Version, MessageEvent: message.MessageEvent, Deleted: message.Deleted,
 				MessageID:  uuid.NewSHA1(uuid.NameSpaceOID, []byte(c.info.EndpointID+"\x00"+channel+"\x00"+strconv.FormatInt(message.Sequence, 10))).String(),
 				DataBase64: base64.StdEncoding.EncodeToString(message.Data), Binary: message.Binary,
 			}); err != nil {
@@ -922,8 +948,10 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 				return
 			}
 		}
-		m.syncFleetPresence(ctx, key)
-		if m.cfg.FleetClient != nil && time.Since(lastLeaseRenewal) >= m.cfg.PresenceLeaseRenewInterval {
+		if c.ticketToken == "" {
+			m.syncFleetPresence(ctx, key)
+		}
+		if c.ticketToken == "" && m.cfg.FleetClient != nil && time.Since(lastLeaseRenewal) >= m.cfg.PresenceLeaseRenewInterval {
 			m.renewFleetPresence(ctx, c, channel)
 			lastLeaseRenewal = time.Now()
 		}
@@ -1203,6 +1231,9 @@ func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeSe
 		return ErrOutboundQueueFull
 	}
 	message := Message{Data: data}
+	if frame.Type != "error" && frame.Type != "unsubscribed" {
+		message.accessChannel = frame.Channel
+	}
 	if frame.Type == "signal" && frame.Name != "" {
 		message.signalKey = pendingSignalKey{channel: frame.Channel, member: frame.MemberID, name: frame.Name}
 		message.signalUpdated = frame.UpdatedAt

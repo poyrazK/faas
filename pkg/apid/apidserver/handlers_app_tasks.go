@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -103,15 +104,34 @@ func (s *server) createAppTask(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 
-	row, problem := s.admitAppTask(r, acct, app, resolved)
+	var attachToken string
+	if resolved.Interactive {
+		if attachToken, problem = apptaskattach.Mint(s.interactiveAppTasksEnabled); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
+	row, problem := s.admitAppTaskWithAttach(r, acct, app, resolved, attachToken)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, appTaskResponse(row))
+	resp := appTaskResponse(row)
+	apptaskattach.Respond(w, &resp, app.Slug, attachToken)
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest) (state.AppTask, *api.Problem) {
+	return s.admitAppTaskWithAttach(r, acct, app, resolved, "")
+}
+
+// admitAppTaskWithAttach admits an interactive session when attachToken is
+// set; only the token's SHA-256 digest is persisted.
+func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app state.App, resolved api.ResolvedCreateAppTaskRequest, attachToken string) (state.AppTask, *api.Problem) {
+	interactive, err := apptaskattach.Session(resolved.Interactive, resolved.TTY, attachToken)
+	if err != nil {
+		return state.AppTask{}, api.ErrInternal("interactive admission requires an attach token")
+	}
 	if api.IsServiceBindingSmokeCommand(resolved.Command, resolved.CommandShell) && !declaresSmokeService(app, resolved.Command[1]) {
 		return state.AppTask{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Service binding unavailable", "The selected service is not declared for this app.")
 	}
@@ -141,6 +161,7 @@ func (s *server) admitAppTask(r *http.Request, acct state.Account, app state.App
 		CommandShell:          resolved.CommandShell,
 		TimeoutSeconds:        resolved.TimeoutSeconds,
 		MaxOutputBytes:        resolved.MaxOutputBytes,
+		Interactive:           interactive,
 		CreatedAt:             time.Now().UTC(),
 	})
 	if errors.Is(err, state.ErrAppTaskDeploymentUnavailable) {

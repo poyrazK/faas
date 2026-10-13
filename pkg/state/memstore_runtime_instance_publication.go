@@ -32,7 +32,7 @@ func (m *MemStore) PublishOwnedInstanceRuntime(_ context.Context, p RuntimeInsta
 	if err != nil || current != p.ConfigFence || current.SecretFence != p.Fence {
 		return Instance{}, ErrConflict
 	}
-	if p.ExpectedState == string(StateWarm) {
+	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
 		proof, ok := m.runtimeInstanceConfigProofs[p.InstanceID]
 		if !ok || proof.WakeID != p.WakeID || proof.NodeID != p.NodeID || proof.Fence != p.ConfigFence {
 			return Instance{}, ErrConflict

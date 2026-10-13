@@ -16,6 +16,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
     from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
+    from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+    from ..models.operation_workflow_playbook_outcome_follow_up import OperationWorkflowPlaybookOutcomeFollowUp
     from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
     from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
     from ..models.operation_workflow_playbook_review import OperationWorkflowPlaybookReview
@@ -65,6 +67,19 @@ class OperationWorkflowPlaybookProgress:
     history_truncated: bool
     """OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
     history."""
+    outcome_follow_ups: list[OperationWorkflowPlaybookOutcomeFollowUp] | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists;
+    original checklist counts and business reports remain independent."""
+    outcome_deadline_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned
+    application wait duration; human edits and watch enrollment do not reschedule it."""
+    start_state_revision: int | Unset = UNSET
+    """OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook
+    with an expected outcome starts; earlier reports cannot establish its business result."""
+    business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset = UNSET
+    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
+    changes the expected outcome."""
     disposition: OperationWorkflowPlaybookProgressDisposition | Unset = UNSET
     """OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active.
     Closed checklists reject item edits and further decisions; this is not business success."""
@@ -119,6 +134,23 @@ class OperationWorkflowPlaybookProgress:
 
         history_truncated = self.history_truncated
 
+        outcome_follow_ups: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.outcome_follow_ups, Unset):
+            outcome_follow_ups = []
+            for outcome_follow_ups_item_data in self.outcome_follow_ups:
+                outcome_follow_ups_item = outcome_follow_ups_item_data.to_dict()
+                outcome_follow_ups.append(outcome_follow_ups_item)
+
+        outcome_deadline_at: str | Unset = UNSET
+        if not isinstance(self.outcome_deadline_at, Unset):
+            outcome_deadline_at = self.outcome_deadline_at.isoformat()
+
+        start_state_revision = self.start_state_revision
+
+        business_outcome: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.business_outcome, Unset):
+            business_outcome = self.business_outcome.to_dict()
+
         disposition: str | Unset = UNSET
         if not isinstance(self.disposition, Unset):
             disposition = self.disposition
@@ -167,6 +199,14 @@ class OperationWorkflowPlaybookProgress:
                 "history_truncated": history_truncated,
             }
         )
+        if outcome_follow_ups is not UNSET:
+            field_dict["outcome_follow_ups"] = outcome_follow_ups
+        if outcome_deadline_at is not UNSET:
+            field_dict["outcome_deadline_at"] = outcome_deadline_at
+        if start_state_revision is not UNSET:
+            field_dict["start_state_revision"] = start_state_revision
+        if business_outcome is not UNSET:
+            field_dict["business_outcome"] = business_outcome
         if disposition is not UNSET:
             field_dict["disposition"] = disposition
         if latest_review is not UNSET:
@@ -186,6 +226,8 @@ class OperationWorkflowPlaybookProgress:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_playbook import OperationWorkflowPlaybook
         from ..models.operation_workflow_playbook_applicability import OperationWorkflowPlaybookApplicability
+        from ..models.operation_workflow_playbook_business_outcome import OperationWorkflowPlaybookBusinessOutcome
+        from ..models.operation_workflow_playbook_outcome_follow_up import OperationWorkflowPlaybookOutcomeFollowUp
         from ..models.operation_workflow_playbook_progress_change import OperationWorkflowPlaybookProgressChange
         from ..models.operation_workflow_playbook_progress_item import OperationWorkflowPlaybookProgressItem
         from ..models.operation_workflow_playbook_review import OperationWorkflowPlaybookReview
@@ -228,6 +270,33 @@ class OperationWorkflowPlaybookProgress:
             history.append(history_item)
 
         history_truncated = d.pop("history_truncated")
+
+        _outcome_follow_ups = d.pop("outcome_follow_ups", UNSET)
+        outcome_follow_ups: list[OperationWorkflowPlaybookOutcomeFollowUp] | Unset = UNSET
+        if _outcome_follow_ups is not UNSET:
+            outcome_follow_ups = []
+            for outcome_follow_ups_item_data in _outcome_follow_ups:
+                outcome_follow_ups_item = OperationWorkflowPlaybookOutcomeFollowUp.from_dict(
+                    outcome_follow_ups_item_data
+                )
+
+                outcome_follow_ups.append(outcome_follow_ups_item)
+
+        _outcome_deadline_at = d.pop("outcome_deadline_at", UNSET)
+        outcome_deadline_at: datetime.datetime | Unset
+        if isinstance(_outcome_deadline_at, Unset):
+            outcome_deadline_at = UNSET
+        else:
+            outcome_deadline_at = datetime.datetime.fromisoformat(_outcome_deadline_at)
+
+        start_state_revision = d.pop("start_state_revision", UNSET)
+
+        _business_outcome = d.pop("business_outcome", UNSET)
+        business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset
+        if isinstance(_business_outcome, Unset):
+            business_outcome = UNSET
+        else:
+            business_outcome = OperationWorkflowPlaybookBusinessOutcome.from_dict(_business_outcome)
 
         _disposition = d.pop("disposition", UNSET)
         disposition: OperationWorkflowPlaybookProgressDisposition | Unset
@@ -285,6 +354,10 @@ class OperationWorkflowPlaybookProgress:
             updated_at=updated_at,
             history=history,
             history_truncated=history_truncated,
+            outcome_follow_ups=outcome_follow_ups,
+            outcome_deadline_at=outcome_deadline_at,
+            start_state_revision=start_state_revision,
+            business_outcome=business_outcome,
             disposition=disposition,
             latest_review=latest_review,
             reviews=reviews,

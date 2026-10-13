@@ -1,0 +1,1 @@
+{"name":"gregale-http-write-postgres-provider","version":"1.0.0","private":true,"type":"module","engines":{"node":">=22"},"scripts":{"start":"node start.js","migrate":"node migrate.mjs"},"dependencies":{"pg":"8.16.3"}}

@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestQueuePushLaneEligible(t *testing.T) {
@@ -137,7 +138,7 @@ func TestTriggerTickRunsQueuePushLanesForBacklog(t *testing.T) {
 	poller := &countingPoller{}
 	l := &Loop{
 		log:               slog.New(slog.NewTextHandler(io.Discard, nil)),
-		engine:            newEngine(t, undashedIDStore{store}, &fakeVMM{}, &fakeNotifier{}, "1.10.0"),
+		engine:            newEngine(t, statetest.NewMem(undashedIDStore{store}), &fakeVMM{}, &fakeNotifier{}, "1.10.0"),
 		gatewayHTTPClient: &http.Client{},
 		triggerPollers:    map[string]triggerSource{trigger.ID.String(): poller},
 	}
@@ -167,7 +168,7 @@ func TestTriggerTickRunsQueuePushLanesForBacklog(t *testing.T) {
 
 // undashedIDStore bridges the trigger row's UUID text form to MemStore, whose
 // ids are undashed hex. PgStore ids are real UUIDs and need no bridging.
-type undashedIDStore struct{ *state.MemStore }
+type undashedIDStore struct{ MemStore *state.MemStore }
 
 func (s undashedIDStore) QueueBindingByID(ctx context.Context, accountID, appID, id string) (state.QueueBinding, error) {
 	return s.MemStore.QueueBindingByID(ctx, undash(accountID), undash(appID), undash(id))
