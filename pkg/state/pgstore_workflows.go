@@ -1380,6 +1380,10 @@ func (s *PgStore) ParkWorkflowTimer(ctx context.Context, runID, stepName string,
 	`, runID, stepName, deadline); err != nil {
 		return time.Time{}, fmt.Errorf("pgstore: schedule workflow timer: %w", err)
 	}
+	// ADR-1156: a parked operation is waiting in the same transaction.
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return time.Time{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return time.Time{}, fmt.Errorf("pgstore: commit workflow timer: %w", err)
 	}
@@ -1460,6 +1464,9 @@ func (s *PgStore) ParkWorkflowEvent(ctx context.Context, runID, stepName, eventN
 	`, runID, stepName, wakeAt); err != nil {
 		return nil, time.Time{}, fmt.Errorf("pgstore: schedule workflow event wait: %w", err)
 	}
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return nil, time.Time{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, time.Time{}, fmt.Errorf("pgstore: commit workflow event wait: %w", err)
 	}
@@ -1536,6 +1543,10 @@ func (s *PgStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName,
 		if _, err := tx.Exec(ctx, `UPDATE workflow_runs SET status = 'dead', current_step = $2, last_error = $3, finished_at = $4, updated_at = $4 WHERE id = $1`, runID, stepName, message, now); err != nil {
 			return nil, false, fmt.Errorf("pgstore: close timed-out workflow run: %w", err)
 		}
+	}
+	// An expired approval settles its operation now; a dead run is never claimed again.
+	if err := syncOperationWorkflowTx(ctx, tx, runID); err != nil {
+		return nil, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, false, fmt.Errorf("pgstore: commit timed-out workflow wait: %w", err)

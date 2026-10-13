@@ -146,7 +146,7 @@ func (m *MemStore) cancelOperationWorkflowLocked(op Operation, generation int) (
 	m.operationSaveLocked(op, event)
 	m.interruptOperationWorkflowLocked(run.ID, now)
 	for name, step := range m.workflowSteps[run.ID] {
-		if step.Status == WorkflowStepStatusPending {
+		if step.Status == WorkflowStepStatusPending || step.Status == WorkflowStepStatusAwaitingEvent {
 			reason := WorkflowSkipDependencyFailed
 			step.Status, step.SkipReason, step.FinishedAt = WorkflowStepStatusSkipped, &reason, &now
 			m.workflowSteps[run.ID][name] = step

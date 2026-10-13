@@ -18,6 +18,7 @@ const (
 	OperationFailed                   OperationState = "failed"
 	OperationCancelled                OperationState = "cancelled"
 	OperationRequiresReconciliation   OperationState = "requires_reconciliation"
+	OperationWaiting                  OperationState = "waiting" // ADR-1156: parked on a timer or approval
 	OperationRecoveryReconcile                       = "reconcile_on_unknown"
 	OperationRecoverySafeRetry                       = "safe_retry"
 	OperationOwnerPlatformTenant                     = "platform_tenant"
@@ -64,6 +65,7 @@ type OperationDefinitionSpec struct {
 	WorkflowSteps          []OperationWorkflowSpec    `json:"workflow_steps,omitempty"`
 	Subject                *OperationSubjectSpec      `json:"subject,omitempty" yaml:"subject,omitempty"`
 	HTTPTransactionVersion int                        `json:"http_transaction_version,omitempty" yaml:"http_transaction_version,omitempty"`
+	Approvals              []OperationApprovalSpec    `json:"approvals,omitempty" yaml:"approvals,omitempty"`
 }
 
 type OperationDefinitionResponse struct {
@@ -202,6 +204,7 @@ type OperationResponse struct {
 	CompletionDelivery    OperationDeliveryResponse `json:"completion_delivery"`
 	CancellationRequested bool                      `json:"cancellation_requested"`
 	FailureCode           string                    `json:"failure_code,omitempty"`
+	Waiting               *OperationWaitingState    `json:"waiting,omitempty"`
 	LatestSequence        int64                     `json:"latest_sequence"`
 	CreatedAt             time.Time                 `json:"created_at"`
 	UpdatedAt             time.Time                 `json:"updated_at"`

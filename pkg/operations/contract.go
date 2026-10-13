@@ -92,6 +92,9 @@ func Compile(spec api.OperationDefinitionSpec, limits api.OperationPlanLimits) (
 	if err := compileWorkflowSteps(&spec); err != nil {
 		return nil, err
 	}
+	if err := compileApprovals(&spec); err != nil {
+		return nil, err
+	}
 	spec.ProgressStages = append([]string(nil), spec.ProgressStages...)
 	raw, err := json.Marshal(spec)
 	if err != nil {

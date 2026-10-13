@@ -1180,6 +1180,9 @@ func (m *MemStore) ParkWorkflowTimer(ctx context.Context, runID, stepName string
 	run.ScheduledFor = deadline
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
+	if err := m.syncOperationWorkflowLocked(runID); err != nil {
+		return time.Time{}, err
+	}
 	return deadline, nil
 }
 
@@ -1239,6 +1242,9 @@ func (m *MemStore) ParkWorkflowEvent(ctx context.Context, runID, stepName, event
 	run.ScheduledFor = wakeAt
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
+	if err := m.syncOperationWorkflowLocked(runID); err != nil {
+		return nil, time.Time{}, err
+	}
 	return nil, deadline, nil
 }
 
@@ -1294,6 +1300,9 @@ func (m *MemStore) ResolveWorkflowEventWait(ctx context.Context, runID, stepName
 	run.CurrentStep = &stepName
 	run.UpdatedAt = now
 	m.workflowRuns[runID] = run
+	if err := m.syncOperationWorkflowLocked(runID); err != nil {
+		return nil, false, err
+	}
 	return nil, true, nil
 }
 
