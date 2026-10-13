@@ -49,6 +49,9 @@ func (h *Handler) startMCPStream(r *http.Request, app App, streaming bool) func(
 	}
 	gauge := h.metrics.mcpActive.WithLabelValues(app.ID, method)
 	gauge.Inc()
+	requestID := requestIDFrom(r)
+	requestTraceID := traceIDForTelemetry(r.Context())
+	receivedAt := startTime(r)
 	return func() {
 		gauge.Dec()
 		if failure := recover(); failure != nil {
@@ -56,11 +59,11 @@ func (h *Handler) startMCPStream(r *http.Request, app App, streaming bool) func(
 			if err, ok := failure.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 				outcome = "interrupted_stream"
 			}
-			elapsed := time.Since(startTime(r))
+			elapsed := time.Since(receivedAt)
 			h.metrics.mcpRequests.WithLabelValues(app.ID, method, outcome).Inc()
 			h.metrics.mcpDuration.WithLabelValues(app.ID, method).Observe(elapsed.Seconds())
 			if h.log != nil {
-				h.log.Info("MCP forwarding aborted", "app_id", app.ID, "method", method, "outcome", outcome, "request_id", logsanitize.Field(requestIDFrom(r)), "trace_id", traceIDForTelemetry(r.Context()))
+				h.log.Info("MCP forwarding aborted", "app_id", app.ID, "method", method, "outcome", outcome, "request_id", logsanitize.Field(requestID), "trace_id", requestTraceID)
 			}
 			panic(failure)
 		}

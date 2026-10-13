@@ -72,9 +72,10 @@ func buildMCPStackDoctor(overview mcpOverviewReport, auth []mcphosting.Check) mc
 			continue
 		}
 		state := "unknown"
-		if component.state == "healthy" {
+		switch component.state {
+		case "healthy":
 			state = "passed"
-		} else if component.state == "degraded" || component.state == "blocked" {
+		case "degraded", "blocked":
 			state = "failed"
 		}
 		add(component.name, state, "Current hosting evidence: "+component.state, nil)

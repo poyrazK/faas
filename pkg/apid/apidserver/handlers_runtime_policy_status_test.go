@@ -15,11 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type runtimePolicyStatusTestStore struct {
 	queriedEdgeAccountID string
-	state.Store
+	Store                state.Store
 	desired              int64
 	requestPolicyDesired int64
 	edgeRulesDesired     int64
@@ -226,7 +227,7 @@ func TestGetRuntimePolicyStatusWaitsForGatewayApplication(t *testing.T) {
 		cpuNodes:      []state.AppCPUPolicyNodeState{{NodeName: "vm-a", DesiredRevision: 4, AppliedRevision: 3, ObservedAt: time.Now().UTC()}},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := apidserver.NewServerWithDeps(store, log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
+	srv := apidserver.NewServerWithDeps(statetest.NewStore(store), log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?wait=1s", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	rec := httptest.NewRecorder()
@@ -245,7 +246,7 @@ func TestGetRuntimePolicyStatusWaitsForGatewayApplication(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?"+query, nil)
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 		if query == "edge_rules_scope=invalid" {
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("invalid scope status %d", rec.Code)
@@ -269,13 +270,13 @@ func TestGetRuntimePolicyStatusWaitsForGatewayApplication(t *testing.T) {
 	}
 
 	monitored := &mcpRuntimePolicyStatusStore{runtimePolicyStatusTestStore: store}
-	monitoredServer := newServerWithDeps(monitored, log, "gregale.dev", &captureNotifier{}, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "")
+	monitoredServer := apidserver.NewServerWithDeps(statetest.NewStore(monitored), log, "gregale.dev", &apidserver.CaptureNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, nil, nil, 0, "")
 	for _, signal := range []string{"pending", "active", "unknown"} {
 		monitored.signal = signal
 		req := httptest.NewRequest(http.MethodGet, "/v1/apps/"+app.Slug+"/policy/status?edge_rules_scope=account", nil)
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		rec := httptest.NewRecorder()
-		monitoredServer.handler().ServeHTTP(rec, req)
+		monitoredServer.Handler().ServeHTTP(rec, req)
 		var body api.RuntimePolicyStatusResponse
 		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body.MCPConvergence == nil || body.MCPConvergence.State != signal || monitored.accountID != acct.ID || monitored.appID != app.ID || strings.Contains(rec.Body.String(), "PRIVATE_ERROR") {
 			t.Fatalf("incorrect MCP monitoring projection: %s", rec.Body.String())

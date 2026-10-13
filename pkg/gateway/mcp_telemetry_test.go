@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,8 +59,13 @@ func TestMCPStreamAbortPreservesPanicAndBalancesGauge(t *testing.T) {
 	r.Header.Set("MCP-Method", "tools/call")
 	func() {
 		defer func() {
-			if recovered := recover(); recovered != http.ErrAbortHandler {
-				t.Fatalf("panic changed: %v", recovered)
+			if recovered := recover(); recovered != nil {
+				err, ok := recovered.(error)
+				if !ok || !errors.Is(err, http.ErrAbortHandler) {
+					t.Fatalf("panic changed: %v", recovered)
+				}
+			} else {
+				t.Fatal("forwarding abort was swallowed")
 			}
 		}()
 		defer h.startMCPStream(r, App{ID: "app"}, true)()

@@ -2272,6 +2272,20 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"MCPPolicyConvergenceSnapshot":                  true,
+	"LatestAccountEdgeRulePolicyPosition":           true,
+	"LatestEdgeRuleChangeID":                        true,
+	"GetAppScalingPolicyStatus":                     true,
+	"ListServingAppCPUPolicyNodeStates":             true,
+	"ListServingAppEgressPolicyNodeStates":          true,
+	"ListServingGatewayControlPlaneStates":          true,
+	"LatestAppCPUPolicyRevision":                    true,
+	"LatestAppEgressPolicyRevision":                 true,
+	"LatestAppResponseCachePurgeID":                 true,
+	"LatestAccountCorsPresetChangeID":               true,
+	"LatestAppEdgeRuleChangeID":                     true,
+	"LatestAppRequestPolicyRevision":                true,
+	"LatestAppControlPlaneChangeID":                 true,
 	"AccountByID":                                   true,
 	"AppByID":                                       true,
 	"AppendEvent":                                   true,
@@ -2630,4 +2644,188 @@ func (s *Store) UsageSLOForAccount(p0 context.Context, p1 string, p2 time.Time, 
 		return o.UsageSLOForAccount(p0, p1, p2, p3)
 	}
 	return s.Store.UsageSLOForAccount(p0, p1, p2, p3)
+}
+
+// Runtime policy capabilities used by external apid tests.
+func (s *Store) LatestAppControlPlaneChangeID(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppControlPlaneChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppControlPlaneChangeID(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppControlPlaneChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppControlPlaneChangeID(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppRequestPolicyRevision(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppRequestPolicyRevision(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppEdgeRuleChangeID(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppEdgeRuleChangeID(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAccountCorsPresetChangeID(ctx context.Context, accountID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAccountCorsPresetChangeID(ctx context.Context, accountID string) (int64, error)
+	}); ok {
+		return override.LatestAccountCorsPresetChangeID(ctx, accountID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAccountCorsPresetChangeID(ctx context.Context, accountID string) (int64, error)
+	}); ok {
+		return source.LatestAccountCorsPresetChangeID(ctx, accountID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppResponseCachePurgeID(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppResponseCachePurgeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppResponseCachePurgeID(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppResponseCachePurgeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppResponseCachePurgeID(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppEgressPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppEgressPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppEgressPolicyRevision(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppEgressPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppEgressPolicyRevision(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppCPUPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppCPUPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppCPUPolicyRevision(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppCPUPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppCPUPolicyRevision(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error) {
+	if override, ok := s.over.(interface {
+		ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error)
+	}); ok {
+		return override.ListServingGatewayControlPlaneStates(ctx)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error)
+	}); ok {
+		return source.ListServingGatewayControlPlaneStates(ctx)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) ListServingAppEgressPolicyNodeStates(ctx context.Context, appID string) ([]state.AppEgressPolicyNodeState, error) {
+	if override, ok := s.over.(interface {
+		ListServingAppEgressPolicyNodeStates(ctx context.Context, appID string) ([]state.AppEgressPolicyNodeState, error)
+	}); ok {
+		return override.ListServingAppEgressPolicyNodeStates(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingAppEgressPolicyNodeStates(ctx context.Context, appID string) ([]state.AppEgressPolicyNodeState, error)
+	}); ok {
+		return source.ListServingAppEgressPolicyNodeStates(ctx, appID)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) ListServingAppCPUPolicyNodeStates(ctx context.Context, appID string) ([]state.AppCPUPolicyNodeState, error) {
+	if override, ok := s.over.(interface {
+		ListServingAppCPUPolicyNodeStates(ctx context.Context, appID string) ([]state.AppCPUPolicyNodeState, error)
+	}); ok {
+		return override.ListServingAppCPUPolicyNodeStates(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingAppCPUPolicyNodeStates(ctx context.Context, appID string) ([]state.AppCPUPolicyNodeState, error)
+	}); ok {
+		return source.ListServingAppCPUPolicyNodeStates(ctx, appID)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error) {
+	if override, ok := s.over.(interface {
+		GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error)
+	}); ok {
+		return override.GetAppScalingPolicyStatus(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error)
+	}); ok {
+		return source.GetAppScalingPolicyStatus(ctx, appID)
+	}
+	return state.AppScalingPolicyStatus{}, state.ErrNotFound
+}
+func (s *Store) LatestEdgeRuleChangeID(ctx context.Context) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestEdgeRuleChangeID(ctx context.Context) (int64, error)
+	}); ok {
+		return override.LatestEdgeRuleChangeID(ctx)
+	}
+	if source, ok := s.Store.(interface {
+		LatestEdgeRuleChangeID(ctx context.Context) (int64, error)
+	}); ok {
+		return source.LatestEdgeRuleChangeID(ctx)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (state.EdgeRulePolicyPosition, error) {
+	if override, ok := s.over.(interface {
+		LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (state.EdgeRulePolicyPosition, error)
+	}); ok {
+		return override.LatestAccountEdgeRulePolicyPosition(ctx, accountID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (state.EdgeRulePolicyPosition, error)
+	}); ok {
+		return source.LatestAccountEdgeRulePolicyPosition(ctx, accountID)
+	}
+	return state.EdgeRulePolicyPosition{}, state.ErrNotFound
+}
+func (s *Store) MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error) {
+	if override, ok := s.over.(interface {
+		MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error)
+	}); ok {
+		return override.MCPPolicyConvergenceSnapshot(ctx, accountID, appID)
+	}
+	if source, ok := s.Store.(interface {
+		MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error)
+	}); ok {
+		return source.MCPPolicyConvergenceSnapshot(ctx, accountID, appID)
+	}
+	return api.MCPPolicyConvergenceSnapshot{}, state.ErrNotFound
 }

@@ -188,7 +188,7 @@ func (r *ObserverRunner) refreshOAuth(ctx context.Context, cfg *api.MCPCatalogOb
 	if err != nil {
 		return data, false, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, api.MCPCatalogOAuthMaxResponseBytes+1))
 	if err != nil || len(body) > api.MCPCatalogOAuthMaxResponseBytes || json.Unmarshal(body, &data) != nil {
 		return data, false, errors.New("invalid token response")

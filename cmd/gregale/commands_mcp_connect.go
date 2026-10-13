@@ -115,7 +115,7 @@ func runMCPBrowserConnection(ctx context.Context, client *Client, app string, re
 	if err != nil {
 		return empty, err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	req.Action = "begin"
 	req.RedirectURI = "http://" + listener.Addr().String() + "/callback"
 	begun, err := client.MCPCatalogOAuth(ctx, app, req)
@@ -146,11 +146,11 @@ func runMCPBrowserConnection(ctx context.Context, client *Client, app string, re
 		case callback <- complete:
 			_, _ = fmt.Fprint(w, "Authorization received. Return to Gregale.")
 		default:
-			http.Error(w, "Authorization already received", 409)
+			http.Error(w, "Authorization already received", http.StatusConflict)
 		}
 	})}
-	defer server.Close()
-	go server.Serve(listener)
+	defer func() { _ = server.Close() }()
+	go func() { _ = server.Serve(listener) }()
 	if err = launch(begun.AuthorizationURL); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Open this URL to authorize the role:\n%s\n", begun.AuthorizationURL)
 	}

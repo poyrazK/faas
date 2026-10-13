@@ -260,14 +260,6 @@ func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRol
 	return checks, nil
 }
 
-func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, pin ...*mcpCatalogPinReceipt) int {
-	return finishMCPDeployWithAudit(ctx, c, slug, id, cfg, token, roles, nil, pin...)
-}
-
-func finishMCPDeployWithAudit(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, pin ...*mcpCatalogPinReceipt) int {
-	return finishMCPDeployWithSmoke(ctx, c, slug, id, cfg, token, roles, audit, nil, pin...)
-}
-
 func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
 	endpoint, candidate, serving, err := prepareMCPCandidate(ctx, c, slug, id, cfg)
 	if err != nil {
