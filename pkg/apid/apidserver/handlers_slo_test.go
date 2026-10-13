@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func accountSLOPromResponse(query, appID string) string {
@@ -173,7 +174,7 @@ func TestFetchAppSLO_IdleAppIsNotDegraded(t *testing.T) {
 // fixedUsageStore reports a known usage_minutes rollup; MemStore's is always
 // zero.
 type fixedUsageStore struct {
-	state.Store
+	Store                  state.Store
 	instanceHours, gbHours float64
 }
 
@@ -189,7 +190,7 @@ func TestFetchAccountSLO_TelemetryTimeoutKeepsUsage(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	apidserver.MustSeedApp(t, e, "slo-usage")
 	store := (*e.S()).Store()
-	*store = fixedUsageStore{Store: *store, instanceHours: 12.5, gbHours: 6.25}
+	*store = statetest.NewStore(fixedUsageStore{Store: *store, instanceHours: 12.5, gbHours: 6.25})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = fmt.Fprint(w, "query timed out")

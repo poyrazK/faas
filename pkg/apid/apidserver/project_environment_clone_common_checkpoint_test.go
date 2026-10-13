@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type commonCheckpointTestDriver struct {
@@ -74,7 +75,7 @@ func reclaimCommonCheckpointWorker(t *testing.T, f *cloneCoordinatorFixture) {
 func TestPGCloneCommonCheckpointRecoversOriginalCapture(t *testing.T) {
 	f, store, provider, buckets := cloneCaptureBarrierFixture(t)
 	provider.drained = true
-	driver := &commonCheckpointTestDriver{t: t, store: store, loseCapture: true}
+	driver := &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store), loseCapture: true}
 	var actual cloneCommonCheckpointReceipt
 	var err error
 	f.lease, actual, err = f.srv.prepareProjectEnvironmentCloneCommonCheckpoint(t.Context(), f.lease, driver)
@@ -99,15 +100,15 @@ func TestPGCloneCommonCheckpointRecoversOriginalCapture(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(actual, original) || !reflect.DeepEqual(f.lease.Operation.Resources, resources) || driver.captures != 1 {
 		t.Fatalf("receipt replay changed capture: %+v %v", actual, err)
 	}
-	if _, err := store.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
+	if _, err := store.PgStore.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
 		t.Fatal("successful selection released configuration", err)
 	}
 	for _, bucket := range buckets {
-		if _, err := store.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
+		if _, err := store.PgStore.BeginObjectBucketMutation(t.Context(), bucket, state.ObjectBucketMutationRequest); !errors.Is(err, state.ErrObjectBucketWriteFenced) {
 			t.Fatal("successful selection reopened source writes", err)
 		}
 	}
-	if _, err := store.AdvanceProjectEnvironmentCloneOperation(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
+	if _, err := store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
 		state.CloneOperationCapturing, state.CloneOperationCopying, f.lease.Operation.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("private checkpoint became publication strategy", err)
 	}
@@ -137,7 +138,7 @@ func TestPGCloneCommonCheckpointRejectsIncompleteEvidence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f, store, provider, _ := cloneCaptureBarrierFixture(t)
 			provider.drained = true
-			driver := &commonCheckpointTestDriver{t: t, store: store, mutateObservation: tc.edit}
+			driver := &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store), mutateObservation: tc.edit}
 			var actual cloneCommonCheckpointReceipt
 			var err error
 			f.lease, actual, err = f.srv.prepareProjectEnvironmentCloneCommonCheckpoint(t.Context(), f.lease, driver)
@@ -162,13 +163,13 @@ func TestPGCloneCommonCheckpointWaitsBeforeDispatch(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f, store, provider, buckets := cloneCaptureBarrierFixture(t)
 			provider.drained = true
-			driver := &commonCheckpointTestDriver{t: t, store: store}
+			driver := &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}
 			var captureDriver cloneCommonCheckpointDriver = driver
 			switch kind {
 			case "no driver":
 				captureDriver = nil
 			case "busy object":
-				if _, err := store.BeginObjectBucketMutation(t.Context(), buckets[0], state.ObjectBucketMutationRequest); err != nil {
+				if _, err := store.PgStore.BeginObjectBucketMutation(t.Context(), buckets[0], state.ObjectBucketMutationRequest); err != nil {
 					t.Fatal(err)
 				}
 			case "busy postgres":
@@ -193,7 +194,7 @@ func TestPGCloneCommonCheckpointWaitsBeforeDispatch(t *testing.T) {
 }
 
 type commonCheckpointCommitFailureStore struct {
-	*state.PgStore
+	PgStore               *state.PgStore
 	loseFinal, stealFinal bool
 	loseStage             string
 	next                  state.ProjectEnvironmentCloneLease
@@ -229,8 +230,8 @@ func TestPGCloneCommonCheckpointLostIntentRepliesNeverInventDispatch(t *testing.
 			f, base, provider, _ := cloneCaptureBarrierFixture(t)
 			provider.drained = true
 			store := &commonCheckpointCommitFailureStore{PgStore: base.PgStore, loseStage: stage}
-			f.srv.store = store
-			driver := &commonCheckpointTestDriver{t: t, store: store}
+			f.srv.store = statetest.NewPg(store)
+			driver := &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}
 			var actual cloneCommonCheckpointReceipt
 			var err error
 			f.lease, actual, err = f.srv.prepareProjectEnvironmentCloneCommonCheckpoint(t.Context(), f.lease, driver)
@@ -256,8 +257,8 @@ func TestPGCloneCommonCheckpointFencesCommitAndRecoversLostReply(t *testing.T) {
 			f, base, provider, _ := cloneCaptureBarrierFixture(t)
 			provider.drained = true
 			store := &commonCheckpointCommitFailureStore{PgStore: base.PgStore, loseFinal: lost, stealFinal: !lost}
-			f.srv.store = store
-			driver := &commonCheckpointTestDriver{t: t, store: store}
+			f.srv.store = statetest.NewPg(store)
+			driver := &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}
 			var actual cloneCommonCheckpointReceipt
 			var err error
 			f.lease, actual, err = f.srv.prepareProjectEnvironmentCloneCommonCheckpoint(t.Context(), f.lease, driver)

@@ -171,3 +171,10 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
   the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
   developer disks.
+- Test fakes must not embed `state.Store`, `*state.MemStore` or `*state.PgStore`: Go generates
+  a wrapper per promoted method for every such type (~3,000 for the concrete stores, ~80 MB of
+  compiler memory each; this was most of apidserver's test-compile memory). Keep the store in a
+  named field (`MemStore *state.MemStore`), define only the overrides, and pass
+  `statetest.NewMem(fake)` (or `NewPg`, `NewStore`) where a store is needed. Overriding a method
+  for the first time needs a dispatch method in `pkg/state/statetest/dispatch.go`; the
+  constructor panics with that instruction if it is missing.

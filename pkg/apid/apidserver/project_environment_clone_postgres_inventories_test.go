@@ -15,10 +15,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyinventory"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneInventoryFailureStore struct {
-	*state.PgStore
+	PgStore   *state.PgStore
 	loseReply bool
 }
 
@@ -40,7 +41,7 @@ func cloneInventoryWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *cloneI
 		t.Fatal(err)
 	}
 	store := &cloneInventoryFailureStore{PgStore: original.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	identity, _ := age.GenerateX25519Identity()
 	oldRecipient, oldIdentities := setSecretRecipient, mfaIdentities
 	setSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
@@ -77,14 +78,14 @@ func TestPGClonePostgresSnapshotInventoryWorkerRecoversCommittedReplyWithKeyRota
 	if _, err := f.srv.projectEnvironmentClonePostgresInventory(t.Context(), f.lease, sourceID, read); !errors.Is(err, managedpostgres.ErrUnavailable) || *reads != 1 {
 		t.Fatalf("lost committed response: reads=%d err=%v", *reads, err)
 	}
-	original, err := store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
+	original, err := store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestPGClonePostgresSnapshotInventoryWorkerRecoversCommittedReplyWithKeyRota
 	if err != nil || *reads != 1 || inventory.Summary().Fingerprint != original.Sealed.Fingerprint {
 		t.Fatalf("handoff recaptured SQL metadata: reads=%d err=%v", *reads, err)
 	}
-	recovered, err := store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
+	recovered, err := store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID)
 	if err != nil || !bytes.Equal(recovered.Sealed.Ciphertext, original.Sealed.Ciphertext) || !recovered.CapturedAt.Equal(original.CapturedAt) {
 		t.Fatalf("rotation replaced committed ciphertext: %v", err)
 	}
@@ -144,7 +145,7 @@ func TestPGClonePostgresSnapshotInventoryWorkerRejectsMissingKeysAndFailedReads(
 	}); !errors.Is(err, managedpostgres.ErrUnavailable) {
 		t.Fatalf("failed read: %v", err)
 	}
-	if _, err := store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), f.lease, sourceID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("failed read committed metadata: %v", err)
 	}
 }
@@ -162,11 +163,11 @@ func TestPGClonePostgresSnapshotInventoryWorkerRejectsHandoffAndKeySubstitutionD
 				}
 				switch mode {
 				case "handoff":
-					if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+					if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 						return cfg, inventory, err
 					}
 					var err error
-					f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+					f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 					if err != nil {
 						return cfg, inventory, err
 					}

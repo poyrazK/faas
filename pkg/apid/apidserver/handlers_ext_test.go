@@ -25,6 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -5763,7 +5764,7 @@ func ptrInt64(v int64) *int64 { return &v }
 // satisfies the full state.Store interface — no need to
 // re-implement the ~100 other methods just to stub one.
 type parkedRefStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 	// err is consulted by LatestParkedDeploymentForApp.
 	// When non-nil, the err is returned verbatim and the
 	// embedded memstore implementation is bypassed.
@@ -5874,7 +5875,7 @@ func TestWithParkedDeploymentRef_StoreErrorLoggedAndIgnored(t *testing.T) {
 	logBuf := &safeBuffer{}
 	captureLogger := slog.New(slog.NewJSONHandler(logBuf, nil))
 	srv := newServerWithDeps(
-		&parkedRefStore{MemStore: e.store, err: errors.New("simulated PG outage")},
+		statetest.NewMem(&parkedRefStore{MemStore: e.store, err: errors.New("simulated PG outage")}),
 		captureLogger,
 		"gregale.dev",
 		noopNotifier{},

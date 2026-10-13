@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointRuntimeFailureStore struct {
@@ -85,12 +86,12 @@ func checkpointRuntimeFixture(t *testing.T) (*cloneCoordinatorFixture, *checkpoi
 		t.Fatal(err)
 	}
 	store := &checkpointRuntimeFailureStore{checkpointVerificationFailureStore: base}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, &checkpointRuntimeTestDriver{checkpointVerificationTestDriver: verification}, id
 }
 func assertCheckpointRuntimePrivate(t *testing.T, f *cloneCoordinatorFixture, s *checkpointRuntimeFailureStore, id string, ready bool) {
 	t.Helper()
-	fork, err := s.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
+	fork, err := s.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func TestPGCloneCheckpointPostgresRuntimeLateFailureAndMigration(t *testing.T) {
 	if _, err = f.srv.prepareCheckpointPostgresRuntime(t.Context(), f.lease, d); err == nil {
 		t.Fatal("expected late catalogue failure")
 	}
-	in, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id)
+	in, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id)
 	if err != nil || in.State != "requested" || in.ObservationSHA256 != "" {
 		t.Fatal("runtime receipt escaped rollback", in, err)
 	}
@@ -348,7 +349,7 @@ func TestPGCloneCheckpointPostgresRuntimeCatalogueSubstitution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id)
+	in, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +363,7 @@ func TestPGCloneCheckpointPostgresRuntimeCatalogueSubstitution(t *testing.T) {
 		if _, err = f.pool.Exec(t.Context(), sql, owner); err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+		if _, err = s.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 			t.Fatal("substituted ready catalogue authenticated", err)
 		}
 		if _, err = f.pool.Exec(t.Context(), "update managed_postgres_databases set data_resource_id=$2,desired_generation=1,observed_generation=1,clone_resource_role='checkpoint' where id=$1", owner, in.Observation.DataResourceID); err != nil {
@@ -379,7 +380,7 @@ func TestPGCloneCheckpointPostgresRuntimeCatalogueSubstitution(t *testing.T) {
 }
 func TestPGCloneCheckpointPostgresRuntimeRequiresVerification(t *testing.T) {
 	f, s, _, id := checkpointVerificationFixture(t)
-	if _, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id); !errors.Is(err, state.ErrNotFound) {
+	if _, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("unverified fork qualified", err)
 	}
 }
@@ -391,7 +392,7 @@ func TestPGCloneCheckpointPostgresRuntimeReadyCompensation(t *testing.T) {
 		t.Fatal(err)
 	}
 	op := f.lease.Operation
-	f.lease.Operation, err = s.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = s.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +403,7 @@ func TestPGCloneCheckpointPostgresRuntimeReadyCompensation(t *testing.T) {
 	if err != nil {
 		t.Fatal("ready fork compensation failed", err)
 	}
-	fork, err := s.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
+	fork, err := s.PgStore.ProjectEnvironmentClonePostgresSnapshotRestoreForLease(t.Context(), f.lease, id)
 	if err != nil || fork.State != "deleted" {
 		t.Fatal("ready fork not retired", err)
 	}
@@ -418,7 +419,7 @@ func TestPGCloneCheckpointPostgresRuntimeReadyCompensation(t *testing.T) {
 
 func TestPGCloneCheckpointPostgresRuntimeRejectsSourceDataset(t *testing.T) {
 	f, s, d, id := checkpointRuntimeFixture(t)
-	in, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id)
+	in, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresRuntime(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}

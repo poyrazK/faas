@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointObjectPublicationLostReplyStore struct {
@@ -78,7 +79,7 @@ func checkpointObjectPublicationFixture(t *testing.T) (*cloneCoordinatorFixture,
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := store.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention)
+	plan, err := store.PgStore.ProjectEnvironmentCloneCheckpointObjectPublicationPlan(t.Context(), f.lease, retention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func assertCheckpointObjectPublicationAbsent(t *testing.T, f *cloneCoordinatorFi
 func TestPGCloneCheckpointObjectPublicationRecovery(t *testing.T) {
 	f, base, d, plan, keyID := checkpointObjectPublicationFixture(t)
 	lost := &checkpointObjectPublicationLostReplyStore{checkpointObjectVerificationTestStore: base, lose: true}
-	f.srv.store = lost
+	f.srv.store = statetest.NewPg(lost)
 	var err error
 	f.lease, _, err = f.srv.publishCheckpointObjects(t.Context(), f.lease, d)
 	if !errors.Is(err, objectstorage.ErrUnavailable) {
@@ -117,12 +118,12 @@ func TestPGCloneCheckpointObjectPublicationRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed, err := base.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), originalLease, plan.SHA256, retention); !errors.Is(err, state.ErrConflict) || failed.State != "" {
+	if failed, err := base.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), originalLease, plan.SHA256, retention); !errors.Is(err, state.ErrConflict) || failed.State != "" {
 		t.Fatal("stale worker publication", err)
 	}
 	expired := retention
 	expired.RetainedUntil = time.Now()
-	if failed, err := base.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, expired); !errors.Is(err, state.ErrConflict) || failed.State != "" {
+	if failed, err := base.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, expired); !errors.Is(err, state.ErrConflict) || failed.State != "" {
 		t.Fatal("expired retention replay", err)
 	}
 	grantOnly := false
@@ -131,11 +132,11 @@ func TestPGCloneCheckpointObjectPublicationRecovery(t *testing.T) {
 			grantOnly = true
 		}
 		for _, p := range b.Preparations {
-			if _, _, err := base.ResolveObjectS3Credential(t.Context(), p.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
+			if _, _, err := base.PgStore.ResolveObjectS3Credential(t.Context(), p.Credential.AccessKeyID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatal("private credential usable", err)
 			}
 		}
-		if allowed, err := base.ObjectBucketKeyCan(t.Context(), plan.AccountID, b.TargetBucketID, keyID, "read"); err != nil || allowed {
+		if allowed, err := base.PgStore.ObjectBucketKeyCan(t.Context(), plan.AccountID, b.TargetBucketID, keyID, "read"); err != nil || allowed {
 			t.Fatal("private API-key grant usable", err)
 		}
 	}
@@ -146,7 +147,7 @@ func TestPGCloneCheckpointObjectPublicationRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), "update object_storage_access_grants set permission='write' where bucket_id=$1", b.TargetBucketID); err != nil {
 		t.Fatal(err)
 	}
-	if failed, err := base.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, retention); !errors.Is(err, state.ErrConflict) || failed.State != "" {
+	if failed, err := base.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, retention); !errors.Is(err, state.ErrConflict) || failed.State != "" {
 		t.Fatal("changed grant owned", err)
 	}
 	if _, err = f.pool.Exec(t.Context(), "update object_storage_access_grants set permission=$2 where bucket_id=$1", b.TargetBucketID, b.AccessGrants[0].Permission); err != nil {
@@ -158,7 +159,7 @@ func TestPGCloneCheckpointObjectPublicationRecovery(t *testing.T) {
 				if _, err = f.pool.Exec(t.Context(), "update app_secrets set ciphertext=$2 where managed_object_storage_credential_id=$1", p.Credential.ID, []byte("tampered")); err != nil {
 					t.Fatal(err)
 				}
-				if failed, err := base.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, retention); !errors.Is(err, state.ErrConflict) || failed.State != "" {
+				if failed, err := base.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, retention); !errors.Is(err, state.ErrConflict) || failed.State != "" {
 					t.Fatal("changed secret owned", err)
 				}
 				return
@@ -211,7 +212,7 @@ func TestPGCloneCheckpointObjectPublicationRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			out, err := store.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, digest, retention)
+			out, err := store.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, digest, retention)
 			if err == nil || out.State != "" || out.Plan.SHA256 != "" {
 				t.Fatal("failed publication returned material", err)
 			}
@@ -247,7 +248,7 @@ func TestPGCloneCheckpointObjectPublicationMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, retention); err != nil {
+	if _, err = store.PgStore.PublishProjectEnvironmentCloneCheckpointObjects(t.Context(), f.lease, plan.SHA256, retention); err != nil {
 		t.Fatal(err)
 	}
 	tx, err = f.pool.Begin(t.Context())

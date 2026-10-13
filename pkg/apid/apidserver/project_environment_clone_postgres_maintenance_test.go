@@ -12,10 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneMaintenanceFailureStore struct {
-	*state.PgStore
+	PgStore                          *state.PgStore
 	loseReservation, loseFinish      bool
 	failRecordPhase, loseRecordPhase string
 }
@@ -169,12 +170,12 @@ func cloneMaintenanceWorkerFixture(t *testing.T) (cloneCoordinatorFixture, *clon
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	plans, err := f.srv.capturedProjectEnvironmentDatabasePlans(t.Context(), f.lease.Operation)
 	if err != nil || len(plans) != 1 || plans[0].source.ID != id {
 		t.Fatalf("maintenance plan: %v", err)
 	}
-	if _, err := store.ReserveProjectEnvironmentClonePostgresWriteFence(t.Context(), f.lease, id); err != nil {
+	if _, err := store.PgStore.ReserveProjectEnvironmentClonePostgresWriteFence(t.Context(), f.lease, id); err != nil {
 		t.Fatal(err)
 	}
 	return f, store, provider, plans[0]
@@ -184,7 +185,7 @@ func TestPGClonePostgresMaintenanceWorkerRecoversOwnedPhases(t *testing.T) {
 	f, store, provider, plan := cloneMaintenanceWorkerFixture(t)
 	ctx := t.Context()
 	provider.onPhase = func(request managedpostgres.CheckpointMaintenanceRequest) error {
-		r, err := store.ProjectEnvironmentClonePostgresMaintenanceForLease(ctx, f.lease, plan.source.ID)
+		r, err := store.PgStore.ProjectEnvironmentClonePostgresMaintenanceForLease(ctx, f.lease, plan.source.ID)
 		if err != nil {
 			return err
 		}
@@ -206,10 +207,10 @@ func TestPGClonePostgresMaintenanceWorkerRecoversOwnedPhases(t *testing.T) {
 		t.Fatalf("lost role reply: %v", err)
 	}
 	stale := f.lease
-	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +232,7 @@ func TestPGClonePostgresMaintenanceWorkerRecoversOwnedPhases(t *testing.T) {
 	if err != nil || receipt.State != "ready" || provider.roles != 1 || provider.databases != 1 || provider.activations != 1 || provider.readyReads != 1 || provider.deadlineMissing {
 		t.Fatalf("maintenance recovery: %+v %v", receipt, err)
 	}
-	if _, err := store.AdvanceProjectEnvironmentCloneOperation(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
+	if _, err := store.PgStore.AdvanceProjectEnvironmentCloneOperation(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
 		state.CloneOperationCapturing, state.CloneOperationCopying, f.lease.Operation.Revision, f.lease.Operation.Resources, ""); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("ready maintenance advanced copying: %v", err)
 	}
@@ -241,46 +242,46 @@ func TestPGClonePostgresFenceCoordinatorRequiresIndependentTerminalProof(t *test
 	f, store, provider, plan := cloneMaintenanceWorkerFixture(t)
 	ctx := t.Context()
 	var err error
-	f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
+	f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
 		state.CloneOperationCapturing, state.CloneOperationCompensating, f.lease.Operation.Revision, f.lease.Operation.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertHeld := func() {
 		t.Helper()
-		rows, err := store.ProjectEnvironmentClonePostgresWriteFencesForLease(ctx, f.lease)
+		rows, err := store.PgStore.ProjectEnvironmentClonePostgresWriteFencesForLease(ctx, f.lease)
 		if err != nil || len(rows) != 1 || rows[0].State != "abandoning" || !rows[0].ReleasedAt.IsZero() {
 			t.Fatalf("unknown result released source: %+v %v", rows, err)
 		}
 	}
 	provider.loseAbandon = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, statetest.NewPg(store), f.lease)
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || provider.observes != 0 {
 		t.Fatalf("lost abandonment reply ignored: %v", err)
 	}
 	assertHeld()
 	provider.missingObservation = true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, statetest.NewPg(store), f.lease)
 	if !errors.Is(err, managedpostgres.ErrNotFound) {
 		t.Fatalf("missing terminal treated as proof: %v", err)
 	}
 	assertHeld()
 	provider.missingObservation, provider.substitutedObservation = false, true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, statetest.NewPg(store), f.lease)
 	if !errors.Is(err, managedpostgres.ErrConflict) {
 		t.Fatalf("substituted terminal accepted: %v", err)
 	}
 	assertHeld()
 	provider.substitutedObservation, store.loseFinish = false, true
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, statetest.NewPg(store), f.lease)
 	if err == nil {
 		t.Fatal("lost source release acknowledgement was ignored")
 	}
 	stale := f.lease
-	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,15 +289,15 @@ func TestPGClonePostgresFenceCoordinatorRequiresIndependentTerminalProof(t *test
 	if _, err := f.srv.abandonProjectEnvironmentClonePostgresWriteFences(ctx, stale); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale worker resumed recovery: %v", err)
 	}
-	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, store, f.lease)
+	f.lease, err = f.srv.processProjectEnvironmentCloneLease(ctx, statetest.NewPg(store), f.lease)
 	if !errors.Is(err, errCloneCompensationUnavailable) || f.lease.Operation.Status != state.CloneOperationCompensating || provider.abandons != before || provider.deadlineMissing {
 		t.Fatalf("terminal recovery marked complete compensation: %v", err)
 	}
-	rows, err := store.ProjectEnvironmentClonePostgresWriteFencesForLease(ctx, f.lease)
+	rows, err := store.PgStore.ProjectEnvironmentClonePostgresWriteFencesForLease(ctx, f.lease)
 	if err != nil || len(rows) != 1 || rows[0].State != "released" || rows[0].SourceDatabaseID != plan.source.ID || rows[0].RemoteTerminalState != "abandoned" {
 		t.Fatalf("source terminal proof: %+v %v", rows, err)
 	}
-	if _, err := store.ProjectEnvironmentBySlug(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentBySlug(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.TargetEnvironment); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("abandonment published stage: %v", err)
 	}
 }

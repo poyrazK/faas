@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointUnusedReservationLostReplyStore struct {
@@ -43,12 +44,12 @@ func TestPGCloneCheckpointUnusedObjectReservationRecovery(t *testing.T) {
 	}
 	admission := f.srv.cloneWorkerAdmission
 	f.srv.cloneWorkerAdmission = func(context.Context) error { return state.ErrConflict }
-	if err := f.srv.retireCheckpointObjectSource(t.Context(), f.lease, nil, store, sourceID); !errors.Is(err, state.ErrConflict) {
+	if err := f.srv.retireCheckpointObjectSource(t.Context(), f.lease, nil, statetest.NewPg(store), sourceID); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("local cleanup ignored admission", err)
 	}
 	f.srv.cloneWorkerAdmission = admission
 	wrapper := &checkpointUnusedReservationLostReplyStore{checkpointTargetLostReplyStore: store, lose: true}
-	f.srv.store = wrapper
+	f.srv.store = statetest.NewPg(wrapper)
 	d := &checkpointObjectRetirementTestDriver{t: t, f: f, proofs: map[string]state.ProjectEnvironmentCloneCheckpointObjectRetirementObservation{}}
 	var err error
 	f.lease, err = f.srv.retireCheckpointObjectTargets(t.Context(), f.lease, d)
@@ -61,7 +62,7 @@ func TestPGCloneCheckpointUnusedObjectReservationRecovery(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), "select source_bucket_id::text from project_environment_clone_checkpoint_unused_object_reservations where operation_id=$1", f.lease.Operation.ID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), old, id); !errors.Is(err, state.ErrConflict) {
+	if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), old, id); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("stale replay", err)
 	}
 	for i := 0; i < 2; i++ {
@@ -83,7 +84,7 @@ func TestPGCloneCheckpointUnusedObjectReservationRecovery(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), "update object_buckets set state='provisioning' where environment_clone_operation_id=$1 and environment_clone_source_bucket_id=$2", f.lease.Operation.ID, id); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+	if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("revival accepted", err)
 	}
 }
@@ -104,7 +105,7 @@ func TestPGCloneCheckpointUnusedObjectReservationFences(t *testing.T) {
 				t.Fatal(err)
 			}
 			if failure == "planned-native" {
-				if _, err := store.ReserveProjectEnvironmentCloneCheckpointObjectTarget(t.Context(), f.lease, appID, id, targetID); err != nil {
+				if _, err := store.PgStore.ReserveProjectEnvironmentCloneCheckpointObjectTarget(t.Context(), f.lease, appID, id, targetID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -164,7 +165,7 @@ func TestPGCloneCheckpointUnusedObjectReservationFences(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
+			if err := store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("unsafe unused cleanup", err)
 			}
 			var completed int
@@ -208,7 +209,7 @@ func TestPGCloneCheckpointUnusedObjectReservationMigration(t *testing.T) {
 			break
 		}
 	}
-	if err = store.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); err != nil {
+	if err = store.PgStore.ReleaseProjectEnvironmentCloneCheckpointUnusedObjectReservation(t.Context(), f.lease, id); err != nil {
 		t.Fatal(err)
 	}
 	tx, err = f.pool.Begin(t.Context())

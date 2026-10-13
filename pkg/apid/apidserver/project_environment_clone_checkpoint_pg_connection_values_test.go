@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointPgConnectionFailureStore struct {
@@ -82,12 +83,12 @@ func checkpointPgConnectionFixture(t *testing.T) (*cloneCoordinatorFixture, *che
 		t.Fatal(err)
 	}
 	store := &checkpointPgConnectionFailureStore{checkpointCredentialFailureStore: s}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, &checkpointPgConnectionTestDriver{checkpointCredentialTestDriver: d, endpoints: make(map[string]state.ProjectEnvironmentCloneCheckpointPgEndpointObservation)}, bindingID, id
 }
 func checkpointPgConnectionJournal(t *testing.T, f *cloneCoordinatorFixture, s *checkpointPgConnectionFailureStore, d *checkpointPgConnectionTestDriver, id, want string) (state.ProjectEnvironmentCloneCheckpointPgConnectionValue, state.ProjectEnvironmentCloneCheckpointPostgresCredential, state.ProjectEnvironmentCloneCheckpointPgConnectionProof) {
 	t.Helper()
-	c, err := s.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, id)
+	c, err := s.PgStore.ReserveProjectEnvironmentCloneCheckpointPostgresCredential(t.Context(), f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}
