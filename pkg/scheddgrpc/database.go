@@ -276,7 +276,7 @@ func (s *Server) databaseStatus(op string, err error) error {
 	switch {
 	case errors.Is(err, dbsched.ErrNotFound):
 		code = codes.NotFound
-	case errors.Is(err, dbsched.ErrNoCapacity):
+	case errors.Is(err, dbsched.ErrNoCapacity), errors.Is(err, dbsched.ErrBootSlotsBusy):
 		code = codes.ResourceExhausted
 	case errors.Is(err, dbsched.ErrConflict):
 		code = codes.FailedPrecondition

@@ -17,11 +17,12 @@ func TestDatabaseNodeConfigValidation(t *testing.T) {
 		t.Fatalf("node = %+v, %v", node, err)
 	}
 	for name, cfg := range map[string]DatabaseNodeConfig{
-		"no id":         {TargetURL: "tcp://x:1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1},
-		"no target":     {ID: "db-1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1},
-		"no ceiling":    {ID: "db-1", TargetURL: "tcp://x:1", VolumeCapacityBytes: 1},
-		"no capacity":   {ID: "db-1", TargetURL: "tcp://x:1", AdmissionCeilingMB: 1},
-		"bad lifecycle": {ID: "db-1", TargetURL: "tcp://x:1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1, Lifecycle: "zombie"},
+		"no id":          {TargetURL: "tcp://x:1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1},
+		"no target":      {ID: "db-1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1},
+		"no ceiling":     {ID: "db-1", TargetURL: "tcp://x:1", VolumeCapacityBytes: 1},
+		"no capacity":    {ID: "db-1", TargetURL: "tcp://x:1", AdmissionCeilingMB: 1},
+		"bad lifecycle":  {ID: "db-1", TargetURL: "tcp://x:1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1, Lifecycle: "zombie"},
+		"bad boot slots": {ID: "db-1", TargetURL: "tcp://x:1", AdmissionCeilingMB: 1, VolumeCapacityBytes: 1, BootSlots: 257},
 	} {
 		if _, err := cfg.node(); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -33,11 +34,14 @@ func TestLoadConfigParsesDatabaseScheduler(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "schedd.toml")
 	body := `[database_scheduler]
 idle_timeout = "7m"
+wake_queue_wait = "20s"
+evict_idle_after = "-1s"
 [[database_scheduler.nodes]]
 id = "db-1"
 target_url = "tcp://10.0.2.10:7443"
 admission_ceiling_mb = 48000
 volume_capacity_bytes = 3000000000000
+boot_slots = 8
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -47,7 +51,8 @@ volume_capacity_bytes = 3000000000000
 		t.Fatal(err)
 	}
 	ds := cfg.DatabaseScheduler
-	if ds == nil || ds.IdleTimeout.Minutes() != 7 || len(ds.Nodes) != 1 || ds.Nodes[0].AdmissionCeilingMB != 48000 || ds.Nodes[0].VolumeCapacityBytes != 3000000000000 {
+	if ds == nil || ds.IdleTimeout.Minutes() != 7 || len(ds.Nodes) != 1 || ds.Nodes[0].AdmissionCeilingMB != 48000 || ds.Nodes[0].VolumeCapacityBytes != 3000000000000 ||
+		ds.WakeQueueWait.Seconds() != 20 || ds.EvictIdleAfter >= 0 || ds.Nodes[0].BootSlots != 8 {
 		t.Fatalf("database_scheduler = %+v", ds)
 	}
 }

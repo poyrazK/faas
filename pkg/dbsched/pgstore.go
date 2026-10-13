@@ -50,7 +50,7 @@ func statesText(states []State) []string {
 func (s *PgStore) UpsertNode(ctx context.Context, node Node) error {
 	err := s.q.UpsertDatabaseNode(ctx, s.pool, sqlc.UpsertDatabaseNodeParams{
 		ID: node.ID, TargetUrl: node.TargetURL, AdmissionCeilingMb: int32(node.AdmissionCeilingMB),
-		VolumeCapacityBytes: node.VolumeCapacityBytes, Lifecycle: node.Lifecycle,
+		VolumeCapacityBytes: node.VolumeCapacityBytes, BootSlots: int32(bootSlots(node)), Lifecycle: node.Lifecycle,
 	})
 	if err != nil {
 		return fmt.Errorf("dbsched: upsert node %s: %w", node.ID, err)
@@ -65,7 +65,8 @@ func (s *PgStore) Nodes(ctx context.Context) ([]Node, error) {
 	}
 	out := make([]Node, len(rows))
 	for i, r := range rows {
-		out[i] = Node{ID: r.ID, TargetURL: r.TargetUrl, AdmissionCeilingMB: int(r.AdmissionCeilingMb), VolumeCapacityBytes: r.VolumeCapacityBytes, Lifecycle: r.Lifecycle}
+		out[i] = Node{ID: r.ID, TargetURL: r.TargetUrl, AdmissionCeilingMB: int(r.AdmissionCeilingMb), VolumeCapacityBytes: r.VolumeCapacityBytes,
+			BootSlots: int(r.BootSlots), Lifecycle: r.Lifecycle}
 	}
 	return out, nil
 }
@@ -123,7 +124,7 @@ func (s *PgStore) usage(ctx context.Context, db sqlc.DBTX) (map[string]nodeUsage
 	}
 	usage := make(map[string]nodeUsage, len(rows))
 	for _, r := range rows {
-		usage[r.NodeID] = nodeUsage{volumeBytes: r.VolumeBytes, activeMB: r.ActiveMemMib + r.ActiveVms*billableMB(0)}
+		usage[r.NodeID] = nodeUsage{volumeBytes: r.VolumeBytes, activeMB: r.ActiveMemMib + r.ActiveVms*billableMB(0), waking: r.WakingVms}
 	}
 	return usage, nil
 }
@@ -197,7 +198,7 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
 		if err != nil {
 			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.NodeID, err)
 		}
-		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), Lifecycle: row.Lifecycle}
+		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), BootSlots: int(row.BootSlots), Lifecycle: row.Lifecycle}
 		if node.Lifecycle == NodeUnavailable {
 			return VM{}, ErrNodeUnavailable
 		}
@@ -205,8 +206,8 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
 		if err != nil {
 			return VM{}, err
 		}
-		if !admits(node, usage[node.ID], vm.MemMiB) {
-			return VM{}, ErrNoCapacity
+		if err := admitWakeOn(node, usage[node.ID], vm.MemMiB); err != nil {
+			return VM{}, err
 		}
 		if err := s.transition(ctx, tx, id, []State{StateParked}, StateWaking, TransitionOptions{LastError: vm.LastError}); err != nil {
 			return VM{}, err

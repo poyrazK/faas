@@ -180,6 +180,7 @@ func TestDatabaseErrorsMapToStableCodes(t *testing.T) {
 	cases := map[error]codes.Code{
 		dbsched.ErrNotFound:                   codes.NotFound,
 		dbsched.ErrNoCapacity:                 codes.ResourceExhausted,
+		dbsched.ErrBootSlotsBusy:              codes.ResourceExhausted,
 		dbsched.ErrConflict:                   codes.FailedPrecondition,
 		dbsched.ErrNodeUnavailable:            codes.Unavailable,
 		dbsched.ErrInvalid:                    codes.InvalidArgument,

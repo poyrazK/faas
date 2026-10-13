@@ -9365,7 +9365,8 @@ const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
     COALESCE(sum(v.mem_mib) FILTER (WHERE v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms
+    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
+    count(v.database_id) FILTER (WHERE v.state = 'waking')::bigint AS waking_vms
 FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id
 GROUP BY n.id ORDER BY n.id
 `
@@ -9375,6 +9376,7 @@ type DatabaseNodeUsageRow struct {
 	VolumeBytes  int64
 	ActiveMemMib int64
 	ActiveVms    int64
+	WakingVms    int64
 }
 
 func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error) {
@@ -9391,6 +9393,7 @@ func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNod
 			&i.VolumeBytes,
 			&i.ActiveMemMib,
 			&i.ActiveVms,
+			&i.WakingVms,
 		); err != nil {
 			return nil, err
 		}
@@ -30461,7 +30464,7 @@ func (q *Queries) ListDataUpstreamsByApp(ctx context.Context, db DBTX, arg ListD
 }
 
 const listDatabaseNodes = `-- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes ORDER BY id
 `
 
@@ -30470,6 +30473,7 @@ type ListDatabaseNodesRow struct {
 	TargetUrl           string
 	AdmissionCeilingMb  int32
 	VolumeCapacityBytes int64
+	BootSlots           int32
 	Lifecycle           string
 }
 
@@ -30487,6 +30491,7 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 			&i.TargetUrl,
 			&i.AdmissionCeilingMb,
 			&i.VolumeCapacityBytes,
+			&i.BootSlots,
 			&i.Lifecycle,
 		); err != nil {
 			return nil, err
@@ -37738,7 +37743,7 @@ func (q *Queries) LockCustomerOperationWorkflowRun(ctx context.Context, db DBTX,
 }
 
 const lockDatabaseNode = `-- name: LockDatabaseNode :one
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes WHERE id = $1 FOR UPDATE
 `
 
@@ -37747,6 +37752,7 @@ type LockDatabaseNodeRow struct {
 	TargetUrl           string
 	AdmissionCeilingMb  int32
 	VolumeCapacityBytes int64
+	BootSlots           int32
 	Lifecycle           string
 }
 
@@ -37758,6 +37764,7 @@ func (q *Queries) LockDatabaseNode(ctx context.Context, db DBTX, id string) (Loc
 		&i.TargetUrl,
 		&i.AdmissionCeilingMb,
 		&i.VolumeCapacityBytes,
+		&i.BootSlots,
 		&i.Lifecycle,
 	)
 	return i, err
@@ -72052,11 +72059,12 @@ func (q *Queries) UpsertCustomerOperationWorkflowState(ctx context.Context, db D
 
 const upsertDatabaseNode = `-- name: UpsertDatabaseNode :exec
 
-INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
     admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
     volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
+    boot_slots = EXCLUDED.boot_slots,
     lifecycle = EXCLUDED.lifecycle, updated_at = now()
 `
 
@@ -72065,6 +72073,7 @@ type UpsertDatabaseNodeParams struct {
 	TargetUrl           string
 	AdmissionCeilingMb  int32
 	VolumeCapacityBytes int64
+	BootSlots           int32
 	Lifecycle           string
 }
 
@@ -72076,6 +72085,7 @@ func (q *Queries) UpsertDatabaseNode(ctx context.Context, db DBTX, arg UpsertDat
 		arg.TargetUrl,
 		arg.AdmissionCeilingMb,
 		arg.VolumeCapacityBytes,
+		arg.BootSlots,
 		arg.Lifecycle,
 	)
 	return err

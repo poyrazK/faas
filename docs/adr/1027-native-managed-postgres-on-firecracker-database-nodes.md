@@ -152,6 +152,42 @@ Provision, delete, admin and get accept only apid's client certificate;
 wake, park and touch also accept pgproxyd. A `[database_scheduler]` table in
 schedd's config enables the scheduler and lists the database nodes.
 
+### Wake admission and wake storms
+
+- **Boot slots.** Each database node has `boot_slots`
+  (`database_nodes.boot_slots`; schedd `[[database_scheduler.nodes]]
+  boot_slots`, default 4, roughly its physical cores). `AdmitWake` refuses a
+  wake while that many of the node's databases are `waking`
+  (`ErrBootSlotsBusy`), in the same node-locked transaction as the RAM
+  ceiling, so the cap holds across schedd replicas. A storm of wakes then
+  boots in waves instead of starving every boot of CPU. Provisioning and
+  restore boots take no slot.
+- **Queueing.** A wake the node cannot admit yet (RAM ceiling or boot
+  slots) waits in schedd for up to `wake_queue_wait` (30 s), retrying with
+  jittered backoff from 20 ms to 500 ms. Waiters retry independently, so
+  admission is not first-come-first-served. Past the wait the wake fails
+  `ResourceExhausted` and pgproxyd answers the client `57P03`; pgproxyd's
+  own wake timeout (1 min) bounds the whole wait.
+- **Idle eviction.** Over the RAM ceiling, the wake first parks the node's
+  longest-idle scale-to-zero database untouched for `evict_idle_after`
+  (2 min; negative disables it). pgproxyd touches a database every 30 s
+  while a session is open, so this parks only databases nobody is connected
+  to: the park the idle sweep would make later, made early. Always-on and
+  resize-pending databases are never evicted. Neither is one whose lock is
+  held (a backup, a resize, another wake), and each candidate is checked
+  again under its lock.
+- A wake that leaves `waking` (running or failed) and a park signal the
+  node's queued wakes in the same process, which retry at once; the backoff
+  covers other replicas.
+- Metal (`TestMetalWakeStorm`, six 384 MiB databases on the loaded 2-vCPU
+  nested test host, polling only): woken at once, all six were up in
+  10.3 s, every wake taking ~10.3 s. With two boot slots, never more than
+  two booted at once; the median wake fell to 8.8 s, the last took 13.6 s.
+  Part of that tail was the backoff's idle gaps between waves, which the
+  in-process signal removes (not yet measured on metal). Over the RAM
+  ceiling, a wake parked the database idle for ten minutes and was up in
+  8.5 s.
+
 ### Proxy surface
 
 `pgproxyd` (`pkg/pgproxy`, `cmd/pgproxyd`) accepts PostgreSQL over TLS only

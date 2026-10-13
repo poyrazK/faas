@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS database_nodes (
         CHECK (admission_ceiling_mb > 0),
     volume_capacity_bytes bigint NOT NULL
         CHECK (volume_capacity_bytes > 0),
+    -- boot_slots caps the database VMs booting on the node at once, so a
+    -- wake storm queues instead of starving every boot of CPU.
+    boot_slots integer NOT NULL DEFAULT 4
+        CHECK (boot_slots BETWEEN 1 AND 256),
     lifecycle text NOT NULL DEFAULT 'active'
         CHECK (lifecycle IN ('active', 'draining', 'unavailable')),
     created_at timestamptz NOT NULL DEFAULT now(),

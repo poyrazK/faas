@@ -45,6 +45,10 @@ type fakeVMM struct {
 	pruneErr     map[string]error
 	archiveBytes map[string]int64
 	growErr      error
+	// startDelay is how long a boot takes, outside the lock; booting and
+	// maxBooting count the boots in flight.
+	startDelay          time.Duration
+	booting, maxBooting int
 }
 
 func newFakeVMM() *fakeVMM {
@@ -76,6 +80,14 @@ func (f *fakeVMM) DeleteVolume(_ context.Context, node Node, id string) error {
 }
 
 func (f *fakeVMM) Start(_ context.Context, _ Node, vm VM) error {
+	if f.startDelay > 0 {
+		f.mu.Lock()
+		f.booting++
+		f.maxBooting = max(f.maxBooting, f.booting)
+		f.mu.Unlock()
+		time.Sleep(f.startDelay)
+		defer func() { f.mu.Lock(); f.booting--; f.mu.Unlock() }()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("start")
@@ -229,7 +241,7 @@ func newTestScheduler(t *testing.T, ceilingMB int) (*Scheduler, *MemStore, *fake
 	t.Helper()
 	store, vmm := NewMemStore(), newFakeVMM()
 	seedNodes(t, store, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: ceilingMB, VolumeCapacityBytes: 100 << 30, Lifecycle: NodeActive})
-	s := New(store, vmm, Config{IdleTimeout: time.Minute, ReadyTimeout: 2 * time.Second, WakeWait: time.Second}, nil)
+	s := New(store, vmm, Config{IdleTimeout: time.Minute, ReadyTimeout: 2 * time.Second, WakeWait: time.Second, WakeQueueWait: 300 * time.Millisecond}, nil)
 	return s, store, vmm
 }
 

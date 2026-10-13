@@ -34,8 +34,11 @@ const (
 )
 
 var (
-	ErrNotFound        = errors.New("dbsched: database not found")
-	ErrNoCapacity      = errors.New("dbsched: no database node has capacity")
+	ErrNotFound   = errors.New("dbsched: database not found")
+	ErrNoCapacity = errors.New("dbsched: no database node has capacity")
+	// ErrBootSlotsBusy: the node already boots as many databases as it
+	// has boot slots. It clears as those boots finish.
+	ErrBootSlotsBusy   = errors.New("dbsched: database node boot slots are busy")
 	ErrConflict        = errors.New("dbsched: database is in another state")
 	ErrNodeUnavailable = errors.New("dbsched: database node unavailable")
 	// ErrInvalid reports a request that cannot be carried out as asked.
@@ -48,8 +51,14 @@ type Node struct {
 	TargetURL           string
 	AdmissionCeilingMB  int
 	VolumeCapacityBytes int64
-	Lifecycle           string
+	// BootSlots caps the databases booting on the node at once; zero
+	// stores DefaultBootSlots.
+	BootSlots int
+	Lifecycle string
 }
+
+// DefaultBootSlots is a node's boot slots when none are configured.
+const DefaultBootSlots = 4
 
 // VM is the runtime record of one native database.
 type VM struct {
@@ -111,8 +120,11 @@ type Store interface {
 	// converge.
 	Place(ctx context.Context, vm VM) (VM, error)
 	// AdmitWake moves a parked database to waking if its node's RAM
-	// ceiling admits the VM's billable memory. A database already waking
-	// or running is returned unchanged.
+	// ceiling admits the VM's billable memory (else ErrNoCapacity) and a
+	// boot slot is free (else ErrBootSlotsBusy). A database already
+	// waking or running is returned unchanged.
+	//
+	// Provisioning and restore boots take no boot slot.
 	AdmitWake(ctx context.Context, id string) (VM, error)
 	// Transition changes state only from one of from (compare-and-set).
 	Transition(ctx context.Context, id string, from []State, to State, opts TransitionOptions) error
@@ -209,10 +221,12 @@ func billableMB(memMiB int) int64 {
 	return int64(api.BillableRAMMB(memMiB))
 }
 
-// nodeUsage is the committed volume and active memory on one node.
+// nodeUsage is the committed volume, active memory and booting VMs on
+// one node.
 type nodeUsage struct {
 	volumeBytes int64
 	activeMB    int64
+	waking      int64
 }
 
 // pickNode chooses the active node with the most free volume capacity that
@@ -239,4 +253,24 @@ func pickNode(nodes []Node, usage map[string]nodeUsage, volumeBytes int64, pin s
 // admits reports whether node can take another VM of memMiB.
 func admits(node Node, usage nodeUsage, memMiB int) bool {
 	return usage.activeMB+billableMB(memMiB) <= int64(node.AdmissionCeilingMB)
+}
+
+// admitWakeOn is AdmitWake's check of a parked VM against its node.
+func admitWakeOn(node Node, usage nodeUsage, memMiB int) error {
+	switch {
+	case node.Lifecycle == NodeUnavailable:
+		return ErrNodeUnavailable
+	case !admits(node, usage, memMiB):
+		return ErrNoCapacity
+	case usage.waking >= int64(bootSlots(node)):
+		return ErrBootSlotsBusy
+	}
+	return nil
+}
+
+func bootSlots(node Node) int {
+	if node.BootSlots <= 0 {
+		return DefaultBootSlots
+	}
+	return node.BootSlots
 }

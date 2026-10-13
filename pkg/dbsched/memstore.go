@@ -30,6 +30,7 @@ var _ Store = (*MemStore)(nil)
 func (m *MemStore) UpsertNode(_ context.Context, node Node) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	node.BootSlots = bootSlots(node)
 	m.nodes[node.ID] = node
 	return nil
 }
@@ -76,6 +77,9 @@ func (m *MemStore) usageLocked() map[string]nodeUsage {
 		if isActive(vm.State) {
 			u.activeMB += billableMB(vm.MemMiB)
 		}
+		if vm.State == StateWaking {
+			u.waking++
+		}
 		usage[vm.NodeID] = u
 	}
 	return usage
@@ -117,11 +121,11 @@ func (m *MemStore) AdmitWake(_ context.Context, id string) (VM, error) {
 		return VM{}, ErrConflict
 	}
 	node, ok := m.nodes[vm.NodeID]
-	if !ok || node.Lifecycle == NodeUnavailable {
+	if !ok {
 		return VM{}, ErrNodeUnavailable
 	}
-	if !admits(node, m.usageLocked()[node.ID], vm.MemMiB) {
-		return VM{}, ErrNoCapacity
+	if err := admitWakeOn(node, m.usageLocked()[node.ID], vm.MemMiB); err != nil {
+		return VM{}, err
 	}
 	vm.State, vm.StateChangedAt = StateWaking, m.now()
 	m.vms[id] = vm

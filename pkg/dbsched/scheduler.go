@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -111,6 +113,17 @@ type Config struct {
 	ReadyTimeout time.Duration
 	// WakeWait bounds how long a wake waits for another replica's wake.
 	WakeWait time.Duration
+	// WakeQueueWait bounds how long a wake waits for its node to admit
+	// it, while the node is at its RAM ceiling or boot slots (a wake
+	// storm). Past it the wake fails with that admission error.
+	WakeQueueWait time.Duration
+	// EvictIdleAfter: a wake over its node's RAM ceiling first parks the
+	// node's scale-to-zero databases that have had no activity for this
+	// long, longest idle first, before its idle timeout. pgproxyd touches
+	// a database every 30 s while a session is open, so the default (two
+	// minutes) parks only databases nobody is connected to. Negative
+	// disables it.
+	EvictIdleAfter time.Duration
 	// BackupInterval is how old a running database's last base backup
 	// may get before the backup sweep takes another.
 	BackupInterval time.Duration
@@ -143,6 +156,39 @@ type Scheduler struct {
 	restoreWG sync.WaitGroup
 	// lostPruned is when each lost node's database was last pruned.
 	lostPruned sync.Map // database id -> time.Time
+	// freed wakes this process's queued wakes when a node frees a boot
+	// slot or RAM; other replicas' are found by polling.
+	freed nodeEvents
+}
+
+// nodeEvents is a per-node broadcast: wait returns a channel the next
+// signal for that node closes.
+type nodeEvents struct {
+	mu sync.Mutex
+	ch map[string]chan struct{}
+}
+
+func (e *nodeEvents) wait(node string) <-chan struct{} {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ch == nil {
+		e.ch = map[string]chan struct{}{}
+	}
+	c, ok := e.ch[node]
+	if !ok {
+		c = make(chan struct{})
+		e.ch[node] = c
+	}
+	return c
+}
+
+func (e *nodeEvents) signal(node string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if c, ok := e.ch[node]; ok {
+		close(c)
+		delete(e.ch, node)
+	}
 }
 
 // New builds a Scheduler with defaults for zero Config fields.
@@ -155,6 +201,12 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.WakeWait <= 0 {
 		cfg.WakeWait = time.Minute
+	}
+	if cfg.WakeQueueWait <= 0 {
+		cfg.WakeQueueWait = 30 * time.Second
+	}
+	if cfg.EvictIdleAfter == 0 {
+		cfg.EvictIdleAfter = 2 * time.Minute
 	}
 	if cfg.BackupInterval <= 0 {
 		cfg.BackupInterval = 24 * time.Hour
@@ -179,6 +231,16 @@ func (s *Scheduler) lock(id string) func() {
 	mu := m.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
+}
+
+// tryLock takes the database's lock only if it is free.
+func (s *Scheduler) tryLock(id string) (func(), bool) {
+	m, _ := s.locks.LoadOrStore(id, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	if !mu.TryLock() {
+		return nil, false
+	}
+	return mu.Unlock, true
 }
 
 func (s *Scheduler) node(ctx context.Context, id string) (Node, error) {
@@ -392,9 +454,11 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 	default:
 		return vm, ErrConflict
 	}
-	if vm, err = s.store.AdmitWake(ctx, id); err != nil {
+	if vm, err = s.admitWake(ctx, vm); err != nil {
 		return vm, err
 	}
+	// Leaving waking frees a boot slot, and a failed boot its RAM too.
+	defer s.freed.signal(vm.NodeID)
 	node, err := s.node(ctx, vm.NodeID)
 	if err != nil {
 		_ = s.store.Transition(context.WithoutCancel(ctx), id, []State{StateWaking}, StateParked, TransitionOptions{LastError: errCodeBoot})
@@ -460,6 +524,7 @@ func (s *Scheduler) parkLocked(ctx context.Context, id string) error {
 		_ = s.store.Transition(context.WithoutCancel(ctx), id, []State{StateParking}, StateFailed, TransitionOptions{LastError: errCodeStop})
 		return fmt.Errorf("dbsched: park %s: %w", id, err)
 	}
+	defer s.freed.signal(vm.NodeID)
 	return s.store.Transition(ctx, id, []State{StateParking}, StateParked, TransitionOptions{})
 }
 
@@ -846,4 +911,87 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}
+}
+
+// admitWake admits a parked database's wake (ADR-1027 wake storms). While
+// its node is at its RAM ceiling or boot slots, the wake waits, up to
+// WakeQueueWait, and retries when this process frees a slot or RAM on the
+// node, or after a jittered backoff for other replicas'; over the ceiling
+// it first parks a database nobody is connected to. Waiting wakes retry
+// independently, so admission is not first-come-first-served.
+func (s *Scheduler) admitWake(ctx context.Context, vm VM) (VM, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.WakeQueueWait)
+	defer cancel()
+	started, delay := s.now(), 20*time.Millisecond
+	for {
+		freed := s.freed.wait(vm.NodeID) // before admission, so no signal is missed
+		admitted, err := s.store.AdmitWake(ctx, vm.DatabaseID)
+		if errors.Is(err, ErrNoCapacity) && s.evictIdle(ctx, vm.NodeID, vm.DatabaseID) {
+			continue
+		}
+		if !errors.Is(err, ErrNoCapacity) && !errors.Is(err, ErrBootSlotsBusy) {
+			if err == nil && s.now().Sub(started) > time.Second {
+				s.log.Info("dbsched: wake admitted after queueing", "database_id", vm.DatabaseID, "node_id", vm.NodeID, "waited", s.now().Sub(started))
+			}
+			return admitted, err
+		}
+		select {
+		case <-ctx.Done():
+			s.log.Warn("dbsched: wake not admitted", "database_id", vm.DatabaseID, "node_id", vm.NodeID, "err", err)
+			return vm, err
+		case <-freed:
+			continue
+		case <-time.After(delay + time.Duration(rand.Int64N(int64(delay)))): //nolint:gosec // jitter, not security
+		}
+		delay = min(2*delay, 500*time.Millisecond)
+	}
+}
+
+// evictIdle parks the node's longest-idle scale-to-zero database that has
+// had no activity for EvictIdleAfter, to make room for another's wake. A
+// database whose lock is busy, or that turned active meanwhile, is
+// skipped. It reports whether one was parked.
+func (s *Scheduler) evictIdle(ctx context.Context, nodeID, except string) bool {
+	if s.cfg.EvictIdleAfter < 0 {
+		return false
+	}
+	running, err := s.store.List(ctx, StateRunning)
+	if err != nil {
+		return false
+	}
+	cutoff := s.now().Add(-s.cfg.EvictIdleAfter)
+	idle := func(vm VM) bool {
+		return vm.NodeID == nodeID && vm.DatabaseID != except && vm.State == StateRunning && !vm.AlwaysOn &&
+			!vm.ResizePending && vm.LastActiveAt.Before(cutoff)
+	}
+	slices.SortFunc(running, func(a, b VM) int { return a.LastActiveAt.Compare(b.LastActiveAt) })
+	for _, candidate := range running {
+		if !idle(candidate) {
+			continue
+		}
+		unlock, ok := s.tryLock(candidate.DatabaseID)
+		if !ok {
+			continue
+		}
+		parked := s.evictLocked(ctx, candidate.DatabaseID, idle)
+		unlock()
+		if parked {
+			s.log.Info("dbsched: parked an idle database for a wake", "database_id", candidate.DatabaseID, "node_id", nodeID, "for", except)
+			return true
+		}
+	}
+	return false
+}
+
+// evictLocked parks a database if it is still idle under its lock.
+func (s *Scheduler) evictLocked(ctx context.Context, id string, idle func(VM) bool) bool {
+	vm, err := s.store.Get(ctx, id)
+	if err != nil || !idle(vm) {
+		return false
+	}
+	if err := s.parkLocked(ctx, id); err != nil {
+		s.log.Warn("dbsched: eviction park failed", "database_id", id, "err", err)
+		return false
+	}
+	return true
 }

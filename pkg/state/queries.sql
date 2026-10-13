@@ -18443,26 +18443,28 @@ UPDATE customer_workflow_playbook_progress SET payload=sqlc.arg(payload),revisio
 -- written only by schedd's database scheduler (pkg/dbsched).
 
 -- name: UpsertDatabaseNode :exec
-INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle)
-VALUES (sqlc.arg(id), sqlc.arg(target_url), sqlc.arg(admission_ceiling_mb), sqlc.arg(volume_capacity_bytes), sqlc.arg(lifecycle))
+INSERT INTO database_nodes (id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle)
+VALUES (sqlc.arg(id), sqlc.arg(target_url), sqlc.arg(admission_ceiling_mb), sqlc.arg(volume_capacity_bytes), sqlc.arg(boot_slots), sqlc.arg(lifecycle))
 ON CONFLICT (id) DO UPDATE SET target_url = EXCLUDED.target_url,
     admission_ceiling_mb = EXCLUDED.admission_ceiling_mb,
     volume_capacity_bytes = EXCLUDED.volume_capacity_bytes,
+    boot_slots = EXCLUDED.boot_slots,
     lifecycle = EXCLUDED.lifecycle, updated_at = now();
 
 -- name: ListDatabaseNodes :many
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes ORDER BY id;
 
 -- name: LockDatabaseNode :one
-SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, lifecycle
+SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, lifecycle
 FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
     COALESCE(sum(v.mem_mib) FILTER (WHERE v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms
+    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
+    count(v.database_id) FILTER (WHERE v.state = 'waking')::bigint AS waking_vms
 FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id
 GROUP BY n.id ORDER BY n.id;
 
