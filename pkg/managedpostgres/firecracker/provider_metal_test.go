@@ -17,6 +17,7 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,9 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dbcreds"
+	"github.com/onebox-faas/faas/pkg/dbroute"
 	"github.com/onebox-faas/faas/pkg/dbsched"
 	"github.com/onebox-faas/faas/pkg/dbvm"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -201,11 +204,34 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 	go func() { _ = proxy.Serve(ctx, ln) }()
-	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	_, proxyPort, _ := net.SplitHostPort(ln.Addr().String())
 
-	// connect uses the material as an app would, except that the endpoint
-	// resolves to the test proxy.
-	connect := func(m managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
+	// The app route (ADR-1027): the node-local forwarder relays bytes to
+	// pgproxyd. The host DNAT is proven by pkg/netns's metal test; here the
+	// original destination is the route's, as SO_ORIGINAL_DST reports it.
+	route, err := dbroute.New(dbroute.Config{
+		Upstreams:   []string{ln.Addr().String()},
+		Destination: netip.AddrPortFrom(api.DatabaseRouteAddress(), api.DatabaseRoutePort),
+		OriginalDestination: func(net.Conn) (netip.AddrPort, error) {
+			return netip.AddrPortFrom(api.DatabaseRouteAddress(), api.DatabaseRoutePort), nil
+		},
+		DialTimeout:          api.DatabaseRouteDialTimeout,
+		MaxSessions:          api.DatabaseRouteSessionsPerNodeMax,
+		MaxSessionsPerSource: api.DatabaseRouteSessionsPerSourceMax,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = route.Serve(ctx, routeLn) }()
+	_, routePort, _ := net.SplitHostPort(routeLn.Addr().String())
+
+	// connectVia uses the material as an app would, except that the
+	// endpoint resolves to a local port: the proxy or the route.
+	connectVia := func(port string, m managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
 		ep := m.Endpoints[0]
 		pc, err := pgx.ParseConfig("host=" + ep.Host + " port=" + port + " user=" + m.Username + " password=" + m.Password +
 			" dbname=" + m.Database + " sslmode=" + m.TLSMode + " connect_timeout=30")
@@ -219,11 +245,14 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 		pc.TLSConfig.ServerName = ep.Host
 		return pgx.ConnectConfig(ctx, pc)
 	}
+	connect := func(m managedpostgres.CredentialMaterial) (*pgx.Conn, error) { return connectVia(proxyPort, m) }
 
+	// The cold connection takes the app route: TLS, SNI routing, SCRAM and
+	// the wake all cross the L4 hop.
 	started = time.Now()
-	conn, err := connect(mig)
+	conn, err := connectVia(routePort, mig)
 	if err != nil {
-		t.Fatalf("migration login through the proxy: %v", err)
+		t.Fatalf("migration login through the app route: %v", err)
 	}
 	coldConnect := time.Since(started)
 	if _, err := conn.Exec(ctx, "CREATE TABLE notes (id bigserial PRIMARY KEY, body text)"); err != nil {
@@ -260,6 +289,6 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workdir, "drivervolumes", id+".img")); !os.IsNotExist(err) {
 		t.Fatalf("volume survived delete: %v", err)
 	}
-	t.Logf("provision %v; issue credential %v; parked -> first query through proxy %v",
+	t.Logf("provision %v; issue credential %v; parked -> first query through the app route %v",
 		provisioned.Round(time.Millisecond), issued.Round(time.Millisecond), coldConnect.Round(time.Millisecond))
 }

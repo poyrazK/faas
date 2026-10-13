@@ -341,6 +341,13 @@ type ComputeNodeConfig struct {
 	// node records compute_nodes.service_address_ready_at so service DNS only
 	// hands addresses to instances whose netns carries the admission.
 	ServiceTCPEnabled bool `toml:"service_tcp_enabled"`
+	// DatabaseRouteEnabled turns on the managed-database route (ADR-1027):
+	// every new netns admits guest TCP to api.DatabaseRouteAddress on the
+	// PostgreSQL port, and the runtime host policy DNATs it onto the
+	// gatewayd-internal forwarder that relays to pgproxyd. Pair with the
+	// nftables role's faas_database_route_enabled and gatewayd-internal's
+	// database_route_listen.
+	DatabaseRouteEnabled bool `toml:"database_route_enabled"`
 	// PrivateNetworkTransportInterface is the underlay NIC used for VXLAN
 	// packets. Empty falls back to OverlayInterface, which keeps the common
 	// Tailscale/WireGuard deployment concise.
@@ -960,6 +967,9 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 	}
 	if cfg.ServiceTCPEnabled {
 		policy.ServiceTCP = netns.NewServiceTCPHostPolicy(api.ServiceAddressCIDR(), bridge.Masked().Addr().Next(), api.ServiceTCPProxyPort, serviceHTTPS)
+	}
+	if cfg.DatabaseRouteEnabled {
+		policy.DatabaseRoute = netns.NewDatabaseRouteHostPolicy(api.DatabaseRouteAddress(), bridge.Masked().Addr().Next(), api.DatabaseRouteProxyPort)
 	}
 	return policy
 }

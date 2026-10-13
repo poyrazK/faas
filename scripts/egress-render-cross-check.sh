@@ -38,11 +38,13 @@ render_go() {
   local tenant="${5:-}"
   local svc_bridge="${6:-}"
   local svc_https="${7:-}"
+  local db_bridge="${8:-}"
   local out
   out=$(cd "$SRC_ROOT" && FAAS_PUBLIC_IFACE="$iface" FAAS_MASQUERADE_CIDR="$cidr" \
         FAAS_OVERLAY_CIDRS="$overlay" FAAS_MASQUERADE_CIDR_V6="$v6" \
         FAAS_TENANT_EGRESS_IFACE="$tenant" \
         FAAS_SERVICE_TCP_BRIDGE_IP="$svc_bridge" FAAS_SERVICE_TCP_HTTPS="$svc_https" \
+        FAAS_DATABASE_ROUTE_BRIDGE_IP="$db_bridge" \
         go run ./cmd/faas-nft-render 2>/dev/null)
   # Normalize trailing newline so the per-row diff is whitespace-
   # insensitive (Go's pkg/netns.Render emits a final \n; the python
@@ -62,6 +64,7 @@ render_jinja() {
   local tenant="${5:-}"
   local svc_bridge="${6:-}"
   local svc_https="${7:-}"
+  local db_bridge="${8:-}"
   python3 -c "
 from jinja2 import Template
 overlay = '$overlay'
@@ -72,9 +75,10 @@ print(Template(open('$JINJA2').read()).render(
     overlay_cidrs=o_list,
     masquerade_cidr_v6='$v6',
     tenant_egress_iface='$tenant',
-    bridge_cidr='$svc_bridge/16',
+    bridge_cidr='${svc_bridge:-$db_bridge}/16',
     faas_service_tcp_enabled=bool('$svc_bridge'),
     faas_service_tcp_https_enabled='$svc_https' == '1',
+    faas_database_route_enabled=bool('$db_bridge'),
 ), end='')
 " 2>/dev/null | python3 -c "import sys; sys.stdout.write(sys.stdin.read().rstrip('\n') + '\n')"
 }
@@ -164,6 +168,9 @@ main() {
         "tenant-gateway|eth0|10.100.0.0/16|203.0.113.0/24|fc00::/7|wg-tenant"
         "service-tcp|eth0|10.100.0.0/16||||10.100.0.1|"
         "service-tcp-https|ens5|10.101.0.0/16|203.0.113.0/24|||10.101.0.1|1"
+        # ADR-1027: the managed-database route, alone and beside ADR-576.
+        "database-route|eth0|10.100.0.0/16|||||10.100.0.1"
+        "service-tcp-database-route|ens5|10.101.0.0/16|203.0.113.0/24|||10.101.0.1|1|10.101.0.1"
       )
       ;;
     *)
@@ -172,10 +179,10 @@ main() {
       ;;
   esac
   for row in "${rows[@]}"; do
-    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https <<< "$row"
+    IFS='|' read -r label iface cidr overlay v6 tenant svc_bridge svc_https db_bridge <<< "$row"
     local go_out jinja_out
-    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https")
-    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https")
+    go_out=$(render_go "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge")
+    jinja_out=$(render_jinja "$iface" "$cidr" "$overlay" "$v6" "$tenant" "$svc_bridge" "$svc_https" "$db_bridge")
     if ! compare "$label" "$go_out" "$jinja_out"; then
       status=1
     fi

@@ -525,6 +525,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	} else {
 		netns.SetDefaultServiceAddressCIDR(netip.Prefix{})
 	}
+	// ADR-1027: the database route is seeded the same way.
+	if cfg.ComputeNode.DatabaseRouteEnabled {
+		netns.SetDefaultDatabaseRouteAddress(api.DatabaseRouteAddress())
+	} else {
+		netns.SetDefaultDatabaseRouteAddress(netip.Addr{})
+	}
 	// Runtime policy rebuilds happen after every VM cache mutation. Seed the
 	// mutable policy from this host's deployment-owned network values before
 	// any wake can trigger a render; otherwise the package default (eth0)

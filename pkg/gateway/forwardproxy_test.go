@@ -424,6 +424,31 @@ func (f *fakeVmmdClient) ForwardTCPStream(context.Context, ...grpc.CallOption) (
 	panic("ForwardTCPStream: not stubbed (HTTP gateway tests do not use the L4 bridge)")
 }
 
+// Database VM RPCs (ADR-1027) run on database nodes, never behind the gateway.
+func (f *fakeVmmdClient) CreateDatabaseVolume(context.Context, *vmmdpb.CreateDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.CreateDatabaseVolumeResponse, error) {
+	panic("CreateDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) DeleteDatabaseVolume(context.Context, *vmmdpb.DeleteDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.DeleteDatabaseVolumeResponse, error) {
+	panic("DeleteDatabaseVolume: not stubbed")
+}
+
+func (f *fakeVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
+	panic("StartDatabase: not stubbed")
+}
+
+func (f *fakeVmmdClient) StopDatabase(context.Context, *vmmdpb.StopDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StopDatabaseResponse, error) {
+	panic("StopDatabase: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseControl(context.Context, *vmmdpb.DatabaseControlRequest, ...grpc.CallOption) (*vmmdpb.DatabaseControlResponse, error) {
+	panic("DatabaseControl: not stubbed")
+}
+
+func (f *fakeVmmdClient) DatabaseSession(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	panic("DatabaseSession: not stubbed")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")

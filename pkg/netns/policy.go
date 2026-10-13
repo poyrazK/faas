@@ -185,6 +185,53 @@ type HostPolicy struct {
 	// ServiceTCP renders the host half of private TCP service addressing
 	// (ADR-576). Nil renders nothing, keeping the pre-ADR-576 ruleset.
 	ServiceTCP *ServiceTCPHostPolicy
+
+	// DatabaseRoute renders the host half of the managed-database route
+	// (ADR-1027). Nil renders nothing.
+	DatabaseRoute *DatabaseRouteHostPolicy
+}
+
+// DatabaseRouteHostPolicy is the host side of the managed-database route
+// (ADR-1027). Guest TCP to Address on DatabaseRoutePort reaches the bridge
+// already masqueraded to the instance's host IP; the nat prerouting chain
+// sends it to the forwarder on the bridge, which relays it to pgproxyd. The
+// forward chain drops anything else addressed to Address so it never leaves
+// the host.
+type DatabaseRouteHostPolicy struct {
+	Address netip.Addr
+	// BridgeIP is the tenant-bridge address the forwarder binds.
+	BridgeIP netip.Addr
+	// ProxyPort is the forwarder's reserved bridge port.
+	ProxyPort int
+}
+
+// NewDatabaseRouteHostPolicy returns the host policy for one tenant bridge.
+func NewDatabaseRouteHostPolicy(address, bridgeIP netip.Addr, proxyPort int) *DatabaseRouteHostPolicy {
+	return &DatabaseRouteHostPolicy{Address: address, BridgeIP: bridgeIP, ProxyPort: proxyPort}
+}
+
+// validate panics on a policy that would capture or leak traffic.
+func (p *DatabaseRouteHostPolicy) validate(masquerade netip.Prefix, overlays []string, service *ServiceTCPHostPolicy) {
+	if !p.Address.Is4() || masquerade.Contains(p.Address) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.Address %s must be IPv4 outside MasqueradeCIDR %s", p.Address, masquerade))
+	}
+	if !p.BridgeIP.Is4() || !masquerade.Contains(p.BridgeIP) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.BridgeIP %s is not inside MasqueradeCIDR %s", p.BridgeIP, masquerade))
+	}
+	for _, raw := range overlays {
+		if overlay, err := netip.ParsePrefix(strings.TrimSpace(raw)); err == nil && overlay.Contains(p.Address) {
+			panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.Address %s is inside overlay %s", p.Address, overlay))
+		}
+	}
+	if service != nil && service.AddressCIDR.Contains(p.Address) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.Address %s is inside the service block %s", p.Address, service.AddressCIDR))
+	}
+	if p.ProxyPort < 1 || p.ProxyPort > 65535 || p.ProxyPort == DatabaseRoutePort {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute has invalid proxy port %d", p.ProxyPort))
+	}
+	if service != nil && (p.ProxyPort == service.ProxyPort || slices.Contains(service.HTTPPorts, p.ProxyPort)) {
+		panic(fmt.Sprintf("netns: HostPolicy.Render: DatabaseRoute.ProxyPort %d collides with a service listener", p.ProxyPort))
+	}
 }
 
 // ServiceTCPHostPolicy is the host side of private TCP service addressing
@@ -576,6 +623,9 @@ func (h HostPolicy) Render() string {
 	if h.ServiceTCP != nil {
 		h.ServiceTCP.validate(masqPrefix, h.OverlayCIDRs)
 	}
+	if h.DatabaseRoute != nil {
+		h.DatabaseRoute.validate(masqPrefix, h.OverlayCIDRs, h.ServiceTCP)
+	}
 
 	denyPorts := h.DenySet.SMTPPortsCommaSet()
 	allowPorts := joinInts(h.InputAllowTCPPorts, ",")
@@ -663,6 +713,9 @@ func (h HostPolicy) Render() string {
 	if h.ServiceTCP != nil {
 		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-576: service addresses never leave the host\n", h.ServiceTCP.AddressCIDR)
 	}
+	if h.DatabaseRoute != nil {
+		fmt.Fprintf(&b, "    ip daddr %s drop     # ADR-1027: the database route never leaves the host\n", h.DatabaseRoute.Address)
+	}
 	// Hobby+ SMTP exception: explicit per-app destination CIDRs may use
 	// authenticated submission ports. These rules intentionally follow
 	// the internal/private deny block and precede the universal SMTP drop.
@@ -711,15 +764,21 @@ func (h HostPolicy) Render() string {
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
 	b.WriteString("  }\n")
 	b.WriteString("\n")
-	if p := h.ServiceTCP; p != nil {
-		ports := slices.Clone(p.HTTPPorts)
-		slices.Sort(ports)
+	if h.ServiceTCP != nil || h.DatabaseRoute != nil {
 		b.WriteString("  chain prerouting {\n")
 		b.WriteString("    type nat hook prerouting priority dstnat; policy accept;\n")
-		fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport { %s } dnat ip to %s\n",
-			h.BridgeName, p.AddressCIDR, joinInts(ports, ", "), p.BridgeIP)
-		fmt.Fprintf(&b, "    iifname %q ip daddr %s meta l4proto tcp dnat ip to %s:%d\n",
-			h.BridgeName, p.AddressCIDR, p.BridgeIP, p.ProxyPort)
+		if p := h.ServiceTCP; p != nil {
+			ports := slices.Clone(p.HTTPPorts)
+			slices.Sort(ports)
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport { %s } dnat ip to %s\n",
+				h.BridgeName, p.AddressCIDR, joinInts(ports, ", "), p.BridgeIP)
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s meta l4proto tcp dnat ip to %s:%d\n",
+				h.BridgeName, p.AddressCIDR, p.BridgeIP, p.ProxyPort)
+		}
+		if p := h.DatabaseRoute; p != nil {
+			fmt.Fprintf(&b, "    iifname %q ip daddr %s tcp dport %d dnat ip to %s:%d\n",
+				h.BridgeName, p.Address, DatabaseRoutePort, p.BridgeIP, p.ProxyPort)
+		}
 		b.WriteString("  }\n")
 		b.WriteString("\n")
 	}

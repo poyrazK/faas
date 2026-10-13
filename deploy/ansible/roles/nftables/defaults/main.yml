@@ -102,3 +102,9 @@ faas_udpd_allowed_cidrs: []
 # service HTTPS listener (gatewayd_service_proxy_https_listen) is staged.
 faas_service_tcp_enabled: false
 faas_service_tcp_https_enabled: false
+
+# ADR-1027 managed-database route: guests reach pgproxyd at 198.18.0.1:5432
+# through the gatewayd-internal forwarder on the bridge (:10083). Mirrors
+# vmmd's database_route_enabled so a reboot keeps the boot-time ruleset
+# identical to the runtime render.
+faas_database_route_enabled: false

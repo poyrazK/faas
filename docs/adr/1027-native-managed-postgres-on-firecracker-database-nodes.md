@@ -174,6 +174,74 @@ a stale cached verifier cannot be retried within the handshake; the proxy
 drops the cached entry after any failed login and the next attempt reads
 the current verifier.
 
+### App route
+
+Apps reach their databases without an egress port on any plan. Neon needed
+`egress-ports add 5432`, which only Pro and Scale may declare (ADR-361).
+Database traffic to Gregale's own proxy is a platform hop, like ADR-576's
+service addresses, so it is not tenant egress. This amends ADR-361 in the
+same way ADR-576 did.
+
+```
+guest ──connect 198.18.0.1:5432──► netns forward: accept (ahead of every ADR-361/373 rule)
+      ──masquerade──► host nat prerouting: dnat to <bridge>:10083
+      ──► gatewayd-internal forwarder (pkg/dbroute)
+          SO_ORIGINAL_DST must be 198.18.0.1:5432; per-source and per-node session caps
+      ──overlay──► any pgproxyd ──► schedd wake ──► vmmd DatabaseSession ──► VM
+```
+
+- **Address.** `api.DatabaseRouteAddress` is `198.18.0.1`. It sits in the
+  RFC 2544 block, in the half ADR-576 does not use, and is the same on every
+  node, so an address cached inside a snapshot stays valid after a restore
+  elsewhere. Only TCP 5432 is admitted. The host drops everything else
+  addressed to it, so nothing sent there ever leaves the node.
+- **DNS.** The guest resolver answers `<database-id>.<host_suffix>` (one
+  label under the suffix) with the address for 60 s, and AAAA with nothing.
+  The connection string is the same one external clients use, so TLS
+  `verify-full` against pgproxyd's wildcard certificate and SNI routing work
+  unchanged. Deeper names and the suffix itself are still forwarded upstream.
+- **Forwarder.** It relays bytes only. TLS, SNI routing and SCRAM stay end
+  to end between the client and pgproxyd, so the forwarder holds no
+  credentials and cannot read a session. Any pgproxyd serves any database,
+  so the forwarder tries its configured upstreams in rotation and fails
+  over on a dial error. Caps: 256 concurrent sessions per instance and 8,192
+  per node (`pkg/api/limits.go`). If one direction ends and the other
+  stalls, both are closed after 10 s.
+- **Why not allow 5432 to the database nodes' public addresses.** With a
+  tenant egress gateway (ADR-372) that traffic would leave through the
+  WireGuard gateway and come back. Every database connection would then
+  depend on the gateway, pay two extra hops, and carry the gateway's
+  address. The overlay keeps it on the platform network.
+- **Rollout.** There are three switches, enabled together per node:
+  - vmmd `[compute_node] database_route_enabled`: netns admission and the
+    runtime host NAT;
+  - the nftables role's `faas_database_route_enabled`: the boot-time ruleset,
+    kept byte-identical by `make egress-check`;
+  - gatewayd-internal `database_route_listen`, `database_route_upstreams`
+    and `database_route_host_suffix`.
+
+  New namespaces carry the admission. A prepared namespace from before the
+  switch no longer matches the requested config, so it is never reused.
+  Running instances pick the admission up on their next wake. Until then a
+  guest's connection fails closed: the resolver already answers with the
+  route, but the old namespace drops it.
+- **Database nodes.** pgproxyd must accept connections on the overlay from
+  compute nodes. Its default `listen_addr` (`:5432`) already does; the
+  database node's host firewall must allow the overlay to reach 5432.
+
+Evidence:
+- **Unit tests:** netns rule order (the route precedes the fan-out, DNS-gate,
+  allowlist and port-policy rules), the host policy and its safety panics,
+  Go/Jinja parity (`database-route` rows in the cross-check), the forwarder
+  (half-close, destination check, failover, caps), the resolver, and
+  gatewayd/vmmd config.
+- **Metal, netns:** `TestMetalDatabaseRouteReachesForwarderWithOriginalDestination`
+  shows a Free-plan, DNS-gated guest reaching the forwarder with the right
+  original destination. Other ports, UDP, the bridge port itself, and
+  namespaces without the admission are dropped.
+- **Metal, driver:** `TestMetalDriverEndToEnd` connects through the
+  forwarder to a parked database in 1.07 s, against 1.01 s direct.
+
 ### Driver
 
 `pkg/managedpostgres/firecracker` is the `managedpostgres.Provider` for this

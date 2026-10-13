@@ -38,6 +38,38 @@ type ServiceDiscoveryDNSHandler struct {
 	onResolved    ResolvedEgressHook
 	serviceAddr   ServiceAddressLookup
 	scenarioChaos *serviceDiscoveryDNSChaos
+	database      databaseRoute
+}
+
+// databaseRoute answers <database-id>.<suffix> with the platform database
+// route address (ADR-1027).
+type databaseRoute struct {
+	suffix string
+	addr   netip.Addr
+	ttl    uint32
+}
+
+// WithDatabaseRoute answers every <label>.<suffix> A query with addr, the
+// managed-database route the host DNATs to pgproxyd, and AAAA with nothing.
+// The answer grants nothing by itself: pgproxyd authenticates every session
+// before it wakes a database. Deeper names and the suffix itself are still
+// forwarded upstream.
+func (h *ServiceDiscoveryDNSHandler) WithDatabaseRoute(suffix string, addr netip.Addr, ttl time.Duration) (*ServiceDiscoveryDNSHandler, error) {
+	suffix = strings.Trim(strings.ToLower(strings.TrimSpace(suffix)), ".")
+	if suffix == "" || !addr.Is4() {
+		return nil, fmt.Errorf("service discovery DNS: invalid database route %q -> %s", suffix, addr)
+	}
+	for _, label := range strings.Split(suffix, ".") {
+		if !validServiceDNSLabel(label) {
+			return nil, fmt.Errorf("service discovery DNS: invalid database route suffix %q", suffix)
+		}
+	}
+	h.database = databaseRoute{suffix: suffix, addr: addr, ttl: uint32(ttl / time.Second)}
+	return h, nil
+}
+
+func (h *ServiceDiscoveryDNSHandler) databaseRouteName(name string) bool {
+	return h.database.suffix != "" && privateServiceName(name, h.database.suffix) != ""
 }
 
 // ServiceAddressLookup returns the private service address (ADR-576) the
@@ -184,7 +216,7 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	lookupCtx, cancelLookup := context.WithTimeout(context.Background(), serviceDiscoveryTimeout)
 	defer cancelLookup()
 	for _, question := range req.Question {
-		if serviceDiscoveryName(question.Name) != "" {
+		if serviceDiscoveryName(question.Name) != "" || h.databaseRouteName(question.Name) {
 			private = true
 			continue
 		}
@@ -246,6 +278,13 @@ func (h *ServiceDiscoveryDNSHandler) ServeDNS(w dns.ResponseWriter, req *dns.Msg
 	for _, question := range req.Question {
 		switch question.Qtype {
 		case dns.TypeA:
+			if h.databaseRouteName(question.Name) {
+				msg.Answer = append(msg.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: h.database.ttl},
+					A:   h.database.addr.AsSlice(),
+				})
+				continue
+			}
 			answer := h.bridgeIP
 			if service := serviceDiscoveryName(question.Name); service != "" && h.serviceAddr != nil {
 				if addr, ok := h.serviceAddr(responseCtx, remote, service); ok && addr.Is4() {

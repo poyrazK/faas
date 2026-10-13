@@ -65,6 +65,18 @@ type Config struct {
 	// ServiceTCPListen, so raw TCP to an answered address always has a proxy.
 	ServiceTCPDNS bool `toml:"service_tcp_dns"`
 
+	// DatabaseRouteListen enables the app route to managed databases
+	// (ADR-1027). It must bind the service proxy bridge address on the
+	// reserved port 10083, where the host DNATs guest traffic to
+	// 198.18.0.1:5432. The forwarder relays bytes to DatabaseRouteUpstreams
+	// (pgproxyd host:port over the overlay); TLS and SCRAM stay end to end.
+	DatabaseRouteListen    string   `toml:"database_route_listen"`
+	DatabaseRouteUpstreams []string `toml:"database_route_upstreams"`
+	// DatabaseRouteHostSuffix makes the guest resolver answer
+	// <database-id>.<suffix> with the route address. Requires
+	// DatabaseRouteListen.
+	DatabaseRouteHostSuffix string `toml:"database_route_host_suffix"`
+
 	// AppsDomain is the platform wildcard suffix (e.g. "gregale.dev").
 	// gatewayd routes <slug>.<apps_domain> to the customer's app and
 	// applies the apps-suffix host guard. Empty disables wildcard routing

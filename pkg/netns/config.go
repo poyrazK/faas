@@ -31,6 +31,7 @@ const (
 	LegacyServiceProxyPort  = 10080        // compatibility for persisted bindings (ADR-169)
 	ServiceProxyHTTPSPort   = 443          // opt-in private HTTPS service proxy on HostBridgeIP
 	ServiceDiscoveryDNSPort = 53           // guest service-name resolver on HostBridgeIP (ADR-170)
+	DatabaseRoutePort       = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
 	TenantBridge            = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
@@ -69,6 +70,15 @@ var DefaultServiceAddressCIDR netip.Prefix
 // SetDefaultServiceAddressCIDR is vmmd's boot-time setter for
 // DefaultServiceAddressCIDR. Pass the zero prefix to disable.
 func SetDefaultServiceAddressCIDR(prefix netip.Prefix) { DefaultServiceAddressCIDR = prefix }
+
+// DefaultDatabaseRouteAddress is seeded by vmmd before any network is
+// prepared (ADR-1027). The zero address keeps the database route off: no
+// netns admits it, and the host renders no database NAT.
+var DefaultDatabaseRouteAddress netip.Addr
+
+// SetDefaultDatabaseRouteAddress is vmmd's boot-time setter for
+// DefaultDatabaseRouteAddress. Pass the zero address to disable.
+func SetDefaultDatabaseRouteAddress(addr netip.Addr) { DefaultDatabaseRouteAddress = addr }
 
 // SetDefaultHostBridgeIP is the boot-time setter for the per-host
 // bridge IP. Mirrors the pattern of pkg/fcvm.SetHostIPBase: callers
@@ -230,6 +240,10 @@ type Config struct {
 	// (ADR-576). The host DNATs that traffic onto the tenant-bridge service
 	// listeners. The zero prefix admits nothing.
 	ServiceAddressCIDR netip.Prefix
+	// DatabaseRouteAddress admits guest TCP to the managed-database route
+	// on api.DatabaseRoutePort (ADR-1027). The host DNATs it onto the
+	// forwarder that relays to pgproxyd. The zero address admits nothing.
+	DatabaseRouteAddress netip.Addr
 }
 
 // NewConfig fills the constant fields (tap name, /16) around the allocated names
@@ -255,8 +269,9 @@ func NewConfigWithBridge(instance, netnsName, vethHost, vethPeer string, hostIP,
 		ServiceProxyHTTPS: DefaultServiceProxyHTTPS,
 		// ADR-576: part of Config so a prepared namespace (ADR-149) built
 		// before the switch flipped is never reused without the admission.
-		ServiceAddressCIDR: DefaultServiceAddressCIDR,
-		HostBits:           16,
+		ServiceAddressCIDR:   DefaultServiceAddressCIDR,
+		DatabaseRouteAddress: DefaultDatabaseRouteAddress,
+		HostBits:             16,
 	}
 }
 
@@ -287,6 +302,21 @@ func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 			"ip", "daddr", c.PrivateNetworkAddress.String(), "tcp", "dport", port, "dnat", "to", target))
 	}
 	return rules
+}
+
+// databaseRouteRules admits guest TCP to the database route's one port
+// (ADR-1027) and drops everything else sent to the address. Like a service
+// address it is a platform hop, so the accept precedes every ADR-361/373
+// egress rule, and the per-instance conntrack cap still bounds it.
+func (c Config) databaseRouteRules(nft func(...string) []string) [][]string {
+	addr := c.DatabaseRouteAddress
+	if !addr.IsValid() || !addr.Is4() {
+		return nil
+	}
+	return [][]string{
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "tcp", "dport", strconv.Itoa(DatabaseRoutePort), "accept"),
+		nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop"),
+	}
 }
 
 // serviceAddressRules admits guest TCP to private service addresses
@@ -688,6 +718,7 @@ func (c Config) NftCommands() [][]string {
 			"oifname", c.Tap, "ip", "daddr", GuestIP, "meta", "l4proto", "tcp",
 			"ct", "status", "dnat", "accept")
 		cmds = append(cmds, c.serviceAddressRules(nft)...)
+		cmds = append(cmds, c.databaseRouteRules(nft)...)
 	}
 
 	// Lateral-movement deny (spec §11 + ADR-023 + ADR-034) — the v4
