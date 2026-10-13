@@ -66,6 +66,7 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 		return out, err
 	}
 	out.CoordinationCheckedAt = time.Now().UTC().Truncate(time.Microsecond)
+	projectWorkflowCaseNextActions(&out, rows, tenant, opts, operator)
 	for _, row := range rows {
 		if err = ctx.Err(); err != nil {
 			return out, err

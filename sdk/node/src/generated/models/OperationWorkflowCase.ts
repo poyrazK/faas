@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowCaseAction } from './OperationWorkflowCaseAction.js';
+import type { OperationWorkflowCaseNextAction } from './OperationWorkflowCaseNextAction.js';
 import type { OperationWorkflowCoordinationTimeline } from './OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
 import type { OperationWorkflowPlaybookGuidance } from './OperationWorkflowPlaybookGuidance.js';
@@ -12,6 +13,18 @@ import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowRead
  * OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
  */
 export type OperationWorkflowCase = {
+  /**
+   * Current obligations and suggestions from retained source records, matched to the exact case before follow-up page truncation. Ordered overdue first, then dated work by due time. Historical delivery snapshots do not create work.
+   */
+  next_actions: Array<OperationWorkflowCaseNextAction>;
+  /**
+   * Number of retained matching action rows before the 100-row cap. One source can have several obligations; this is not a workflow or global task count.
+   */
+  next_action_count: number;
+  /**
+   * Additional retained actions were omitted from the bounded response.
+   */
+  next_actions_truncated: boolean;
   /**
    * OperationWorkflowCase.playbook_progress. Durable pinned checklists for this exact case, retained independently of inboxes and current guidance; at most 100.
    */

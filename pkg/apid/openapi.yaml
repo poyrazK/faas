@@ -82328,10 +82328,50 @@ components:
           format: int64
           minimum: 1
           description: OperationWorkflowCaseAction.sequence. Retained source notification sequence.
+    OperationWorkflowCaseNextAction:
+      type: object
+      additionalProperties: false
+      description: One current coordination obligation or suggestion for an exact workflow case, including the responsible label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references matching this case. This does not authorize application execution or infer business completion.
+      required: [kind, summary, trigger, overdue, subscription_id, sequence]
+      properties:
+        kind:
+          type: string
+          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
+        summary:
+          type: string
+        owner:
+          type: string
+        trigger:
+          type: string
+          enum: [human, automatic, suggested]
+          description: Human obligation, automatic scheduled worker check or optional operator suggestion. Opening controls does not perform the action.
+        due_at:
+          type: string
+          format: date-time
+        overdue:
+          type: boolean
+          description: This action's own due time is at or before coordination_checked_at. Undated suggestions are never overdue.
+        subscription_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        evidence:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReviewResponseLink'
+        shared_plan:
+          type: boolean
+          description: The originating plan or completion has references to other workflow cases. Case evidence is filtered; the source controls act on the shared record.
     OperationWorkflowCase:
       type: object
       description: OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
       required:
+      - next_actions
+      - next_action_count
+      - next_actions_truncated
       - playbook_progress
       - guidance
       - guidance_status
@@ -82350,6 +82390,18 @@ components:
       - evaluated_at
       - limitations
       properties:
+        next_actions:
+          type: array
+          maxItems: 100
+          description: Current obligations and suggestions from retained source records, matched to the exact case before follow-up page truncation. Ordered overdue first, then dated work by due time. Historical delivery snapshots do not create work.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowCaseNextAction'
+        next_action_count:
+          type: integer
+          description: Number of retained matching action rows before the 100-row cap. One source can have several obligations; this is not a workflow or global task count.
+        next_actions_truncated:
+          type: boolean
+          description: Additional retained actions were omitted from the bounded response.
         playbook_progress:
           type: array
           maxItems: 100

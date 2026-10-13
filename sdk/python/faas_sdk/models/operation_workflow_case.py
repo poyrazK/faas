@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
+    from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
     from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
     from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
     from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
@@ -29,6 +30,15 @@ T = TypeVar("T", bound="OperationWorkflowCase")
 class OperationWorkflowCase:
     """OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow."""
 
+    next_actions: list[OperationWorkflowCaseNextAction]
+    """Current obligations and suggestions from retained source records, matched to the exact case before follow-up
+    page truncation. Ordered overdue first, then dated work by due time. Historical delivery snapshots do not create
+    work."""
+    next_action_count: int
+    """Number of retained matching action rows before the 100-row cap. One source can have several obligations;
+    this is not a workflow or global task count."""
+    next_actions_truncated: bool
+    """Additional retained actions were omitted from the bounded response."""
     playbook_progress: list[OperationWorkflowPlaybookProgress]
     """OperationWorkflowCase.playbook_progress. Durable pinned checklists for this exact case, retained
     independently of inboxes and current guidance; at most 100."""
@@ -81,6 +91,15 @@ class OperationWorkflowCase:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        next_actions = []
+        for next_actions_item_data in self.next_actions:
+            next_actions_item = next_actions_item_data.to_dict()
+            next_actions.append(next_actions_item)
+
+        next_action_count = self.next_action_count
+
+        next_actions_truncated = self.next_actions_truncated
+
         playbook_progress = []
         for playbook_progress_item_data in self.playbook_progress:
             playbook_progress_item = playbook_progress_item_data.to_dict()
@@ -135,6 +154,9 @@ class OperationWorkflowCase:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "next_actions": next_actions,
+                "next_action_count": next_action_count,
+                "next_actions_truncated": next_actions_truncated,
                 "playbook_progress": playbook_progress,
                 "guidance": guidance,
                 "guidance_status": guidance_status,
@@ -162,6 +184,7 @@ class OperationWorkflowCase:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
+        from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
         from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
         from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
         from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
@@ -169,6 +192,17 @@ class OperationWorkflowCase:
         from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
 
         d = dict(src_dict)
+        next_actions = []
+        _next_actions = d.pop("next_actions")
+        for next_actions_item_data in _next_actions:
+            next_actions_item = OperationWorkflowCaseNextAction.from_dict(next_actions_item_data)
+
+            next_actions.append(next_actions_item)
+
+        next_action_count = d.pop("next_action_count")
+
+        next_actions_truncated = d.pop("next_actions_truncated")
+
         playbook_progress = []
         _playbook_progress = d.pop("playbook_progress")
         for playbook_progress_item_data in _playbook_progress:
@@ -231,6 +265,9 @@ class OperationWorkflowCase:
             instance = OperationWorkflowInstanceSnapshot.from_dict(_instance)
 
         operation_workflow_case = cls(
+            next_actions=next_actions,
+            next_action_count=next_action_count,
+            next_actions_truncated=next_actions_truncated,
             playbook_progress=playbook_progress,
             guidance=guidance,
             guidance_status=guidance_status,

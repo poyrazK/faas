@@ -412,6 +412,9 @@ type OperationWorkflowCaseAction struct {
 	Sequence       int64  `json:"sequence,omitempty"`
 }
 type OperationWorkflowCase struct {
+	NextActions           []OperationWorkflowCaseNextAction     `json:"next_actions"`
+	NextActionCount       int                                   `json:"next_action_count"`
+	NextActionsTruncated  bool                                  `json:"next_actions_truncated"`
 	PlaybookProgress      []OperationWorkflowPlaybookProgress   `json:"playbook_progress"`
 	Guidance              []OperationWorkflowPlaybookGuidance   `json:"guidance"`
 	GuidanceStatus        string                                `json:"guidance_status"`
@@ -821,4 +824,18 @@ type OperationWorkflowReviewResponseScheduledReviewReschedule struct {
 	Reason        string    `json:"reason"`
 	Actor         string    `json:"actor"`
 	At            time.Time `json:"at"`
+}
+
+// Current coordination obligations for an exact workflow case, separate from execution permission.
+type OperationWorkflowCaseNextAction struct {
+	Kind           string                                `json:"kind"`
+	Summary        string                                `json:"summary"`
+	Owner          string                                `json:"owner,omitempty"`
+	Trigger        string                                `json:"trigger"`
+	DueAt          *time.Time                            `json:"due_at,omitempty"`
+	Overdue        bool                                  `json:"overdue"`
+	SubscriptionID string                                `json:"subscription_id"`
+	Sequence       int64                                 `json:"sequence"`
+	Evidence       []OperationWorkflowReviewResponseLink `json:"evidence,omitempty"`
+	SharedPlan     bool                                  `json:"shared_plan,omitempty"`
 }

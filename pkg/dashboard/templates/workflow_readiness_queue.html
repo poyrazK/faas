@@ -1004,6 +1004,17 @@
    }
    if(instance.awaiting_verification_count)caseView.append(node('p','Awaiting application verification: '+instance.awaiting_verification_count));
   }
+  caseView.append(node('h4','Next actions for this workflow'),node('p',(result.next_action_count||0)+' retained action rows · Human obligations, scheduled checks and optional suggestions are shown separately.'));
+  if(!(result.next_actions||[]).length)caseView.append(node('p','No outstanding actions were found in retained coordination. This does not establish business completion.'));
+  const actionList=node('ol','');
+  for(const action of result.next_actions||[]){
+   const item=node('li','');item.append(node('p',action.kind.replace(/_/g,' ')+' · '+(action.trigger==='automatic'?'Scheduled worker check':action.trigger==='suggested'?'Optional next step':'Human action')+' · '+(action.owner||'Unassigned')+(action.due_at?' · '+(action.overdue?'Overdue · ':'Due · ')+clock(action.due_at):' · No recorded deadline')));item.append(node('p',action.summary));
+   if(action.shared_plan)item.append(node('p','This plan also covers other workflow cases. Source controls apply to the shared record.'));
+   const url=safeURL(root.dataset.queueUrl);url.searchParams.set('scope',result.timeline.scope);url.searchParams.delete('tenant_id');url.hash='readiness-subscriptions/'+encodeURIComponent(action.subscription_id)+'/'+action.sequence;const link=node('a','Open action controls');link.href=url.href;item.append(link);
+   for(const ref of action.evidence||[]){const evidenceURL=safeURL(root.dataset.queueUrl);evidenceURL.searchParams.set('scope',result.timeline.scope);evidenceURL.searchParams.delete('tenant_id');evidenceURL.hash='readiness-subscriptions/'+encodeURIComponent(ref.subscription_id)+'/'+ref.sequence;const evidence=node('a','Linked review evidence · '+ref.outcome_code+' step '+(ref.item_index+1));evidence.href=evidenceURL.href;item.append(node('br',''),evidence);}
+   actionList.append(item);
+  }
+  caseView.append(actionList);if(result.next_actions_truncated)caseView.append(node('p','More retained actions exist than the 100 rows shown. Open the relevant source inboxes to inspect the remaining work.'));
   caseView.append(node('h4','Application playbook guidance'));
   const guidanceMessages={not_declared:'No playbooks are declared by the current reporting definition.',evidence_unavailable:'Fresh application evidence is required before matching playbooks.',definition_unavailable:'The exact reporting definition is unavailable; no substitute guidance is used.'};
   if(result.guidance_status!=='available')caseView.append(node('p',guidanceMessages[result.guidance_status]||'Playbook guidance is unavailable.'));

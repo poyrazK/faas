@@ -1143,6 +1143,7 @@ export type { OperationWorkflowBlockerResolution } from './models/OperationWorkf
 export type { OperationWorkflowBottlenecks } from './models/OperationWorkflowBottlenecks.js';
 export type { OperationWorkflowCase } from './models/OperationWorkflowCase.js';
 export type { OperationWorkflowCaseAction } from './models/OperationWorkflowCaseAction.js';
+export type { OperationWorkflowCaseNextAction } from './models/OperationWorkflowCaseNextAction.js';
 export type { OperationWorkflowChangeReason } from './models/OperationWorkflowChangeReason.js';
 export type { OperationWorkflowConditionChange } from './models/OperationWorkflowConditionChange.js';
 export type { OperationWorkflowConditionComparison } from './models/OperationWorkflowConditionComparison.js';
