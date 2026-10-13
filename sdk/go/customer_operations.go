@@ -460,3 +460,6 @@ type OperationWorkflowObligationTargetRequest = api.OperationWorkflowObligationT
 
 type OperationWorkflowObligationFulfillment = api.OperationWorkflowObligationFulfillment
 type OperationWorkflowObligationFulfillmentRequest = api.OperationWorkflowObligationFulfillmentRequest
+
+type OperationWorkflowObligationReopening = api.OperationWorkflowObligationReopening
+type OperationWorkflowObligationReopeningRequest = api.OperationWorkflowObligationReopeningRequest

@@ -3,12 +3,17 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
+import type { OperationWorkflowObligationReopening } from './OperationWorkflowObligationReopening.js';
 import type { OperationWorkflowObligationTargetBinding } from './OperationWorkflowObligationTargetBinding.js';
 import type { OperationWorkflowReadinessCompletion } from './OperationWorkflowReadinessCompletion.js';
 /**
  * OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordination = {
+  /**
+   * Retained immutable human reopening receipts. Capacity exhaustion rejects further reopening without pruning prior decisions.
+   */
+  reopenings?: Array<OperationWorkflowObligationReopening>;
   /**
    * Immutable exact-case cycle fulfillment receipts. Capacity exhaustion rejects further fulfillment; receipts are never pruned into reopened work.
    */

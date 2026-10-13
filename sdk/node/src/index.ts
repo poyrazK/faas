@@ -410,3 +410,5 @@ export type { OperationWorkflowObligationTargetBinding } from './customer-operat
 export type { OperationWorkflowObligationTargetRequest } from './customer-operations.js';
 
 export type { OperationWorkflowObligationFulfillment, OperationWorkflowObligationFulfillmentRequest } from './customer-operations.js';
+
+export type { OperationWorkflowObligationReopening, OperationWorkflowObligationReopeningRequest } from './customer-operations.js';

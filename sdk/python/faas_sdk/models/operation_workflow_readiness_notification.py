@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
     from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
     from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
+    from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
     from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
     from ..models.operation_workflow_playbook_completion_review_event import (
         OperationWorkflowPlaybookCompletionReviewEvent,
@@ -74,6 +75,10 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    obligation_reopening: OperationWorkflowObligationReopening | Unset = UNSET
+    """Immutable human decision to restore one current-source case/cycle to work, retaining the original
+    fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate
+    suppression. A subsequent fulfillment requires a report published after this reopening."""
     target_assessment: OperationWorkflowObligationAssessment | Unset = UNSET
     """Coordination assessment for one displayed outstanding source action. Human reviews, ownership acceptance and
     worker checks are distinct from executing application transitions. Free-form response/coordinator plans remain
@@ -172,6 +177,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        obligation_reopening: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.obligation_reopening, Unset):
+            obligation_reopening = self.obligation_reopening.to_dict()
 
         target_assessment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.target_assessment, Unset):
@@ -293,6 +302,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if obligation_reopening is not UNSET:
+            field_dict["obligation_reopening"] = obligation_reopening
         if target_assessment is not UNSET:
             field_dict["target_assessment"] = target_assessment
         if obligation_receipts is not UNSET:
@@ -355,6 +366,7 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
         from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
         from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
+        from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
         from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
         from ..models.operation_workflow_playbook_completion_review_event import (
             OperationWorkflowPlaybookCompletionReviewEvent,
@@ -409,6 +421,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _obligation_reopening = d.pop("obligation_reopening", UNSET)
+        obligation_reopening: OperationWorkflowObligationReopening | Unset
+        if isinstance(_obligation_reopening, Unset):
+            obligation_reopening = UNSET
+        else:
+            obligation_reopening = OperationWorkflowObligationReopening.from_dict(_obligation_reopening)
 
         _target_assessment = d.pop("target_assessment", UNSET)
         target_assessment: OperationWorkflowObligationAssessment | Unset
@@ -604,6 +623,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            obligation_reopening=obligation_reopening,
             target_assessment=target_assessment,
             obligation_receipts=obligation_receipts,
             obligation_receipts_truncated=obligation_receipts_truncated,

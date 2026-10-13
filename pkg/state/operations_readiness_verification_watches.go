@@ -9,6 +9,7 @@ import (
 )
 
 type readinessWatchUpdate struct {
+	Reopening             *api.OperationWorkflowObligationReopening
 	TargetAssessment      *api.OperationWorkflowObligationAssessment
 	ScheduledActionReview *scheduledActionReviewUpdate
 	EscalationCommitment  *reviewEscalationCommitmentUpdate
@@ -150,6 +151,9 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
 func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+	if u.Reopening != nil {
+		return applyObligationReopeningNotice(r, n, u)
+	}
 	if u.TargetAssessment != nil {
 		return applyObligationTargetObservation(r, n, u)
 	}

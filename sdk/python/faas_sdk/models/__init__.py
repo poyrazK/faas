@@ -7702,3 +7702,9 @@ __all__ += (
     "OperationWorkflowObligationFulfillmentRequest",
     "OperationWorkflowObligationFulfillmentActionKind",
 )
+
+from .operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
+from .operation_workflow_obligation_reopening_action_kind import OperationWorkflowObligationReopeningActionKind
+from .operation_workflow_obligation_reopening_request import OperationWorkflowObligationReopeningRequest
+
+__all__ += ('OperationWorkflowObligationReopening', 'OperationWorkflowObligationReopeningActionKind', 'OperationWorkflowObligationReopeningRequest')

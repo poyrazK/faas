@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+    from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
     from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
     from ..models.operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
 
@@ -45,6 +46,9 @@ class OperationWorkflowReadinessCoordination:
     updated_by: str
     """OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter application
     evidence."""
+    reopenings: list[OperationWorkflowObligationReopening] | Unset = UNSET
+    """Retained immutable human reopening receipts. Capacity exhaustion rejects further reopening without pruning
+    prior decisions."""
     fulfillments: list[OperationWorkflowObligationFulfillment] | Unset = UNSET
     """Immutable exact-case cycle fulfillment receipts. Capacity exhaustion rejects further fulfillment; receipts
     are never pruned into reopened work."""
@@ -74,6 +78,13 @@ class OperationWorkflowReadinessCoordination:
         updated_at = self.updated_at.isoformat()
 
         updated_by = self.updated_by
+
+        reopenings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.reopenings, Unset):
+            reopenings = []
+            for reopenings_item_data in self.reopenings:
+                reopenings_item = reopenings_item_data.to_dict()
+                reopenings.append(reopenings_item)
 
         fulfillments: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.fulfillments, Unset):
@@ -115,6 +126,8 @@ class OperationWorkflowReadinessCoordination:
                 "updated_by": updated_by,
             }
         )
+        if reopenings is not UNSET:
+            field_dict["reopenings"] = reopenings
         if fulfillments is not UNSET:
             field_dict["fulfillments"] = fulfillments
         if target_bindings is not UNSET:
@@ -133,6 +146,7 @@ class OperationWorkflowReadinessCoordination:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+        from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
         from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
         from ..models.operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
 
@@ -148,6 +162,15 @@ class OperationWorkflowReadinessCoordination:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         updated_by = d.pop("updated_by")
+
+        _reopenings = d.pop("reopenings", UNSET)
+        reopenings: list[OperationWorkflowObligationReopening] | Unset = UNSET
+        if _reopenings is not UNSET:
+            reopenings = []
+            for reopenings_item_data in _reopenings:
+                reopenings_item = OperationWorkflowObligationReopening.from_dict(reopenings_item_data)
+
+                reopenings.append(reopenings_item)
 
         _fulfillments = d.pop("fulfillments", UNSET)
         fulfillments: list[OperationWorkflowObligationFulfillment] | Unset = UNSET
@@ -197,6 +220,7 @@ class OperationWorkflowReadinessCoordination:
             note=note,
             updated_at=updated_at,
             updated_by=updated_by,
+            reopenings=reopenings,
             fulfillments=fulfillments,
             target_bindings=target_bindings,
             completion=completion,

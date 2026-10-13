@@ -54,6 +54,11 @@ func (h *workflowCaseObligationHistory) collect(subscription api.OperationWorkfl
 			value.Evidence.PlatformTenantID = ""
 			event.Fulfillment = &value
 		}
+		if !h.operator && event.Reopening != nil {
+			value := *event.Reopening
+			value.Binding.Case.PlatformTenantID = ""
+			event.Reopening = &value
+		}
 		shared := event.SharedPlan || len(event.Cases) > 1
 		event.Cases = selected
 		group := groups[event.ObligationID]

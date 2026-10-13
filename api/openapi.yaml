@@ -79365,6 +79365,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        obligation_reopening:
+          $ref: '#/components/schemas/OperationWorkflowObligationReopening'
         target_assessment:
           $ref: '#/components/schemas/OperationWorkflowObligationAssessment'
           description: Bound target prerequisite change observed by the worker; fulfillment and execution remain explicit.
@@ -79446,6 +79448,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - obligation_reopened
           - obligation_target_changed
           - next_action_digest
           - review_response_escalation_action_checked
@@ -79540,6 +79543,8 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        reopening:
+          $ref: '#/components/schemas/OperationWorkflowObligationReopeningRequest'
         fulfillment:
           $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentRequest'
         target_binding:
@@ -79590,6 +79595,12 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        reopenings:
+          type: array
+          maxItems: 128
+          description: Retained immutable human reopening receipts. Capacity exhaustion rejects further reopening without pruning prior decisions.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationReopening'
         fulfillments:
           type: array
           maxItems: 128
@@ -82551,6 +82562,8 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        reopening:
+          $ref: '#/components/schemas/OperationWorkflowObligationReopening'
         fulfillment:
           $ref: '#/components/schemas/OperationWorkflowObligationFulfillment'
         target_binding:
@@ -82571,7 +82584,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened]
         at:
           type: string
           format: date-time
@@ -82886,6 +82899,53 @@ components:
           type: string
           format: date-time
         completed_by:
+          type: string
+    OperationWorkflowObligationReopeningRequest:
+      type: object
+      additionalProperties: false
+      description: Explicitly reopen the latest fulfillment for an exact bound case and current source cycle, with a reason. Preserve source status, owner, note and deadline; cannot combine with other action edits. Retired sources, superseded cycles and changed/cleared bindings cannot be reopened. Reopening does not execute an application transition.
+      required: [binding, fulfilled_at, reason]
+      properties:
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        fulfilled_at:
+          type: string
+          format: date-time
+          description: Completion time of the exact latest fulfillment being reopened.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+    OperationWorkflowObligationReopening:
+      type: object
+      additionalProperties: false
+      description: Immutable human decision to restore one current-source case/cycle to work, retaining the original fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate suppression. A subsequent fulfillment requires a report published after this reopening.
+      required: [source_sequence, binding, fulfilled_at, reason, action_kind, owner, reopened_at, reopened_by]
+      properties:
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Source notification sequence within the delivering readiness subscription.
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        fulfilled_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        action_kind:
+          type: string
+          enum: [response_check_in, coordinator_completion, follow_up]
+        owner:
+          type: string
+        reopened_at:
+          type: string
+          format: date-time
+        reopened_by:
           type: string
     OperationWorkflowObligationAssessment:
       type: object

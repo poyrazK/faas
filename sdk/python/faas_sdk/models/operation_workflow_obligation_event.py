@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+    from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
     from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
     from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 
@@ -32,6 +33,10 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    reopening: OperationWorkflowObligationReopening | Unset = UNSET
+    """Immutable human decision to restore one current-source case/cycle to work, retaining the original
+    fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate
+    suppression. A subsequent fulfillment requires a report published after this reopening."""
     fulfillment: OperationWorkflowObligationFulfillment | Unset = UNSET
     """Immutable human fulfillment receipt for one exact case and obligation cycle, linked to a retained
     application transition report. Does not close a shared source plan or assert business success or execution
@@ -60,6 +65,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        reopening: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reopening, Unset):
+            reopening = self.reopening.to_dict()
 
         fulfillment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.fulfillment, Unset):
@@ -97,6 +106,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if reopening is not UNSET:
+            field_dict["reopening"] = reopening
         if fulfillment is not UNSET:
             field_dict["fulfillment"] = fulfillment
         if target_binding is not UNSET:
@@ -120,6 +131,7 @@ class OperationWorkflowObligationEvent:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+        from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
         from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
         from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
 
@@ -129,6 +141,13 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _reopening = d.pop("reopening", UNSET)
+        reopening: OperationWorkflowObligationReopening | Unset
+        if isinstance(_reopening, Unset):
+            reopening = UNSET
+        else:
+            reopening = OperationWorkflowObligationReopening.from_dict(_reopening)
 
         _fulfillment = d.pop("fulfillment", UNSET)
         fulfillment: OperationWorkflowObligationFulfillment | Unset
@@ -172,6 +191,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            reopening=reopening,
             fulfillment=fulfillment,
             target_binding=target_binding,
             replacement=replacement,

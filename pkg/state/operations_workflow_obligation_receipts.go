@@ -10,7 +10,7 @@ import (
 
 // Capture only transitions in the locked source, never reconstruct an audit from old snapshots.
 func captureObligationReceipts(id, scope string, before, after api.OperationWorkflowReadinessNotification, actor string) api.OperationWorkflowReadinessNotification {
-	if after.NextActionDigest != nil || after.TargetAssessment != nil {
+	if after.NextActionDigest != nil || after.TargetAssessment != nil || after.ObligationReopening != nil {
 		return after
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -44,6 +44,7 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 		return result
 	}
 	old, current := actions(before), actions(after)
+	reopenings := newObligationReopenings(before.Coordination, after.Coordination)
 	receipts := slices.Clone(before.ObligationReceipts)
 	add := func(id, kind, explanation string) {
 		receipts = append(receipts, api.OperationWorkflowObligationEvent{Cases: slices.Clone(cases[id]), ActionKind: kinds[id], SharedPlan: len(cases[id]) > 1, ObligationID: id, Kind: kind, At: now, Actor: actor, Explanation: explanation})
@@ -71,7 +72,9 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 		fulfilled := false
 		if after.Coordination != nil {
 			for _, receipt := range after.Coordination.Fulfillments {
-				if receipt.Binding.ObligationID == id && (before.Coordination == nil || !obligationFulfilled(*before.Coordination, id, receipt.Binding.Case, "")) {
+				if receipt.Binding.ObligationID == id && (before.Coordination == nil || !slices.ContainsFunc(before.Coordination.Fulfillments, func(previous api.OperationWorkflowObligationFulfillment) bool {
+					return readinessDigest(previous) == readinessDigest(receipt)
+				})) {
 					fulfilled = true
 				}
 			}
@@ -120,14 +123,18 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 	}
 	slices.Sort(keys)
 	for _, id := range keys {
-		if _, exists := old[id]; !exists {
+		if _, exists := old[id]; !exists && !slices.ContainsFunc(reopenings, func(reopening api.OperationWorkflowObligationReopening) bool {
+			return reopening.Binding.ObligationID == id
+		}) {
 			add(id, "assigned", "This obligation became active for "+current[id].Owner+".")
 		}
 	}
 	if after.Coordination != nil {
 		for _, receipt := range after.Coordination.Fulfillments {
 			event := fulfillmentEvent(receipt)
-			if before.Coordination != nil && obligationFulfilled(*before.Coordination, receipt.Binding.ObligationID, receipt.Binding.Case, "") {
+			if before.Coordination != nil && slices.ContainsFunc(before.Coordination.Fulfillments, func(previous api.OperationWorkflowObligationFulfillment) bool {
+				return readinessDigest(previous) == readinessDigest(receipt)
+			}) {
 				continue
 			}
 			event.SharedPlan = len(cases[receipt.Binding.ObligationID]) > 1
@@ -135,6 +142,11 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 				receipts = append(receipts, event)
 			}
 		}
+	}
+	for _, reopening := range reopenings {
+		event := reopeningEvent(reopening)
+		event.SharedPlan = len(cases[reopening.Binding.ObligationID]) > 1
+		receipts = append(receipts, event)
 	}
 	receipts = captureObligationTargetReceipts(before, after, old, current, cases, actor, now, receipts)
 	receipts = linkObligationSuccessors(before, after, old, current, cases, actor, now, receipts)

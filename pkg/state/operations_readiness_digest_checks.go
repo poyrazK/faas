@@ -117,7 +117,7 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEvent, saved api.OperationWorkflowNextActionQueueItem, tenant, selectedTenant, sourceTenant string, operator bool) []api.OperationWorkflowObligationEvent {
 	out := []api.OperationWorkflowObligationEvent{}
 	for _, event := range events {
-		visible := event.Replacement == nil && event.TargetBinding == nil && event.Fulfillment == nil
+		visible := event.Replacement == nil && event.TargetBinding == nil && event.Fulfillment == nil && event.Reopening == nil
 		if !visible {
 			for _, covered := range event.Cases {
 				for _, delivered := range saved.Cases {
@@ -148,6 +148,11 @@ func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEve
 				value.Binding.Case.PlatformTenantID = ""
 				value.Evidence.PlatformTenantID = ""
 				event.Fulfillment = &value
+			}
+			if !operator && event.Reopening != nil {
+				value := *event.Reopening
+				value.Binding.Case.PlatformTenantID = ""
+				event.Reopening = &value
 			}
 			event.Cases = nil
 			out = append(out, event)

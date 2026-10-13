@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_obligation_fulfillment_request import OperationWorkflowObligationFulfillmentRequest
+    from ..models.operation_workflow_obligation_reopening_request import OperationWorkflowObligationReopeningRequest
     from ..models.operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
     from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
     from ..models.operation_workflow_review_response_request import OperationWorkflowReviewResponseRequest
@@ -41,6 +42,11 @@ class OperationWorkflowReadinessCoordinationRequest:
     note: str
     """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
     evidence."""
+    reopening: OperationWorkflowObligationReopeningRequest | Unset = UNSET
+    """Explicitly reopen the latest fulfillment for an exact bound case and current source cycle, with a reason.
+    Preserve source status, owner, note and deadline; cannot combine with other action edits. Retired sources,
+    superseded cycles and changed/cleared bindings cannot be reopened. Reopening does not execute an application
+    transition."""
     fulfillment: OperationWorkflowObligationFulfillmentRequest | Unset = UNSET
     """Explicit fulfillment of one current bound case/cycle. Must preserve source status, owner, note and deadline
     and cannot combine with target binding, response or shared completion edits. The full binding fences replacement
@@ -72,6 +78,10 @@ class OperationWorkflowReadinessCoordinationRequest:
 
         note = self.note
 
+        reopening: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reopening, Unset):
+            reopening = self.reopening.to_dict()
+
         fulfillment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.fulfillment, Unset):
             fulfillment = self.fulfillment.to_dict()
@@ -102,6 +112,8 @@ class OperationWorkflowReadinessCoordinationRequest:
                 "note": note,
             }
         )
+        if reopening is not UNSET:
+            field_dict["reopening"] = reopening
         if fulfillment is not UNSET:
             field_dict["fulfillment"] = fulfillment
         if target_binding is not UNSET:
@@ -120,6 +132,7 @@ class OperationWorkflowReadinessCoordinationRequest:
         from ..models.operation_workflow_obligation_fulfillment_request import (
             OperationWorkflowObligationFulfillmentRequest,
         )
+        from ..models.operation_workflow_obligation_reopening_request import OperationWorkflowObligationReopeningRequest
         from ..models.operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
         from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
         from ..models.operation_workflow_review_response_request import OperationWorkflowReviewResponseRequest
@@ -132,6 +145,13 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = d.pop("owner")
 
         note = d.pop("note")
+
+        _reopening = d.pop("reopening", UNSET)
+        reopening: OperationWorkflowObligationReopeningRequest | Unset
+        if isinstance(_reopening, Unset):
+            reopening = UNSET
+        else:
+            reopening = OperationWorkflowObligationReopeningRequest.from_dict(_reopening)
 
         _fulfillment = d.pop("fulfillment", UNSET)
         fulfillment: OperationWorkflowObligationFulfillmentRequest | Unset
@@ -173,6 +193,7 @@ class OperationWorkflowReadinessCoordinationRequest:
             status=status,
             owner=owner,
             note=note,
+            reopening=reopening,
             fulfillment=fulfillment,
             target_binding=target_binding,
             review_response=review_response,

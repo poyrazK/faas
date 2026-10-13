@@ -45,6 +45,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	ObligationReopening         *OperationWorkflowObligationReopening                    `json:"obligation_reopening,omitempty"`
 	TargetAssessment            *OperationWorkflowObligationAssessment                   `json:"target_assessment,omitempty"`
 	ObligationReceipts          []OperationWorkflowObligationEvent                       `json:"obligation_receipts,omitempty"`
 	ObligationReceiptsTruncated bool                                                     `json:"obligation_receipts_truncated,omitempty"`
@@ -89,6 +90,7 @@ type OperationWorkflowReadinessInboxResponse struct {
 
 // Coordination is shared inbox bookkeeping, never business workflow evidence.
 type OperationWorkflowReadinessCoordination struct {
+	Reopenings     []OperationWorkflowObligationReopening     `json:"reopenings,omitempty"`
 	Fulfillments   []OperationWorkflowObligationFulfillment   `json:"fulfillments,omitempty"`
 	TargetBindings []OperationWorkflowObligationTargetBinding `json:"target_bindings,omitempty"`
 	Completion     *OperationWorkflowReadinessCompletion      `json:"completion,omitempty"`
@@ -103,6 +105,7 @@ type OperationWorkflowReadinessCoordination struct {
 	AcknowledgedBy string                                     `json:"acknowledged_by,omitempty"`
 }
 type OperationWorkflowReadinessCoordinationRequest struct {
+	Reopening      *OperationWorkflowObligationReopeningRequest   `json:"reopening,omitempty"`
 	Fulfillment    *OperationWorkflowObligationFulfillmentRequest `json:"fulfillment,omitempty"`
 	TargetBinding  *OperationWorkflowObligationTargetRequest      `json:"target_binding,omitempty"`
 	ReviewResponse *OperationWorkflowReviewResponseRequest        `json:"review_response,omitempty"`
@@ -933,6 +936,7 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
+	Reopening     *OperationWorkflowObligationReopening     `json:"reopening,omitempty"`
 	Fulfillment   *OperationWorkflowObligationFulfillment   `json:"fulfillment,omitempty"`
 	TargetBinding *OperationWorkflowObligationTargetBinding `json:"target_binding,omitempty"`
 	Replacement   *OperationWorkflowObligationReplacement   `json:"replacement,omitempty"`
@@ -1026,4 +1030,20 @@ type OperationWorkflowObligationFulfillment struct {
 	EvidenceCheckedAt time.Time                                `json:"evidence_checked_at"`
 	CompletedAt       time.Time                                `json:"completed_at"`
 	CompletedBy       string                                   `json:"completed_by"`
+}
+
+type OperationWorkflowObligationReopeningRequest struct {
+	Binding     OperationWorkflowObligationTargetBinding `json:"binding"`
+	FulfilledAt time.Time                                `json:"fulfilled_at"`
+	Reason      string                                   `json:"reason"`
+}
+type OperationWorkflowObligationReopening struct {
+	SourceSequence int64                                    `json:"source_sequence"`
+	Binding        OperationWorkflowObligationTargetBinding `json:"binding"`
+	FulfilledAt    time.Time                                `json:"fulfilled_at"`
+	Reason         string                                   `json:"reason"`
+	ActionKind     string                                   `json:"action_kind"`
+	Owner          string                                   `json:"owner"`
+	ReopenedAt     time.Time                                `json:"reopened_at"`
+	ReopenedBy     string                                   `json:"reopened_by"`
 }

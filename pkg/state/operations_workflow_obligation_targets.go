@@ -16,7 +16,7 @@ func prepareObligationTarget(ctx context.Context, store readinessSubscriptionBac
 	if input == nil {
 		return nil, nil
 	}
-	if input.ObligationID == "" || len(input.ObligationID) > 128 || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || req.ReviewResponse != nil || req.Completion != nil || input.Clear == (input.Transition != nil) {
+	if input.ObligationID == "" || len(input.ObligationID) > 128 || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || req.Reopening != nil || req.ReviewResponse != nil || req.Completion != nil || input.Clear == (input.Transition != nil) {
 		return nil, ErrInvalidArgument
 	}
 	c := input.Case

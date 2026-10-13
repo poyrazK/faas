@@ -17,7 +17,7 @@ func prepareObligationFulfillment(ctx context.Context, store readinessSubscripti
 	if input == nil {
 		return nil, nil
 	}
-	if req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || input.EvidenceReportID == "" || len(input.EvidenceReportID) > 128 {
+	if req.Reopening != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 || input.EvidenceReportID == "" || len(input.EvidenceReportID) > 128 {
 		return nil, ErrInvalidArgument
 	}
 	operationID, err := uuid.Parse(input.EvidenceOperationID)
@@ -85,6 +85,12 @@ func prepareObligationFulfillment(ctx context.Context, store readinessSubscripti
 	if !sameOperationHistoryIdentity(op.AppID, app) || op.Scope != scope || !sameOperationHistoryIdentity(op.PlatformTenantID, evidenceTenant) || op.Subject == nil || *op.Subject != c.Subject || op.Name != binding.Transition.Operation {
 		return nil, ErrNotFound
 	}
+	evidenceAfter := binding.BoundAt
+	for _, reopening := range n.Coordination.Reopenings {
+		if reopening.Binding.ObligationID == binding.ObligationID && reopening.Binding.Case == binding.Case && reopening.ReopenedAt.After(evidenceAfter) {
+			evidenceAfter = reopening.ReopenedAt
+		}
+	}
 	// Scan a bounded exact-case feed. The named report must itself record the bound
 	// edge after binding, rather than a ready assessment or unrelated successful run.
 	projection := api.OperationMilestoneListOptions{AppID: app, Scope: scope, SubjectType: c.Subject.Type, SubjectID: c.Subject.ID, Workflow: c.Workflow, WorkflowInstanceID: c.InstanceID, Limit: api.OperationHistoryPageMax}
@@ -107,7 +113,7 @@ func prepareObligationFulfillment(ctx context.Context, store readinessSubscripti
 				continue
 			}
 			target := binding.Transition
-			if report.OperationID != operationID.String() || report.Workflow != c.Workflow || report.InstanceID != c.InstanceID || report.FromState != target.From || report.State != target.To || report.ContractVersion != target.ContractVersion || report.PublishedAt.Before(binding.BoundAt) || report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
+			if report.OperationID != operationID.String() || report.Workflow != c.Workflow || report.InstanceID != c.InstanceID || report.FromState != target.From || report.State != target.To || report.ContractVersion != target.ContractVersion || report.PublishedAt.Before(evidenceAfter) || report.BlockersOnly || report.DeadlineOnly || report.OutcomeOnly || report.DependenciesOnly {
 				return nil, ErrInvalidArgument
 			}
 			report.PlatformTenantID = c.PlatformTenantID
@@ -124,7 +130,8 @@ func prepareObligationFulfillment(ctx context.Context, store readinessSubscripti
 }
 
 func obligationFulfilled(coord api.OperationWorkflowReadinessCoordination, obligation string, c api.OperationWorkflowNextActionCase, sourceTenant string) bool {
-	for _, receipt := range coord.Fulfillments {
+	for i := len(coord.Fulfillments) - 1; i >= 0; i-- {
+		receipt := coord.Fulfillments[i]
 		b := receipt.Binding
 		actual, expected := b.Case.PlatformTenantID, c.PlatformTenantID
 		if actual == "" {
@@ -134,7 +141,7 @@ func obligationFulfilled(coord api.OperationWorkflowReadinessCoordination, oblig
 			expected = sourceTenant
 		}
 		if b.ObligationID == obligation && b.Case.Subject == c.Subject && b.Case.Workflow == c.Workflow && b.Case.InstanceID == c.InstanceID && (actual == expected || actual != "" && expected != "" && sameOperationHistoryIdentity(actual, expected)) {
-			return true
+			return !fulfillmentReopened(coord, receipt)
 		}
 	}
 	return false
@@ -203,6 +210,21 @@ func appendFulfillmentEvents(events []api.OperationWorkflowObligationEvent, coor
 		}
 		if !found {
 			events = append(events, fulfillmentEvent(receipt))
+		}
+	}
+	for _, reopening := range coord.Reopenings {
+		if obligation != "" && reopening.Binding.ObligationID != obligation {
+			continue
+		}
+		found := false
+		for _, event := range events {
+			if event.Reopening != nil && readinessDigest(*event.Reopening) == readinessDigest(reopening) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			events = append(events, reopeningEvent(reopening))
 		}
 	}
 	return events
