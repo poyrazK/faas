@@ -110,9 +110,9 @@ not counted. The existing account-level `tcpmetrics` series are unchanged.
 Two more bounded PromQL queries (same closed-set selectors; six per request
 now) fill `tcp_sessions`, `tcp_errors` and `tcp_cold_sessions`. Edges are the
 union of HTTP and TCP pairs, ranked by calls plus sessions, so a TCP-only
-pair is an edge with zero `calls` and zero latency. The wake-ahead suggestion
-stays HTTP-only: ADR-977 learns edges from HTTP service calls, so a TCP-only
-edge would be a suggestion wake-ahead cannot act on.
+pair is an edge with zero `calls` and zero latency. Because ADR-1134 teaches
+wake-ahead from private TCP sessions too, the wake-ahead suggestion counts cold
+calls plus cold sessions against calls plus sessions.
 
 ## Follow-ups
 

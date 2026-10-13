@@ -50,6 +50,7 @@ type tcpTestHarness struct {
 	release  string
 	dead     map[string]bool // instance IDs whose guest dial fails
 	caller   string          // app ID the "caller" source resolves to
+	preview  string          // PreviewOfSlug the caller authorizes as
 
 	mu   sync.Mutex
 	hops []Target
@@ -72,7 +73,7 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 			if h.authzErr != nil {
 				return ServiceCaller{}, h.authzErr
 			}
-			return ServiceCaller{AppID: callerAppID, AccountID: "acct", CallScope: h.scope}, nil
+			return ServiceCaller{AppID: callerAppID, AccountID: "acct", CallScope: h.scope, PreviewOfSlug: h.preview}, nil
 		},
 		ResolveCallerIdentity: func(_ context.Context, remoteAddr string) (string, string, error) {
 			switch remoteAddr {

@@ -10,6 +10,9 @@ import (
 
 func TestSuggestWakeAhead(t *testing.T) {
 	edge := func(calls, cold int64) api.ServiceMapEdge { return api.ServiceMapEdge{Calls: calls, ColdCalls: cold} }
+	tcp := func(sessions, cold int64) api.ServiceMapEdge {
+		return api.ServiceMapEdge{TCPSessions: sessions, TCPColdSessions: cold}
+	}
 	for _, tc := range []struct {
 		name    string
 		edge    api.ServiceMapEdge
@@ -21,6 +24,13 @@ func TestSuggestWakeAhead(t *testing.T) {
 		{name: "already opted in", edge: edge(40, 30), optedIn: true, want: false},
 		{name: "too few cold calls", edge: edge(20, 19), want: false},
 		{name: "mostly warm", edge: edge(100, 30), want: false},
+		// ADR-1134: private TCP sessions teach wake-ahead too.
+		{name: "TCP only, mostly cold", edge: tcp(30, 25), want: true},
+		{name: "TCP only, too few cold sessions", edge: tcp(30, 19), want: false},
+		{name: "calls and sessions together reach the bar",
+			edge: api.ServiceMapEdge{Calls: 12, ColdCalls: 10, TCPSessions: 14, TCPColdSessions: 10}, want: true},
+		{name: "warm calls outweigh cold sessions",
+			edge: api.ServiceMapEdge{Calls: 100, ColdCalls: 0, TCPSessions: 25, TCPColdSessions: 25}, want: false},
 	} {
 		if got := suggestWakeAhead(tc.edge, tc.optedIn); got != tc.want {
 			t.Errorf("%s: suggest = %v, want %v", tc.name, got, tc.want)

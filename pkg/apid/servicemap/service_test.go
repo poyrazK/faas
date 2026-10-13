@@ -225,8 +225,9 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 		case strings.Contains(query, "gateway_service_tcp_edge_wakes_total"):
 			return fmt.Sprintf(`{"status":"success","data":{"resultType":"vector","result":[`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[2]s"},"value":[1,"5"]},`+
+				`{"metric":{"caller_app":"%[1]s","target_app":"%[4]s"},"value":[1,"10"]},`+
 				`{"metric":{"caller_app":"%[1]s","target_app":"%[3]s"},"value":[1,"9"]}]}}`,
-				gw(publicAPIID), gw(ledgerID), gw(foreignID))
+				gw(publicAPIID), gw(ledgerID), gw(foreignID), gw(paymentsID))
 		default:
 			t.Errorf("unexpected query: %s", query)
 			return `{"status":"success","data":{"resultType":"vector","result":[]}}`
@@ -257,15 +258,16 @@ func TestGetServiceMap_HappyPath_WithProm(t *testing.T) {
 	if second := out.Edges[1]; second.CallerAppSlug != "payments" || second.TargetAppSlug != "ledger" || second.Calls != 10 {
 		t.Fatalf("second edge = %+v", second)
 	}
-	// 60 of 100 calls woke payments and public-api has not opted in: suggest.
+	// 60 of 100 calls and 10 of 30 TCP sessions woke payments (70 of 130),
+	// and public-api has not opted in: suggest.
 	if top.ColdCalls != 60 || math.Abs(top.ColdCallPct-60) > 1e-9 || !top.SuggestWakeAhead {
 		t.Fatalf("top edge cold = %d (%v%%) suggest=%v, want 60, 60%%, true", top.ColdCalls, top.ColdCallPct, top.SuggestWakeAhead)
 	}
 	if top.WakeAheadStarted != 10 || top.WakeAheadUsed != 8 {
 		t.Fatalf("top edge wake-ahead = %d started / %d used, want 10 / 8", top.WakeAheadStarted, top.WakeAheadUsed)
 	}
-	if top.TCPSessions != 30 || top.TCPErrors != 2 || top.TCPColdSessions != 0 {
-		t.Fatalf("top edge tcp = %d sessions / %d errors / %d cold, want 30 / 2 / 0", top.TCPSessions, top.TCPErrors, top.TCPColdSessions)
+	if top.TCPSessions != 30 || top.TCPErrors != 2 || top.TCPColdSessions != 10 {
+		t.Fatalf("top edge tcp = %d sessions / %d errors / %d cold, want 30 / 2 / 10", top.TCPSessions, top.TCPErrors, top.TCPColdSessions)
 	}
 	// A pair with only private TCP traffic is still an edge, ranked by its
 	// sessions; its sub-unit HTTP sample rounds away.

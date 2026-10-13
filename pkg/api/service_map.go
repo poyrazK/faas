@@ -65,7 +65,8 @@ type ServiceMapEdge struct {
 	// SuggestWakeAhead marks an edge where the caller has not opted into
 	// wake-ahead (ADR-977) and its calls mostly wake the target: at least
 	// ServiceWakeAheadMinWakes cold calls in the window, making up at least
-	// ServiceWakeAheadMinColdShare of the edge's calls.
+	// ServiceWakeAheadMinColdShare of the edge's calls. Private TCP sessions
+	// count as calls (ADR-1134).
 	SuggestWakeAhead bool `json:"suggest_wake_ahead"`
 	// WakeAheadStarted counts the ADR-977 wake-aheads the caller's wakes
 	// started for this target in the window; WakeAheadUsed counts those the

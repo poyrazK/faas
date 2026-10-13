@@ -1,7 +1,9 @@
 # Service wake-ahead
 
 When a parked app calls another parked app over `<slug>.svc.gregale`, Gregale
-holds the call while the second app restores. On a fully cold path such as
+holds the call while the second app restores. The same happens when an app
+opens a [private TCP connection](networking.md#private-tcp-between-services) to
+a parked service such as a database or a queue. On a fully cold path such as
 `public-api → auth → billing`, those restores happen one after another.
 
 Service wake-ahead lets an app start restoring the services it usually calls
@@ -21,8 +23,9 @@ seconds.
 
 Gregale only wakes services it has measured your app calling:
 
-- After each cold wake of the app, calls it makes in the next 10 seconds are
-  recorded.
+- After each cold wake of the app, the calls and private TCP connections it
+  makes to other services in the next 10 seconds are recorded. A connection
+  is recorded when it opens, however long it then stays open.
 - A service is woken ahead once the app has woken at least 20 times, called the
   service after at least half of those wakes, and found the service parked on
   at least half of those calls.

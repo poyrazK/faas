@@ -60,15 +60,15 @@ an edge do, the caller pays that restore again and again. Wake-ahead
 app calls while the app itself wakes, along the edges it has measured.
 
 The map marks an edge with a wake-ahead tip when the caller has not turned
-wake-ahead on yet, at least 20 calls in the window woke the target, and those
-calls are at least half of the edge's traffic — the same evidence wake-ahead
-itself needs before it acts. The API sets `suggest_wake_ahead: true` on such
+wake-ahead on yet, at least 20 calls or TCP sessions in the window woke the
+target, and those are at least half of the edge's traffic — the same evidence
+wake-ahead itself needs before it acts. The API sets `suggest_wake_ahead: true` on such
 edges and `wake_ahead_enabled` on each app. Wake-ahead restores bill like any
 wake (plan RAM per running second until the idle timeout parks the service).
 
-An edge with only TCP sessions has no HTTP calls, so it shows no latency and
-never carries a wake-ahead tip: the map suggests wake-ahead from HTTP calls,
-which is what wake-ahead learns from.
+An edge with only TCP sessions has no HTTP calls, so it shows no latency.
+Wake-ahead learns from TCP sessions as it does from calls, so such an edge can
+still carry a wake-ahead tip.
 
 Only calls between apps in your account appear. Traffic from the internet and
 calls your app makes to outside services are not edges on the map; use

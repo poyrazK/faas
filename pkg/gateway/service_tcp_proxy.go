@@ -211,8 +211,9 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 		return "", "unknown_service", nil
 	}
 	session.Bind(target.AccountID)
-	if reason, err := p.authorize(ctx, callerAppID, target, int(dst.Port())); reason != "" {
-		return "", reason, err
+	caller, denied, err := p.authorize(ctx, callerAppID, target, int(dst.Port()))
+	if denied != "" {
+		return "", denied, err
 	}
 	// From here the session is an authorized caller -> target attempt, and it
 	// is recorded on that service-map edge (ADR-1131) however it ends.
@@ -248,7 +249,7 @@ func (p *ServiceTCPProxy) serve(ctx context.Context, conn net.Conn, session *tcp
 			}
 		}
 	}
-	outcome, reason, woke, err = p.forward(ctx, conn, target, deploymentID, int(dst.Port()))
+	outcome, reason, woke, err = p.forward(ctx, conn, caller, target, deploymentID, int(dst.Port()))
 	return outcome, reason, err
 }
 
@@ -266,25 +267,25 @@ func (p *ServiceTCPProxy) observeEdge(callerAppID, targetAppID, outcome, reason 
 // authorize applies the HTTP mesh's tenant, binding, caller and preview
 // policy, then the TCP-only rules: a method/path call scope cannot be
 // enforced on raw bytes, and only declared TCP listeners are reachable.
-func (p *ServiceTCPProxy) authorize(ctx context.Context, callerAppID string, target ServiceTCPTarget, port int) (string, error) {
+func (p *ServiceTCPProxy) authorize(ctx context.Context, callerAppID string, target ServiceTCPTarget, port int) (ServiceCaller, string, error) {
 	caller, err := p.cfg.Services.authorize(ctx, callerAppID, target.AppID)
 	switch {
 	case errors.Is(err, ErrServiceProxyBindingDenied):
-		return "binding_denied", err
+		return caller, "binding_denied", err
 	case errors.Is(err, ErrServiceProxyCallerDenied):
-		return "caller_denied", err
+		return caller, "caller_denied", err
 	case errors.Is(err, ErrServiceProxyPreviewDenied), errors.Is(err, ErrServiceProxyPreviewProductionDenied):
-		return "preview_denied", err
+		return caller, "preview_denied", err
 	case errors.Is(err, ErrServiceProxyDenied):
-		return "denied", err
+		return caller, "denied", err
 	case err != nil:
-		return "authorization_unavailable", err
+		return caller, "authorization_unavailable", err
 	case caller.CallScope != nil:
-		return "call_scope", nil
+		return caller, "call_scope", nil
 	case !slices.Contains(target.TCPPorts, port):
-		return "undeclared_port", nil
+		return caller, "undeclared_port", nil
 	}
-	return "", nil
+	return caller, "", nil
 }
 
 // releaseDeployment keeps a caller inside its project release graph exactly
@@ -302,9 +303,9 @@ func (p *ServiceTCPProxy) releaseDeployment(ctx context.Context, callerAppID, ca
 // tries one alternate replica only when the first could not be dialed before
 // any client byte was read.
 // It also reports whether it had to wake the target.
-func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target ServiceTCPTarget, deploymentID string, port int) (string, string, bool, error) {
+func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller ServiceCaller, target ServiceTCPTarget, deploymentID string, port int) (string, string, bool, error) {
 	services := p.cfg.Services
-	woke := false
+	woke, observed := false, false
 	for attempt := 0; attempt < 2; attempt++ {
 		endpoints, attemptWoke, reason, err := p.routable(ctx, target.AppID, deploymentID)
 		woke = woke || attemptWoke
@@ -314,6 +315,13 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target Ser
 		endpoint, ok := services.pick(target.AppID, endpoints)
 		if !ok {
 			return "", "no_replica", woke, nil
+		}
+		if !observed {
+			// ADR-1134: the wake-ahead learner sees the session as it starts,
+			// like an HTTP call; a pooled database connection can stay open
+			// far past the caller's follow window.
+			services.observeWakeAheadCall(caller, ServiceTarget{AppID: target.AppID}, woke)
+			observed = true
 		}
 		hop := serviceEndpointTarget(target.AppID, endpoint)
 		hop.Port = port

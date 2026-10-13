@@ -260,10 +260,14 @@ func build(in samples, owned map[string]state.App, maxEdges int) ([]api.ServiceM
 
 // suggestWakeAhead applies the ADR-977 evidence bar to one edge: enough cold
 // calls to have taught wake-ahead the edge, and most of the edge's calls cold.
+// HTTP calls and private TCP sessions both teach wake-ahead (ADR-1134), so
+// they count together.
 func suggestWakeAhead(edge api.ServiceMapEdge, callerOptedIn bool) bool {
+	cold := edge.ColdCalls + edge.TCPColdSessions
+	total := edge.Calls + edge.TCPSessions
 	return !callerOptedIn &&
-		edge.ColdCalls >= api.ServiceWakeAheadMinWakes &&
-		float64(edge.ColdCalls) >= api.ServiceWakeAheadMinColdShare*float64(edge.Calls)
+		cold >= api.ServiceWakeAheadMinWakes &&
+		float64(cold) >= api.ServiceWakeAheadMinColdShare*float64(total)
 }
 
 // count rounds an increase() sample to a whole, non-negative count.

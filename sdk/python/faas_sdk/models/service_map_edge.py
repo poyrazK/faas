@@ -36,7 +36,8 @@ class ServiceMapEdge:
     suggest_wake_ahead: bool
     """The caller has not opted into wake-ahead (ADR-977) and its calls
     mostly wake the target: at least 20 cold calls in the window,
-    making up at least half of the edge's calls.
+    making up at least half of the edge's calls. Private TCP sessions
+    count as calls (ADR-1134).
     """
     wake_ahead_started: int
     """Wake-aheads (ADR-977) the caller's wakes started for this target in the window."""
