@@ -15,6 +15,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_decline import (
         OperationWorkflowReviewResponseHandoffDecline,
     )
+    from ..models.operation_workflow_review_response_handoff_reassignment import (
+        OperationWorkflowReviewResponseHandoffReassignment,
+    )
     from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
 
 
@@ -39,6 +42,12 @@ class OperationWorkflowReviewResponseDecisionReview:
     health: OperationWorkflowReviewResponseHealth
     """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
     business completion. Sampling stops on response resolution."""
+    handed_off_at: datetime.datetime | Unset = UNSET
+    """OperationWorkflowReviewResponseDecisionReview.handed_off_at. Current handoff timestamp; required by
+    acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it."""
+    reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset = UNSET
+    """Immutable manual routing record for an authorized operator, with preserved decline context and one-time
+    notification intent. Ownership assignment is not acceptance."""
     reassignment_required: bool | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the
     unresolved review; manual owner reassignment clears this flag without erasing decline history."""
@@ -88,6 +97,14 @@ class OperationWorkflowReviewResponseDecisionReview:
 
         health = self.health.to_dict()
 
+        handed_off_at: str | Unset = UNSET
+        if not isinstance(self.handed_off_at, Unset):
+            handed_off_at = self.handed_off_at.isoformat()
+
+        reassignment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reassignment, Unset):
+            reassignment = self.reassignment.to_dict()
+
         reassignment_required = self.reassignment_required
 
         decline: dict[str, Any] | Unset = UNSET
@@ -136,6 +153,10 @@ class OperationWorkflowReviewResponseDecisionReview:
                 "health": health,
             }
         )
+        if handed_off_at is not UNSET:
+            field_dict["handed_off_at"] = handed_off_at
+        if reassignment is not UNSET:
+            field_dict["reassignment"] = reassignment
         if reassignment_required is not UNSET:
             field_dict["reassignment_required"] = reassignment_required
         if decline is not UNSET:
@@ -173,6 +194,9 @@ class OperationWorkflowReviewResponseDecisionReview:
         from ..models.operation_workflow_review_response_handoff_decline import (
             OperationWorkflowReviewResponseHandoffDecline,
         )
+        from ..models.operation_workflow_review_response_handoff_reassignment import (
+            OperationWorkflowReviewResponseHandoffReassignment,
+        )
         from ..models.operation_workflow_review_response_health import OperationWorkflowReviewResponseHealth
 
         d = dict(src_dict)
@@ -183,6 +207,20 @@ class OperationWorkflowReviewResponseDecisionReview:
         changes = cast(list[str], d.pop("changes"))
 
         health = OperationWorkflowReviewResponseHealth.from_dict(d.pop("health"))
+
+        _handed_off_at = d.pop("handed_off_at", UNSET)
+        handed_off_at: datetime.datetime | Unset
+        if isinstance(_handed_off_at, Unset):
+            handed_off_at = UNSET
+        else:
+            handed_off_at = datetime.datetime.fromisoformat(_handed_off_at)
+
+        _reassignment = d.pop("reassignment", UNSET)
+        reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset
+        if isinstance(_reassignment, Unset):
+            reassignment = UNSET
+        else:
+            reassignment = OperationWorkflowReviewResponseHandoffReassignment.from_dict(_reassignment)
 
         reassignment_required = d.pop("reassignment_required", UNSET)
 
@@ -245,6 +283,8 @@ class OperationWorkflowReviewResponseDecisionReview:
             required_at=required_at,
             changes=changes,
             health=health,
+            handed_off_at=handed_off_at,
+            reassignment=reassignment,
             reassignment_required=reassignment_required,
             decline=decline,
             acceptance_due_at=acceptance_due_at,

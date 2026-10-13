@@ -26,7 +26,7 @@ func pinnedDecisionReview(response *api.OperationWorkflowReviewResponse) *api.Op
 		review.DueAt = &due
 	}
 	if review.Reassigned && review.AcceptanceDueAt == nil && review.DeadlineNotifiedAt != nil {
-		due := review.DeadlineNotifiedAt.Add(time.Duration(effectiveHandoffAcceptanceWindow(response)) * time.Second)
+		due := reviewHandoffTime(&review).Add(time.Duration(effectiveHandoffAcceptanceWindow(response)) * time.Second)
 		review.AcceptanceDueAt = &due
 	}
 	return &review
@@ -94,6 +94,7 @@ func applyReviewDecisionDeadline(r *readinessSubscriptionRecord, n api.Operation
 		review.Owner = updated.Owner
 		review.OwnerChanged = true
 		review.Reassigned = true
+		review.HandedOffAt = &now
 		acceptanceDue := now.Add(time.Duration(effectiveHandoffAcceptanceWindow(&updated)) * time.Second)
 		review.AcceptanceDueAt = &acceptanceDue
 		updated.History = append(slices.Clone(updated.History), api.OperationWorkflowReviewResponseChange{HandoffAcceptAfterSeconds: updated.HandoffAcceptAfterSeconds, Reason: "decision_review_overdue", DecisionReviewFallbackOwner: updated.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: updated.DecisionReviewAfterSeconds, FallbackOwner: updated.FallbackOwner, Owner: updated.Owner, Plan: updated.Plan, Status: updated.Status, CheckInAt: updated.CheckInAt, At: now, Actor: updated.UpdatedBy})

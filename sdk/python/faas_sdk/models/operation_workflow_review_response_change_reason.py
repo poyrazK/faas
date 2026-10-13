@@ -1,7 +1,12 @@
 from typing import Literal
 
 OperationWorkflowReviewResponseChangeReason = Literal[
-    "check_in_overdue", "decision_review_overdue", "handoff_accepted", "handoff_declined", "human_update"
+    "check_in_overdue",
+    "decision_review_overdue",
+    "handoff_accepted",
+    "handoff_declined",
+    "handoff_reassigned",
+    "human_update",
 ]
 
 OPERATION_WORKFLOW_REVIEW_RESPONSE_CHANGE_REASON_VALUES: set[OperationWorkflowReviewResponseChangeReason] = {
@@ -9,6 +14,7 @@ OPERATION_WORKFLOW_REVIEW_RESPONSE_CHANGE_REASON_VALUES: set[OperationWorkflowRe
     "decision_review_overdue",
     "handoff_accepted",
     "handoff_declined",
+    "handoff_reassigned",
     "human_update",
 }
 

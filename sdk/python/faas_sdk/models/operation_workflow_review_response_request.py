@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_decline_request import (
         OperationWorkflowReviewResponseHandoffDeclineRequest,
     )
+    from ..models.operation_workflow_review_response_handoff_reassignment_request import (
+        OperationWorkflowReviewResponseHandoffReassignmentRequest,
+    )
     from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
 
 
@@ -44,6 +47,9 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentRequest | Unset = UNSET
+    """Reassign a currently declined handoff to a different parent response owner. Preserve plan, check-in and
+    review deadline; start a new acceptance clock. Cannot combine with a decision, acceptance or decline."""
     handoff_decline: OperationWorkflowReviewResponseHandoffDeclineRequest | Unset = UNSET
     """Decline one current unaccepted handoff without a decision or acceptance. Retain its owner, plan and exact
     check-in, even if already overdue; deadlines do not restart."""
@@ -82,6 +88,10 @@ class OperationWorkflowReviewResponseRequest:
         plan = self.plan
 
         status: str = self.status
+
+        handoff_reassignment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_reassignment, Unset):
+            handoff_reassignment = self.handoff_reassignment.to_dict()
 
         handoff_decline: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_decline, Unset):
@@ -123,6 +133,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if handoff_reassignment is not UNSET:
+            field_dict["handoff_reassignment"] = handoff_reassignment
         if handoff_decline is not UNSET:
             field_dict["handoff_decline"] = handoff_decline
         if handoff_accept_after_seconds is not UNSET:
@@ -155,6 +167,9 @@ class OperationWorkflowReviewResponseRequest:
         from ..models.operation_workflow_review_response_handoff_decline_request import (
             OperationWorkflowReviewResponseHandoffDeclineRequest,
         )
+        from ..models.operation_workflow_review_response_handoff_reassignment_request import (
+            OperationWorkflowReviewResponseHandoffReassignmentRequest,
+        )
         from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
 
         d = dict(src_dict)
@@ -163,6 +178,15 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _handoff_reassignment = d.pop("handoff_reassignment", UNSET)
+        handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentRequest | Unset
+        if isinstance(_handoff_reassignment, Unset):
+            handoff_reassignment = UNSET
+        else:
+            handoff_reassignment = OperationWorkflowReviewResponseHandoffReassignmentRequest.from_dict(
+                _handoff_reassignment
+            )
 
         _handoff_decline = d.pop("handoff_decline", UNSET)
         handoff_decline: OperationWorkflowReviewResponseHandoffDeclineRequest | Unset
@@ -213,6 +237,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,
             handoff_accept_after_seconds=handoff_accept_after_seconds,
             handoff_acceptance=handoff_acceptance,

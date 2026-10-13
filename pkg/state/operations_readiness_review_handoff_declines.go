@@ -16,7 +16,7 @@ func validateReviewHandoffDecline(n api.OperationWorkflowReadinessNotification, 
 	if decline == nil {
 		return nil
 	}
-	if input.Decision != nil || input.HandoffAcceptance != nil || input.Status != "active" || strings.TrimSpace(decline.Reason) == "" || len(decline.Reason) > 1024 || !utf8.ValidString(decline.Reason) || strings.IndexFunc(decline.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
+	if input.HandoffReassignment != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.Status != "active" || strings.TrimSpace(decline.Reason) == "" || len(decline.Reason) > 1024 || !utf8.ValidString(decline.Reason) || strings.IndexFunc(decline.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
 		return ErrInvalidArgument
 	}
 	response := n.ReviewResponse
@@ -24,7 +24,7 @@ func validateReviewHandoffDecline(n api.OperationWorkflowReadinessNotification, 
 		return ErrConflict
 	}
 	review := response.DecisionReview
-	if !review.Reassigned || review.DeadlineNotifiedAt == nil || review.Acceptance != nil || review.Decline != nil || review.PreviousOwner == "" || review.Owner == "" || input.Owner != review.Owner || response.Owner != review.Owner || n.Coordination.Owner != review.Owner || !review.DecisionAt.Equal(decline.DecisionAt) || !response.Decision.At.Equal(decline.DecisionAt) || !review.RequiredAt.Equal(decline.RequiredAt) || input.Plan != response.Plan || input.CheckInAt == nil || response.CheckInAt == nil || !input.CheckInAt.Equal(*response.CheckInAt) {
+	if !matchesReviewHandoffTime(review, decline.HandedOffAt) || !review.Reassigned || review.DeadlineNotifiedAt == nil || review.Acceptance != nil || review.Decline != nil || review.PreviousOwner == "" || review.Owner == "" || input.Owner != review.Owner || response.Owner != review.Owner || n.Coordination.Owner != review.Owner || !review.DecisionAt.Equal(decline.DecisionAt) || !response.Decision.At.Equal(decline.DecisionAt) || !review.RequiredAt.Equal(decline.RequiredAt) || input.Plan != response.Plan || input.CheckInAt == nil || response.CheckInAt == nil || !input.CheckInAt.Equal(*response.CheckInAt) {
 		return ErrConflict
 	}
 	return nil

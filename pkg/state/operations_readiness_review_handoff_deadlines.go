@@ -49,7 +49,7 @@ func reviewHandoffDeadlineUpdates(items []api.OperationWorkflowReadinessNotifica
 	updates := []readinessWatchUpdate{}
 	for _, n := range candidates {
 		review := pinnedDecisionReview(n.ReviewResponse)
-		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, HandoffDeadline: &reviewHandoffDeadlineUpdate{CoordinationRevision: n.Coordination.Revision, DecisionAt: review.DecisionAt, RequiredAt: review.RequiredAt, HandedOffAt: *review.DeadlineNotifiedAt, DueAt: *review.AcceptanceDueAt, Owner: review.Owner}})
+		updates = append(updates, readinessWatchUpdate{SourceID: n.ID, Sequence: n.Sequence, HandoffDeadline: &reviewHandoffDeadlineUpdate{CoordinationRevision: n.Coordination.Revision, DecisionAt: review.DecisionAt, RequiredAt: review.RequiredAt, HandedOffAt: *reviewHandoffTime(review), DueAt: *review.AcceptanceDueAt, Owner: review.Owner}})
 		r.HandoffDeadlineCursor = n.Sequence
 	}
 	return updates
@@ -63,7 +63,7 @@ func applyReviewHandoffDeadline(r *readinessSubscriptionRecord, n api.OperationW
 	response := n.ReviewResponse
 	review := pinnedDecisionReview(response)
 	target := u.HandoffDeadline
-	if n.Coordination.Revision != target.CoordinationRevision || !response.Decision.At.Equal(target.DecisionAt) || !review.DecisionAt.Equal(target.DecisionAt) || !review.RequiredAt.Equal(target.RequiredAt) || !review.DeadlineNotifiedAt.Equal(target.HandedOffAt) || !review.AcceptanceDueAt.Equal(target.DueAt) || review.Owner != target.Owner {
+	if n.Coordination.Revision != target.CoordinationRevision || !response.Decision.At.Equal(target.DecisionAt) || !review.DecisionAt.Equal(target.DecisionAt) || !review.RequiredAt.Equal(target.RequiredAt) || !reviewHandoffTime(review).Equal(target.HandedOffAt) || !review.AcceptanceDueAt.Equal(target.DueAt) || review.Owner != target.Owner {
 		return n, nil, false
 	}
 	updated := *response
@@ -83,4 +83,18 @@ func applyReviewHandoffDeadline(r *readinessSubscriptionRecord, n api.OperationW
 	notice.DecisionReview = &api.OperationWorkflowReviewResponseDecisionReviewEvent{SourceNotificationID: n.ID, SourceSequence: n.Sequence, Decision: *response.Decision, Review: *review}
 	notice.Coordination = &api.OperationWorkflowReadinessCoordination{Revision: 1, Status: "unread", Owner: response.Owner, UpdatedAt: now, UpdatedBy: "system:handoff-acceptance-deadline"}
 	return n, []api.OperationWorkflowReadinessNotification{notice}, true
+}
+
+func reviewHandoffTime(review *api.OperationWorkflowReviewResponseDecisionReview) *time.Time {
+	if review.HandedOffAt != nil {
+		return review.HandedOffAt
+	}
+	return review.DeadlineNotifiedAt
+}
+func matchesReviewHandoffTime(review *api.OperationWorkflowReviewResponseDecisionReview, supplied *time.Time) bool {
+	if supplied == nil {
+		return review.Reassignment == nil
+	}
+	current := reviewHandoffTime(review)
+	return current != nil && current.Equal(*supplied)
 }

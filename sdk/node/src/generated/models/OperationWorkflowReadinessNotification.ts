@@ -24,10 +24,15 @@ import type { OperationWorkflowReviewResponseBlockageEvent } from './OperationWo
 import type { OperationWorkflowReviewResponseCheckInEvent } from './OperationWorkflowReviewResponseCheckInEvent.js';
 import type { OperationWorkflowReviewResponseDecisionReviewEvent } from './OperationWorkflowReviewResponseDecisionReviewEvent.js';
 import type { OperationWorkflowReviewResponseHandoffDeclineEvent } from './OperationWorkflowReviewResponseHandoffDeclineEvent.js';
+import type { OperationWorkflowReviewResponseHandoffReassignmentEvent } from './OperationWorkflowReviewResponseHandoffReassignmentEvent.js';
 /**
  * Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
  */
 export type OperationWorkflowReadinessNotification = {
+  /**
+   * OperationWorkflowReadinessNotification.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
+   */
+  handoff_reassignment?: OperationWorkflowReviewResponseHandoffReassignmentEvent;
   /**
    * OperationWorkflowReadinessNotification.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
    */
@@ -83,7 +88,7 @@ export type OperationWorkflowReadinessNotification = {
   /**
    * OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
    */
-  kind: 'review_response_handoff_declined' | 'review_response_handoff_acceptance_overdue' | 'review_response_decision_review_overdue' | 'review_response_decision_review_required' | 'review_response_recovered' | 'review_response_blocked' | 'review_response_check_in_overdue' | 'business_impact_changed' | 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed' | 'playbook_outcome_changed' | 'playbook_outcome_deadline_reached' | 'playbook_outcome_step_assigned' | 'playbook_dependency_regressed' | 'playbook_dependency_recovered';
+  kind: 'review_response_handoff_reassigned' | 'review_response_handoff_declined' | 'review_response_handoff_acceptance_overdue' | 'review_response_decision_review_overdue' | 'review_response_decision_review_required' | 'review_response_recovered' | 'review_response_blocked' | 'review_response_check_in_overdue' | 'business_impact_changed' | 'newly_ready' | 'newly_blocked' | 'reassigned' | 'unavailable' | 'verification_verified' | 'verification_invalidated' | 'verification_unavailable' | 'outcome_achieved' | 'outcome_different_outcome' | 'outcome_unavailable' | 'outcome_deadline_reached' | 'escalation_response_overdue' | 'playbook_evidence_changed' | 'playbook_outcome_changed' | 'playbook_outcome_deadline_reached' | 'playbook_outcome_step_assigned' | 'playbook_dependency_regressed' | 'playbook_dependency_recovered';
   /**
    * OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification.
    */

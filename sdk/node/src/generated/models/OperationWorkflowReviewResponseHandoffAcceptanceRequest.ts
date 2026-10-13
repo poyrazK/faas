@@ -7,6 +7,10 @@
  */
 export type OperationWorkflowReviewResponseHandoffAcceptanceRequest = {
   /**
+   * OperationWorkflowReviewResponseHandoffAcceptanceRequest.handed_off_at. Current handoff timestamp; required by acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it.
+   */
+  handed_off_at?: string;
+  /**
    * OperationWorkflowReviewResponseHandoffAcceptanceRequest.decision_at. Exact decision timestamp of the handed-off episode.
    */
   decision_at: string;

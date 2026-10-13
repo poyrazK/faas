@@ -48,6 +48,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_decline_event import (
         OperationWorkflowReviewResponseHandoffDeclineEvent,
     )
+    from ..models.operation_workflow_review_response_handoff_reassignment_event import (
+        OperationWorkflowReviewResponseHandoffReassignmentEvent,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReadinessNotification")
@@ -68,6 +71,9 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentEvent | Unset = UNSET
+    """Historical handoff notice to the assigned team. Check current ownership before accepting; the original
+    review deadline remains unchanged."""
     handoff_decline: OperationWorkflowReviewResponseHandoffDeclineEvent | Unset = UNSET
     """One historical decline notification routed to the previous owner, without automatic reassignment or deadline
     changes. Consult current response ownership before acting."""
@@ -149,6 +155,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        handoff_reassignment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_reassignment, Unset):
+            handoff_reassignment = self.handoff_reassignment.to_dict()
 
         handoff_decline: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_decline, Unset):
@@ -249,6 +259,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if handoff_reassignment is not UNSET:
+            field_dict["handoff_reassignment"] = handoff_reassignment
         if handoff_decline is not UNSET:
             field_dict["handoff_decline"] = handoff_decline
         if decision_review is not UNSET:
@@ -338,6 +350,9 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_review_response_handoff_decline_event import (
             OperationWorkflowReviewResponseHandoffDeclineEvent,
         )
+        from ..models.operation_workflow_review_response_handoff_reassignment_event import (
+            OperationWorkflowReviewResponseHandoffReassignmentEvent,
+        )
 
         d = dict(src_dict)
         id = UUID(d.pop("id"))
@@ -349,6 +364,15 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _handoff_reassignment = d.pop("handoff_reassignment", UNSET)
+        handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentEvent | Unset
+        if isinstance(_handoff_reassignment, Unset):
+            handoff_reassignment = UNSET
+        else:
+            handoff_reassignment = OperationWorkflowReviewResponseHandoffReassignmentEvent.from_dict(
+                _handoff_reassignment
+            )
 
         _handoff_decline = d.pop("handoff_decline", UNSET)
         handoff_decline: OperationWorkflowReviewResponseHandoffDeclineEvent | Unset
@@ -510,6 +534,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,
             decision_review=decision_review,
             review_blockage=review_blockage,

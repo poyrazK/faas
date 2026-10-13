@@ -79305,6 +79305,9 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        handoff_reassignment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignmentEvent'
+          description: OperationWorkflowReadinessNotification.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
         handoff_decline:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDeclineEvent'
           description: OperationWorkflowReadinessNotification.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
@@ -79366,6 +79369,7 @@ components:
           type: string
           description: OperationWorkflowReadinessNotification.kind. Matched subscription notification kind.
           enum:
+          - review_response_handoff_reassigned
           - review_response_handoff_declined
           - review_response_handoff_acceptance_overdue
           - review_response_decision_review_overdue
@@ -80668,6 +80672,13 @@ components:
       additionalProperties: false
       description: First changed observation for one explicit response decision. Remains latched until a new explicit decision; ordinary edits, acknowledgment and subsequent recovery do not clear it.
       properties:
+        handed_off_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseDecisionReview.handed_off_at. Current handoff timestamp; required by acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it.
+        reassignment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignment'
+          description: OperationWorkflowReviewResponseDecisionReview.reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
         reassignment_required:
           type: boolean
           description: OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the unresolved review; manual owner reassignment clears this flag without erasing decline history.
@@ -80779,6 +80790,10 @@ components:
       additionalProperties: false
       description: Accept the current reassigned review for its responsible team. Parent response must remain active with the handed-off owner and a future check-in, without an accompanying decision.
       properties:
+        handed_off_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffAcceptanceRequest.handed_off_at. Current handoff timestamp; required by acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it.
         decision_at:
           type: string
           format: date-time
@@ -80821,6 +80836,10 @@ components:
       additionalProperties: false
       description: Decline one current unaccepted handoff without a decision or acceptance. Retain its owner, plan and exact check-in, even if already overdue; deadlines do not restart.
       properties:
+        handed_off_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffDeclineRequest.handed_off_at. Current handoff timestamp; required by acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it.
         decision_at:
           type: string
           format: date-time
@@ -80887,12 +80906,93 @@ components:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDecline'
           description: OperationWorkflowReviewResponseHandoffDeclineEvent.decline. Historical decline and its published notification marker.
       required: [source_notification_id, source_sequence, decline]
+    OperationWorkflowReviewResponseHandoffReassignmentRequest:
+      type: object
+      additionalProperties: false
+      description: Reassign a currently declined handoff to a different parent response owner. Preserve plan, check-in and review deadline; start a new acceptance clock. Cannot combine with a decision, acceptance or decline.
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignmentRequest.decision_at. Exact reviewed decision timestamp.
+        required_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignmentRequest.required_at. Exact review requirement timestamp.
+        declined_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignmentRequest.declined_at. Exact decline timestamp to route; stale decline conflicts.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: OperationWorkflowReviewResponseHandoffReassignmentRequest.reason. Nonblank UTF-8 explanation up to 1024 bytes; line breaks and tabs allowed.
+      required: [decision_at, required_at, declined_at, reason]
+    OperationWorkflowReviewResponseHandoffReassignment:
+      type: object
+      additionalProperties: false
+      description: Immutable manual routing record for an authorized operator, with preserved decline context and one-time notification intent. Ownership assignment is not acceptance.
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignment.decision_at. Original reviewed decision timestamp.
+        required_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignment.required_at. Original review requirement timestamp.
+        at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignment.at. Server handoff time, starting the new acceptance clock.
+        notified_at:
+          type: string
+          format: date-time
+          description: OperationWorkflowReviewResponseHandoffReassignment.notified_at. One-time notification marker, bounded by retained history and inbox.
+        owner:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffReassignment.owner. New responsible team label; membership is not verified.
+        previous_owner:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffReassignment.previous_owner. Declining owner before this manual transfer.
+        actor:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffReassignment.actor. Authenticated operator performing reassignment.
+        reason:
+          type: string
+          description: OperationWorkflowReviewResponseHandoffReassignment.reason. Operator reason for choosing the new team.
+        decline:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDecline'
+          description: OperationWorkflowReviewResponseHandoffReassignment.decline. Immutable decline context preserved at reassignment.
+      required: [decision_at, required_at, at, owner, previous_owner, actor, reason, decline]
+    OperationWorkflowReviewResponseHandoffReassignmentEvent:
+      type: object
+      additionalProperties: false
+      description: Historical handoff notice to the assigned team. Check current ownership before accepting; the original review deadline remains unchanged.
+      properties:
+        source_notification_id:
+          type: string
+          format: uuid
+          description: OperationWorkflowReviewResponseHandoffReassignmentEvent.source_notification_id. Original response alert identity.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          description: OperationWorkflowReviewResponseHandoffReassignmentEvent.source_sequence. Original response sequence in this inbox.
+        reassignment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignment'
+          description: OperationWorkflowReviewResponseHandoffReassignmentEvent.reassignment. Immutable routing and previous decline context.
+      required: [source_notification_id, source_sequence, reassignment]
     OperationWorkflowReviewResponseRequest:
       type: object
       additionalProperties: false
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        handoff_reassignment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignmentRequest'
+          description: OperationWorkflowReviewResponseRequest.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
         handoff_decline:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDeclineRequest'
           description: OperationWorkflowReviewResponseRequest.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
@@ -81194,6 +81294,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        handoff_reassignment:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffReassignment'
+          description: OperationWorkflowReviewResponseChange.handoff_reassignment. Explicit reassignment after decline with accountable actor, reason and new acceptance requirement.
         handoff_decline:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHandoffDecline'
           description: OperationWorkflowReviewResponseChange.handoff_decline. Explicit immutable decline of the current handoff with accountable actor and reason.
@@ -81224,7 +81327,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

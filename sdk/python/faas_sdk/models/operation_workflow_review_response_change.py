@@ -24,6 +24,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_decline import (
         OperationWorkflowReviewResponseHandoffDecline,
     )
+    from ..models.operation_workflow_review_response_handoff_reassignment import (
+        OperationWorkflowReviewResponseHandoffReassignment,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseChange")
@@ -46,6 +49,9 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset = UNSET
+    """Immutable manual routing record for an authorized operator, with preserved decline context and one-time
+    notification intent. Ownership assignment is not acceptance."""
     handoff_decline: OperationWorkflowReviewResponseHandoffDecline | Unset = UNSET
     """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
     team membership. Retained history carries its one-time notification intent."""
@@ -86,6 +92,10 @@ class OperationWorkflowReviewResponseChange:
 
         actor = self.actor
 
+        handoff_reassignment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.handoff_reassignment, Unset):
+            handoff_reassignment = self.handoff_reassignment.to_dict()
+
         handoff_decline: dict[str, Any] | Unset = UNSET
         if not isinstance(self.handoff_decline, Unset):
             handoff_decline = self.handoff_decline.to_dict()
@@ -125,6 +135,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if handoff_reassignment is not UNSET:
+            field_dict["handoff_reassignment"] = handoff_reassignment
         if handoff_decline is not UNSET:
             field_dict["handoff_decline"] = handoff_decline
         if handoff_accept_after_seconds is not UNSET:
@@ -155,6 +167,9 @@ class OperationWorkflowReviewResponseChange:
         from ..models.operation_workflow_review_response_handoff_decline import (
             OperationWorkflowReviewResponseHandoffDecline,
         )
+        from ..models.operation_workflow_review_response_handoff_reassignment import (
+            OperationWorkflowReviewResponseHandoffReassignment,
+        )
 
         d = dict(src_dict)
         owner = d.pop("owner")
@@ -166,6 +181,13 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _handoff_reassignment = d.pop("handoff_reassignment", UNSET)
+        handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset
+        if isinstance(_handoff_reassignment, Unset):
+            handoff_reassignment = UNSET
+        else:
+            handoff_reassignment = OperationWorkflowReviewResponseHandoffReassignment.from_dict(_handoff_reassignment)
 
         _handoff_decline = d.pop("handoff_decline", UNSET)
         handoff_decline: OperationWorkflowReviewResponseHandoffDecline | Unset
@@ -216,6 +238,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            handoff_reassignment=handoff_reassignment,
             handoff_decline=handoff_decline,
             handoff_accept_after_seconds=handoff_accept_after_seconds,
             handoff_acceptance=handoff_acceptance,

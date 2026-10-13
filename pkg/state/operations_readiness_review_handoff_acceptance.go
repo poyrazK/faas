@@ -15,7 +15,7 @@ func validateReviewHandoffAcceptance(n api.OperationWorkflowReadinessNotificatio
 	if acceptance == nil {
 		return nil
 	}
-	if input.HandoffDecline != nil || input.Decision != nil || input.Status != "active" || input.CheckInAt == nil || !input.CheckInAt.After(time.Now().UTC()) || strings.TrimSpace(acceptance.Note) == "" || len(acceptance.Note) > 1024 || !utf8.ValidString(acceptance.Note) || strings.IndexFunc(acceptance.Note, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
+	if input.HandoffReassignment != nil || input.HandoffDecline != nil || input.Decision != nil || input.Status != "active" || input.CheckInAt == nil || !input.CheckInAt.After(time.Now().UTC()) || strings.TrimSpace(acceptance.Note) == "" || len(acceptance.Note) > 1024 || !utf8.ValidString(acceptance.Note) || strings.IndexFunc(acceptance.Note, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
 		return ErrInvalidArgument
 	}
 	response := n.ReviewResponse
@@ -23,7 +23,7 @@ func validateReviewHandoffAcceptance(n api.OperationWorkflowReadinessNotificatio
 		return ErrConflict
 	}
 	review := response.DecisionReview
-	if !review.Reassigned || review.DeadlineNotifiedAt == nil || review.Acceptance != nil || review.Decline != nil || review.Owner == "" || input.Owner != review.Owner || response.Owner != review.Owner || n.Coordination.Owner != review.Owner || !review.DecisionAt.Equal(acceptance.DecisionAt) || !response.Decision.At.Equal(acceptance.DecisionAt) || !review.RequiredAt.Equal(acceptance.RequiredAt) {
+	if !matchesReviewHandoffTime(review, acceptance.HandedOffAt) || !review.Reassigned || review.DeadlineNotifiedAt == nil || review.Acceptance != nil || review.Decline != nil || review.Owner == "" || input.Owner != review.Owner || response.Owner != review.Owner || n.Coordination.Owner != review.Owner || !review.DecisionAt.Equal(acceptance.DecisionAt) || !response.Decision.At.Equal(acceptance.DecisionAt) || !review.RequiredAt.Equal(acceptance.RequiredAt) {
 		return ErrConflict
 	}
 	return nil
