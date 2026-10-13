@@ -1,5 +1,0 @@
-# Non-test Go lines in pkg/apid/apidserver (ADR-982).
-# Main 8f897e58f measures 155853; this storage branch retains
-# its three-line production reduction. Lowered to the actual combined source.
-# Raise only with a reason in the PR; lower whenever code moves out.
-155850

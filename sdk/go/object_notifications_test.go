@@ -47,6 +47,8 @@ func TestPublicObjectNotificationClient(t *testing.T) {
 }
 
 func TestPublicObjectComputeTriggerClient(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -65,7 +67,7 @@ func TestPublicObjectComputeTriggerClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := int64(3)
-	p, err := client.ReconcileObjectStorageComputeTriggers(t.Context(), "demo/x", "bucket/x", faas.ReconcileObjectStorageComputeTriggersRequest{ExpectedRevision: &revision, Triggers: []faas.ObjectStorageComputeTrigger{}})
+	p, err := client.ReconcileObjectStorageComputeTriggers(ctx, "demo/x", "bucket/x", faas.ReconcileObjectStorageComputeTriggersRequest{ExpectedRevision: &revision, Triggers: []faas.ObjectStorageComputeTrigger{}})
 	if err != nil || !called || p.Revision != 4 || len(p.ManagedRuleIDs) != 1 {
 		t.Fatal(p, err)
 	}

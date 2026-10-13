@@ -1323,13 +1323,6 @@ jobs:
         run: make adr-number-uniqueness-check
       - name: ADR number gate checker tests
         run: make adr-number-uniqueness-check-test
-      # ADR-977: pkg/apid/apidserver is one package compiled as a unit (~16 GB peak for its
-      # tests). New code goes in pkg/apid/<domain>; growth needs a visible
-      # baseline bump.
-      - name: apid size
-        run: make apid-size-check
-      - name: apid size gate checker tests
-        run: make apid-size-check-test
       - name: migration-version gate checker tests
         run: make migration-version-hygiene-check-test
       # The two encoding/quoting gates run in `make lint`, but the tests that

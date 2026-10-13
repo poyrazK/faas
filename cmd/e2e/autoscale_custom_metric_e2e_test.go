@@ -235,9 +235,11 @@ func TestE2E_Autoscale_MCPWorkerScalesFromZeroAndBack(t *testing.T) {
 	}
 
 	policy := &api.ScalingPolicy{
-		MinInstances: 0,
-		MaxInstances: 5,
-		Targets:      []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: metricName, Value: perWorker}},
+		MinInstances:      0,
+		MaxInstances:      5,
+		ScaleOutCooldownS: api.MinScaleOutCooldownS,
+		ScaleInCooldownS:  api.MinScaleInCooldownS,
+		Targets:           []api.ScalingTarget{{Metric: api.ScalingMetricCustom, Name: metricName, Value: perWorker}},
 	}
 	body, status = doReq(t, f.h, f.key, http.MethodPatch, "/v1/apps/"+f.app.Slug,
 		api.UpdateAppRequest{ScalingPolicy: policy})

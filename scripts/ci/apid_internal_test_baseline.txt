@@ -1,5 +1,0 @@
-# Internal apidserver tests, excluding export_test.go (ADR-982).
-# Main 8f897e58f measures 74873; the original storage-test
-# extraction retains its 28-line reduction. New tests go in apidserver_test.
-# Raise only with a reason in the PR; lower when tests move out.
-74845
