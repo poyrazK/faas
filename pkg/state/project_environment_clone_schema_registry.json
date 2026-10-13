@@ -3274,6 +3274,7 @@
       "accepted_at",
       "account_id",
       "app_id",
+      "diagnostic_id",
       "outbox_id",
       "reason",
       "recorded_at",

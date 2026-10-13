@@ -1401,6 +1401,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/event-recoveries/{jobID}/resume":                                                                  "ResumeEventRecovery",
 	"PUT /v1/event-recoveries/{jobID}/rate":                                                                     "SetEventRecoveryRate",
 
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel":    "CancelEventExecutionLineageRetryJob",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill":                     "GetEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill":                    "RequestEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/pause":  "PauseEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/resume": "ResumeEventExecutionLineageCaseBackfill",
+	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/case-backfill/{requestID}/cancel": "CancelEventExecutionLineageCaseBackfill",
+
 	// Issue #279 — operator credits. The auto-derivation produces
 	// "PostAdminAccountsIdCredits" which reads as a Swagger-style
 	// artifact; the SDK verb is "issue" (the operator's mental
