@@ -38,6 +38,9 @@ func newNodeRecoveryFixture(t *testing.T, slug string) *normalPathFixture {
 	return newNormalPathFixtureWithPlanAndEnv(t, slug, api.PlanHobby,
 		"FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS=2",
 		"FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS=1",
+		// One failed ping fails the node over, as before the production
+		// default of three (H9-171), so detection fits the 30 s window.
+		"FAAS_HEARTBEAT_FAILURE_THRESHOLD=1",
 	)
 }
 
