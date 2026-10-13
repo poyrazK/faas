@@ -22,7 +22,7 @@ func customerOperationCLIManifest() []cliSub {
 	limit := cliFlag{Name: "limit", Value: "N", Short: "page size, 1–100"}
 	after := cliFlag{Name: "after", Value: "N", Short: "event sequence or execution generation watermark"}
 	return append(customerOperationDeveloperCLIManifest(), []cliSub{
-		makeSub("list", "List one bounded page of retained business work", cliFlag{Name: "scope", Value: "SCOPE", Short: "explicit deployment environment", Req: true}, cliFlag{Name: "tenant", Value: "UUID", Short: "optional platform tenant filter"}, cliFlag{Name: "name", Value: "NAME", Short: "operation name"}, cliFlag{Name: "state", Value: "STATE", Short: "business state", ClosedSet: []string{"accepted", "running", "succeeded", "failed", "cancelled", "requires_reconciliation"}}, limit, cliFlag{Name: "cursor", Value: "CURSOR", Short: "next page cursor"}),
+		makeSub("list", "List one bounded page of retained business work", cliFlag{Name: "scope", Value: "SCOPE", Short: "explicit deployment environment", Req: true}, cliFlag{Name: "tenant", Value: "UUID", Short: "optional platform tenant filter"}, cliFlag{Name: "name", Value: "NAME", Short: "operation name"}, cliFlag{Name: "state", Value: "STATE", Short: "business state", ClosedSet: []string{"accepted", "running", "waiting", "succeeded", "failed", "cancelled", "requires_reconciliation"}}, limit, cliFlag{Name: "cursor", Value: "CURSOR", Short: "next page cursor"}),
 		makeSub("get", "Read business result and independent delivery status"),
 		makeSub("inspect", "Inspect confirmed steps, uncertain attempts, retained files and retry blockers"),
 		makeSub("events", "Read durable event evidence and resync marker", after),

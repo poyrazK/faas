@@ -759,6 +759,9 @@ func (s *server) completePlatformTenantSelfWorkflowCallback(w http.ResponseWrite
 }
 
 func (s *server) completeWorkflowCallbackForRun(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) {
+	if s.refuseOperationWorkflowCallback(w, r, run) {
+		return
+	}
 	callbacks, err := workflowCallbackSpecs(run)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("workflow definition snapshot is invalid"))
@@ -891,3 +894,24 @@ func (s *server) retryWorkflowStep(w http.ResponseWriter, r *http.Request, acct 
 	}
 	writeJSON(w, http.StatusOK, workflowRunResponse(run))
 }
+
+// refuseOperationWorkflowCallback keeps operation approvals on their own
+// decision path (ADR-1156): a generic callback could forge the decision and
+// would record no approver.
+func (s *server) refuseOperationWorkflowCallback(w http.ResponseWriter, r *http.Request, run *state.WorkflowRun) bool {
+	adapter, ok := s.store.(state.WorkflowOperationStore)
+	if !ok {
+		return false
+	}
+	_, linked, err := adapter.OperationForWorkflowRun(r.Context(), run.ID)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not resolve the workflow run's operation"))
+		return true
+	}
+	if linked {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "operation_approval_required", "Use the operation approval API",
+			"this run belongs to a customer operation; decide its approvals through the operation's approvals endpoint"))
+	}
+	return linked
+}
+
