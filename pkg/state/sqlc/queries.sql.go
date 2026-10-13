@@ -17379,7 +17379,7 @@ func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetD
 const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17400,6 +17400,7 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.RestoreWindowSeconds,
 		&i.RestoreSource,
 		&i.RestoreTarget,
+		&i.RestoreRecoveredTo,
 		&i.RestoreLeaseUntil,
 		&i.LastError,
 		&i.LastActiveAt,
@@ -30386,7 +30387,7 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30413,6 +30414,7 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.RestoreWindowSeconds,
 			&i.RestoreSource,
 			&i.RestoreTarget,
+			&i.RestoreRecoveredTo,
 			&i.RestoreLeaseUntil,
 			&i.LastError,
 			&i.LastActiveAt,
@@ -61097,6 +61099,24 @@ type RecordDatabaseVMBackupParams struct {
 
 func (q *Queries) RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg RecordDatabaseVMBackupParams) (int64, error) {
 	result, err := db.Exec(ctx, recordDatabaseVMBackup, arg.At, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordDatabaseVMRestore = `-- name: RecordDatabaseVMRestore :execrows
+UPDATE database_vms SET restore_recovered_to = $1
+WHERE database_id = $2 AND state = 'provisioning' AND restore_source IS NOT NULL
+`
+
+type RecordDatabaseVMRestoreParams struct {
+	RecoveredTo pgtype.Timestamptz
+	DatabaseID  pgtype.UUID
+}
+
+func (q *Queries) RecordDatabaseVMRestore(ctx context.Context, db DBTX, arg RecordDatabaseVMRestoreParams) (int64, error) {
+	result, err := db.Exec(ctx, recordDatabaseVMRestore, arg.RecoveredTo, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}

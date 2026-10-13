@@ -18468,13 +18468,13 @@ GROUP BY n.id ORDER BY n.id;
 -- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -18484,6 +18484,10 @@ VALUES (sqlc.arg(database_id), sqlc.arg(node_id), sqlc.arg(postgres_major), sqlc
     sqlc.arg(mem_mib), sqlc.arg(volume_bytes), sqlc.arg(always_on), sqlc.arg(restore_window_seconds),
     sqlc.narg(restore_source), sqlc.narg(restore_target), 'provisioning')
 ON CONFLICT (database_id) DO NOTHING;
+
+-- name: RecordDatabaseVMRestore :execrows
+UPDATE database_vms SET restore_recovered_to = sqlc.arg(recovered_to)
+WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL;
 
 -- name: ClaimDatabaseVMRestore :one
 -- Takes (held is NULL) or renews (held is the current lease) the lease on

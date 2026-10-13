@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -144,6 +145,7 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 		VolumeRateLimiter:    volumeRateLimiter(req.GetVolumeBandwidthBytesPerSec(), req.GetVolumeOpsPerSec()),
 		RestoreSource:        req.GetRestoreSource(),
 		RestoreWindowSeconds: req.GetRestoreWindowSeconds(),
+		RestoreUntilEnd:      req.GetRestoreUntilEnd(),
 	}
 	if req.GetRestoreTarget() != nil {
 		if err := req.GetRestoreTarget().CheckValid(); err != nil {
@@ -154,7 +156,7 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 	if boot.RestoreWindowSeconds < 0 {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "negative restore window")
 	}
-	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() {
+	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() || (boot.RestoreUntilEnd && boot.RestoreSource == "") {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a restore names its source and target")
 	}
 	return boot, nil
@@ -209,9 +211,13 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if err != nil {
 		return nil, s.databaseStatus("control", err)
 	}
-	return &vmmdpb.DatabaseControlResponse{
+	out := &vmmdpb.DatabaseControlResponse{
 		State: string(resp.State), PostgresMajor: int32(resp.Major), ErrorCode: resp.Error, Sqlstate: resp.SQLState, Backup: resp.Backup,
-	}, nil
+	}
+	if !resp.RecoveredTo.IsZero() {
+		out.RecoveredTo = timestamppb.New(resp.RecoveredTo)
+	}
+	return out, nil
 }
 
 // databaseStatus maps runtime errors to stable gRPC codes and logs

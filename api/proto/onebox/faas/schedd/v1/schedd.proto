@@ -1201,6 +1201,9 @@ message DatabaseRuntime {
   // A restored database's lineage, recorded at placement.
   string restore_source_id = 13;
   google.protobuf.Timestamp restore_target = 14;
+  // The restore's last replayed commit: the target's, or earlier when the
+  // source's node was lost and its archive ended first.
+  google.protobuf.Timestamp restore_recovered_to = 15;
 }
 
 message TouchDatabaseResponse {}

@@ -2608,6 +2608,9 @@ message StartDatabaseRequest {
   google.protobuf.Timestamp restore_target = 8;
   // The database's restore window; dbbackupd keeps its archive that long.
   int64 restore_window_seconds = 9;
+  // restore_until_end lets a restore whose archive ends before its target
+  // recover to the end of the archive (the source's node is lost).
+  bool restore_until_end = 10;
 }
 
 message StartDatabaseResponse {
@@ -2643,6 +2646,8 @@ message DatabaseControlResponse {
   string sqlstate = 4;
   // Id of the base backup a basebackup op stored (ADR-1027).
   string backup = 5;
+  // A restored database's last replayed commit.
+  google.protobuf.Timestamp recovered_to = 6;
 }
 
 message DatabaseSessionFrame {

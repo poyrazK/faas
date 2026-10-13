@@ -173,21 +173,23 @@ func TestStartDatabaseRelaysARestore(t *testing.T) {
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	target := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
 	_, err := s.StartDatabase(unixCaller(), &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384,
-		RestoreSource: "7c9e6679-7425-40de-944b-e07fc1f90ae7", RestoreTarget: timestamppb.New(target), RestoreWindowSeconds: 3600})
-	if err != nil || rt.started.RestoreSource != "7c9e6679-7425-40de-944b-e07fc1f90ae7" || !rt.started.RestoreTarget.Equal(target) || rt.started.RestoreWindowSeconds != 3600 {
+		RestoreSource: "7c9e6679-7425-40de-944b-e07fc1f90ae7", RestoreTarget: timestamppb.New(target), RestoreWindowSeconds: 3600, RestoreUntilEnd: true})
+	if err != nil || rt.started.RestoreSource != "7c9e6679-7425-40de-944b-e07fc1f90ae7" || !rt.started.RestoreTarget.Equal(target) || rt.started.RestoreWindowSeconds != 3600 || !rt.started.RestoreUntilEnd {
 		t.Fatalf("StartDatabase = %v; boot %+v", err, rt.started)
 	}
 }
 
 func TestDatabaseControlRelaysFlushInstant(t *testing.T) {
-	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady}}
+	recovered := time.Date(2026, 10, 13, 9, 29, 0, 0, time.UTC)
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, RecoveredTo: recovered}}
 	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
 	if _, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "flush_wal"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("flush without an instant = %v", err)
 	}
 	after := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
-	if _, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "flush_wal", After: timestamppb.New(after)}); err != nil {
-		t.Fatal(err)
+	resp, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: testDatabaseID, Op: "flush_wal", After: timestamppb.New(after)})
+	if err != nil || !resp.GetRecoveredTo().AsTime().Equal(recovered) {
+		t.Fatalf("control = %v, %v", resp, err)
 	}
 	if len(rt.controls) != 1 || rt.controls[0].Op != dbguest.OpFlushWAL || !rt.controls[0].After.Equal(after) {
 		t.Fatalf("flush not relayed: %+v", rt.controls)

@@ -99,6 +99,8 @@ type BootRequest struct {
 	// RestoreWindowSeconds reaches dbbackupd in the relay header and sets
 	// how long the database's archive is kept.
 	RestoreWindowSeconds int64
+	// RestoreUntilEnd lets the restore end at the end of the archive.
+	RestoreUntilEnd bool
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.
@@ -337,7 +339,7 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
 		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
-		RestoreTarget: req.RestoreTarget,
+		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd,
 	})
 	if err != nil {
 		return err

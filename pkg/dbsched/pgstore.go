@@ -76,7 +76,7 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 		VcpuCount: int(r.VcpuCount), MemMiB: int(r.MemMib), VolumeBytes: r.VolumeBytes, State: State(r.State),
 		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
-		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time,
+		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
@@ -269,6 +269,21 @@ func (s *PgStore) ClaimRestore(ctx context.Context, id string, held time.Time, l
 		return time.Time{}, fmt.Errorf("dbsched: claim restore %s: %w", id, err)
 	}
 	return until.Time, nil
+}
+
+func (s *PgStore) RecordRestore(ctx context.Context, id string, recoveredTo time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.RecordDatabaseVMRestore(ctx, s.pool, sqlc.RecordDatabaseVMRestoreParams{RecoveredTo: pgtype.Timestamptz{Time: recoveredTo, Valid: true}, DatabaseID: key})
+	if err != nil {
+		return fmt.Errorf("dbsched: record restore %s: %w", id, err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *PgStore) SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) error {

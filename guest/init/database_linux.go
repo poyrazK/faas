@@ -64,23 +64,31 @@ type databaseGuest struct {
 	// restoreTarget, when set, makes an empty volume a point-in-time
 	// restore of the relay's restore source.
 	restoreTarget time.Time
-	uid           int
-	gid           int
+	// restoreUntilEnd lets the restore recover to the end of the archive
+	// when the archive ends before the target; targetDropped records that
+	// it had to, recoveredTo the last replayed commit.
+	restoreUntilEnd bool
+	targetDropped   bool
+	recoveredTo     time.Time
+	uid             int
+	gid             int
 
 	mu         sync.Mutex
 	state      dbguest.State
 	errCode    string
 	postmaster *os.Process
-	exited     chan struct{}
-	done       chan struct{}
-	stopOnce   sync.Once
+	// exited closes when the current postmaster exits.
+	exited   chan struct{}
+	done     chan struct{}
+	stopOnce sync.Once
 }
 
-func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget time.Time) error {
+func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget time.Time, restoreUntilEnd bool) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &databaseGuest{log: log, major: major, archive: archive, restoreTarget: restoreTarget, exited: make(chan struct{}), done: make(chan struct{})}
+	g := &databaseGuest{log: log, major: major, archive: archive, restoreTarget: restoreTarget, restoreUntilEnd: restoreUntilEnd,
+		exited: make(chan struct{}), done: make(chan struct{})}
 	g.prepare()
 	control, err := listenGuestVsockBacklog(dbguest.ControlPort, 8)
 	if err != nil {
@@ -385,8 +393,14 @@ func (g *databaseGuest) startPostgres() {
 		return
 	}
 	args := databaseServerArgs(g.major, g.memKiB, g.archive)
-	if !g.restoreTarget.IsZero() {
-		args = append(args, recoverySettings(g.restoreTarget)...)
+	g.mu.Lock()
+	target, dropped := g.restoreTarget, g.targetDropped
+	g.mu.Unlock()
+	if !target.IsZero() {
+		if dropped {
+			target = time.Time{}
+		}
+		args = append(args, recoverySettings(target)...)
 	}
 	cmd := g.asDatabaseUser(exec.Command(args[0], args[1:]...))
 	cmd.Stdout = os.Stderr
@@ -395,37 +409,68 @@ func (g *databaseGuest) startPostgres() {
 		g.fail(dbguest.ErrCodeStartFailed, "start postgres", err)
 		return
 	}
+	exited := make(chan struct{})
 	g.mu.Lock()
 	g.postmaster = cmd.Process
+	g.exited = exited
 	g.mu.Unlock()
-	go g.watchPostmaster(cmd)
-	go g.awaitReady()
+	go g.watchPostmaster(cmd, exited)
+	go g.awaitReady(exited)
 }
 
-func (g *databaseGuest) watchPostmaster(cmd *exec.Cmd) {
+func (g *databaseGuest) watchPostmaster(cmd *exec.Cmd, exited chan struct{}) {
 	err := cmd.Wait()
-	close(g.exited)
+	close(exited)
 	if g.currentState() == dbguest.StateStopping {
+		return
+	}
+	if g.retryToEndOfArchive() {
 		return
 	}
 	g.fail(dbguest.ErrCodeStartFailed, "postgres exited", err)
 	g.stop()
 }
 
-func (g *databaseGuest) awaitReady() {
+// retryToEndOfArchive restarts a restore that stopped before promoting,
+// once and only when allowed, without its target: PostgreSQL ends a
+// targeted recovery with FATAL when the archive runs out first, and with
+// the source's node lost the archive is all there is.
+func (g *databaseGuest) retryToEndOfArchive() bool {
+	g.mu.Lock()
+	retry := g.restoreUntilEnd && !g.restoreTarget.IsZero() && !g.targetDropped && g.state == dbguest.StateStarting
+	if retry {
+		g.targetDropped = true
+	}
+	g.mu.Unlock()
+	if !retry {
+		return false
+	}
+	g.log.Warn("database restore: the archive ended before the target; recovering to its end", "target", g.restoreTarget)
+	g.startPostgres()
+	return true
+}
+
+func (g *databaseGuest) awaitReady(exited chan struct{}) {
 	pidFile := filepath.Join(databasePGData, "postmaster.pid")
 	for {
 		select {
-		case <-g.exited:
+		case <-exited:
 			return
 		case <-time.After(databaseReadyPoll):
 		}
 		if data, err := os.ReadFile(pidFile); err == nil && postmasterReady(data) {
 			// A restoring server accepts read-only connections while it
 			// recovers; it is ready only once promoted.
-			if !g.restoreTarget.IsZero() && !g.awaitPromotion() {
-				g.fail(dbguest.ErrCodeRestoreFailed, "recovery did not promote", nil)
-				return
+			if !g.restoreTarget.IsZero() {
+				if !g.awaitPromotion(exited) {
+					select {
+					case <-exited: // the postmaster's watcher decides
+					default:
+						g.fail(dbguest.ErrCodeRestoreFailed, "recovery did not promote", nil)
+					}
+					return
+				}
+				g.noteRecoveredTo()
 			}
 			g.mu.Lock()
 			if g.state == dbguest.StateStarting {
@@ -447,13 +492,13 @@ func (g *databaseGuest) stop() {
 		if g.state != dbguest.StateFailed {
 			g.state = dbguest.StateStopping
 		}
-		postmaster := g.postmaster
+		postmaster, exited := g.postmaster, g.exited
 		g.mu.Unlock()
-		go g.shutdown(postmaster)
+		go g.shutdown(postmaster, exited)
 	})
 }
 
-func (g *databaseGuest) shutdown(postmaster *os.Process) {
+func (g *databaseGuest) shutdown(postmaster *os.Process, exited chan struct{}) {
 	defer close(g.done)
 	if postmaster != nil && g.archive {
 		g.drainArchive()
@@ -461,12 +506,12 @@ func (g *databaseGuest) shutdown(postmaster *os.Process) {
 	if postmaster != nil {
 		_ = postmaster.Signal(syscall.SIGINT)
 		select {
-		case <-g.exited:
+		case <-exited:
 		case <-time.After(databaseFastStopWait):
 			g.log.Warn("database fast shutdown stalled; escalating")
 			_ = postmaster.Signal(syscall.SIGQUIT)
 			select {
-			case <-g.exited:
+			case <-exited:
 			case <-time.After(databaseQuitStopWait):
 			}
 		}
@@ -603,7 +648,7 @@ func (g *databaseGuest) setState(state dbguest.State) {
 func (g *databaseGuest) response() dbguest.Response {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return dbguest.Response{State: g.state, Major: g.major, Error: g.errCode}
+	return dbguest.Response{State: g.state, Major: g.major, Error: g.errCode, RecoveredTo: g.recoveredTo}
 }
 
 // fail records a stable error code. The detail goes to the guest console

@@ -17638,6 +17638,7 @@ CREATE TABLE public.database_vms (
     restore_window_seconds bigint DEFAULT 0 NOT NULL,
     restore_source uuid,
     restore_target timestamp with time zone,
+    restore_recovered_to timestamp with time zone,
     restore_lease_until timestamp with time zone,
     last_error text,
     last_active_at timestamp with time zone,

@@ -30,6 +30,8 @@ type fakeVMM struct {
 	// restoreBoots are the targets of restore boots; restoreFail makes
 	// them fail, and restoreHold keeps them recovering until closed.
 	restoreBoots []time.Time
+	untilEnd     []bool
+	recoveredTo  time.Time
 	restoring    map[string]bool
 	restoreFail  bool
 	restoreHold  chan struct{}
@@ -75,6 +77,7 @@ func (f *fakeVMM) Start(_ context.Context, _ Node, vm VM) error {
 	f.running[vm.DatabaseID] = true
 	if vm.RestoreSource != "" && !vm.Bootstrapped {
 		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
+		f.untilEnd = append(f.untilEnd, vm.RestoreUntilEnd)
 		f.restoring[vm.DatabaseID] = true
 	}
 	return nil
@@ -133,7 +136,7 @@ func (f *fakeVMM) Control(_ context.Context, _ Node, id string, req dbguest.Requ
 			}
 		}
 		f.volumes[id] = true
-		return dbguest.Response{State: dbguest.StateReady}, nil
+		return dbguest.Response{State: dbguest.StateReady, RecoveredTo: f.recoveredTo}, nil
 	}
 	if !f.volumes[id] {
 		return dbguest.Response{State: dbguest.StateNeedsBootstrap}, nil

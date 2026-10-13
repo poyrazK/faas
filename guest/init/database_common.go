@@ -217,11 +217,24 @@ const databaseRestoreCommand = "/sbin/init archive-wal get %f %p"
 
 // recoverySettings are the targeted-recovery parameters of a restore boot.
 func recoverySettings(target time.Time) []string {
-	return []string{
-		"-c", "restore_command=" + databaseRestoreCommand,
-		"-c", "recovery_target_time=" + target.UTC().Format("2006-01-02 15:04:05.999999+00"),
-		"-c", "recovery_target_action=promote",
+	settings := []string{"-c", "restore_command=" + databaseRestoreCommand}
+	if target.IsZero() {
+		// No target: recover to the end of the archive, then promote.
+		return settings
 	}
+	return append(settings,
+		"-c", "recovery_target_time="+target.UTC().Format("2006-01-02 15:04:05.999999+00"),
+		"-c", "recovery_target_action=promote",
+	)
+}
+
+// parseReplayTimestamp reads psql's text for pg_last_xact_replay_timestamp;
+// empty means no transaction was replayed.
+func parseReplayTimestamp(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse("2006-01-02 15:04:05.999999-07", s)
 }
 
 // extractBaseTar writes a pg_basebackup tar into dir. It accepts only

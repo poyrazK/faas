@@ -69,12 +69,18 @@ type VM struct {
 	RestoreWindowSeconds int64
 	// RestoreSource and RestoreTarget record a point-in-time restore: the
 	// database recovered from and the instant. Both are empty otherwise.
-	RestoreSource  string
-	RestoreTarget  time.Time
-	LastError      string
-	LastActiveAt   time.Time
-	StateChangedAt time.Time
-	CreatedAt      time.Time
+	RestoreSource string
+	RestoreTarget time.Time
+	// RestoreRecoveredTo is the restore's last replayed commit, recorded
+	// when it finished (zero: not recorded).
+	RestoreRecoveredTo time.Time
+	// RestoreUntilEnd lets a restore boot end at the end of the archive.
+	// The restore job sets it per boot; stores do not persist it.
+	RestoreUntilEnd bool
+	LastError       string
+	LastActiveAt    time.Time
+	StateChangedAt  time.Time
+	CreatedAt       time.Time
 	// NodeTarget is the node's vmmd dial target. The scheduler fills it on
 	// Wake and Get; stores do not persist it.
 	NodeTarget string
@@ -117,6 +123,8 @@ type Store interface {
 	// or renews the lease held, returning the new lease. A lease another
 	// replica holds, or a database no longer restoring, is ErrConflict.
 	ClaimRestore(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
+	// RecordRestore stamps a provisioning restore's last replayed commit.
+	RecordRestore(ctx context.Context, id string, recoveredTo time.Time) error
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
 }

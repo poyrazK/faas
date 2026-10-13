@@ -104,7 +104,7 @@ func boot() error {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database restore mode: %w", targetErr)
 			}
-			return runDatabaseGuest(slog.Default(), major, dbguest.ArchiveEnabled(string(cmdline)), target)
+			return runDatabaseGuest(slog.Default(), major, dbguest.ArchiveEnabled(string(cmdline)), target, dbguest.RestoreUntilEnd(string(cmdline)))
 		}
 	}
 	root, err := assembleOverlay()

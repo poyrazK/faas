@@ -1915,6 +1915,7 @@ type DatabaseVm struct {
 	RestoreWindowSeconds int64
 	RestoreSource        pgtype.UUID
 	RestoreTarget        pgtype.Timestamptz
+	RestoreRecoveredTo   pgtype.Timestamptz
 	RestoreLeaseUntil    pgtype.Timestamptz
 	LastError            pgtype.Text
 	LastActiveAt         pgtype.Timestamptz

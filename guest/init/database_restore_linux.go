@@ -105,7 +105,7 @@ func (g *databaseGuest) fetchBaseBackup() error {
 }
 
 // awaitPromotion waits until a recovering server has promoted.
-func (g *databaseGuest) awaitPromotion() bool {
+func (g *databaseGuest) awaitPromotion(exited chan struct{}) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), databasePromoteWait)
 	defer cancel()
 	for {
@@ -116,9 +116,29 @@ func (g *databaseGuest) awaitPromotion() bool {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-g.exited:
+		case <-exited:
 			return false
 		case <-time.After(databaseReadyPoll):
 		}
 	}
+}
+
+// noteRecoveredTo records the last commit the restore replayed, so the
+// host learns how far it got (before the target if the archive ended).
+func (g *databaseGuest) noteRecoveredTo() {
+	ctx, cancel := context.WithTimeout(context.Background(), databaseAdminSQLTimeout)
+	defer cancel()
+	out, err := g.query(ctx, "SELECT coalesce(pg_last_xact_replay_timestamp()::text, '')")
+	if err == nil {
+		var at time.Time
+		if at, err = parseReplayTimestamp(out); err == nil {
+			g.mu.Lock()
+			g.recoveredTo = at
+			toEnd := g.targetDropped
+			g.mu.Unlock()
+			g.log.Info("database restore: promoted", "recovered_to", at, "target", g.restoreTarget, "to_end_of_archive", toEnd)
+			return
+		}
+	}
+	g.log.Warn("database restore: last replayed commit unknown", "err", err)
 }

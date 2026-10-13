@@ -262,3 +262,27 @@ func TestArchivePendingCountsReadyFiles(t *testing.T) {
 		t.Fatal("a missing status directory counted as drained")
 	}
 }
+
+func TestRecoverySettingsWithoutTargetRecoverToTheEnd(t *testing.T) {
+	got := strings.Join(recoverySettings(time.Time{}), " ")
+	if !strings.Contains(got, "restore_command=") || strings.Contains(got, "recovery_target") {
+		t.Fatalf("untargeted recovery settings = %q", got)
+	}
+}
+
+func TestParseReplayTimestamp(t *testing.T) {
+	for in, want := range map[string]time.Time{
+		"2026-10-13 09:30:15.123456+00": time.Date(2026, 10, 13, 9, 30, 15, 123456000, time.UTC),
+		"2026-10-13 09:30:15+00":        time.Date(2026, 10, 13, 9, 30, 15, 0, time.UTC),
+		"2026-10-13 11:30:15.5+02":      time.Date(2026, 10, 13, 9, 30, 15, 500000000, time.UTC),
+		"":                              {},
+	} {
+		got, err := parseReplayTimestamp(in)
+		if err != nil || !got.Equal(want) {
+			t.Errorf("parse %q = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	if _, err := parseReplayTimestamp("yesterday"); err == nil {
+		t.Error("garbage parsed")
+	}
+}

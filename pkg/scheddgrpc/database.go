@@ -81,6 +81,9 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 	if vm.RestoreSource != "" {
 		rt.RestoreTarget = timestamppb.New(vm.RestoreTarget)
 	}
+	if !vm.RestoreRecoveredTo.IsZero() {
+		rt.RestoreRecoveredTo = timestamppb.New(vm.RestoreRecoveredTo)
+	}
 	return rt
 }
 

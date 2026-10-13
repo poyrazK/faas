@@ -50,6 +50,8 @@ type Spec struct {
 	// RestoreTarget, when set, boots the empty volume as a point-in-time
 	// restore to that instant; it needs Archive.
 	RestoreTarget time.Time
+	// RestoreUntilEnd lets that restore end at the end of the archive.
+	RestoreUntilEnd bool
 }
 
 // Validate rejects a spec that would not boot a database VM.
@@ -65,6 +67,8 @@ func (s Spec) Validate() error {
 		return fmt.Errorf("dbvm: guest cid %d is reserved", s.GuestCID)
 	case !s.RestoreTarget.IsZero() && !s.Archive:
 		return errors.New("dbvm: a point-in-time restore needs the archive")
+	case s.RestoreUntilEnd && s.RestoreTarget.IsZero():
+		return errors.New("dbvm: restore-until-end without a restore")
 	}
 	return nil
 }
@@ -86,6 +90,9 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 	}
 	if !s.RestoreTarget.IsZero() {
 		bootArgs += " " + dbguest.RestoreTargetArg(s.RestoreTarget)
+	}
+	if s.RestoreUntilEnd {
+		bootArgs += " " + dbguest.RestoreUntilEndArg
 	}
 	return fcvm.VMConfig{
 		BootSource: fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},

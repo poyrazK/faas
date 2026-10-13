@@ -29,8 +29,11 @@ import (
 // Listed nodes are upserted into database_nodes at startup. Without the
 // table the database RPCs return UNIMPLEMENTED.
 type DatabaseSchedulerConfig struct {
-	IdleTimeout   time.Duration        `toml:"idle_timeout"`
-	SweepInterval time.Duration        `toml:"sweep_interval"`
+	IdleTimeout   time.Duration `toml:"idle_timeout"`
+	SweepInterval time.Duration `toml:"sweep_interval"`
+	// SharedArchive: every database node's dbbackupd uploads to the same
+	// bucket and prefix, so restores may run on any node (ADR-1027).
+	SharedArchive bool                 `toml:"shared_archive"`
 	Nodes         []DatabaseNodeConfig `toml:"nodes"`
 }
 
@@ -109,7 +112,7 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 		}
 	}
 	vmm := dbsched.NewGRPCVMM(vmmTLS)
-	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout}, log)
+	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout, SharedArchive: cfg.SharedArchive}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
 		return nil, fmt.Errorf("schedd: recover databases: %w", err)

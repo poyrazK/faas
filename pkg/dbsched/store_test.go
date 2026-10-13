@@ -308,9 +308,19 @@ func TestStoreRestorePlacementAndLease(t *testing.T) {
 			if _, err := s.ClaimRestore(ctx, vm.DatabaseID, time.Time{}, time.Minute); err != nil {
 				t.Fatalf("claim after the lease %v lapsed = %v", short, err)
 			}
+			recovered := restored.RestoreTarget.Add(-time.Second)
+			if err := s.RecordRestore(ctx, vm.DatabaseID, recovered); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, vm.DatabaseID); !got.RestoreRecoveredTo.Equal(recovered) {
+				t.Fatalf("recovered point = %v", got.RestoreRecoveredTo)
+			}
 			plain, err := s.Place(ctx, newVM(1<<30, 384))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if err := s.RecordRestore(ctx, plain.DatabaseID, recovered); !errors.Is(err, ErrConflict) {
+				t.Fatalf("recording a restore point on a plain database = %v", err)
 			}
 			if _, err := s.ClaimRestore(ctx, plain.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
 				t.Fatalf("claim on a database that is not a restore = %v", err)

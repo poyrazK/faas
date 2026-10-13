@@ -421,8 +421,32 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
   - Metal (`TestMetalPointInTimeRestore`): after the source's local archive
     is deleted, a runtime backed by an empty store restores it from the
     bucket to the same rows.
-- Not yet: placing a restore on another node (schedd still pins it to the
-  source's), and pruning objects that exist only in the bucket.
+- **Restore onto another node.** With `shared_archive` set in schedd's
+  `[database_scheduler]` (every node's dbbackupd uploads to the same
+  bucket and prefix), a restore leaves the source's node when that node is
+  full, draining or unavailable. Without it, restores stay on the source's
+  node and fail while it is unavailable.
+  - A reachable source is flushed as usual, so the restore is exact on any
+    node.
+  - When the operator marks the source's node `unavailable` (node loss),
+    nothing can flush it. The restore boots with
+    `gregale.restore_until_end`: if PostgreSQL ends the targeted recovery
+    because the archive runs out first, guest-init restarts it once
+    without the target, and it recovers to the end of the archive and
+    promotes. The loss is bounded by the archive's lag: archive_timeout
+    (60 s) plus the upload interval.
+  - The guest reports its last replayed commit
+    (`pg_last_xact_replay_timestamp`), which schedd records as
+    `database_vms.restore_recovered_to` and returns on `GetDatabase`. The
+    lineage keeps the requested target, so the portable contract is
+    unchanged; the recovered point is operator evidence of the actual
+    recovery point.
+  - Metal (`TestMetalRestoreOntoAnotherNodeAfterNodeLoss`): node A's
+    database is parked and uploaded, A is marked unavailable and its
+    archive disk deleted, and the scheduler restores onto node B from the
+    bucket in 13 s, to the last commit before the target.
+- Not yet: pruning objects that exist only in the bucket (a lost node's
+  database keeps its bucket archive until it is deleted).
 
 ### Driver
 

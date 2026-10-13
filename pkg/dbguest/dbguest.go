@@ -38,6 +38,11 @@ const (
 	// guest-init pulls the restore source's base backup and recovers to the
 	// target (RFC 3339, UTC), then promotes.
 	RestoreTargetArgKey = "gregale.restore_target"
+	// RestoreUntilEndArg lets a restore whose archive ends before its
+	// target recover to the end of the archive instead of failing. schedd
+	// sets it only when the source's node is lost, so the source could not
+	// commit and archive past the target first.
+	RestoreUntilEndArg = "gregale.restore_until_end=1"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -127,6 +132,9 @@ type Response struct {
 	SQLState string `json:"sqlstate,omitempty"`
 	// Backup is the id of the base backup OpBaseBackup stored.
 	Backup string `json:"backup,omitempty"`
+	// RecoveredTo is a restored database's last replayed commit: at or
+	// before the target, and earlier when the archive ended first.
+	RecoveredTo time.Time `json:"recovered_to,omitzero"`
 }
 
 // Validate rejects malformed requests before the guest acts on them.
@@ -189,9 +197,15 @@ func RestoreTarget(cmdline string) (time.Time, bool, error) {
 
 // ArchiveEnabled reports whether the kernel command line turns WAL
 // archiving on.
-func ArchiveEnabled(cmdline string) bool {
+func ArchiveEnabled(cmdline string) bool { return hasField(cmdline, ArchiveArg) }
+
+// RestoreUntilEnd reports whether a restore may end at the end of the
+// archive.
+func RestoreUntilEnd(cmdline string) bool { return hasField(cmdline, RestoreUntilEndArg) }
+
+func hasField(cmdline, want string) bool {
 	for _, field := range strings.Fields(cmdline) {
-		if field == ArchiveArg {
+		if field == want {
 			return true
 		}
 	}

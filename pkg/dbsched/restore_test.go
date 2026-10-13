@@ -179,3 +179,84 @@ func TestDeleteStopsARunningRestore(t *testing.T) {
 	}
 	s.restoreWG.Wait()
 }
+
+// twoNodeScheduler has db-a (small) and db-b; the source lands on db-a.
+func twoNodeScheduler(t *testing.T, shared bool) (*Scheduler, *MemStore, *fakeVMM, VM) {
+	t.Helper()
+	store, vmm := NewMemStore(), newFakeVMM()
+	vmm.archive = true
+	seedNodes(t, store,
+		Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 3 << 30, Lifecycle: NodeActive},
+		Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 2 << 30, Lifecycle: NodeActive},
+	)
+	s := New(store, vmm, Config{IdleTimeout: time.Minute, ReadyTimeout: 2 * time.Second, WakeWait: time.Second, SharedArchive: shared}, nil)
+	source := provision(t, s)
+	if source.NodeID != "db-a" {
+		t.Fatalf("source on %s", source.NodeID)
+	}
+	time.Sleep(2 * time.Millisecond)
+	return s, store, vmm, source
+}
+
+func TestRestoreLeavesAFullSourceNodeOnlyWithASharedArchive(t *testing.T) {
+	ctx := context.Background()
+	for _, shared := range []bool{false, true} {
+		s, store, vmm, source := twoNodeScheduler(t, shared)
+		// Fill db-a's remaining 2 GiB.
+		if _, err := store.Place(ctx, VM{DatabaseID: uuid.NewString(), NodeID: "db-a", Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 2 << 30}); err != nil {
+			t.Fatal(err)
+		}
+		vm, err := s.Restore(ctx, restoreRequest(source, time.Now()))
+		if !shared {
+			if !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("unshared archive, full source node = %+v, %v", vm, err)
+			}
+			continue
+		}
+		if err != nil || vm.NodeID != "db-b" {
+			t.Fatalf("shared archive = %+v, %v; want db-b", vm, err)
+		}
+		s.restoreWG.Wait()
+		got, _ := store.Get(ctx, vm.DatabaseID)
+		if got.State != StateParked || len(vmm.untilEnd) != 1 || vmm.untilEnd[0] {
+			t.Fatalf("restore on db-b = %+v, until-end %v", got, vmm.untilEnd)
+		}
+		if _, ok := vmm.flushes[source.DatabaseID]; !ok {
+			t.Fatal("a reachable source was not flushed")
+		}
+	}
+}
+
+// After its node is lost, the source cannot flush: the restore recovers
+// from the bucket to the end of the archive at most, and records how far.
+func TestRestoreAfterTheSourceNodeIsLost(t *testing.T) {
+	ctx := context.Background()
+	s, store, vmm, source := twoNodeScheduler(t, false)
+	target := time.Now()
+	seedNodes(t, store, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 3 << 30, Lifecycle: NodeUnavailable})
+	if _, err := s.Restore(ctx, restoreRequest(source, target)); !errors.Is(err, ErrNodeUnavailable) {
+		t.Fatalf("lost node without a shared archive = %v, want ErrNodeUnavailable", err)
+	}
+
+	s.cfg.SharedArchive = true
+	vmm.recoveredTo = target.Add(-time.Minute).UTC().Truncate(time.Microsecond)
+	vm, err := s.Restore(ctx, restoreRequest(source, target))
+	if err != nil || vm.NodeID != "db-b" {
+		t.Fatalf("restore after node loss = %+v, %v", vm, err)
+	}
+	s.restoreWG.Wait()
+	got, _ := store.Get(ctx, vm.DatabaseID)
+	if got.State != StateParked || !got.RestoreRecoveredTo.Equal(vmm.recoveredTo) {
+		t.Fatalf("restored = %+v; want parked, recovered to %v", got, vmm.recoveredTo)
+	}
+	if len(vmm.untilEnd) != 1 || !vmm.untilEnd[0] {
+		t.Fatalf("restore boot until-end = %v", vmm.untilEnd)
+	}
+	if _, ok := vmm.flushes[source.DatabaseID]; ok {
+		t.Fatal("the scheduler tried to flush a source on a lost node")
+	}
+	// The record keeps the requested target as its lineage.
+	if !got.RestoreTarget.Equal(target.UTC().Truncate(time.Microsecond)) {
+		t.Fatalf("lineage target = %v", got.RestoreTarget)
+	}
+}

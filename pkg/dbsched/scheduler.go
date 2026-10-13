@@ -97,6 +97,11 @@ type Config struct {
 	// RestoreLease is how long a restore's lease lasts unrenewed; another
 	// replica resumes the restore once it lapses.
 	RestoreLease time.Duration
+	// SharedArchive says every database node's dbbackupd uploads to the
+	// same bucket and prefix, so any node can read any database's archive:
+	// a restore may then run off the source's node, and after that node is
+	// lost.
+	SharedArchive bool
 }
 
 // Scheduler is schedd's database scheduler. Operations on one database are

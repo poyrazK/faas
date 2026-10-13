@@ -112,6 +112,7 @@ func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 	// bootstrapped it boots from its own volume.
 	if vm.RestoreSource != "" && !vm.Bootstrapped {
 		req.RestoreSource, req.RestoreTarget = vm.RestoreSource, timestamppb.New(vm.RestoreTarget)
+		req.RestoreUntilEnd = vm.RestoreUntilEnd
 	}
 	_, err = c.StartDatabase(ctx, req)
 	return tolerate(err, codes.FailedPrecondition)
@@ -143,5 +144,9 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	return dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup()}, nil
+	out := dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup()}
+	if resp.GetRecoveredTo() != nil {
+		out.RecoveredTo = resp.GetRecoveredTo().AsTime()
+	}
+	return out, nil
 }

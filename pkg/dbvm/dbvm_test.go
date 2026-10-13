@@ -108,7 +108,18 @@ func TestBuildConfigRestoreBoot(t *testing.T) {
 	if err != nil || !ok || !target.Equal(s.RestoreTarget) || !dbguest.ArchiveEnabled(cfg.BootSource.BootArgs) {
 		t.Fatalf("boot args %q: target %v %v %v", cfg.BootSource.BootArgs, target, ok, err)
 	}
+	if dbguest.RestoreUntilEnd(cfg.BootSource.BootArgs) {
+		t.Fatal("a plain restore may end early")
+	}
+	s.RestoreUntilEnd = true
+	if cfg, err := BuildConfig(s); err != nil || !dbguest.RestoreUntilEnd(cfg.BootSource.BootArgs) {
+		t.Fatalf("until-end restore boot args = %q, %v", cfg.BootSource.BootArgs, err)
+	}
 	s.RestoreTarget = time.Time{}
+	if _, err := BuildConfig(s); err == nil {
+		t.Fatal("until-end without a restore accepted")
+	}
+	s.RestoreUntilEnd = false
 	if cfg, _ := BuildConfig(s); strings.Contains(cfg.BootSource.BootArgs, dbguest.RestoreTargetArgKey) {
 		t.Fatalf("plain boot carries a restore target: %q", cfg.BootSource.BootArgs)
 	}

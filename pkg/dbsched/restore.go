@@ -1,6 +1,7 @@
 package dbsched
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -59,10 +60,12 @@ type restoreRun struct {
 
 // Restore places a database recovered from req.Source as of req.Target and
 // starts restoring it in the background. It lands on the source's node,
-// where the source's base backups are. The database stays provisioning
-// until it has recovered, promoted and taken its own first base backup,
-// then parks; a failed restore leaves it failed. Repeating a request
-// returns the same database; another source or target is ErrConflict.
+// where the source's archive is local; with a shared archive it goes to
+// another node when that one is full, draining or lost. The database stays
+// provisioning until it has recovered, promoted and taken its own first
+// base backup, then parks; a failed restore leaves it failed. Repeating a
+// request returns the same database; another source or target is
+// ErrConflict.
 func (s *Scheduler) Restore(ctx context.Context, req RestoreRequest) (VM, error) {
 	if err := req.Validate(); err != nil {
 		return VM{}, fmt.Errorf("%w: %w", ErrInvalid, err)
@@ -84,15 +87,60 @@ func (s *Scheduler) Restore(ctx context.Context, req RestoreRequest) (VM, error)
 	if err := s.restorable(source, req); err != nil {
 		return VM{}, err
 	}
-	vm, err := s.store.Place(ctx, VM{
-		DatabaseID: req.DatabaseID, NodeID: source.NodeID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
+	pin, err := s.restoreNode(ctx, source)
+	if err != nil {
+		return VM{}, err
+	}
+	place := VM{
+		DatabaseID: req.DatabaseID, NodeID: pin, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
 		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds,
 		RestoreSource: source.DatabaseID, RestoreTarget: req.Target,
-	})
+	}
+	vm, err := s.store.Place(ctx, place)
+	if errors.Is(err, ErrNoCapacity) && pin != "" && s.cfg.SharedArchive {
+		// The source's node is full; any node reads the archive from the
+		// bucket.
+		place.NodeID = ""
+		vm, err = s.store.Place(ctx, place)
+	}
 	if err != nil {
 		return vm, err
 	}
 	return s.resumeExisting(ctx, vm, source.DatabaseID, req.Target)
+}
+
+// restoreNode is the node a restore must land on: the source's while it is
+// active, otherwise any ("") when the archive is shared.
+func (s *Scheduler) restoreNode(ctx context.Context, source VM) (string, error) {
+	node, err := s.node(ctx, source.NodeID)
+	if err != nil && !errors.Is(err, ErrNodeUnavailable) {
+		return "", err
+	}
+	if err == nil && node.Lifecycle == NodeActive {
+		return source.NodeID, nil
+	}
+	if !s.cfg.SharedArchive {
+		return "", fmt.Errorf("%w: the source's node is %s and archives are not shared", ErrNodeUnavailable, cmp.Or(node.Lifecycle, "gone"))
+	}
+	return "", nil
+}
+
+// sourceNodeLost reports whether the operator has declared the source's
+// node unavailable or removed it: its archive is then whatever reached
+// the bucket, and the source cannot flush past the target.
+func (s *Scheduler) sourceNodeLost(ctx context.Context, sourceID string) (bool, error) {
+	source, err := s.store.Get(ctx, sourceID)
+	if err != nil {
+		return false, err
+	}
+	node, err := s.node(ctx, source.NodeID)
+	if errors.Is(err, ErrNodeUnavailable) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return node.Lifecycle == NodeUnavailable, nil
 }
 
 func (s *Scheduler) resumeExisting(ctx context.Context, vm VM, source string, target time.Time) (VM, error) {
@@ -232,8 +280,23 @@ func (s *Scheduler) renewRestore(ctx context.Context, id string, lease time.Time
 
 // restore recovers vm into its volume, backs it up and parks it.
 func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
-	if err := s.flushSource(ctx, vm); err != nil {
-		return fmt.Errorf("flush source archive: %w", err)
+	lost, err := s.sourceNodeLost(ctx, vm.RestoreSource)
+	if err != nil {
+		return fmt.Errorf("restore source: %w", err)
+	}
+	switch {
+	case lost && !s.cfg.SharedArchive:
+		return fmt.Errorf("%w: the source's node is lost and archives are not shared", ErrNodeUnavailable)
+	case lost:
+		// Recover to the target, or to the end of what reached the bucket
+		// if that ends first; RestoreRecoveredTo records how far it got.
+		s.log.Warn("dbsched: restore source's node is unavailable; recovering from the bucket, at most to the target",
+			"database_id", vm.DatabaseID, "source", vm.RestoreSource, "target", vm.RestoreTarget)
+		vm.RestoreUntilEnd = true
+	default:
+		if err := s.flushSource(ctx, vm); err != nil {
+			return fmt.Errorf("flush source archive: %w", err)
+		}
 	}
 	// A previous attempt may have left the VM running; the guest restarts
 	// an unfinished extraction on the next boot.
@@ -249,6 +312,7 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 	if err := s.pollReady(ctx, node, vm.DatabaseID, s.cfg.RestoreTimeout, restorePoll); err != nil {
 		return err
 	}
+	s.recordRecoveredTo(ctx, node, vm)
 	// The restored database archives to its own archive from its new
 	// timeline; its first base backup makes it restorable in turn.
 	s.takeBackup(ctx, node, vm.DatabaseID)
@@ -277,4 +341,18 @@ func (s *Scheduler) flushSource(ctx context.Context, vm VM) error {
 		return errors.Join(err, guestError(resp))
 	}
 	return nil
+}
+
+// recordRecoveredTo stores how far the restore replayed. It is evidence for
+// operators, so a failure to read or record it does not fail the restore.
+func (s *Scheduler) recordRecoveredTo(ctx context.Context, node Node, vm VM) {
+	resp, err := s.vmm.Control(ctx, node, vm.DatabaseID, dbguest.Request{Op: dbguest.OpStatus})
+	if err != nil || resp.RecoveredTo.IsZero() {
+		return
+	}
+	if err := s.store.RecordRestore(ctx, vm.DatabaseID, resp.RecoveredTo); err != nil {
+		s.log.Warn("dbsched: record restore point", "database_id", vm.DatabaseID, "err", err)
+	}
+	s.log.Info("dbsched: restore recovered", "database_id", vm.DatabaseID, "target", vm.RestoreTarget,
+		"recovered_to", resp.RecoveredTo, "until_end", vm.RestoreUntilEnd)
 }

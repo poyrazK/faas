@@ -176,7 +176,7 @@ func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
 	const sourceID = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 	target := time.Date(2026, 10, 13, 9, 30, 0, 0, time.UTC)
 	f := &fakeDatabases{vm: dbsched.VM{DatabaseID: testDBID, NodeID: "db-a", State: dbsched.StateProvisioning,
-		RestoreSource: sourceID, RestoreTarget: target, RestoreWindowSeconds: 3600}}
+		RestoreSource: sourceID, RestoreTarget: target, RestoreWindowSeconds: 3600, RestoreRecoveredTo: target.Add(-time.Second)}}
 	s := New(nil, nil, nil).WithDatabases(f)
 	ctx := asCaller(callerAPID)
 	database := &scheddpb.ProvisionDatabaseRequest{DatabaseId: testDBID, PostgresMajor: 17, VcpuCount: 1, MemMib: 512, VolumeBytes: 1 << 30, RestoreWindowSeconds: 3600}
@@ -192,7 +192,8 @@ func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
 		}
 	}
 	rt, err := s.RestoreDatabase(ctx, &scheddpb.RestoreDatabaseRequest{Database: database, SourceDatabaseId: sourceID, PointInTime: timestamppb.New(target)})
-	if err != nil || rt.GetState() != "provisioning" || rt.GetRestoreSourceId() != sourceID || !rt.GetRestoreTarget().AsTime().Equal(target) || rt.GetRestoreWindowSeconds() != 3600 {
+	if err != nil || rt.GetState() != "provisioning" || rt.GetRestoreSourceId() != sourceID || !rt.GetRestoreTarget().AsTime().Equal(target) || rt.GetRestoreWindowSeconds() != 3600 ||
+		!rt.GetRestoreRecoveredTo().AsTime().Equal(target.Add(-time.Second)) {
 		t.Fatalf("restore = %v, %v", rt, err)
 	}
 	if f.restore.Source != sourceID || !f.restore.Target.Equal(target) || f.restore.MemMiB != 512 || f.restore.RestoreWindowSeconds != 3600 {

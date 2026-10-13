@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS database_vms (
     -- one was recovered from, and the instant. Fixed at placement.
     restore_source uuid,
     restore_target timestamptz,
+    -- The restore's last replayed commit, recorded when it finished.
+    restore_recovered_to timestamptz,
     -- The schedd replica running a restore holds this lease and renews it.
     restore_lease_until timestamptz,
     -- Stable error code of the last failed transition; never free text.

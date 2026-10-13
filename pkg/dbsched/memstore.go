@@ -214,3 +214,15 @@ func (m *MemStore) ClaimRestore(_ context.Context, id string, held time.Time, le
 	m.leases[id] = next
 	return next, nil
 }
+
+func (m *MemStore) RecordRestore(_ context.Context, id string, recoveredTo time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateProvisioning || vm.RestoreSource == "" {
+		return ErrConflict
+	}
+	vm.RestoreRecoveredTo = recoveredTo
+	m.vms[id] = vm
+	return nil
+}
