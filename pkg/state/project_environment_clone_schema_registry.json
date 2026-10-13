@@ -4580,6 +4580,21 @@
     "kind": "operational"
   },
   {
+    "table": "issue_source_map_artifacts",
+    "columns": [
+      "app_id",
+      "canonical_manifest",
+      "created_at",
+      "created_by_account_id",
+      "deployment_id",
+      "manifest_sha256",
+      "map_count",
+      "retired_at",
+      "retired_by_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "issue_split_rules",
     "columns": [
       "app_id",

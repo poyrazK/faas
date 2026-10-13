@@ -2864,3 +2864,14 @@ Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reporte
 cause. The dashboard preserves the outer exception and cause chain. See
 [Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
 language semantics, incomplete chains, and compatibility.
+
+Issue reporters accept explicitly reported operational context. Create a separate collector for each request or job:
+
+```ts
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.

@@ -202,6 +202,7 @@ export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.j
 
 export { createIssueReporter, type IssueContext, type IssueReporterOptions, type IssueSourceMap } from './issues.js';
 export { buildIssueSourceMapManifest, loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
+export { createIssueContext, type IssueBreadcrumbEntry, type IssueContextSnapshot } from './issue-context.js';
 
 export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
 export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';

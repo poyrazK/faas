@@ -896,3 +896,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1201: Deployment-bound Issues source-map artifacts](1201-deployment-issue-source-map-artifacts.md)
+
+- [ADR-1202: Labeled Issues grouping evaluation](1202-issue-grouping-evaluation-corpus.md)
+- [1203: Bounded operational context for Issues](1203-bounded-issue-operational-context.md)

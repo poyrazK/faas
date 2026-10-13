@@ -520,3 +520,13 @@ type EventDeliveryHealthSLOObservation = api.EventDeliveryHealthSLOObservation
 func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options EventDeliveryHealthSLOOptions) ([]EventDeliveryHealthSLOObservation, error) {
 	return api.EvaluateEventConsumerDeliverySLO(h, options)
 }
+
+// Deployment-bound source-map artifact publication and verified occurrence metadata.
+type IssueSourceMapArtifact = api.IssueSourceMapArtifact
+type IssueSourceMapManifest = api.IssueSourceMapManifest
+type PublishIssueSourceMapsRequest = api.PublishIssueSourceMapsRequest
+type IssueSourceMapsMetadata = api.IssueSourceMapsMetadata
+type IssueSymbolicationResult = api.IssueSymbolicationResult
+
+// IssueBreadcrumb is bounded reported operational context.
+type IssueBreadcrumb = api.IssueBreadcrumb

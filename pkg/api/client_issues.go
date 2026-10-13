@@ -7,11 +7,30 @@ import (
 )
 
 func issueAppPath(slug string) string { return "/v1/apps/" + url.PathEscape(slug) }
+func issueSourceMapsPath(slug, deployment string) string {
+	return issueAppPath(slug) + "/deployments/" + url.PathEscape(deployment) + "/issue-source-maps"
+}
+func (c *Client) PublishIssueSourceMaps(ctx context.Context, slug, deployment string, in PublishIssueSourceMapsRequest) (IssueSourceMapsMetadata, error) {
+	var out IssueSourceMapsMetadata
+	err := c.do(ctx, "PUT", issueSourceMapsPath(slug, deployment), in, &out)
+	return out, err
+}
+func (c *Client) GetIssueSourceMaps(ctx context.Context, slug, deployment string) (IssueSourceMapsMetadata, error) {
+	var out IssueSourceMapsMetadata
+	err := c.do(ctx, "GET", issueSourceMapsPath(slug, deployment), nil, &out)
+	return out, err
+}
+func (c *Client) RetireIssueSourceMaps(ctx context.Context, slug, deployment string) (IssueSourceMapsMetadata, error) {
+	var out IssueSourceMapsMetadata
+	err := c.do(ctx, "DELETE", issueSourceMapsPath(slug, deployment), nil, &out)
+	return out, err
+}
 func (c *Client) ListIssues(ctx context.Context, slug, state, environment, cursor string) (ListIssuesResponse, error) {
 	return c.ListIssuesFiltered(ctx, slug, state, environment, "", cursor)
 }
 
 type IssueListOptions struct {
+	Tag                                        string
 	State, Environment, Assignee, Sort, Cursor string
 	MinCustomers                               int64
 }
@@ -26,6 +45,9 @@ func (c *Client) ListIssuesFiltered(ctx context.Context, slug, state, environmen
 func (c *Client) ListIssuesWithOptions(ctx context.Context, slug string, options IssueListOptions) (ListIssuesResponse, error) {
 	q := url.Values{}
 	q.Set("state", options.State)
+	if options.Tag != "" {
+		q.Set("tag", options.Tag)
+	}
 	q.Set("environment", options.Environment)
 	if options.Assignee != "" {
 		q.Set("assignee", options.Assignee)

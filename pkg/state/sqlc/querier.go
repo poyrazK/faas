@@ -1584,6 +1584,7 @@ type Querier interface {
 	IssueCanonicalID(ctx context.Context, db DBTX, arg IssueCanonicalIDParams) (pgtype.UUID, error)
 	IssueCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountEvents(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueCountReadySourceMaps(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountRecentEvents(ctx context.Context, db DBTX, arg IssueCountRecentEventsParams) (int64, error)
 	IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParams) (AppIssue, error)
@@ -1626,15 +1627,19 @@ type Querier interface {
 	IssueLockApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockAppRow, error)
 	IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error)
 	IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error
+	IssuePublishSourceMaps(ctx context.Context, db DBTX, arg IssuePublishSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error
 	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
+	IssueReadSourceMaps(ctx context.Context, db DBTX, arg IssueReadSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssueReopenGroup(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueReparentGroup(ctx context.Context, db DBTX, arg IssueReparentGroupParams) error
 	IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error)
+	IssueRetireSourceMaps(ctx context.Context, db DBTX, arg IssueRetireSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevokeTokenParams) (int64, error)
 	IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg IssueSetNewIssueAssigneeParams) (AppIssue, error)
 	IssueSetSplitRuleEnabled(ctx context.Context, db DBTX, arg IssueSetSplitRuleEnabledParams) (IssueSplitRule, error)
+	IssueSourceMapDeploymentOwner(ctx context.Context, db DBTX, arg IssueSourceMapDeploymentOwnerParams) (pgtype.UUID, error)
 	IssueSplitPreviewCounts(ctx context.Context, db DBTX, arg IssueSplitPreviewCountsParams) (IssueSplitPreviewCountsRow, error)
 	IssueSyncGroupAction(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTokenStillValidParams) (bool, error)

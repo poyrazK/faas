@@ -8,6 +8,24 @@ import (
 )
 
 func issueAppPath(slug string) string { return "/v1/apps/" + url.PathEscape(slug) }
+func issueSourceMapsPath(slug, deployment string) string {
+	return issueAppPath(slug) + "/deployments/" + url.PathEscape(deployment) + "/issue-source-maps"
+}
+func (c *Client) PublishIssueSourceMaps(ctx context.Context, slug, deployment string, in PublishIssueSourceMapsRequest) (IssueSourceMapsMetadata, error) {
+	var out IssueSourceMapsMetadata
+	err := c.do(ctx, "PUT", issueSourceMapsPath(slug, deployment), in, &out)
+	return out, err
+}
+func (c *Client) GetIssueSourceMaps(ctx context.Context, slug, deployment string) (IssueSourceMapsMetadata, error) {
+	var out IssueSourceMapsMetadata
+	err := c.do(ctx, "GET", issueSourceMapsPath(slug, deployment), nil, &out)
+	return out, err
+}
+func (c *Client) RetireIssueSourceMaps(ctx context.Context, slug, deployment string) (IssueSourceMapsMetadata, error) {
+	var out IssueSourceMapsMetadata
+	err := c.do(ctx, "DELETE", issueSourceMapsPath(slug, deployment), nil, &out)
+	return out, err
+}
 func (c *Client) ListIssues(ctx context.Context, slug, state, environment, cursor string) (ListIssuesResponse, error) {
 	return c.ListIssuesFiltered(ctx, slug, state, environment, "", cursor)
 }
@@ -122,5 +140,16 @@ func (c *Client) UpdateIssueSplitRule(ctx context.Context, slug, source, id stri
 func (c *Client) UndoIssueSplitRule(ctx context.Context, slug, source, id string, in IssueSplitRuleUndoRequest) (IssueSplitRule, error) {
 	var out IssueSplitRule
 	err := c.do(ctx, "POST", issueAppPath(slug)+"/issues/"+url.PathEscape(source)+"/split-rules/"+url.PathEscape(id)+"/undo", in, &out)
+	return out, err
+}
+
+// ListIssuesByTag matches retained occurrences in the fixed 24-hour window.
+// The cursor must come from the same exact operational tag query.
+func (c *Client) ListIssuesByTag(ctx context.Context, slug, tag, cursor string) (ListIssuesResponse, error) {
+	q := url.Values{}
+	q.Set("tag", tag)
+	q.Set("cursor", cursor)
+	var out ListIssuesResponse
+	err := c.do(ctx, http.MethodGet, issueAppPath(slug)+"/issues?"+q.Encode(), nil, &out)
 	return out, err
 }

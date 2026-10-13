@@ -7440,6 +7440,12 @@ WITH candidate_issues AS MATERIALIZED (
       AND (sqlc.arg(environment)::text = '' OR i.environment = sqlc.arg(environment))
       AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR i.assignee_account_id = sqlc.narg(assignee_account_id))
       AND (NOT sqlc.arg(unassigned)::bool OR i.assignee_account_id IS NULL)
+      AND (sqlc.arg(tag_filter)::jsonb='{}'::jsonb OR EXISTS(
+        SELECT 1 FROM issue_events tagged JOIN issue_group_assignments assigned ON assigned.original_issue_id=tagged.issue_id
+        WHERE assigned.canonical_issue_id=i.id AND tagged.app_id=sqlc.arg(app_id)
+          AND tagged.occurred_at>=sqlc.arg(since)::timestamptz AND tagged.occurred_at<=sqlc.arg(until)::timestamptz
+          AND (tagged.payload->'tags') @> sqlc.arg(tag_filter)::jsonb
+      ))
 ), issue_impact AS (
     SELECT a.canonical_issue_id AS issue_id,
            count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
@@ -16845,6 +16851,7 @@ SELECT (jsonb_build_object(
     'github_deployments_deployment_id_fkey', (SELECT count(*) FROM github_deployments WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'instances_deployment_id_fkey', (SELECT count(*) FROM instances WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'invocation_environment_queue_admissions_deployment_id_fkey', (SELECT count(*) FROM invocation_environment_queue_admissions WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'issue_source_map_artifacts_deployment_owner_fkey', (SELECT count(*) FROM issue_source_map_artifacts WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'issue_ingest_tokens_deployment_id_fkey', (SELECT count(*) FROM issue_ingest_tokens WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'mirror_rules_mirror_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE mirror_deployment_id = sqlc.arg(deployment_id)::uuid),
     'mirror_rules_source_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE source_deployment_id = sqlc.arg(deployment_id)::uuid),

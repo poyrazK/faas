@@ -43,6 +43,7 @@ type RecordIssueParams struct {
 }
 
 type IssueCursor struct {
+	Tag  string `json:"tag,omitempty"`
 	Time time.Time
 	ID   string
 
@@ -56,6 +57,7 @@ type IssueCursor struct {
 
 // IssueListFilter scopes an issue inbox without changing its pagination shape.
 type IssueListFilter struct {
+	Tag               string
 	State             string
 	Environment       string
 	AssigneeAccountID string

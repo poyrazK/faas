@@ -13354,6 +13354,71 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [apps]
+      operationId: publishIssueSourceMaps
+      summary: Publish immutable deployment-local source-map artifacts.
+      description: Requires deploy-write permission and session MFA. Source contents and extensions are discarded. Matching canonical manifests are idempotent; a different manifest for the deployment conflicts, including after retirement.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishIssueSourceMapsRequest' }
+      responses:
+        '200':
+          description: Artifact readiness and immutable identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSourceMapsMetadata' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Immutable manifest conflict or active artifact quota exceeded. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [apps]
+      operationId: getIssueSourceMaps
+      summary: Inspect deployment source-map readiness without downloading mapping artifacts.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Read-only artifact metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSourceMapsMetadata' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: retireIssueSourceMaps
+      summary: Retire mapping blobs while preserving their immutable deployment identity.
+      description: Requires deploy-write permission and session MFA. New symbolicated captures require the same manifest to be restored; retained exact event retries remain idempotent.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Retired metadata, including the preserved manifest digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSourceMapsMetadata' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -13379,6 +13444,10 @@ paths:
           description: Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
           in: query
           schema: { type: string, enum: [recent, impact], default: recent }
+        - name: tag
+          description: Exact allowed operational key=value match on retained occurrences in the fixed 24-hour window.
+          in: query
+          schema: { type: string }
         - name: min_customers
           description: Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
           in: query
@@ -81558,6 +81627,7 @@ components:
         file: { type: string }
         function: { type: string }
         line: { type: integer }
+        column: { type: integer, minimum: 0, maximum: 2147483647, description: One-based generated or original column; omitted when unknown. Excluded from grouping identity. }
         in_app: { type: boolean }
 
     IssueCause:
@@ -81571,11 +81641,66 @@ components:
         frames: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/IssueFrame' } }
         frame_order: { type: string, enum: [newest-first, oldest-first] }
 
+    IssueSourceMapArtifact:
+      type: object
+      required: [generatedFile, sha256, payload]
+      properties:
+        generatedFile: { type: string, maxLength: 512, description: Portable relative bundle path from the Node build manifest. }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Producer-supplied bundle digest; the server does not retrieve bundle bytes to independently verify it. }
+        payload: { type: string, maxLength: 524288, description: Flat Source Map v3 JSON; byte and decoded limits are enforced before persistence. }
+    IssueSourceMapManifest:
+      type: object
+      required: [version, artifacts]
+      properties:
+        version: { type: integer, enum: [1] }
+        artifacts: { type: array, minItems: 1, maxItems: 32, items: { $ref: '#/components/schemas/IssueSourceMapArtifact' } }
+    PublishIssueSourceMapsRequest:
+      type: object
+      required: [directory, manifest]
+      properties:
+        directory: { type: string, maxLength: 512, description: Absolute deployed directory corresponding to the manifest scan root. }
+        manifest: { $ref: '#/components/schemas/IssueSourceMapManifest' }
+    IssueSourceMapsMetadata:
+      type: object
+      required: [deployment_id, manifest_sha256, map_count, ready, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        manifest_sha256: { type: string }
+        map_count: { type: integer }
+        ready: { type: boolean }
+        created_at: { type: string, format: date-time }
+        retired_at: { type: string, format: date-time }
+    IssueSymbolicationResult:
+      type: object
+      readOnly: true
+      required: [manifest_sha256, mapped_frames, unmapped_frames]
+      properties:
+        manifest_sha256: { type: string }
+        mapped_frames: { type: integer }
+        unmapped_frames: { type: integer }
+
+    IssueBreadcrumb:
+      type: object
+      required: [occurred_at, category, level, message]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        category: { type: string, enum: [http, db, cache, workflow, log, custom] }
+        level: { type: string, enum: [debug, info, warning, error] }
+        message: { type: string, description: Sanitized and bounded to 256 UTF-8 bytes. }
     IssueEvent:
       description: "Structured exception evidence; credential-derived account and deployment identity cannot be overridden."
       type: object
       required: [event_id, occurred_at, exception_type, message]
       properties:
+        breadcrumbs: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/IssueBreadcrumb' } }
+        breadcrumbs_dropped: { type: integer, minimum: 0, maximum: 2147483647 }
+        tags:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string }
+          description: Sanitized operational dimensions; unknown keys are discarded. Allowed keys are component, operation, feature_flag, feature_variant, dependency, region, job_type, workflow, state, error_class, release_channel, runtime.
+        symbolication_strategy: { type: string, enum: [deployment-source-maps-v1], description: Opt-in server mapping against this credential's deployment artifacts; requires failure-site-v1 or cause-chain-v1. }
+        symbolication: { $ref: '#/components/schemas/IssueSymbolicationResult' }
         causes: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/IssueCause' } }
         causes_incomplete: { type: boolean, description: "Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause." }
         event_id: { type: string, format: uuid }

@@ -15,9 +15,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|ownership-rules|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|ownership-rules|source-maps|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
+	if len(args) > 0 && args[0] == "source-maps" {
+		return cmdIssueSourceMaps(args[1:])
+	}
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		PrintUsage(os.Stderr, issuesCmdUsage, "issues")
 		if len(args) > 0 {
@@ -58,12 +61,13 @@ func cmdIssues(args []string) int {
 	memberIssue := fs.String("member", "", "original group UUID to split out")
 	assignee := fs.String("assignee", "", "list filter: me, unassigned, or account UUID; assignment owner UUID (empty unassigns)")
 	sortBy := fs.String("sort", "", "list order: recent (default) or impact by verified customers in 24h")
+	tag := fs.String("tag", "", "list filter: allowed operational key=value")
 	minCustomers := fs.Int64("min-customers", 0, "list filter: minimum verified customers affected in 24h")
 	until := fs.String("until", "", "ignore until (RFC3339)")
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
 	rulesFile := fs.String("rules-file", "", "JSON policy file for ownership-rules; omit to read the current policy")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "target": true, "member": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "target": true, "member": true, "assignee": true, "sort": true, "min-customers": true, "tag": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -95,7 +99,7 @@ func cmdIssues(args []string) int {
 		}
 		out, err := c.ListIssuesWithOptions(ctx, *app, api.IssueListOptions{
 			State: *stateFilter, Environment: *environment, Assignee: *assignee,
-			Sort: *sortBy, MinCustomers: *minCustomers, Cursor: *cursor,
+			Sort: *sortBy, MinCustomers: *minCustomers, Tag: *tag, Cursor: *cursor,
 		})
 		if err != nil {
 			return printErr("Could not list issues", err)

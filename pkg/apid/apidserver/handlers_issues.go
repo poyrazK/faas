@@ -22,6 +22,9 @@ import (
 var issueEnvironmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func (s *server) registerIssueRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishIssueSourceMaps))))
+	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueSourceMaps)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retireIssueSourceMaps))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events", s.ingestIssueEvent)
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-events/otlp/{signal}", s.ingestIssueOTLP)
 	mux.HandleFunc("GET /v1/apps/{slug}/issues", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssues)))
@@ -80,6 +83,10 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	}
 
 	switch {
+	case errors.Is(err, state.ErrIssueSourceMapsConflict):
+		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_conflict", "Conflict", "source-map manifest is immutable for this deployment"))
+	case errors.Is(err, state.ErrIssueSourceMapsUnavailable):
+		api.WriteProblem(w, api.NewProblem(409, "issue_source_maps_unavailable", "Source maps unavailable", "publish this deployment's source-map artifacts before requesting symbolication"))
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "issue resource not found"))
 	case errors.Is(err, state.ErrIssueGroupingConflict):
@@ -351,7 +358,10 @@ func (s *server) setIssueOwnershipRules(w http.ResponseWriter, r *http.Request, 
 
 func parseIssueListFilter(r *http.Request, accountID string) (state.IssueListFilter, error) {
 	q := r.URL.Query()
-	filter := state.IssueListFilter{State: q.Get("state"), Environment: q.Get("environment")}
+	filter := state.IssueListFilter{State: q.Get("state"), Environment: q.Get("environment"), Tag: q.Get("tag")}
+	if _, err := api.ParseIssueTagFilter(filter.Tag); err != nil {
+		return state.IssueListFilter{}, err
+	}
 	if filter.State != "" && filter.State != "open" && filter.State != "resolved" && filter.State != "ignored" {
 		return state.IssueListFilter{}, errors.New("state must be open, resolved, or ignored")
 	}

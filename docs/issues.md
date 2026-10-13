@@ -334,8 +334,8 @@ server validation and redaction.
 
 Roll out matching maps and reporting tokens with each deployment. Enabling maps
 can create new issue identities; saved groups and history are not migrated.
-This covers Node reporters. Central release artifact uploads, indexed maps,
-and server-side OTLP symbolication remain future work.
+This covers Node reporters. Central artifact publication and server-side OTLP mapping are described below.
+Indexed maps and automatic build-to-server artifact handoff remain future work.
 
 ### Discover source maps during Node builds
 
@@ -393,6 +393,56 @@ directories must remain stable while these helpers read them. `--replace`
 allows a repeated build to replace its generated manifest; failed discovery
 leaves the previous output untouched. Without that flag, an existing output
 file is rejected.
+
+### Publish deployment artifacts for REST and OTLP symbolication
+
+Publish a portable build manifest using an owner API key with deploy-write scope:
+
+```sh
+gregale issues source-maps publish --app exports --deployment DEPLOYMENT_ID \
+  --directory /app/dist --manifest-file dist/.gregale-issue-maps.json
+gregale issues source-maps status --app exports --deployment DEPLOYMENT_ID
+```
+
+The REST equivalent is `PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps`
+with `{"directory":"/app/dist","manifest":<parsed build manifest>}`. Status uses
+`GET` on the same path and returns readiness, map count, canonical manifest digest,
+and timestamps. Mapping payloads are private and are not returned by this endpoint.
+Session mutations require MFA; reporting tokens cannot publish or retire artifacts.
+
+After publication, opt into server mapping with Node
+`symbolicationStrategy: 'deployment-source-maps-v1'` together with
+`groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'`. Configure server
+mapping or local maps, not both. Node sends generated columns in this mode.
+REST events use `symbolication_strategy: "deployment-source-maps-v1"` and either
+structured one-based frame columns or a Node raw stack. OTLP exception attributes
+use the string `gregale.issue.symbolication_strategy=deployment-source-maps-v1`
+and the existing grouping-strategy attribute. Trace and log exports are supported.
+No map URL or source file is fetched.
+
+The reporting credential selects the artifact-owning deployment. Missing or
+retired artifacts reject new opted-in captures with
+`409 issue_source_maps_unavailable`; publish before enabling exporters. Different
+canonical manifests conflict for the same deployment. Bundle digests are producer
+claims: the server does not independently fetch deployment bundles or attest map
+correctness. The Node startup loader separately verifies local bundle bytes.
+
+Mapped outer and cause frames pass through normal sanitization before grouping.
+Unmapped lines and segments keep generated locations. Raw stacks remain generated.
+Retained occurrences expose read-only `symbolication` evidence containing the
+manifest digest and mapped/unmapped application-frame counts; columns do not affect
+identity. Existing grouping explanations continue verifying saved fingerprints.
+
+At most 32 ready deployment sets per app are retained, each subject to the existing
+map count, byte, symbol, and decoded-entry bounds. Upload bodies are capped at
+4 MiB plus 64 KiB. Retire an obsolete set with
+`gregale issues source-maps retire --app exports --deployment DEPLOYMENT_ID`
+or `DELETE` on the artifact path. Retirement removes mapping blobs and frees ready-set
+capacity while preserving the immutable digest. The identical canonical manifest
+can be restored; different mapping metadata cannot replace it. Retained exact event
+retries keep their original occurrence even after retirement. App or deployment
+deletion cascades artifacts. Existing occurrences retain their mapped evidence;
+source contents and producer extensions are never persisted in artifact storage.
 
 ### Grouping explanations
 
@@ -716,3 +766,33 @@ source only needs its rule disabled. Undo rejects isolated branch roots that
 also contain other merged members; review those links first. Repeating a
 completed undo adds no activity or counters. The source group's current owner
 and lifecycle take precedence, as for a manual merge.
+
+### Evaluate grouping quality
+
+`make issues-grouping-eval` compares the grouping strategies against a labeled
+synthetic corpus, reporting false-merge pairs, false-split pairs, and same-family
+precision/recall. App/environment namespaces remain separate. See
+[the corpus guide](../pkg/issues/evaluation/testdata/README.md) for input and metric
+semantics. The initial 19 fixtures are a regression baseline, not production
+accuracy evidence; add reviewed, sanitized real incidents before making rollout
+claims. The evaluator uses no network or database and does not output event content.
+
+### Reported breadcrumbs and operational tags
+
+Create a collector for each request or job; add only messages appropriate to retain as issue evidence:
+
+```typescript
+import { createIssueContext } from '@gregale/sdk-node';
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Capture freezes the evidence for retries. The collector keeps the latest 16 entries, with messages bounded to 256 UTF-8 bytes. The server sanitizes messages and discards entries older than one hour relative to the exception. The dashboard displays reported breadcrumbs, tags, and dropped counts. These are reported observations, not a complete request history.
+
+Allowed operational tag keys are `component`, `operation`, `feature_flag`, `feature_variant`, `dependency`, `region`, `job_type`, `workflow`, `state`, `error_class`, `release_channel`, and `runtime`. Values are sanitized to 128 UTF-8 bytes; unknown keys are discarded. Tags never establish verified customer identity and do not change grouping.
+
+Use `gregale issues list --app payments --tag component=payments`, or the list API's `tag=component%3Dpayments` query, to find groups with matching retained occurrences in a fixed 24-hour window. Pagination preserves the filter and window. Impact and event totals still describe the whole issue, rather than the filtered tag segment.
+
+OTLP exception records can report tags as string attributes named `gregale.issue.tag.<key>`, breadcrumbs as a JSON array in the string attribute `gregale.issue.breadcrumbs`, and a decimal counter in `gregale.issue.breadcrumbs_dropped`. The same server validation and sanitation apply.

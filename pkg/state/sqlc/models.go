@@ -3940,6 +3940,18 @@ type IssueResolution struct {
 	ActorAccountID    pgtype.UUID
 }
 
+type IssueSourceMapArtifact struct {
+	AppID              pgtype.UUID
+	DeploymentID       pgtype.UUID
+	ManifestSha256     string
+	CanonicalManifest  []byte
+	MapCount           int32
+	CreatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
+	RetiredAt          pgtype.Timestamptz
+	RetiredByAccountID pgtype.UUID
+}
+
 type IssueSplitRule struct {
 	ID                           pgtype.UUID
 	AppID                        pgtype.UUID

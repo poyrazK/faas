@@ -9224,7 +9224,7 @@ const (
 	IssueMaxFrameBytes    = 512
 	IssueMaxTypeBytes     = 256
 	IssuePageSize         = 50
-	IssueCursorMaxBytes   = 512
+	IssueCursorMaxBytes   = 2048
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
 )
@@ -9232,11 +9232,20 @@ const (
 // Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
 // bounds; map artifacts and source content never enter ingestion.
 const (
-	IssueSourceMapsMax       = 32
-	IssueSourceMapMaxBytes   = 512 << 10
-	IssueSourceMapsMaxBytes  = 4 << 20
-	IssueSourceMapEntriesMax = 100000
-	IssueSourceMapSymbolsMax = 8192
+	IssueSourceMapsMax             = 32
+	IssueSourceMapMaxBytes         = 512 << 10
+	IssueSourceMapsMaxBytes        = 4 << 20
+	IssueSourceMapEntriesMax       = 100000
+	IssueSourceMapSymbolsMax       = 8192
+	IssueSourceMapsUploadMaxBytes  = IssueSourceMapsMaxBytes + (64 << 10)
+	IssueSourceMapDeploymentsMax   = 32
+	IssueFrameCoordinateMax        = 1<<31 - 1
+	IssueBreadcrumbsMax            = 16
+	IssueBreadcrumbMessageMaxBytes = 256
+	IssueBreadcrumbMaxAge          = time.Hour
+	IssueTagsMax                   = 16
+	IssueTagKeyMaxBytes            = 64
+	IssueTagValueMaxBytes          = 128
 )
 
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).

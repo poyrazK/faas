@@ -58,6 +58,7 @@ import type { IssueEventResponse } from '../models/IssueEventResponse.js';
 import type { IssueImpactAlertPolicy } from '../models/IssueImpactAlertPolicy.js';
 import type { IssueIngestToken } from '../models/IssueIngestToken.js';
 import type { IssueOwnershipRules } from '../models/IssueOwnershipRules.js';
+import type { IssueSourceMapsMetadata } from '../models/IssueSourceMapsMetadata.js';
 import type { IssueSplitMatcher } from '../models/IssueSplitMatcher.js';
 import type { IssueSplitPreview } from '../models/IssueSplitPreview.js';
 import type { IssueSplitRule } from '../models/IssueSplitRule.js';
@@ -81,6 +82,7 @@ import type { ProfileDeploymentCheck } from '../models/ProfileDeploymentCheck.js
 import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.js';
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
+import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -2371,6 +2373,116 @@ export class AppsService {
     });
   }
   /**
+   * Publish immutable deployment-local source-map artifacts.
+   * Requires deploy-write permission and session MFA. Source contents and extensions are discarded. Matching canonical manifests are idempotent; a different manifest for the deployment conflicts, including after retirement.
+   * @returns IssueSourceMapsMetadata Artifact readiness and immutable identity.
+   * @throws ApiError
+   */
+  public static publishIssueSourceMaps({
+    slug,
+    deploymentId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deploymentId: string,
+    requestBody: PublishIssueSourceMapsRequest,
+  }): CancelablePromise<IssueSourceMapsMetadata> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
+      path: {
+        'slug': slug,
+        'deployment_id': deploymentId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Immutable manifest conflict or active artifact quota exceeded.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect deployment source-map readiness without downloading mapping artifacts.
+   * @returns IssueSourceMapsMetadata Read-only artifact metadata.
+   * @throws ApiError
+   */
+  public static getIssueSourceMaps({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deploymentId: string,
+  }): CancelablePromise<IssueSourceMapsMetadata> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
+      path: {
+        'slug': slug,
+        'deployment_id': deploymentId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Retire mapping blobs while preserving their immutable deployment identity.
+   * Requires deploy-write permission and session MFA. New symbolicated captures require the same manifest to be restored; retained exact event retries remain idempotent.
+   * @returns IssueSourceMapsMetadata Retired metadata, including the preserved manifest digest.
+   * @throws ApiError
+   */
+  public static retireIssueSourceMaps({
+    slug,
+    deploymentId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    deploymentId: string,
+  }): CancelablePromise<IssueSourceMapsMetadata> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
+      path: {
+        'slug': slug,
+        'deployment_id': deploymentId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * List durable grouped application issues.
    * @returns ListIssuesResponse A bounded page of issues for this application.
    * @throws ApiError
@@ -2381,6 +2493,7 @@ export class AppsService {
     environment,
     assignee,
     sort = 'recent',
+    tag,
     minCustomers,
     cursor,
   }: {
@@ -2405,6 +2518,10 @@ export class AppsService {
      */
     sort?: 'recent' | 'impact',
     /**
+     * Exact allowed operational key=value match on retained occurrences in the fixed 24-hour window.
+     */
+    tag?: string,
+    /**
      * Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
      */
     minCustomers?: number,
@@ -2424,6 +2541,7 @@ export class AppsService {
         'environment': environment,
         'assignee': assignee,
         'sort': sort,
+        'tag': tag,
         'min_customers': minCustomers,
         'cursor': cursor,
       },

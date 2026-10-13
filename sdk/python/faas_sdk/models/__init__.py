@@ -506,7 +506,6 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
-
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -1591,6 +1590,9 @@ from .issue_action_request import IssueActionRequest
 from .issue_action_request_action import IssueActionRequestAction
 from .issue_activity import IssueActivity
 from .issue_activity_details import IssueActivityDetails
+from .issue_breadcrumb import IssueBreadcrumb
+from .issue_breadcrumb_category import IssueBreadcrumbCategory
+from .issue_breadcrumb_level import IssueBreadcrumbLevel
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .issue_cause import IssueCause
 from .issue_cause_frame_order import IssueCauseFrameOrder
@@ -1599,6 +1601,8 @@ from .issue_event import IssueEvent
 from .issue_event_frame_order import IssueEventFrameOrder
 from .issue_event_grouping_strategy import IssueEventGroupingStrategy
 from .issue_event_response import IssueEventResponse
+from .issue_event_symbolication_strategy import IssueEventSymbolicationStrategy
+from .issue_event_tags import IssueEventTags
 from .issue_frame import IssueFrame
 from .issue_grouping_explanation import IssueGroupingExplanation
 from .issue_grouping_explanation_basis import IssueGroupingExplanationBasis
@@ -1614,6 +1618,10 @@ from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
 from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
+from .issue_source_map_artifact import IssueSourceMapArtifact
+from .issue_source_map_manifest import IssueSourceMapManifest
+from .issue_source_map_manifest_version import IssueSourceMapManifestVersion
+from .issue_source_maps_metadata import IssueSourceMapsMetadata
 from .issue_split_matcher import IssueSplitMatcher
 from .issue_split_matcher_source_kind import IssueSplitMatcherSourceKind
 from .issue_split_preview import IssueSplitPreview
@@ -1622,6 +1630,7 @@ from .issue_split_rule import IssueSplitRule
 from .issue_split_rule_undo_request import IssueSplitRuleUndoRequest
 from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
+from .issue_symbolication_result import IssueSymbolicationResult
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
@@ -3088,6 +3097,7 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_issue_source_maps_request import PublishIssueSourceMapsRequest
 from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
@@ -4568,7 +4578,6 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
-
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -5619,6 +5628,9 @@ __all__ = (
     "IssueActionRequestAction",
     "IssueActivity",
     "IssueActivityDetails",
+    "IssueBreadcrumb",
+    "IssueBreadcrumbCategory",
+    "IssueBreadcrumbLevel",
     "IssueBrowserCSRFTokenAction",
     "IssueCause",
     "IssueCauseFrameOrder",
@@ -5627,6 +5639,8 @@ __all__ = (
     "IssueEventFrameOrder",
     "IssueEventGroupingStrategy",
     "IssueEventResponse",
+    "IssueEventSymbolicationStrategy",
+    "IssueEventTags",
     "IssueFrame",
     "IssueGroupingExplanation",
     "IssueGroupingExplanationBasis",
@@ -5642,6 +5656,10 @@ __all__ = (
     "IssueOwnershipRules",
     "IssueOwnershipRuleSourceKind",
     "IssueRelease",
+    "IssueSourceMapArtifact",
+    "IssueSourceMapManifest",
+    "IssueSourceMapManifestVersion",
+    "IssueSourceMapsMetadata",
     "IssueSplitMatcher",
     "IssueSplitMatcherSourceKind",
     "IssueSplitPreview",
@@ -5650,6 +5668,7 @@ __all__ = (
     "IssueSplitRuleUndoRequest",
     "IssueSplitRuleUpdate",
     "IssueState",
+    "IssueSymbolicationResult",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
@@ -6980,6 +6999,7 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishIssueSourceMapsRequest",
     "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",

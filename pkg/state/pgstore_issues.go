@@ -170,6 +170,11 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.IssueEventResponse{}, err
 	}
+	// The app lock also serializes artifact publication/retirement. Exact retries
+	// above keep their original evidence even if mapping artifacts are retired.
+	if err = symbolicateIssueTx(ctx, q, tx, &in); err != nil {
+		return api.IssueEventResponse{}, err
+	}
 	if err = q.IssuePurgeEvents(ctx, tx, sqlc.IssuePurgeEventsParams{AppID: owner.ID, Before: issueTime(in.Now.AddDate(0, 0, -in.Limits.RetentionDays))}); err != nil {
 		return api.IssueEventResponse{}, err
 	}
@@ -545,12 +550,18 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 	if sortBy == "" {
 		sortBy = "recent"
 	}
-	if sortBy == "impact" || filter.MinCustomers > 0 {
+	tags, err := api.ParseIssueTagFilter(filter.Tag)
+	if err != nil {
+		return api.ListIssuesResponse{}, ErrInvalidArgument
+	}
+	tagFilter, _ := json.Marshal(tags)
+	if sortBy == "impact" || filter.MinCustomers > 0 || filter.Tag != "" {
 		windowEnd := time.Now().UTC()
 		if cur.ImpactWindowEnd != nil {
 			windowEnd = cur.ImpactWindowEnd.UTC()
 		}
 		rows, err := sqlc.New().IssueListByImpact(ctx, s.pool, sqlc.IssueListByImpactParams{
+			TagFilter:    tagFilter,
 			MinCustomers: filter.MinCustomers, SortByImpact: sortBy == "impact",
 			CursorTime: issueTime(cur.Time), CursorID: issueUUID(cur.ID),
 			CursorCustomers: pgtype.Int8{Int64: cur.ImpactCustomers, Valid: cur.ID != "" && sortBy == "impact"},
@@ -570,7 +581,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 		}
 		if len(rows) > api.IssuePageSize {
 			last := out.Items[len(out.Items)-1]
-			next := IssueCursor{Time: last.LastSeenAt, ID: last.ID, Sort: sortBy, MinCustomers: filter.MinCustomers, ImpactWindowEnd: &windowEnd}
+			next := IssueCursor{Time: last.LastSeenAt, ID: last.ID, Sort: sortBy, MinCustomers: filter.MinCustomers, ImpactWindowEnd: &windowEnd, Tag: filter.Tag}
 			if sortBy == "impact" && last.Impact24h != nil {
 				next.ImpactCustomers = last.Impact24h.IdentifiedCustomers
 			}

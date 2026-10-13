@@ -19,6 +19,7 @@ def _get_kwargs(
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -36,6 +37,8 @@ def _get_kwargs(
         json_sort = sort
 
     params["sort"] = json_sort
+
+    params["tag"] = tag
 
     params["min_customers"] = min_customers
 
@@ -127,6 +130,7 @@ def sync_detailed(
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
@@ -138,6 +142,7 @@ def sync_detailed(
         environment (str | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -155,6 +160,7 @@ def sync_detailed(
         environment=environment,
         assignee=assignee,
         sort=sort,
+        tag=tag,
         min_customers=min_customers,
         cursor=cursor,
     )
@@ -174,6 +180,7 @@ def sync(
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
@@ -185,6 +192,7 @@ def sync(
         environment (str | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -203,6 +211,7 @@ def sync(
         environment=environment,
         assignee=assignee,
         sort=sort,
+        tag=tag,
         min_customers=min_customers,
         cursor=cursor,
     ).parsed
@@ -216,6 +225,7 @@ async def asyncio_detailed(
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> Response[ListIssuesResponse | Problem]:
@@ -227,6 +237,7 @@ async def asyncio_detailed(
         environment (str | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -244,6 +255,7 @@ async def asyncio_detailed(
         environment=environment,
         assignee=assignee,
         sort=sort,
+        tag=tag,
         min_customers=min_customers,
         cursor=cursor,
     )
@@ -261,6 +273,7 @@ async def asyncio(
     environment: str | Unset = UNSET,
     assignee: str | Unset = UNSET,
     sort: ListIssuesSort | Unset = "recent",
+    tag: str | Unset = UNSET,
     min_customers: int | Unset = UNSET,
     cursor: str | Unset = UNSET,
 ) -> ListIssuesResponse | Problem | None:
@@ -272,6 +285,7 @@ async def asyncio(
         environment (str | Unset):
         assignee (str | Unset):
         sort (ListIssuesSort | Unset):  Default: 'recent'.
+        tag (str | Unset):
         min_customers (int | Unset):
         cursor (str | Unset):
 
@@ -291,6 +305,7 @@ async def asyncio(
             environment=environment,
             assignee=assignee,
             sort=sort,
+            tag=tag,
             min_customers=min_customers,
             cursor=cursor,
         )

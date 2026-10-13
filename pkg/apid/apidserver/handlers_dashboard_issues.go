@@ -39,6 +39,7 @@ type dashboardIssuesData struct {
 	AssigneeFilter       string
 	SortFilter           string
 	MinCustomersFilter   string
+	TagFilter            string
 	OwnerLabels          map[string]string
 	CSRF                 string
 	ReplayCSRF           string
@@ -274,6 +275,7 @@ func populateIssueDashboardList(w http.ResponseWriter, r *http.Request, app stat
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return false
 	}
+	data.TagFilter = filter.Tag
 	data.StateFilter = filter.State
 	data.EnvironmentFilter = filter.Environment
 	data.AssigneeFilter = r.URL.Query().Get("assignee")

@@ -29763,6 +29763,12 @@ WITH candidate_issues AS MATERIALIZED (
       AND ($9::text = '' OR i.environment = $9)
       AND ($10::uuid IS NULL OR i.assignee_account_id = $10)
       AND (NOT $11::bool OR i.assignee_account_id IS NULL)
+      AND ($12::jsonb='{}'::jsonb OR EXISTS(
+        SELECT 1 FROM issue_events tagged JOIN issue_group_assignments assigned ON assigned.original_issue_id=tagged.issue_id
+        WHERE assigned.canonical_issue_id=i.id AND tagged.app_id=$7
+          AND tagged.occurred_at>=$13::timestamptz AND tagged.occurred_at<=$14::timestamptz
+          AND (tagged.payload->'tags') @> $12::jsonb
+      ))
 ), issue_impact AS (
     SELECT a.canonical_issue_id AS issue_id,
            count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
@@ -29771,8 +29777,8 @@ WITH candidate_issues AS MATERIALIZED (
       FROM candidate_issues i
       JOIN issue_group_assignments a ON a.canonical_issue_id = i.id
       JOIN issue_events e ON e.issue_id = a.original_issue_id
-     WHERE e.occurred_at >= $12::timestamptz
-       AND e.occurred_at <= $13::timestamptz
+     WHERE e.occurred_at >= $13::timestamptz
+       AND e.occurred_at <= $14::timestamptz
      GROUP BY a.canonical_issue_id
 )
 SELECT i.id, i.account_id, i.app_id, i.environment, i.fingerprint, i.grouping_version, i.title, i.state, i.assignee_account_id, i.first_seen_at, i.last_seen_at, i.event_count, i.regression_count, i.resolved_at, i.fixed_deployment_id, i.fixed_deployment_created_at, i.ignored_until, i.split_source_issue_id,
@@ -29809,6 +29815,7 @@ type IssueListByImpactParams struct {
 	Environment       string
 	AssigneeAccountID pgtype.UUID
 	Unassigned        bool
+	TagFilter         []byte
 	Since             pgtype.Timestamptz
 	Until             pgtype.Timestamptz
 }
@@ -29850,6 +29857,7 @@ func (q *Queries) IssueListByImpact(ctx context.Context, db DBTX, arg IssueListB
 		arg.Environment,
 		arg.AssigneeAccountID,
 		arg.Unassigned,
+		arg.TagFilter,
 		arg.Since,
 		arg.Until,
 	)
@@ -60151,6 +60159,7 @@ SELECT (jsonb_build_object(
     'github_deployments_deployment_id_fkey', (SELECT count(*) FROM github_deployments WHERE deployment_id = $1::uuid),
     'instances_deployment_id_fkey', (SELECT count(*) FROM instances WHERE deployment_id = $1::uuid),
     'invocation_environment_queue_admissions_deployment_id_fkey', (SELECT count(*) FROM invocation_environment_queue_admissions WHERE deployment_id = $1::uuid),
+    'issue_source_map_artifacts_deployment_owner_fkey', (SELECT count(*) FROM issue_source_map_artifacts WHERE deployment_id = $1::uuid),
     'issue_ingest_tokens_deployment_id_fkey', (SELECT count(*) FROM issue_ingest_tokens WHERE deployment_id = $1::uuid),
     'mirror_rules_mirror_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE mirror_deployment_id = $1::uuid),
     'mirror_rules_source_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE source_deployment_id = $1::uuid),
