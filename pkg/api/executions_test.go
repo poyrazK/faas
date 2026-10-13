@@ -13,7 +13,7 @@ func TestExecutionPlanLimits(t *testing.T) {
 		PlanHobby: {
 			Allowed: true, MaxConcurrent: 1, MaxSourceBytes: 64 << 10, MaxInputBytes: 64 << 10,
 			DefaultOutputBytes: 256 << 10, MaxOutputBytes: 1 << 20,
-			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 10_000,
+			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 60_000,
 			DefaultMemoryMB: 128, MaxMemoryMB: 256,
 			DefaultCPUMillicores: 250, MaxCPUMillicores: 1000,
 			DefaultEphemeralDiskMB: 64, MaxEphemeralDiskMB: 512, PIDsMax: 64,
@@ -21,7 +21,7 @@ func TestExecutionPlanLimits(t *testing.T) {
 		PlanPro: {
 			Allowed: true, MaxConcurrent: 5, MaxSourceBytes: 256 << 10, MaxInputBytes: 256 << 10,
 			DefaultOutputBytes: 256 << 10, MaxOutputBytes: 4 << 20,
-			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 30_000,
+			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 300_000,
 			DefaultMemoryMB: 128, MaxMemoryMB: 512,
 			DefaultCPUMillicores: 250, MaxCPUMillicores: 1000,
 			DefaultEphemeralDiskMB: 64, MaxEphemeralDiskMB: 1024, PIDsMax: 64,
@@ -29,7 +29,7 @@ func TestExecutionPlanLimits(t *testing.T) {
 		PlanScale: {
 			Allowed: true, MaxConcurrent: 20, MaxSourceBytes: 1 << 20, MaxInputBytes: 1 << 20,
 			DefaultOutputBytes: 256 << 10, MaxOutputBytes: 16 << 20,
-			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 30_000,
+			DefaultTimeoutMS: 5_000, MaxTimeoutMS: 900_000,
 			DefaultMemoryMB: 128, MaxMemoryMB: 1024,
 			DefaultCPUMillicores: 250, MaxCPUMillicores: 1000,
 			DefaultEphemeralDiskMB: 64, MaxEphemeralDiskMB: 2048, PIDsMax: 64,

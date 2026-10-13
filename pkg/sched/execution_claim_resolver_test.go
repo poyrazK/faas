@@ -97,7 +97,8 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 		t.Fatalf("outbound metadata = lease %q, integrations %v", got.LeaseToken, got.OutboundIntegrationIDs)
 	}
 	if !got.Snapshot.Networkless || got.Snapshot.StorageKey != "execution-snapshots/node22-amd64/mem" ||
-		got.Snapshot.VMStateStorageKey != "execution-snapshots/node22-amd64/vmstate" || got.Snapshot.FCVersion != "1.10.0" {
+		got.Snapshot.VMStateStorageKey != "execution-snapshots/node22-amd64/vmstate" || got.Snapshot.FCVersion != "1.10.0" ||
+		got.Snapshot.MemBytes != 128<<20 {
 		t.Fatalf("snapshot = %+v", got.Snapshot)
 	}
 	if string(claim.SealedPayload) != "caller-source-and-input-must-stay-opaque" {
@@ -127,6 +128,47 @@ func TestExecutionClaimResolverMissingSnapshotColdBootsSameIdentity(t *testing.T
 	}
 	if got.ID != executions[0].ID || got.AccountID != account.ID {
 		t.Fatalf("identity = %+v", got)
+	}
+}
+
+type recordingCaptureRequester struct {
+	identities []RuntimeSnapshotIdentity
+	templates  []ExecutionRestoreRequest
+}
+
+func (r *recordingCaptureRequester) Request(identity RuntimeSnapshotIdentity, template ExecutionRestoreRequest) bool {
+	r.identities = append(r.identities, identity)
+	r.templates = append(r.templates, template)
+	return true
+}
+
+func TestExecutionClaimResolverMissingSnapshotRequestsCapture(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, _ := newExecutionCoordinatorFixture(t, 1, 5000)
+	claim, err := store.ClaimExecution(ctx, "schedd-test", time.Now().UTC(), time.Second)
+	if err != nil {
+		t.Fatalf("ClaimExecution: %v", err)
+	}
+	capturer := &recordingCaptureRequester{}
+	resolver := NewExecutionClaimResolver(store, NewRuntimeSnapshotCatalog(NewMemoryRuntimeSnapshotIndex(), nil), StaticExecutionRuntimeArtifacts{
+		api.ExecutionRuntimeNode22: {
+			Architecture: archAMD64, KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64),
+			KernelKey: "kernel/1.10.0", BaseKey: "base/runner-node22-amd64.ext4", LayerKey: "execution/node22-amd64.ext4", FCVersion: "1.10.0",
+		},
+	}, "node-a").WithSnapshotCapturer(capturer)
+	got, err := resolver.ResolveExecutionClaim(ctx, claim)
+	if err != nil {
+		t.Fatalf("ResolveExecutionClaim: %v", err)
+	}
+	if got.Snapshot != (SnapshotRef{}) {
+		t.Fatalf("snapshot = %+v, want cold boot for the observing Run", got.Snapshot)
+	}
+	if len(capturer.identities) != 1 || capturer.identities[0].BaseImageDigest != strings.Repeat("c", 64) ||
+		capturer.identities[0].MemoryMB != claim.Limits.MemoryMB {
+		t.Fatalf("capture identities = %+v", capturer.identities)
+	}
+	if capturer.templates[0].NodeID != "node-a" || capturer.templates[0].VcpuCount != api.ExecutionVCPUCount {
+		t.Fatalf("capture template = %+v", capturer.templates[0])
 	}
 }
 

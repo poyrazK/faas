@@ -14151,6 +14151,37 @@ func (q *Queries) ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const executionComputeUsageRecord = `-- name: ExecutionComputeUsageRecord :exec
+INSERT INTO usage_minutes (
+    account_id, instance_id, minute, mb_seconds, cpu_usec, meter_kind, execution_id
+)
+SELECT account_id, id,
+       date_trunc('minute', finished_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+       (memory_mb + $1::int)::bigint
+         * GREATEST(1, ceil(EXTRACT(EPOCH FROM (finished_at - started_at))))::bigint,
+       cpu_time_ms * 1000, 'run', id
+FROM executions
+WHERE id = $2
+  AND status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+  AND started_at IS NOT NULL
+  AND finished_at IS NOT NULL
+ON CONFLICT (instance_id, minute) DO NOTHING
+`
+
+type ExecutionComputeUsageRecordParams struct {
+	OverheadMb  int32
+	ExecutionID pgtype.UUID
+}
+
+// Billable Run compute: (admitted memory + per-VM overhead) MB for every
+// started second between running and terminal, host-observed. A Run that
+// never reached running (restore failure, queued cancel) is not charged.
+// The execution ID is the usage instance ID, so retries cannot double-count.
+func (q *Queries) ExecutionComputeUsageRecord(ctx context.Context, db DBTX, arg ExecutionComputeUsageRecordParams) error {
+	_, err := db.Exec(ctx, executionComputeUsageRecord, arg.OverheadMb, arg.ExecutionID)
+	return err
+}
+
 const executionCountActive = `-- name: ExecutionCountActive :one
 SELECT count(*) FROM executions
 WHERE account_id = $1
@@ -15463,6 +15494,48 @@ func (q *Queries) ExecutionPinRuntime(ctx context.Context, db DBTX, arg Executio
 		&i.StepLabel,
 	)
 	return i, err
+}
+
+const executionPurgeExpiredReceipts = `-- name: ExecutionPurgeExpiredReceipts :execrows
+WITH candidates AS (
+  SELECT execution.id
+  FROM executions AS execution
+  WHERE execution.status IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+    AND execution.finished_at < $1::timestamptz
+    AND EXISTS (
+      SELECT 1 FROM execution_usage_ledger AS ledger
+      WHERE ledger.execution_id = execution.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM agent_execution_workflows AS workflow
+      WHERE workflow.account_id = execution.account_id
+        AND workflow.workflow_id = execution.workflow_id
+        AND workflow.status IN ('queued', 'running')
+    )
+  ORDER BY execution.finished_at, execution.id
+  FOR UPDATE OF execution SKIP LOCKED
+  LIMIT $2::int
+)
+DELETE FROM executions AS execution
+USING candidates
+WHERE execution.id = candidates.id
+`
+
+type ExecutionPurgeExpiredReceiptsParams struct {
+	FinishedBefore pgtype.Timestamptz
+	BatchLimit     int32
+}
+
+// Receipt retention. Deleting the execution cascades to its payload, replay
+// events, integration grants, and artifact grants; the usage ledger has no
+// FK to executions and is kept. A receipt is deleted only after its usage is
+// recorded, and never while its managed workflow can still read it.
+func (q *Queries) ExecutionPurgeExpiredReceipts(ctx context.Context, db DBTX, arg ExecutionPurgeExpiredReceiptsParams) (int64, error) {
+	result, err := db.Exec(ctx, executionPurgeExpiredReceipts, arg.FinishedBefore, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const executionQueueAccounts = `-- name: ExecutionQueueAccounts :many

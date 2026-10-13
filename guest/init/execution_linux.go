@@ -67,6 +67,11 @@ func serveExecutionOnceWithBroker(ctx context.Context, ln net.Listener, handler 
 	return executionproto.ServeWithBroker(ctx, conn, handler)
 }
 
+// listenExecutionResumeHook is a seam so protocol tests do not bind AF_VSOCK.
+var listenExecutionResumeHook = func(log *slog.Logger) error {
+	return listenResumeHook(log)
+}
+
 var poweroffExecution = func() error {
 	unix.Sync()
 	return unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF)
@@ -107,6 +112,17 @@ func runExecutionGuest(log *slog.Logger) error {
 		log.Warn("execution outbound relay unavailable", "err", err)
 	} else {
 		runExecutor.WithOutboundRelay(OutboundRelayEndpoint)
+	}
+	// Bind the resume hook last, after the execution listener and relay. A
+	// payload-free runtime snapshot is captured once the host's resume-hook
+	// probe is acknowledged, so the acknowledgement proves the captured guest
+	// is fully set up and waiting for its one request (ADR-986). On every
+	// restore vmmd triggers the hook before dispatch, which re-seeds entropy
+	// and steps the clock (spec §11 V6) so Runs restored from one snapshot
+	// never share RNG state. A cold boot has fresh entropy and tolerates a
+	// missing AF_VSOCK listener here.
+	if err := listenExecutionResumeHook(log); err != nil {
+		log.Warn("execution resume listener unavailable", "err", err)
 	}
 	serveErr := serveExecutionOnceWithBroker(context.Background(), ln, runExecutor.HandleWithBroker)
 	if serveErr != nil {

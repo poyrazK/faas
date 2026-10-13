@@ -7,6 +7,10 @@
  */
 export type UsageResponse = {
   app_id: string;
+  /**
+   * Workload meter. All disposable Runs of an account share one row whose app_id is the account ID.
+   */
+  kind?: 'app' | 'job' | 'run';
   mb_seconds: number;
   requests: number;
   included_gb_hours: number;

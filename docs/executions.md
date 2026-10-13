@@ -379,19 +379,11 @@ Unknown profiles, incompatible runtimes, and mismatched guest images fail
 closed. Standard and data runs never share a snapshot identity. Every run
 keeps its existing network, resource, output, and ephemeral-storage limits.
 
-Operators must publish and validate the profile image and matching guest
-artifacts before use. On imaged, set `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF`
-to the concrete linux/amd64 OCI manifest reference (`...@sha256:...`). It
-opts into the existing verified staging path under
-`base/runner-python-data-v1-amd64.ext4`; omission stages no data base. Use the
-reported image configuration digest for `BASE_DIGEST` below, and publish a
-separate payload-free execution layer preserving the data profile marker.
-The scheduler reads all eight artifact fields from
-`FAAS_EXECUTION_PYTHON313_PYTHON_DATA_V1_`: `ARCH`, `KERNEL_DIGEST`,
-`EXECUTOR_DIGEST`, `BASE_DIGEST`, `KERNEL_KEY`, `BASE_KEY`, `LAYER_KEY`, and
-`FC_VERSION`. Digests are lowercase SHA-256 hex without the `sha256:` prefix.
-This namespace never falls back to plain `FAAS_EXECUTION_PYTHON313_*` values.
-Dependency profiles require guest protocol v3 and native KVM/leak acceptance;
+To offer the data profile, set `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` on
+imaged to the concrete linux/amd64 OCI manifest reference (`...@sha256:...`).
+imaged stages it through the existing verified path under
+`base/runner-python-data-v1-amd64.ext4`; without it no data base is staged and
+data-profile Runs fail closed. Dependency profiles require guest protocol v3;
 see [ADR-383](adr/383-curated-stateless-execution-profiles.md) for rollout.
 
 ## Usage accounting
@@ -404,14 +396,85 @@ from an execution-ID-keyed ledger written in the same transaction as
 terminalization, so retries cannot double-count and deleting the sealed
 payload does not erase usage history.
 
-The control-plane and scheduler gates are explicit. Set
-`FAAS_EXECUTION_API_ENABLED=1` on apid and `FAAS_EXECUTION_DISPATCH=1` on
-schedd only after the host's restore/execute/destroy isolation checks pass.
-When dispatch is enabled, schedd uses one worker by default. Set
-`FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` to a value from 1 to 32 to raise
-the bounded worker pool; each account's plan concurrency limit still applies,
-and the scheduler rotates claims across accounts so one busy tenant cannot
-monopolize the pool.
+## Billing
+
+Runs are billed like any other compute: the Run's memory (`memory_mb`) plus
+8 MB, for every started second from `running` to its terminal state, counted
+in GB-hours against the plan's included allowance and then at the plan's
+overage rate ([ADR-986](adr/986-runs-billing-retention-snapshots-artifacts.md)).
+A 2.4-second Run at 256 MB is billed as 264 MB × 3 s. Queue and restore time
+are not billed, and a Run that never started (restore failure, cancelled while
+queued, expired before dispatch) costs nothing. In `GET /v1/usage` and
+`GET /v1/usage/daily` all Runs of an account appear as one row with
+`"kind": "run"`, whose `app_id` is the account ID; `gregale usage` labels it
+`runs`.
+
+## Fast starts from runtime snapshots
+
+The first Run of a machine shape on a node cold-boots. That miss also queues a
+background capture: schedd boots a separate VM with the same runtime, profile,
+memory, and scratch shape, but with no source, input, or Run identity. Once
+the guest is waiting for work, schedd snapshots it and records the snapshot in
+the runtime snapshot catalog. Later Runs with the same shape restore from that
+snapshot, and every restore re-seeds the guest's entropy and steps its clock
+before the request is sent. A new base image, guest-init, or kernel is a new
+shape and gets its own capture. A failed capture is retried after ten minutes;
+Runs keep cold-booting meanwhile.
+
+## Receipt retention
+
+A terminal Run keeps its receipt for seven days after it finishes
+(`ExecutionReceiptRetention` in `pkg/api/limits.go`). The receipt covers the
+JSON result, stdout/stderr, inline artifacts, the replay event stream, and any
+unredeemed artifact grants. After that, schedd deletes the Run, and
+`GET /v1/executions/{id}` returns 404. Save anything you need with
+`gregale runs artifacts` or your own storage before then.
+
+Retention never touches the usage ledger, so monthly usage and billing
+are unchanged after a receipt expires. Two kinds of receipts are kept past the
+window: Runs whose usage has not been recorded yet, and Runs that belong to a
+managed workflow that is still queued or running. Re-running a local workflow
+manifest after its receipts expire starts those steps again, so use a new
+`workflow_id` for work that must not repeat.
+
+schedd runs retention every ten minutes in bounded batches, including on
+nodes where dispatch is disabled, so receipts from an earlier enabled period
+still expire.
+
+## Enabling Runs on a deployment
+
+Set `faas_runs_enabled: true` in the Ansible inventory and converge. That one
+switch renders `FAAS_EXECUTION_API_ENABLED=1` for apid and
+`FAAS_EXECUTION_DISPATCH=1` for every schedd (control plane and compute
+nodes); setting it back to `false` clears both. `faas_runs_dispatch_concurrency`
+(default 1, maximum 32) sets `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY`, the
+bounded worker pool per schedd. Each account's plan concurrency limit still
+applies, and the scheduler rotates claims across accounts so one busy tenant
+cannot monopolize the pool.
+
+No per-runtime artifact configuration is needed. schedd derives each Run's
+machine from what the release and imaged already publish:
+
+* kernel: `kernel/<firecracker version>`, hashed once per version;
+* runtime base: `base/runner-<runtime>-<arch>.ext4` (or the profile base), with
+  its image config digest and guest-init digest read from the base's `.digest`
+  sidecar. The one-shot executor is compiled into guest-init, so the guest-init
+  digest is the executor identity;
+* execution layer: `execution/layer-v1-<profile>-<arch>.ext4`, a payload-free
+  drive1 carrying only `/etc/faas/execution.json`. imaged stages one per
+  profile at startup.
+
+A missing kernel, base, or layer fails the Run with `restore_failed` instead of
+guessing. Re-staging a base changes its digests, which gives later Runs a new
+runtime snapshot identity. An operator can still pin a runtime explicitly with
+the eight `FAAS_EXECUTION_<RUNTIME>[_<PROFILE>]_*` fields (`ARCH`,
+`KERNEL_DIGEST`, `EXECUTOR_DIGEST`, `BASE_DIGEST`, `KERNEL_KEY`, `BASE_KEY`,
+`LAYER_KEY`, `FC_VERSION`); setting any of them for a runtime switches that
+runtime to the explicit values, which must then be complete.
+
+Run scratch space is the guest's `/tmp` tmpfs, so it is bounded by the Run's
+memory limit; `ephemeral_disk_mb` currently only selects the runtime snapshot
+shape.
 
 ## Pass artifacts between runs
 

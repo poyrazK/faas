@@ -13724,7 +13724,8 @@ BEGIN
     ), account.plan), jsonb_strip_nulls(jsonb_build_object(
       'app_id', NEW.app_id::text, 'job_id', NEW.job_id::text,
       'project_id', app.project_id::text, 'deployment_id', instance.deployment_id::text,
-      'environment_id', environment.id::text, 'name', COALESCE(app.slug, job.name)))
+      'environment_id', environment.id::text,
+      'name', COALESCE(app.slug, job.name, CASE WHEN NEW.meter_kind = 'run' THEN 'runs' END)))
     INTO captured_plan, captured_attribution
     FROM accounts account
     LEFT JOIN apps app ON app.id = NEW.app_id AND app.account_id = account.id
@@ -21356,7 +21357,7 @@ CREATE TABLE public.executions (
     CONSTRAINT executions_source_bytes_check CHECK (((source_bytes >= 1) AND (source_bytes <= 1048576))),
     CONSTRAINT executions_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text]))),
     CONSTRAINT executions_step_label_check CHECK (((step_label IS NULL) OR ((workflow_id IS NOT NULL) AND ((octet_length(step_label) >= 1) AND (octet_length(step_label) <= 128)) AND (length(btrim(step_label)) = length(step_label)) AND (step_label !~ '[[:cntrl:]]'::text)))),
-    CONSTRAINT executions_timeout_ms_check CHECK (((timeout_ms >= 100) AND (timeout_ms <= 30000))),
+    CONSTRAINT executions_timeout_ms_check CHECK (((timeout_ms >= 100) AND (timeout_ms <= 900000))),
     CONSTRAINT executions_timestamps_check CHECK ((((status = 'queued'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'restoring'::text) AND (started_at IS NULL) AND (finished_at IS NULL)) OR ((status = 'running'::text) AND (started_at IS NOT NULL) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL)))),
     CONSTRAINT executions_updated_at_check CHECK ((updated_at >= created_at)),
     CONSTRAINT executions_usage_check CHECK (((wall_time_ms >= 0) AND (cpu_time_ms >= 0) AND (peak_memory_mb >= 0))),
@@ -30633,8 +30634,8 @@ CREATE TABLE public.usage_daily (
     tail_seconds bigint DEFAULT 0 NOT NULL,
     meter_kind text DEFAULT 'app'::text NOT NULL,
     job_id uuid,
-    CONSTRAINT usage_daily_job_identity_check CHECK ((((meter_kind = 'app'::text) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (job_id IS NOT NULL)))),
-    CONSTRAINT usage_daily_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text])))
+    CONSTRAINT usage_daily_job_identity_check CHECK ((((meter_kind = ANY (ARRAY['app'::text, 'run'::text])) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (job_id IS NOT NULL)))),
+    CONSTRAINT usage_daily_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text, 'run'::text])))
 );
 
 
@@ -30697,9 +30698,10 @@ CREATE TABLE public.usage_minutes (
     job_id uuid,
     job_run_id uuid,
     job_execution_class text,
-    CONSTRAINT usage_minutes_app_or_job_chk CHECK ((((meter_kind = 'app'::text) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
-    CONSTRAINT usage_minutes_job_execution_class_check CHECK ((((meter_kind = 'app'::text) AND (job_execution_class IS NULL) AND (job_run_id IS NULL)) OR ((meter_kind = 'job'::text) AND (job_execution_class = ANY (ARRAY['standard'::text, 'flexible'::text]))))),
-    CONSTRAINT usage_minutes_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text])))
+    execution_id uuid,
+    CONSTRAINT usage_minutes_app_or_job_chk CHECK ((((meter_kind = 'app'::text) AND (app_id IS NOT NULL) AND (job_id IS NULL) AND (execution_id IS NULL)) OR ((meter_kind = 'job'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL) AND (execution_id IS NULL)) OR ((meter_kind = 'run'::text) AND (app_id IS NULL) AND (job_id IS NULL) AND (execution_id IS NOT NULL)))),
+    CONSTRAINT usage_minutes_job_execution_class_check CHECK ((((meter_kind = ANY (ARRAY['app'::text, 'run'::text])) AND (job_execution_class IS NULL) AND (job_run_id IS NULL)) OR ((meter_kind = 'job'::text) AND (job_execution_class = ANY (ARRAY['standard'::text, 'flexible'::text]))))),
+    CONSTRAINT usage_minutes_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text, 'run'::text])))
 );
 
 
@@ -41559,6 +41561,13 @@ CREATE INDEX executions_lease_expiry_idx ON public.executions USING btree (lease
 --
 
 CREATE INDEX executions_queue_account_idx ON public.executions USING btree (account_id, created_at, id) WHERE ((status = 'queued'::text) AND (cancel_requested_at IS NULL));
+
+
+--
+-- Name: executions_terminal_finished_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX executions_terminal_finished_idx ON public.executions USING btree (finished_at, id) WHERE (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'timed_out'::text, 'out_of_memory'::text, 'cancelled'::text]));
 
 
 --
@@ -52981,14 +52990,6 @@ ALTER TABLE ONLY public.execution_payloads
 
 ALTER TABLE ONLY public.execution_usage_ledger
     ADD CONSTRAINT execution_usage_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
--- Name: execution_usage_ledger execution_usage_ledger_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.execution_usage_ledger
-    ADD CONSTRAINT execution_usage_ledger_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.executions(id) ON DELETE CASCADE;
 
 
 --

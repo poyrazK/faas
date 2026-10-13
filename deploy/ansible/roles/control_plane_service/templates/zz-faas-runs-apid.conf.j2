@@ -1,0 +1,4 @@
+[Service]
+# Disposable Runs admission gate (docs/executions.md). One inventory switch,
+# faas_runs_enabled, drives this and the schedd dispatch gate together.
+Environment=FAAS_EXECUTION_API_ENABLED={{ (faas_runs_enabled | default(false) | bool) | ternary('1', '0') }}

@@ -149,6 +149,11 @@ func recordExecutionUsage(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, ex
 	if err := q.ExecutionUsageRecord(ctx, db, executionID); err != nil {
 		return fmt.Errorf("record execution usage: %w", err)
 	}
+	if err := q.ExecutionComputeUsageRecord(ctx, db, sqlc.ExecutionComputeUsageRecordParams{
+		OverheadMb: api.PerVMOverheadMB, ExecutionID: executionID,
+	}); err != nil {
+		return fmt.Errorf("record execution compute usage: %w", err)
+	}
 	return nil
 }
 
@@ -901,6 +906,22 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 		FinishedRestores: len(finishedRestores), FinishedRuns: len(finishedRuns),
 		PayloadsDeleted: int(deleted + orphans),
 	}, nil
+}
+
+// PurgeExpiredExecutions deletes one bounded batch of terminal receipts that
+// finished before finishedBefore. Child rows cascade; usage stays.
+func (s *PgStore) PurgeExpiredExecutions(ctx context.Context, finishedBefore time.Time, limit int) (int, error) {
+	if finishedBefore.IsZero() {
+		return 0, ErrExecutionInvalid
+	}
+	limit = min(max(limit, 1), 1000)
+	deleted, err := sqlc.New().ExecutionPurgeExpiredReceipts(ctx, s.pool, sqlc.ExecutionPurgeExpiredReceiptsParams{
+		FinishedBefore: executionTime(finishedBefore), BatchLimit: int32(limit),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("purge expired executions: %w", err)
+	}
+	return int(deleted), nil
 }
 
 // ExecutionUsageByAccount returns the UTC-month aggregate from the durable

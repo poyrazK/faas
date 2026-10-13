@@ -5479,6 +5479,16 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	// A payload-free execution guest has no readiness probe. Its resume hook
+	// is bound only after the execution listener, so an acknowledged hook
+	// proves the captured guest is waiting for its one request.
+	if inst.ExecutionOnly {
+		if readyErr := m.awaitExecutionCaptureReady(operationCtx, inst.Lease); readyErr != nil {
+			cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+			return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, errors.Join(readyErr, cleanupErr))
+		}
+	}
+
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	if snapshotErr != nil {
 		snapshotErr = fmt.Errorf("snapshot: %w", snapshotErr)
@@ -5492,6 +5502,32 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
+}
+
+// executionCaptureReadyTimeout bounds how long Park waits for a freshly
+// cold-booted execution guest to bind its listeners before a runtime
+// snapshot capture.
+const executionCaptureReadyTimeout = 30 * time.Second
+
+// awaitExecutionCaptureReady retries the resume hook until the guest
+// acknowledges it. On a fresh guest the hook only re-seeds entropy and steps
+// the clock, which is harmless; it also serves as the readiness barrier.
+func (m *Manager) awaitExecutionCaptureReady(ctx context.Context, lease Lease) error {
+	deadline := time.Now().Add(executionCaptureReadyTimeout)
+	for {
+		err := m.vmm.TriggerResumeHook(ctx, lease, time.Now().UnixNano())
+		if err == nil {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("execution guest not ready for capture: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier

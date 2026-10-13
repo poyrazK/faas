@@ -80,6 +80,23 @@ type ExecutionClaimResolver struct {
 	catalog   *RuntimeSnapshotCatalog
 	artifacts ExecutionRuntimeArtifactsResolver
 	nodeID    string
+	// capturer is optional. When set, a catalog miss schedules a background
+	// payload-free capture of the missing runtime snapshot.
+	capturer RuntimeSnapshotCaptureRequester
+}
+
+// RuntimeSnapshotCaptureRequester accepts a non-blocking capture request for
+// one missing runtime snapshot identity.
+type RuntimeSnapshotCaptureRequester interface {
+	Request(identity RuntimeSnapshotIdentity, template ExecutionRestoreRequest) bool
+}
+
+// WithSnapshotCapturer attaches the background runtime snapshot capturer.
+func (r *ExecutionClaimResolver) WithSnapshotCapturer(capturer RuntimeSnapshotCaptureRequester) *ExecutionClaimResolver {
+	if r != nil {
+		r.capturer = capturer
+	}
+	return r
 }
 
 func NewExecutionClaimResolver(accounts interface {
@@ -156,7 +173,7 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 		Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
 		OutboundIntegrationIDs: outboundIntegrationIDs,
 		KernelKey:              artifacts.KernelKey, BaseKey: artifacts.BaseKey, LayerKey: artifacts.LayerKey,
-		VcpuCount: api.VCPUPerPlan[account.Plan], MemSizeMiB: claim.Limits.MemoryMB,
+		VcpuCount: api.ExecutionVCPUCount, MemSizeMiB: claim.Limits.MemoryMB,
 		CPUMillicores: claim.Limits.CPUMillicores,
 	}
 	if len(outboundIntegrationIDs) > 0 && claim.LeaseToken != nil {
@@ -169,7 +186,12 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 			StorageKey:        plan.Snapshot.StorageKey,
 			VMStateStorageKey: runtimeSnapshotVMStateStorageKey(plan.Snapshot.StorageKey),
 			Networkless:       true,
+			MemBytes:          plan.Snapshot.MemBytes,
 		}
+	} else if plan.FallbackReason == RuntimeSnapshotFallbackMissing && r.capturer != nil {
+		// This Run cold-boots; capture a payload-free snapshot of the same
+		// machine in the background so later Runs restore instead.
+		r.capturer.Request(plan.Identity, request)
 	}
 	return request, nil
 }
