@@ -172,6 +172,24 @@ func (s *Service) ReceiveBoundWebhook(w http.ResponseWriter, r *http.Request, en
 	if !ok {
 		return false
 	}
+	digest := sha256.Sum256(body)
+	// A provider retry is answered from the durable receipt alone, even after
+	// the binding, definition or preview gate changed, or the binding was
+	// removed: an accepted event must never also reach plain delivery.
+	receipt, prior, err := store.OperationWebhookReceipt(r.Context(), endpoint.ID, eventID)
+	if err == nil {
+		w.Header().Set("Cache-Control", "no-store")
+		if prior != digest {
+			WriteOperationError(w, state.ErrOperationInputConflict)
+			return true
+		}
+		writeWebhookOperationReceipt(w, receipt)
+		return true
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrCapacity("could not read inbound webhook operation receipt"))
+		return true
+	}
 	binding, err := store.OperationWebhookBinding(r.Context(), endpoint.ID)
 	if errors.Is(err, state.ErrNotFound) {
 		return false
@@ -179,20 +197,6 @@ func (s *Service) ReceiveBoundWebhook(w http.ResponseWriter, r *http.Request, en
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load inbound webhook operation binding"))
-		return true
-	}
-	digest := sha256.Sum256(body)
-	// A provider retry is answered from the durable receipt alone, even if the
-	// binding, definition or preview gate has changed since acceptance.
-	if receipt, prior, err := store.OperationWebhookReceipt(r.Context(), endpoint.ID, eventID); err == nil {
-		if prior != digest {
-			WriteOperationError(w, state.ErrOperationInputConflict)
-			return true
-		}
-		writeWebhookOperationReceipt(w, receipt)
-		return true
-	} else if !errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.ErrCapacity("could not read inbound webhook operation receipt"))
 		return true
 	}
 	if !binding.Admits(eventType) {

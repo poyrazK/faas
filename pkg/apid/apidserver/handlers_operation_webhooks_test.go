@@ -121,6 +121,15 @@ func TestOperationWebhookBindingAdmitsOneOperationPerEvent(t *testing.T) {
 	expectStatus(t, e.Do(t, http.MethodDelete, bindingPath+"?expected_version="+url.QueryEscape(version+"9"), nil, nil), http.StatusConflict)
 	expectStatus(t, e.Do(t, http.MethodDelete, bindingPath+"?expected_version="+version, nil, nil), http.StatusNoContent)
 	expectStatus(t, e.Do(t, http.MethodGet, bindingPath, nil, nil), http.StatusNotFound)
+	// A lost acknowledgement retried after unbinding must not reach plain delivery.
+	late := postStripeInboundWebhook(t, e, endpoint.EndpointURL, body, inboundWebhookTestSecret)
+	expectStatus(t, late, http.StatusAccepted)
+	if r := decodeInboundReceipt(t, late); !r.Duplicate || r.ReceiptID != receipt.ReceiptID {
+		t.Fatalf("retry after unbinding %+v", r)
+	}
+	if _, err := store.InvocationByID(ctx, plain); err == nil {
+		t.Fatal("accepted event reached plain delivery after unbinding")
+	}
 	unbound := postStripeInboundWebhook(t, e, endpoint.EndpointURL, []byte(`{"id":"evt_4","type":"invoice.paid"}`), inboundWebhookTestSecret)
 	expectStatus(t, unbound, http.StatusAccepted)
 	if _, err := store.InvocationByID(ctx, decodeInboundReceipt(t, unbound).ReceiptID); err != nil {

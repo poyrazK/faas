@@ -215,6 +215,17 @@ func testWebhookOperationAdmission(t *testing.T, s webhookOperationFixtureStore)
 	if created.Load() != 1 || distinct != 1 {
 		t.Fatalf("concurrent deliveries created %d operations with %d identities", created.Load(), distinct)
 	}
+	current, err := s.OperationWebhookBinding(f.ctx, f.endpoint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteOperationWebhookBinding(f.ctx, f.endpoint.ID, f.acct.ID, current.Version); err != nil {
+		t.Fatal(err)
+	}
+	late, err := s.AdmitWebhookOperation(f.ctx, event)
+	if err != nil || !late.Duplicate || late.OperationID != first.OperationID {
+		t.Fatalf("retry of an accepted event after unbinding: %+v %v", late, err)
+	}
 }
 
 func TestMemOperationWebhookBinding(t *testing.T) {

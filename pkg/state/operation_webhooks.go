@@ -262,10 +262,7 @@ func (s *PgStore) AdmitWebhookOperation(ctx context.Context, in WebhookOperation
 	if err := q.LockOperationWebhookEvent(ctx, tx, operationWebhookEventLock(in.EndpointID, in.ProviderEventID)); err != nil {
 		return WebhookOperationReceipt{}, err
 	}
-	binding, err := q.LockOperationWebhookBinding(ctx, tx, endpoint)
-	if err != nil {
-		return WebhookOperationReceipt{}, mapErr(err)
-	}
+	// The receipt answers a retry even after its binding was removed.
 	prior, err := q.GetOperationWebhookReceipt(ctx, tx, sqlc.GetOperationWebhookReceiptParams{EndpointID: endpoint, ProviderEventID: in.ProviderEventID})
 	if err == nil {
 		receipt, digest, err := operationWebhookReceiptFromSQL(prior)
@@ -279,6 +276,10 @@ func (s *PgStore) AdmitWebhookOperation(ctx context.Context, in WebhookOperation
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return WebhookOperationReceipt{}, err
+	}
+	binding, err := q.LockOperationWebhookBinding(ctx, tx, endpoint)
+	if err != nil {
+		return WebhookOperationReceipt{}, mapErr(err)
 	}
 	if binding.Version != in.BindingVersion {
 		return WebhookOperationReceipt{}, ErrOperationWebhookBindingChanged
@@ -417,10 +418,6 @@ func (m *MemStore) AdmitWebhookOperation(ctx context.Context, in WebhookOperatio
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationWebhookMemoryLocked()
-	binding, ok := data.webhookBindings[in.EndpointID]
-	if !ok {
-		return WebhookOperationReceipt{}, ErrNotFound
-	}
 	now := time.Now().UTC()
 	key := operationWebhookReceiptKey(in.EndpointID, in.ProviderEventID)
 	if prior, exists := data.webhookReceipts[key]; exists && prior.ExpiresAt.After(now) {
@@ -428,6 +425,10 @@ func (m *MemStore) AdmitWebhookOperation(ctx context.Context, in WebhookOperatio
 			return WebhookOperationReceipt{}, ErrOperationInputConflict
 		}
 		return prior.WebhookOperationReceipt, nil
+	}
+	binding, ok := data.webhookBindings[in.EndpointID]
+	if !ok {
+		return WebhookOperationReceipt{}, ErrNotFound
 	}
 	if binding.Version != in.BindingVersion || binding.AccountID != in.Admission.AccountID || binding.PlatformTenantID != in.Admission.PlatformTenantID {
 		return WebhookOperationReceipt{}, ErrOperationWebhookBindingChanged

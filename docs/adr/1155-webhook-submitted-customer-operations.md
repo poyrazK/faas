@@ -86,8 +86,10 @@ waiting runs and are matched first.
 - A sleeping app's Operation starts from a provider event with the same receipt,
   progress, recovery and completion contract as a customer submission.
 - Rebinding cannot cause a second operation for an already accepted event.
-- Deleting the binding returns the endpoint to plain invocation delivery;
-  deleting the endpoint removes the binding and its receipts, never operations.
+- Deleting the binding returns new events to plain invocation delivery, but a
+  retry of an already accepted event is still answered from its receipt, which
+  is checked before the binding; deleting the endpoint removes the binding and
+  its receipts, never operations.
 - Disabling preview admission makes providers retry rather than silently drop.
 
 ## Rejected alternatives
