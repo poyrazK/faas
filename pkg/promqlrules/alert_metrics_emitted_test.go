@@ -1,6 +1,7 @@
 package promqlrules_test
 
 import (
+	"encoding/json"
 	"go/scanner"
 	"go/token"
 	"io/fs"
@@ -15,8 +16,9 @@ import (
 
 // externalMetricPrefixes are series exported by third-party binaries
 // (node_exporter, Prometheus, Alertmanager, Loki, Promtail, client_golang's
-// process collector) rather than by Gregale code.
-var externalMetricPrefixes = []string{"alertmanager_", "loki_", "node_", "process_", "prometheus_", "promtail_"}
+// process collector) or synthesized per target by Prometheus (scrape_*)
+// rather than by Gregale code.
+var externalMetricPrefixes = []string{"alertmanager_", "loki_", "node_", "process_", "prometheus_", "promtail_", "scrape_"}
 
 var externalMetricNames = map[string]bool{"up": true, "ALERTS": true, "ALERTS_FOR_STATE": true}
 
@@ -59,12 +61,6 @@ var (
 // that, because its fixtures feed the rule the name the rule expects.
 func TestAlertMetricsAreEmitted(t *testing.T) {
 	rules := loadShippedRules(t)
-	recorded := map[string]bool{}
-	for _, r := range rules {
-		if r.Record != "" {
-			recorded[r.Record] = true
-		}
-	}
 	readers := map[string][]string{}
 	for _, r := range rules {
 		name := r.Alert
@@ -72,21 +68,11 @@ func TestAlertMetricsAreEmitted(t *testing.T) {
 			name = r.Record
 		}
 		for _, m := range exprMetricNames(r.Expr) {
-			if recorded[m] || externalMetricNames[m] || hasAnyPrefix(m, externalMetricPrefixes) {
-				continue
-			}
 			readers[m] = append(readers[m], name)
 		}
 	}
-
 	src := loadMetricSources(t)
-	var missing []string
-	for m := range readers {
-		if !src.emits(m) {
-			missing = append(missing, m)
-		}
-	}
-	sort.Strings(missing)
+	missing := unemittedMetrics(readers, recordedMetrics(rules), src)
 	for _, m := range missing {
 		if _, known := knownUnemittedAlertMetrics[m]; known {
 			continue
@@ -98,6 +84,90 @@ func TestAlertMetricsAreEmitted(t *testing.T) {
 			t.Errorf("knownUnemittedAlertMetrics[%q] is stale: the metric is now emitted or no longer read by a rule; delete the entry", m)
 		}
 	}
+}
+
+// TestDashboardMetricsAreEmitted applies the same check to every PromQL
+// target in deploy/grafana. A panel over a name nothing exports renders an
+// empty graph that reads as "no events" rather than "broken query"; the Safe
+// Deploy row queried unprefixed safedeploy_* names for months.
+func TestDashboardMetricsAreEmitted(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join(repoRootDir, "deploy", "grafana", "*.json"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob dashboards: %v (found %d)", err, len(paths))
+	}
+	readers := map[string][]string{}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var doc any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		walkDashboardExprs(doc, "", func(panel, expr string) {
+			for _, m := range exprMetricNames(expr) {
+				readers[m] = append(readers[m], filepath.Base(path)+" \""+panel+"\"")
+			}
+		})
+	}
+	for _, m := range unemittedMetrics(readers, recordedMetrics(loadShippedRules(t)), loadMetricSources(t)) {
+		t.Errorf("%s (queried by %s) is not emitted by any Go source in cmd/ or pkg/ or any Ansible textfile collector; the panel can only ever be empty", m, strings.Join(dedupe(readers[m]), ", "))
+	}
+}
+
+// walkDashboardExprs calls visit with every Prometheus target expression in a
+// Grafana dashboard and the title of the panel that holds it. Targets on a
+// non-Prometheus datasource (Loki) are skipped.
+func walkDashboardExprs(node any, panel string, visit func(panel, expr string)) {
+	switch v := node.(type) {
+	case map[string]any:
+		if title, ok := v["title"].(string); ok {
+			panel = title
+		}
+		if expr, ok := v["expr"].(string); ok && !isLokiTarget(v) {
+			visit(panel, expr)
+		}
+		for _, child := range v {
+			walkDashboardExprs(child, panel, visit)
+		}
+	case []any:
+		for _, child := range v {
+			walkDashboardExprs(child, panel, visit)
+		}
+	}
+}
+
+func isLokiTarget(target map[string]any) bool {
+	ds, _ := target["datasource"].(map[string]any)
+	kind, _ := ds["type"].(string)
+	return kind == "loki"
+}
+
+func recordedMetrics(rules []shippedRule) map[string]bool {
+	recorded := map[string]bool{}
+	for _, r := range rules {
+		if r.Record != "" {
+			recorded[r.Record] = true
+		}
+	}
+	return recorded
+}
+
+// unemittedMetrics returns the read metrics that are neither recording-rule
+// outputs, third-party exporter series, nor produced by Gregale sources.
+func unemittedMetrics(readers map[string][]string, recorded map[string]bool, src metricSources) []string {
+	var missing []string
+	for m := range readers {
+		if recorded[m] || externalMetricNames[m] || hasAnyPrefix(m, externalMetricPrefixes) {
+			continue
+		}
+		if !src.emits(m) {
+			missing = append(missing, m)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // exprMetricNames returns the metric names a PromQL expression selects. It
@@ -118,6 +188,9 @@ func exprMetricNames(expr string) []string {
 		}
 		if loc[0] > 0 && (e[loc[0]-1] >= '0' && e[loc[0]-1] <= '9' || e[loc[0]-1] == '.') {
 			continue // exponent or duration suffix of a number
+		}
+		if loc[0] > 0 && e[loc[0]-1] == '$' {
+			continue // Grafana template variable
 		}
 		if strings.HasPrefix(strings.TrimLeft(e[loc[1]:], " \t\n"), "(") {
 			continue // function or aggregation call
@@ -210,10 +283,31 @@ func (s metricSources) addGoLiterals(t *testing.T, path string) {
 			continue
 		}
 		s.literals[value] = true
-		for _, ident := range metricIdentRE.FindAllString(value, -1) {
+		for _, ident := range exposedMetricNames(value) {
 			s.tokens[ident] = true
 		}
 	}
+}
+
+// exposedMetricNames returns the names a literal writes in exposition
+// position: the first token of a line (a textfile sample such as
+// "faas_x{a=%q} %d") or the name after "# HELP " / "# TYPE ". Names that only
+// appear inside prose, such as a Help string citing a sibling metric, do not
+// count as emitted.
+func exposedMetricNames(literal string) []string {
+	var names []string
+	for _, line := range strings.Split(literal, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(strings.TrimPrefix(line, "# HELP "), "# TYPE ")
+		loc := metricIdentRE.FindStringIndex(line)
+		if loc == nil || loc[0] != 0 {
+			continue
+		}
+		if rest := line[loc[1]:]; rest == "" || rest[0] == '{' || rest[0] == ' ' {
+			names = append(names, line[:loc[1]])
+		}
+	}
+	return names
 }
 
 // emits reports whether some source produces metric m, either verbatim or

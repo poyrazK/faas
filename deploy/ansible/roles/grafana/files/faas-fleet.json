@@ -1767,7 +1767,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (canary_preset) (rate(canary_progression_advanced_total[5m]))",
+          "expr": "sum by (canary_preset) (rate(meterd_canary_progression_advanced_total[5m]))",
           "legendFormat": "{{canary_preset}}",
           "refId": "A"
         }
@@ -1811,7 +1811,7 @@
       },
       "targets": [
         {
-          "expr": "safedeploy_in_flight_rollouts",
+          "expr": "meterd_safedeploy_in_flight_rollouts",
           "refId": "A"
         }
       ],
@@ -1864,7 +1864,7 @@
       },
       "targets": [
         {
-          "expr": "rate(safedeploy_orchestrator_stuck_detected_total[5m])",
+          "expr": "rate(meterd_safedeploy_orchestrator_stuck_detected_total[5m])",
           "legendFormat": "stuck/sec",
           "refId": "A"
         }
@@ -1904,12 +1904,12 @@
       },
       "targets": [
         {
-          "expr": "rate(safedeploy_orchestrator_audit_emit_failed_total[5m])",
+          "expr": "rate(meterd_safedeploy_orchestrator_audit_emit_failed_total[5m])",
           "legendFormat": "orchestrator failures/sec",
           "refId": "A"
         },
         {
-          "expr": "sum by (kind) (rate(deployment_audit_emitted_total{outcome=\"failed\"}[5m]))",
+          "expr": "sum by (kind) (rate(meterd_deployment_audit_emitted_total{outcome=\"failed\"}[5m]))",
           "legendFormat": "fleet {{kind}} failures/sec",
           "refId": "B"
         }
@@ -1949,17 +1949,17 @@
       },
       "targets": [
         {
-          "expr": "increase(safedeploy_orchestrator_started_total[24h])",
+          "expr": "increase(meterd_safedeploy_orchestrator_started_total[24h])",
           "legendFormat": "started",
           "refId": "A"
         },
         {
-          "expr": "increase(safedeploy_orchestrator_completed_total[24h])",
+          "expr": "increase(meterd_safedeploy_orchestrator_completed_total[24h])",
           "legendFormat": "completed",
           "refId": "B"
         },
         {
-          "expr": "increase(safedeploy_orchestrator_aborted_total[24h])",
+          "expr": "increase(meterd_safedeploy_orchestrator_aborted_total[24h])",
           "legendFormat": "aborted",
           "refId": "C"
         }
