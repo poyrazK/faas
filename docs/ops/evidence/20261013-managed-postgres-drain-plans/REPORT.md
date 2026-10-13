@@ -1,7 +1,8 @@
 # Managed PostgreSQL durable drain-plan evidence
 
-Date: 2026-10-13. Base: `f6b8f9a70e` (main after PR-4604).
-Decision: [ADR-1151](../../../adr/1151-managed-postgres-durable-drain-plans.md).
+Date: 2026-10-13. Final implementation base: `e1bfe3368f`.
+Initial verification base: `f6b8f9a70e` (main after PR-4604).
+Decision: [ADR-1153](../../../adr/1153-managed-postgres-durable-drain-plans.md).
 
 ## Implemented boundary
 
@@ -34,24 +35,38 @@ Catalog guards reuse the existing typed admission-fence constraint so scheduler
 callers receive `ErrManagedPostgresAdmissionFenced`. SQLC verification also copies
 the new query file into its disposable generation workspace.
 
+Initial CI caught a malformed-receipt decoder error being returned as nil and
+two clone inventory omissions. Typed conflict classification now preserves an
+inspectable `receipt_invalid` blocker, with a corrupt-timestamp regression.
+Blocked plan members independently count as retained deployment borrowers even
+when they have no native drain row. Cleanup locks both receipt and member writers
+until its commit; borrower, atomic-cleanup and concurrent-insertion regressions
+cover this boundary. Captured deployment scope is explicitly retained historical
+evidence in the environment-cleanup inventory.
+
+Rebasing discovered an ADR-1151 collision, so this decision is ADR-1153. A separate
+ADR-976 collision already present on main was resolved by renumbering the local
+capture cohort document to ADR-1154; its decision and production gates are unchanged.
+
 ## Local verification
 
 Pinned Go 1.26.9, SQLC 1.31.1, private PostgreSQL 16.15:
 
-- Final planner suite with the race detector: passed (38.419 s). Covers all
+- Final rebased planner suite with the race detector: passed (73.199 s). Covers all
   scopes/modes, immutable retry, unsupported members, unconfirmed terminal rows,
   missing catalog/member evidence, atomic rollback, lost reply and unreachable
   member recovery, owner ABA, cancellation, empty/oversized inventories,
-  concurrent capture/late insertion and concurrent idempotent requests.
+  concurrent capture/late insertion, concurrent idempotent requests and malformed
+  retained native receipts.
 - Existing member-receipt and planner regressions: passed (161.451 s), before
   the final typed-error assertion and two additional race cases.
-- State classification and clone schema policies: passed (20.379 s).
-- Scheduler plan/capability and receipt-recovery regressions: passed (2.651 s).
-- Final migration replay and complete up/down walk: passed (6.670 s).
+- Before rebase: state classification and clone schema policies passed (20.379 s).
+- Before rebase: scheduler plan/capability and receipt-recovery regressions passed
+  (2.651 s).
+- Before rebase: migration replay and complete up/down walk passed (6.670 s).
 - SQLC generation/verification, ADR uniqueness, runbook SQL, text encoding,
   shell quoting and diff whitespace checks: passed.
-- Full schema matches the applied migration set after trailing-whitespace
-  normalization. Fresh regeneration also includes function/trigger changes from
+- The final schema was regenerated from fresh migrations in a UTC database. Fresh regeneration also includes function/trigger changes from
   already merged main migrations that its previous snapshot did not reflect.
 
 An exploratory broader migration corpus exhausted local disk while creating
@@ -59,6 +74,14 @@ schemas. Only the task-owned, idle disposable database was recreated; shared Go
 caches and other checkouts were preserved. The required replay/up-down checks
 were then rerun successfully. This environment failure is not a passing full
 migration-corpus result.
+
+After rebase, local disk exhaustion interrupted two planner cases; the complete
+planner race suite then passed on retry. Linux lint retries and the local state
+race build did not complete. Subsequent Go builds failed because shared cache
+files disappeared during validation (including a diagnostic-only `-vet=off`
+attempt). Shared cache contents were not deleted by this task. Remaining lint,
+vet, builds, clone regressions and migration replay must be verified by Linux CI
+on the final PR head; these interrupted local attempts are not passing evidence.
 
 ## Remaining qualification
 

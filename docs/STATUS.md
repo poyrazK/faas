@@ -330,7 +330,7 @@ full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 
-Managed PostgreSQL drain plans (2026-10-13, [ADR-1151](adr/1151-managed-postgres-durable-drain-plans.md))
+Managed PostgreSQL drain plans (2026-10-13, [ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md))
 capture the app instance catalog and native member reservations atomically under
 an existing admission fence and ownership epoch. Restart recovery reuses the
 original receipts. Unsupported members, empty/oversized inventories and stale

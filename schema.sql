@@ -4018,7 +4018,7 @@ SELECT EXISTS (
         AND deployment.scope=environment.slug
     JOIN invocations invocation ON invocation.id=target_invocation AND invocation.app_id=target_app
         AND invocation.source='queue' AND invocation.state='completed'
-        AND invocation.completed_at IS NOT NULL AND invocation.deployment_scope=environment.slug
+        AND invocation.completed_at>=release.created_at AND invocation.deployment_scope=environment.slug
         AND invocation.queue_binding_id=target_binding
     CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
     CROSS JOIN LATERAL jsonb_each(coalesce(graph_member.value->'queue_bindings','{}'::jsonb)) AS queue_binding(name,value)
@@ -4201,13 +4201,108 @@ $$;
 CREATE FUNCTION public.environment_workload_serving_ready(target_graph uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
-SELECT environment_workload_serving_ready_without_scheduled_jobs(target_graph)
-    AND EXISTS (
-        SELECT 1 FROM environment_workload_serving_receipts receipt
-        JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
-        WHERE receipt.graph_id=target_graph
-            AND environment_workload_scheduled_jobs_ready(target_graph,release.id)
-    )
+SELECT EXISTS (
+    SELECT 1
+    FROM environment_workload_serving_receipts receipt
+    JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
+    JOIN active_environment_git_sources source ON source.id=receipt.source_id
+    JOIN project_environments environment ON environment.id=source.environment_id
+    JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
+    WHERE receipt.graph_id=target_graph AND source.mode='enforce' AND NOT source.suspended
+        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
+        AND source.approved_revision_id=graph.revision_id
+        AND environment_workload_graph_serving_supported(graph.id)
+        AND (SELECT count(*) FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)=(
+            SELECT count(*) FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+                AND NOT EXISTS (
+                    SELECT 1 FROM environment_workload_serving_routes route
+                    JOIN project_release_members release_member ON release_member.release_id=release.id
+                        AND release_member.app_id=route.app_id AND release_member.deployment_id=route.deployment_id
+                    WHERE route.graph_id=graph.id AND route.app_id::text=graph_member.value->>'app_id'
+                        AND ((route.cutover_required AND route.deployment_id::text=graph_member.value->>'candidate_deployment_id') OR
+                            (NOT route.cutover_required AND nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? route.deployment_id::text))
+                )
+        )
+        AND (NOT EXISTS (SELECT 1 FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)
+            OR cardinality(receipt.expected_gateways)>0)
+        AND NOT EXISTS (
+            SELECT 1 FROM environment_workload_serving_routes route
+            WHERE route.graph_id=graph.id AND (SELECT count(*) FROM environment_workload_serving_route_acks ack
+                WHERE ack.graph_id=route.graph_id AND ack.route_generation=route.route_generation)<>cardinality(receipt.expected_gateways)
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (binding.id IS NULL OR binding.app_id::text<>graph_member.value->>'app_id'
+                    OR binding.account_id<>source.account_id
+                    OR binding.environment_id<>source.environment_id OR binding.deployment_scope<>environment.slug
+                    OR binding.name<>queue_binding.name OR binding.queue_name<>queue_binding.value->'contract'->>'queue_name'
+                    OR binding.mode<>queue_binding.value->'contract'->>'mode'
+                    OR binding.workload_class<>queue_binding.value->'contract'->>'workload_class'
+                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
+                    OR binding.max_concurrency::text<>queue_binding.value->'contract'->>'max_concurrency'
+                    OR coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)<>binding.retry_policy
+                    OR binding.retired_at IS NOT NULL
+                    OR (binding.mode='push' AND NOT EXISTS (
+                        SELECT 1 FROM triggers queue_trigger
+                        WHERE queue_trigger.id::text=queue_binding.value->>'trigger_id'
+                            AND queue_trigger.app_id=binding.app_id AND queue_trigger.queue_binding_id=binding.id
+                            AND queue_trigger.account_id=source.account_id
+                            AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
+                            AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
+                            AND queue_trigger.queue_binding_scope=environment.slug
+                            AND queue_trigger.queue_binding_environment_id=source.environment_id
+                    ))
+                    OR (binding.mode='pull' AND coalesce(queue_binding.value->>'trigger_id','')<>'')
+                    OR binding.mode NOT IN ('push','pull'))
+        )
+        AND (SELECT count(*) FROM environment_workload_serving_queue_acks ack WHERE ack.graph_id=graph.id)=(
+            SELECT count(*)
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN environment_workload_serving_queue_acks ack ON ack.graph_id=graph.id
+                AND ack.binding_id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (ack.graph_id IS NULL OR ack.mode<>queue_binding.value->'contract'->>'mode'
+                    OR NOT environment_workload_queue_serving_ack_authorized(ack.graph_id,ack.binding_id,ack.mode,
+                        ack.trigger_id,ack.app_id,ack.deployment_id,ack.invocation_id)
+                    OR ack.app_id::text<>graph_member.value->>'app_id'
+                    OR (ack.mode='push' AND ack.trigger_id::text<>queue_binding.value->>'trigger_id')
+                    OR (ack.mode='pull' AND ack.trigger_id IS NOT NULL)
+                    OR NOT EXISTS (
+                        SELECT 1 FROM project_release_members release_member
+                        JOIN deployments deployment ON deployment.id=release_member.deployment_id
+                            AND deployment.app_id=release_member.app_id AND deployment.status='live'
+                            AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
+                        WHERE release_member.release_id=release.id AND release_member.app_id=ack.app_id
+                            AND release_member.deployment_id=ack.deployment_id
+                            AND (graph_member.value->>'candidate_deployment_id'=ack.deployment_id::text OR
+                                (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                    AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? ack.deployment_id::text))
+                    ))
+        )
+)
 $$;
 
 
@@ -8114,6 +8209,40 @@ END $$;
 
 
 --
+-- Name: guard_environment_workload_image_full_rootfs(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_image_full_rootfs() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE reviewed_source jsonb;
+BEGIN
+ IF NEW.environment_workload_runtime IS NULL OR NEW.kind <> 'image' THEN
+  RETURN NEW;
+ END IF;
+ SELECT w.source INTO reviewed_source
+ FROM app_environment_workload_intents w
+ JOIN project_environments e ON e.id=w.environment_id
+ WHERE w.app_id=NEW.app_id AND e.slug=NEW.scope;
+ IF reviewed_source IS NULL OR reviewed_source->>'kind' <> 'image' THEN
+  RETURN NEW;
+ END IF;
+ IF NEW.environment_workload_runtime->'source' IS DISTINCT FROM reviewed_source OR
+    coalesce(reviewed_source->>'full_rootfs','false') NOT IN ('true','false') THEN
+  RAISE EXCEPTION 'frozen image source differs from reviewed workload intent' USING ERRCODE='23514';
+ END IF;
+ IF reviewed_source->>'full_rootfs'='true' THEN
+  IF NEW.full_rootfs_override IS DISTINCT FROM true THEN
+   RAISE EXCEPTION 'reviewed image requires full-rootfs opt-in' USING ERRCODE='23514';
+  END IF;
+ ELSIF NOT (NEW.environment_workload_runtime ? 'deployment_inputs') AND NEW.full_rootfs_override IS NOT NULL THEN
+  RAISE EXCEPTION 'image full-rootfs override is not reviewed' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_instance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10724,6 +10853,8 @@ CREATE FUNCTION public.lock_clone_deployment_cleanup_borrower_writers() RETURNS 
     AS $$ BEGIN
  LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
+ -- Retained PostgreSQL receipts and blocked plan members also borrow deployments.
+ LOCK TABLE managed_postgres_cutover_drains,managed_postgres_cutover_drain_plan_members IN SHARE MODE;
 END $$;
 
 
@@ -47123,6 +47254,13 @@ CREATE TRIGGER guard_environment_workload_graph BEFORE INSERT OR DELETE OR UPDAT
 --
 
 CREATE TRIGGER guard_environment_workload_hold_state BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_hold_state();
+
+
+--
+-- Name: deployments guard_environment_workload_image_full_rootfs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_image_full_rootfs BEFORE INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_image_full_rootfs();
 
 
 --

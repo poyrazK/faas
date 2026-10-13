@@ -1,4 +1,4 @@
-# ADR-1151: durable managed PostgreSQL instance-catalog drain plans
+# ADR-1153: durable managed PostgreSQL instance-catalog drain plans
 
 Status: accepted for internal scheduler/controller plumbing; customer activation disabled.
 

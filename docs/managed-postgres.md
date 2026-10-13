@@ -758,7 +758,7 @@ remain pending, as does physical native KVM qualification for this step.
 
 An explicit internal scheduler request can now capture a durable app-instance
 drain plan across every deployment, scope and mode
-([ADR-1151](adr/1151-managed-postgres-durable-drain-plans.md)). Capture and native
+([ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md)). Capture and native
 member reservations commit atomically under the current owner and admission
 fence; the existing bounded recovery worker resumes the same members after
 restart. The atomic inventory limit is 512 members. Empty or oversized catalogs
