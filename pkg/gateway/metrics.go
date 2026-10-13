@@ -729,6 +729,12 @@ type Metrics struct {
 	// serviceWakeAhead (ADR-977) counts speculative wake-ahead decisions by
 	// outcome. used/unused close the loop on whether a prediction helped.
 	serviceWakeAhead *prometheus.CounterVec
+	// Per-edge wake-ahead evidence (ADR-1152), labelled by caller and target
+	// app UUID. Bounded by the learner: top edges of callers with enough
+	// wakes, and outcomes only for edges that were actually woken ahead.
+	serviceWakeAheadEdgeShare   *prometheus.GaugeVec
+	serviceWakeAheadCallerWakes *prometheus.GaugeVec
+	serviceWakeAheadEdgeTotal   *prometheus.CounterVec
 	// routePriorityQueue (ADR-978) counts warm-capacity queue entries by route
 	// priority class and outcome.
 	routePriorityQueue *prometheus.CounterVec
@@ -1605,11 +1611,29 @@ func NewMetrics() *Metrics {
 				Help: "Opt-in service wake-ahead decisions (ADR-977) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
 			}, []string{"outcome"},
 		),
+		serviceWakeAheadEdgeShare: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "gateway_service_wake_ahead_edge_share",
+				Help: "Learned wake-ahead evidence per caller and target app UUID (ADR-1152): kind=call is the share of caller cold wakes followed by a call to the target, kind=cold the share of those calls that found it parked or pre-woken.",
+			}, []string{"caller_app", "target_app", "kind"},
+		),
+		serviceWakeAheadCallerWakes: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "gateway_service_wake_ahead_caller_wakes",
+				Help: "Cold wakes of a caller app the wake-ahead learner holds evidence for (decayed; ADR-1152).",
+			}, []string{"caller_app"},
+		),
+		serviceWakeAheadEdgeTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_wake_ahead_edge_total",
+				Help: "Wake-ahead outcomes per caller and target app UUID (ADR-1152): started, used, unused, skipped_residency, failed.",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
 		routePriorityQueue: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_route_priority_queue_total",
 				Help: "Warm-capacity queue entries by route priority class (critical, normal, bulk) and outcome: queued, displacing (entered by taking a lower-class waiter's place), displaced (lost its place to a higher class), rejected (queue full).",
-			}, []string{"class", "outcome"},
+			}, []string{"app", "class", "outcome"},
 		),
 		serviceWakeLatency: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
@@ -1982,7 +2006,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.serviceWakeAhead)
-	reg.MustRegister(m.routePriorityQueue)
+	reg.MustRegister(m.routePriorityQueue, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -3668,12 +3692,67 @@ func (m *Metrics) IncServiceWakeAhead(outcome string) {
 	m.serviceWakeAhead.WithLabelValues(outcome).Inc()
 }
 
-// IncRoutePriorityQueue counts one warm-capacity queue outcome (ADR-978).
-func (m *Metrics) IncRoutePriorityQueue(class, outcome string) {
+// IncRoutePriorityQueue counts one warm-capacity queue outcome for an app
+// (ADR-978, ADR-1152).
+func (m *Metrics) IncRoutePriorityQueue(appID, class, outcome string) {
 	if m == nil || m.routePriorityQueue == nil {
 		return
 	}
-	m.routePriorityQueue.WithLabelValues(class, outcome).Inc()
+	m.routePriorityQueue.WithLabelValues(appID, class, outcome).Inc()
+}
+
+func wakeAheadAppIDs(ids ...string) bool {
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// WakeAheadOutcome counts one wake-ahead outcome fleet-wide and per edge.
+func (m *Metrics) WakeAheadOutcome(caller, target, outcome string) {
+	if m == nil {
+		return
+	}
+	m.IncServiceWakeAhead(outcome)
+	if m.serviceWakeAheadEdgeTotal != nil && wakeAheadAppIDs(caller, target) {
+		m.serviceWakeAheadEdgeTotal.WithLabelValues(caller, target, outcome).Inc()
+	}
+}
+
+// WakeAheadEdge publishes one learned edge.
+func (m *Metrics) WakeAheadEdge(caller, target string, callShare, coldShare float64) {
+	if m == nil || m.serviceWakeAheadEdgeShare == nil || !wakeAheadAppIDs(caller, target) {
+		return
+	}
+	m.serviceWakeAheadEdgeShare.WithLabelValues(caller, target, "call").Set(callShare)
+	m.serviceWakeAheadEdgeShare.WithLabelValues(caller, target, "cold").Set(coldShare)
+}
+
+// WakeAheadEdgeGone withdraws an edge that left the caller's top edges.
+func (m *Metrics) WakeAheadEdgeGone(caller, target string) {
+	if m == nil || m.serviceWakeAheadEdgeShare == nil {
+		return
+	}
+	m.serviceWakeAheadEdgeShare.DeleteLabelValues(caller, target, "call")
+	m.serviceWakeAheadEdgeShare.DeleteLabelValues(caller, target, "cold")
+}
+
+// WakeAheadCallerWakes publishes a caller's observed wake count.
+func (m *Metrics) WakeAheadCallerWakes(caller string, wakes float64) {
+	if m == nil || m.serviceWakeAheadCallerWakes == nil || !wakeAheadAppIDs(caller) {
+		return
+	}
+	m.serviceWakeAheadCallerWakes.WithLabelValues(caller).Set(wakes)
+}
+
+// WakeAheadCallerGone withdraws an evicted caller.
+func (m *Metrics) WakeAheadCallerGone(caller string) {
+	if m == nil || m.serviceWakeAheadCallerWakes == nil {
+		return
+	}
+	m.serviceWakeAheadCallerWakes.DeleteLabelValues(caller)
 }
 
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {

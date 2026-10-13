@@ -1027,6 +1027,15 @@ type AppTask struct {
 	BindingVerification  []byte
 }
 
+type AppTaskAttachSession struct {
+	TaskID            pgtype.UUID
+	Tty               bool
+	AttachTokenSha256 []byte
+	NodeID            pgtype.Text
+	NodeRecordedAt    pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+}
+
 type AppTcpListener struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -2508,6 +2517,7 @@ type EnvironmentGitSource struct {
 	SourceDefinitionDigest string
 	SourceVerifiedAt       pgtype.Timestamptz
 	Detached               bool
+	Provider               string
 }
 
 type EnvironmentGitSourcePoll struct {
@@ -3565,6 +3575,17 @@ type GithubWebhookSecret struct {
 	SecretValue    []byte
 	UpgradedAt     pgtype.Timestamptz
 	UpgradedBy     string
+}
+
+type GitlabOauthConnection struct {
+	AccountID         pgtype.UUID
+	GitlabUserID      int64
+	Username          string
+	CredentialsSealed []byte
+	ExpiresAt         pgtype.Timestamptz
+	Version           int64
+	ConnectedAt       pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type GooseDbVersion struct {
@@ -5435,6 +5456,8 @@ type ObjectStorageMultipartUpload struct {
 	ProtectionSnapshot         []byte
 	ProtectionLeaseToken       string
 	ProtectionVerified         bool
+	ChecksumSnapshot           []byte
+	ChecksumVerified           bool
 }
 
 type ObjectStorageRequestMetric struct {

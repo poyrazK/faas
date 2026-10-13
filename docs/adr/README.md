@@ -101,6 +101,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
 | 712 | [Object-storage durable entities](712-object-storage-durable-entities.md) | internal prototype; qualification pending | SQL-free entity state and retry receipts, opt-in alarms and checkpointed cleanup |
 | 903 | [Object-storage entity outbox commit contract](903-object-storage-entity-outbox-contract.md) | internal engine; delivery pending | Atomically rooted outgoing intents with bounded restore, receipt replay and storage accounting |
+| 1037 | [Interactive app-task attach](1037-interactive-app-task-attach.md) | accepted; operator-gated preview | `gregale app exec -it` attaches one client to a fresh task VM's PTY through the gateway and vmmd with a single-use token; schedd lifecycle unchanged |
 | 971 | [Retire dead same-boot instance records after verified absence](971-same-boot-dead-instance-record-retirement.md) | accepted | vmmd startup retires instance records whose process is gone and whose kernel resources are verifiably absent, freeing quarantined slots and identity-verified temporary files (amends ADR-472, extends ADR-478) |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
 | 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
@@ -163,6 +164,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 585 | [Managed operation results with durable webhook effects](585-managed-operation-webhook-effects.md) | accepted for implementation; promotion requires runtime qualification | Atomically fence managed HTTP completion with receiver-scoped durable webhook delivery |
 | 584 | [Durable object version protection](584-durable-object-version-protection.md) | accepted | Exact-version retention and legal holds with durable mutation/readback recovery |
 | 568 | [Git-owned environment intent and continuous reconciliation](568-environment-gitops-contract.md) | implementation in progress | Reviewed definitions, scoped ownership and binding retirement, bounded reports, durable effects, and scoped runtime convergence |
+| 1000 | [GitLab.com as a reviewed environment Git source](1000-gitlab-gitops-source.md) | implementation in progress | Account OAuth, verified project identity, commit-pinned reads, manual report scope |
 | 576 | [Private TCP addressing between services](576-private-tcp-service-addressing.md) | proposed | Account-scoped service addresses in 198.19.0.0/16 give non-HTTP protocols natural-port private reachability through a node-local TCP proxy |
 | 520 | [Self-hosted TLS for customer custom domains](520-self-hosted-custom-domain-tls.md) | proposed | Caddy on-demand certificates gated by gatewayd-public's ask endpoint; durable per-wildcard issuance budget; no CDN in the customer-domain path |
 | 580 | [Control-plane role convergence in CD](580-control-plane-convergence-in-cd.md) | proposed | CD runs the control-plane bootstrap play before release activation whenever a hash of its inputs (roles, inventory, operator vars) changes |
@@ -678,6 +680,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with auth gates intact and no telemetry
 - [ADR-977: Opt-in service wake-ahead along measured edges](977-service-wake-ahead.md) — wake the services a waking app is measured to call, below a 60% residency guard, through the ordinary wake path (amends ADR-196)
 - [ADR-978: Route priority for the warm-capacity queue](978-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
+- [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
 - [ADR-480: Platform paths reserved on platform hosts only](480-platform-paths-reserved-on-platform-hosts.md)
 - [ADR-493: Observed customer exposure for route changes](493-route-customer-exposure.md) — bounded, read-only request-time customer usage evidence in preview reports
 - [ADR-494: Advisory customer route health](494-advisory-customer-route-health.md) — compare tenant or consumer route health while preserving sparse and attribution coverage
@@ -893,6 +896,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1035: Managed object storage for developer sessions](1035-developer-managed-object-storage.md)
 
 - [ADR-1036: Declarative bucket triggers for the owning compute app](1036-managed-object-storage-compute-triggers.md)
+- [ADR-1038: Durable S3 multipart checksums](1038-durable-s3-multipart-checksums.md)
 - [ADR-908: Shared runtime base through virtio-pmem DAX](908-shared-runtime-base-pmem-dax.md)
 
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)

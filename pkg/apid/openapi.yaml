@@ -5456,6 +5456,54 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/apps/{slug}/tasks/{id}/attach:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      tags: [runs]
+      operationId: attachAppTask
+      summary: Attach to an interactive app task (WebSocket).
+      description: |
+        ADR-1037. Served by the compute gateway, not apid. Requires the account
+        credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
+        task's create response, and the `gregale-app-task-attach-v1`
+        WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
+        size. The token is consumed by the first successful attach. Binary
+        messages start with a type byte: client 0x01 stdin, 0x02 resize
+        (rows, cols as big-endian uint16), 0x03 stdin close; server 0x10
+        attached, 0x11 stdout, 0x12 stderr, 0x13 terminal JSON
+        (`status`, `exit_code`, `failure`).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: rows
+          in: query
+          required: false
+          description: Initial terminal height for TTY sessions; defaults to 24.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+        - name: cols
+          in: query
+          required: false
+          description: Initial terminal width for TTY sessions; defaults to 80.
+          schema: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '101':
+          description: Switching to the attach WebSocket.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The task VM is still starting; retry after the Retry-After interval.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The session ended, already has a client, or its attach window closed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/account:
     get:
       tags: [account]
@@ -48094,12 +48142,21 @@ components:
           enum: [claimed, released, unscoped]
     CreateEnvironmentGitSourceRequest:
       type: object
-      description: Select a Git definition in the project repository; repository identities are verified by
-        the server.
+      description: Select a Git definition. GitHub uses the project's bound repository;
+        GitLab.com requires an account OAuth connection, a repository path and an explicit ref.
+        Repository identity is verified by the server. GitLab.com currently supports report
+        mode, manual approval and prune=false.
       properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
+          default: github
+        repository:
+          type: string
+          description: Canonical GitLab.com group/project path, including subgroups when present.
         ref:
           type: string
-          description: Git ref selecting candidates; defaults to the project production branch.
+          description: Git ref selecting candidates; GitHub defaults to the project production branch.
         manifest_path:
           type: string
           minLength: 1
@@ -48122,7 +48179,7 @@ components:
       additionalProperties: false
     PreviewEnvironmentGitRevisionRequest:
       type: object
-      description: An exact GitHub commit to fetch and review.
+      description: An exact Git commit to fetch and review.
       properties:
         commit_sha:
           type: string
@@ -48426,6 +48483,9 @@ components:
       type: object
       description: Pinned repository identity and source-of-truth controls for one environment.
       properties:
+        provider:
+          type: string
+          enum: [github, gitlab]
         repository_id:
           type: integer
           format: int64
@@ -48453,6 +48513,7 @@ components:
         prune:
           type: boolean
       required:
+      - provider
       - repository_id
       - installation_id
       - repository
@@ -49549,11 +49610,11 @@ components:
           items: { $ref: '#/components/schemas/RouteAdviceSuggestion' }
     RouteAdviceSuggestion:
       type: object
-      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname)."
+      description: "One proposed edge rule for one observed route, with evidence, a what-if estimate and disabled rule bodies (one per hostname). Kinds wake_ahead and priority are app-level settings (ADR-1152): method and route are empty, rules is empty and setting carries the proposal."
       required: [id, kind, method, route, title, rationale, evidence, impact, rules]
       properties:
         id: {"type": "string", "description": "Stable for the same kind, method and route."}
-        kind: {"type": "string", "enum": ["cache", "async", "throttle"]}
+        kind: {"type": "string", "enum": ["cache", "async", "throttle", "wake_ahead", "priority"]}
         method: {"type": "string"}
         route: {"type": "string", "description": "Observed route template, for example /users/{id}."}
         title: {"type": "string"}
@@ -49566,6 +49627,16 @@ components:
         rules:
           type: array
           items: { $ref: '#/components/schemas/CreateEdgeRuleRequest' }
+        setting: { $ref: '#/components/schemas/RouteAdviceSetting' }
+    RouteAdviceSetting:
+      type: object
+      description: "The app setting a wake_ahead or priority suggestion proposes; apply it through PUT /v1/apps/{slug}/service-wake-ahead or PUT /v1/apps/{slug}/route-priorities."
+      properties:
+        wake_ahead: {"type": "boolean", "description": "Turn service wake-ahead on."}
+        route_priorities:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RoutePriorityRule' }
     RouteAdviceEvidence:
       type: object
       description: "Observed traffic for the route over the window. Consumer fields are present only on throttle suggestions."
@@ -49600,6 +49671,32 @@ components:
         slug: {"type": "string"}
         enabled: {"type": "boolean", "description": "Whether a cold wake of this app also wakes the services it is measured to call."}
         updated_at: {"type": "string", "format": "date-time", "description": "Omitted until the opt-in is first changed."}
+        learned: { $ref: '#/components/schemas/ServiceWakeAheadLearned' }
+    ServiceWakeAheadLearned:
+      type: object
+      description: "What the gateways measured for this caller app (ADR-1152): its top service edges and what wake-ahead did over the evidence window. Present on GET; source is unavailable when gateway metrics cannot be read."
+      required: [source, window, caller_wakes, targets]
+      properties:
+        source: {"type": "string", "enum": ["live", "unavailable"]}
+        window: {"type": "string", "description": "Window of the outcome counts, for example 24h."}
+        caller_wakes: {"type": "integer", "format": "int64", "description": "Cold wakes of this app the evidence covers (older wakes decay)."}
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceWakeAheadTarget' }
+    ServiceWakeAheadTarget:
+      type: object
+      description: "One measured caller-to-service edge and its wake-ahead outcomes."
+      required: [app_id, slug, call_share, cold_share, qualifies, started, used, unused, failed]
+      properties:
+        app_id: {"type": "string", "format": "uuid"}
+        slug: {"type": "string"}
+        call_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of cold wakes followed by a call to this service."}
+        cold_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of those calls that found it parked or woken ahead."}
+        qualifies: {"type": "boolean", "description": "The edge meets the wake-ahead thresholds."}
+        started: {"type": "integer", "format": "int64"}
+        used: {"type": "integer", "format": "int64"}
+        unused: {"type": "integer", "format": "int64"}
+        failed: {"type": "integer", "format": "int64"}
     SetServiceWakeAheadRequest:
       type: object
       description: "Turns service wake-ahead on or off for one app."
@@ -49627,6 +49724,27 @@ components:
           type: array
           items: { $ref: '#/components/schemas/RoutePriorityRule' }
         updated_at: {"type": "string", "format": "date-time", "description": "When saved rules last changed; omitted for the route-health default."}
+        queue: { $ref: '#/components/schemas/RoutePriorityQueueStats' }
+    RoutePriorityQueueStats:
+      type: object
+      description: "How the app's warm-capacity queue behaved per priority class over the evidence window (ADR-1152). Present on GET; source is unavailable when gateway metrics cannot be read."
+      required: [source, window, classes]
+      properties:
+        source: {"type": "string", "enum": ["live", "unavailable"]}
+        window: {"type": "string", "description": "Window of the counts, for example 24h."}
+        classes:
+          type: array
+          items: { $ref: '#/components/schemas/RoutePriorityQueueClass' }
+    RoutePriorityQueueClass:
+      type: object
+      description: "Queue outcomes for one priority class."
+      required: [class, queued, displacing, displaced, rejected]
+      properties:
+        class: {"type": "string", "enum": ["critical", "normal", "bulk"]}
+        queued: {"type": "integer", "format": "int64", "description": "Requests that waited for capacity."}
+        displacing: {"type": "integer", "format": "int64", "description": "Requests that took a lower class's queue place."}
+        displaced: {"type": "integer", "format": "int64", "description": "Requests that lost their place to a higher class."}
+        rejected: {"type": "integer", "format": "int64", "description": "Requests turned away because the queue was full."}
     SetRoutePrioritiesRequest:
       type: object
       description: "Replaces the saved route priorities; an empty list saves none."
@@ -76699,8 +76817,13 @@ components:
         Gregale HTTPS service-binding canary and is handled by guest-init.
         `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a
         configured outbound probe; the server supplies immutable gateway routing metadata.
+        `interactive=true` admits an ADR-1037 session (operator-gated): the
+        command defaults to `/bin/sh`, the timeout defaults to 3600 seconds
+        and bounds the session, no output is retained, and the create
+        response carries a one-time `attach` credential for
+        GET /v1/apps/{slug}/tasks/{id}/attach. `tty` allocates a terminal.
       type: object
-      required: [command]
+      required: []
       additionalProperties: false
       properties:
         verification_deployment_id: { type: string, format: uuid, description: "Exact source deployment for a reserved binding verification probe; omit for the current manual-task selection." }
@@ -76712,7 +76835,18 @@ components:
           items: { type: string, maxLength: 4096 }
         command_shell: { type: boolean, default: false }
         timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Zero uses the 600-second default." }
-        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024." }
+        max_output_bytes: { type: integer, minimum: 0, maximum: 16777216, description: "Zero uses the 1 MiB default; non-zero values must be at least 1024. Must be omitted for interactive sessions." }
+        interactive: { type: boolean, default: false, description: "Admit an interactive session (ADR-1037). The command is required unless interactive." }
+        tty: { type: boolean, default: false, description: "Allocate a pseudo-terminal; requires interactive." }
+
+    AppTaskAttachInfo:
+      description: One-time attach credential for an interactive app task (ADR-1037). Returned only in the create response.
+      type: object
+      required: [token, path, subprotocol]
+      properties:
+        token: { type: string, description: "Send in X-Gregale-Attach-Token with the account credential; consumed by the first attach." }
+        path: { type: string, description: "Gateway WebSocket path for this task." }
+        subprotocol: { type: string, enum: [gregale-app-task-attach-v1] }
 
     AppTaskFailure:
       description: Bounded customer-visible failure details for an app task.
@@ -76759,6 +76893,8 @@ components:
         finished_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        interactive: { type: boolean, description: "Present on the create response of an interactive session." }
+        attach: { $ref: '#/components/schemas/AppTaskAttachInfo' }
 
     AppTaskListResponse:
       description: |
@@ -81077,6 +81213,7 @@ components:
         dependency_type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency], description: "Allowlisted platform-owned dependency classification." }
         dependency_kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$', description: "Allowlisted platform-owned dependency kind; raw span attributes are never returned." }
         dependency_name: { type: string, maxLength: 96, description: "Grouping identity of an app_dependency span (ADR-958): database operation and table, HTTP host, RPC method or messaging destination. Never contains literals, paths, query strings or credentials." }
+        error_type: { type: string, maxLength: 96, pattern: '^[A-Za-z0-9._:$/-]+$', description: "Failure class of an error span, from the error.type attribute or the first recorded exception.type (for example QueryTimeout or 503). Exception messages and stack traces are never retained." }
 
     DebugCriticalPathSpan:
       type: object
@@ -81116,7 +81253,7 @@ components:
     DebugDependencyLatencyItem:
       type: object
       description: "Bounded historical dependency aggregate. Percentiles are weighted by collapsed request-row counts and derived from sampled redacted spans."
-      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression]
+      required: [type, name, calls, error_calls, error_rate_pct, p50_ms, p95_ms, p99_ms, regression, failure_regression]
       properties:
         type: { type: string, enum: [application, managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
         kind: { type: string, maxLength: 64, pattern: '^[a-z0-9_.-]+$' }
@@ -81141,6 +81278,8 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_delta_pct: { type: number }
+        failure_regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed calls, and the current error rate is at least 5 percentage points and 2x above baseline." }
+        top_error_type: { type: string, maxLength: 96, description: "Most frequent span failure class, from the current side when it has failures." }
 
     DebugDependencyImpactEdge:
       type: object
@@ -81333,7 +81472,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [dependency_failure, request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -81487,7 +81626,7 @@ components:
 
     DebugSuspectedDependency:
       type: object
-      description: "The classified dependency whose p95 regressed most between the previous and the regressed deployment on this route (ADR-958). Bounded and redacted; also sent in debug.regression.* webhooks."
+      description: "The classified dependency most likely behind this route regression (ADR-958): the one whose p95 regressed most between the previous and the regressed deployment, else one that started failing more often. Bounded and redacted; also sent in debug.regression.* webhooks."
       required: [type, name, p95_base_ms, p95_ms, regression_factor]
       properties:
         type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
@@ -81496,6 +81635,10 @@ components:
         p95_base_ms: { type: integer, format: int64, minimum: 0 }
         p95_ms: { type: integer, format: int64, minimum: 0 }
         regression_factor: { type: number, minimum: 0 }
+        reason: { type: string, enum: [latency, failures], description: "latency when the dependency's p95 regressed; failures when its error rate rose. Absent on suspects recorded before failure attribution, which are latency suspects." }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        error_type: { type: string, maxLength: 96 }
 
     DebugRegressionActionRequest:
       type: object

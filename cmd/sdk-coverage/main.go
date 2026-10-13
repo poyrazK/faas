@@ -51,6 +51,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 
 	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":               true, // ADR-1037 WebSocket attach; the CLI drives it directly
 	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
 	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
 	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK

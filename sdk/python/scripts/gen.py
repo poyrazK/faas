@@ -1164,7 +1164,6 @@ def _canonicalise_to_head(
     return reconciled
 
 
-
 def _preserve_routing_replay_guard_precision(package: Path) -> None:
     """Keep a receipt guard's RFC3339 text intact, including nanosecond precision."""
     path = package / "models" / "replay_event_fanout_failure_request.py"
@@ -1174,6 +1173,7 @@ def _preserve_routing_replay_guard_precision(package: Path) -> None:
     text = text.replace("self.expected_accepted_at.isoformat()", "self.expected_accepted_at")
     text = text.replace("datetime.datetime.fromisoformat(_expected_accepted_at)", "_expected_accepted_at")
     path.write_text(text)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])

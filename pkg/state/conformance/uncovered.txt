@@ -51,6 +51,7 @@ CancelInstanceMigration
 CancelInvocation
 CancelUploadSession
 CheckWebhookReplay
+ClaimMCPTaskPromotionRecovery
 ClaimNextPendingRun
 ClearDeployment
 ClearInstanceFrameworkReadyAt
@@ -167,6 +168,7 @@ DeploymentClearSnapshotBackoff
 DeploymentRecordSnapshotMiss
 DeploymentSidecarRAMs
 DeploymentSnapshotBackoffActive
+DeploymentWorkerDrainStatus
 DomainByName
 DropTriggerRecordByOperator
 EditPublicStatusEventTitle
@@ -179,6 +181,7 @@ FailSourceDeployment
 FinalizeServiceRollout
 FindGdprRequestByRequestID
 FindMatchingEvent
+FinishMCPTaskPromotionRecovery
 GetAPIKey
 GetAccountEgressAllowlistExtra
 GetAccountKeyGraceWindow
@@ -197,6 +200,7 @@ GetGithubInstallBindingForApp
 GetGithubWebhookSecret
 GetIdempotent
 GetInstanceTailCount
+GetMCPTaskCompatibilityReport
 GetMFADisableRequest
 GetOIDCExchangedTokenByHash
 GetOIDCTrustPolicy
@@ -401,6 +405,8 @@ LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
 LookupRuntimeSnapshot
+MCPTaskPromotionHold
+MCPTaskPromotionHoldAgeSeconds
 MTDSpendEurCents
 MarkAccountEmailVerified
 MarkAllSnapshotsStaleByAppProtocol
@@ -411,6 +417,7 @@ MarkComputeNodeInactive
 MarkDeploymentStageFailed
 MarkDomainVerified
 MarkFireNowRequestSucceeded
+MarkMCPTaskRecoveryDeploymentLive
 MarkMFAEnrolled
 MarkOperatorIntentFailed
 MarkOperatorIntentSucceeded
@@ -457,6 +464,7 @@ PruneAppLogDrainDeliveryAnalytics
 PruneDataUpstreamProbesOlderThan
 PublishRuntimeSnapshot
 PutIdempotent
+PutMCPTaskCompatibilityReport
 PutManagedObjectStorageSecret
 PutManagedPostgresSecret
 QueueDeadLetter
@@ -472,8 +480,10 @@ RecentErrorRate
 RecentInvocations
 RecentP95LatencyMs
 ReclaimStuckRunningOperatorIntents
+ReconcileObsoleteMCPTaskHolds
 RecordAlertDelivery
 RecordGitHubBinding
+RecordMCPTaskPromotionHold
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
@@ -502,6 +512,7 @@ ResolveStaleRegressionObservations
 ResolveStatusIncident
 RetireRuntimeSnapshot
 RetryDeploymentFromStage
+RetryMCPTaskPromotionRecovery
 RevokeConsumerKey
 RevokeOrgAPIKey
 RevokeOrgInvitation
