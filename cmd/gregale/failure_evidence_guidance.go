@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -27,8 +28,10 @@ func printJobHistoryNextSteps(w io.Writer, name string, runs []api.JobRunRespons
 		switch run.AggregateStatus {
 		case "failed", "dead_letter":
 			command = fmt.Sprintf("%s jobs tasks %s %s --failed-only\n  %s jobs logs %s %s --failed-only", recoveryCLI(), recoveryArgument(name), recoveryArgument(run.ID), recoveryCLI(), recoveryArgument(name), recoveryArgument(run.ID))
+			command += "\n  " + savedNameSuggestionCommand([]string{"jobs", "replay-failed", name, run.ID, "--dry-run"})
 		case "queued", "running":
 			command = fmt.Sprintf("%s jobs wait %s %s", recoveryCLI(), recoveryArgument(name), recoveryArgument(run.ID))
+			command += "\n  " + savedNameSuggestionCommand([]string{"jobs", "cancel", name, run.ID, "--dry-run"})
 		default:
 			continue
 		}
@@ -38,10 +41,10 @@ func printJobHistoryNextSteps(w io.Writer, name string, runs []api.JobRunRespons
 	if len(commands) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintln(w, "\nInspect failures or follow active runs (POSIX shells):")
+	_, _ = fmt.Fprintln(w, "\nInspect failures, preview recovery/cancellation, or follow active runs (POSIX shells):")
 	for i, command := range commands {
 		if i == 3 {
-			_, _ = fmt.Fprintf(w, "  %d more failed or active runs are listed above; use their UUIDs with jobs tasks --failed-only, jobs logs --failed-only, or jobs wait.\n", len(commands)-3)
+			_, _ = fmt.Fprintf(w, "  %d more failed or active runs are listed above; use their UUIDs with jobs tasks --failed-only, jobs logs --failed-only, jobs replay-failed --dry-run, jobs wait, or jobs cancel --dry-run.\n", len(commands)-3)
 			break
 		}
 		_, _ = fmt.Fprintf(w, "  %s\n", command)
@@ -106,29 +109,41 @@ func printActiveWorkflowRunCommands(w io.Writer, runs []api.WorkflowRunResponse)
 func printFailedJobTaskLogs(w io.Writer, name, runID string, tasks []api.JobTaskResponse) {
 	indexes := make([]int, 0)
 	seen := map[int]bool{}
+	retryPreview := map[int]bool{}
+	hasCancelled := false
 	for _, task := range tasks {
 		if task.RunID != runID || task.TaskIndex < 0 || seen[task.TaskIndex] {
 			continue
 		}
-		if task.Status == "failed" || task.Status == "timeout" || task.Status == "oom" || task.Status == "dead_letter" {
+		if jobTaskRetryStatus(task.Status) || task.Status == "dead_letter" {
 			indexes = append(indexes, task.TaskIndex)
 			seen[task.TaskIndex] = true
+			retryPreview[task.TaskIndex] = jobTaskRetryStatus(task.Status)
+			hasCancelled = hasCancelled || task.Status == "cancelled"
 		}
 	}
 	sort.Ints(indexes)
 	if len(indexes) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintln(w, "\nFailed task logs and retained attempts (POSIX shells):")
+	heading, description := "Failed", "failed"
+	if hasCancelled {
+		heading, description = "Unsuccessful", "unsuccessful"
+	}
+	_, _ = fmt.Fprintf(w, "\n%s task logs, retained attempts, and retry previews (POSIX shells):\n", heading)
 	for i, index := range indexes {
 		if i == 3 {
-			_, _ = fmt.Fprintf(w, "  %d more failed tasks are listed above; use their task indexes with jobs logs or jobs attempts --all.\n", len(indexes)-3)
+			_, _ = fmt.Fprintf(w, "  %d more %s tasks are listed above; use their task indexes with jobs logs, jobs attempts --all, or jobs retry --task N --dry-run.\n", len(indexes)-3, description)
 			break
 		}
 		_, _ = fmt.Fprintf(w, "  %s jobs logs %s %s %d\n", recoveryCLI(), recoveryArgument(name), recoveryArgument(runID), index)
 		_, _ = fmt.Fprintf(w, "  %s jobs attempts %s %s %d --all\n", recoveryCLI(), recoveryArgument(name), recoveryArgument(runID), index)
+		if retryPreview[index] {
+			_, _ = fmt.Fprintf(w, "  %s\n", savedNameSuggestionCommand([]string{"jobs", "retry", name, runID, "--task", strconv.Itoa(index), "--dry-run"}))
+		}
 	}
 	_, _ = fmt.Fprintln(w, "Logs depend on retention; use jobs attempts for retained outcomes from earlier attempts.")
+	_, _ = fmt.Fprintln(w, "Retry previews read current task state without retrying; the server rechecks eligibility when a retry is requested.")
 }
 
 func printWorkflowFailureEvidence(w io.Writer, run api.WorkflowRunResponse) {

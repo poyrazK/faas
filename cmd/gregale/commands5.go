@@ -123,6 +123,17 @@ func cmdPS(args []string) int {
 	if jsonOutput {
 		// NDJSON: empty slice renders as zero lines (no header), which
 		// `jq -c '.'` handles gracefully.
+		if *history {
+			rows := make([]psArchivePreviewRow, 0, len(ins))
+			for _, instance := range ins {
+				rows = append(rows, psArchivePreviewRow{
+					InstanceResponse:      instance,
+					ArchivePreviewCommand: psArchivePreviewCommand(slug, instance.ID),
+					ArchiveAvailability:   "not_checked",
+				})
+			}
+			return jsonOut(writeNDJSON(rows))
+		}
 		return jsonOut(writeNDJSON(ins))
 	}
 	if len(ins) == 0 {
@@ -135,7 +146,28 @@ func cmdPS(args []string) int {
 			i.ID, humanizeInstanceState(i.State), i.RAMMB,
 			i.StartedAt, i.LastRequestAt, i.WakeID)
 	}
+	if *history {
+		_, _ = fmt.Fprintln(osStdout, "Archive query previews (POSIX shells; archive availability and retention not checked):")
+		for _, instance := range ins {
+			if command := psArchivePreviewCommand(slug, instance.ID); command != "" {
+				_, _ = fmt.Fprintf(osStdout, "  Instance %s:\n    %s\n", oneLine(instance.ID), command)
+			}
+		}
+	}
 	return 0
+}
+
+type psArchivePreviewRow struct {
+	api.InstanceResponse
+	ArchivePreviewCommand string `json:"archive_preview_command,omitempty"`
+	ArchiveAvailability   string `json:"archive_availability"`
+}
+
+func psArchivePreviewCommand(slug, instance string) string {
+	if !api.ValidAppSlug(slug) || !archiveLogInstancePattern.MatchString(instance) {
+		return ""
+	}
+	return savedNameSuggestionCommand([]string{"logs", "--app", slug, "--archive", "--instance", instance, "--date", "yesterday", "--dry-run"})
 }
 
 // humanizeInstanceState maps the wire-level state string to a

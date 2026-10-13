@@ -74,7 +74,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`logout`](#logout) | Revoke the managed CLI session and remove the stored token |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
 | [`profile`](#profile) | Manage named API connections and isolated credentials |
-| [`context`](#context) | Show the linked project and default app context |
+| [`context`](#context) | Show linked targets, configuration sources, and missing defaults |
 | [`signup`](#signup) | Create a new account (signup [--email-only EMAIL \| --password-stdin]) |
 | [`logs`](#logs) | Query runtime logs and HTTP request events (linked app or interactive picker) |
 | [`metrics`](#metrics) | Per-app or account-wide metrics (slug defaults to linked context) |
@@ -3876,6 +3876,37 @@ Manage jobs (run-to-completion workloads)
 
 `gregale jobs [<subcommand>]`
 
+### jobs resume
+
+Resume read-only observation of an exact locally recorded accepted Job run
+
+`gregale jobs resume [--job <NAME>|--saved-job] [--run <UUID|PREFIX>|--latest] [--dry-run] [--list] [--overview] [--current-connection] [--forget <UUID>] [--timeout <DURATION>] [--poll-interval <DURATION>] [--logs] [--results]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--run <UUID\|PREFIX>` | exact recorded UUID or unique prefix of at least 8 characters on the current profile/API |  |
+| `--job <NAME>` | filter records by exact Job name on the current profile/API |  |
+| `--saved-job` | use the Job name from local defaults; excludes --job and --forget |  |
+| `--latest` | most recently recorded run for --saved-job; requires a unique newest timestamp across matching records |  |
+| `--dry-run` | preview the selected run and action offline; no API access, waiting, or file writes |  |
+| `--current-connection` | restrict --list or --overview to the current profile and API |  |
+| `--list` | list saved identifiers without API access |  |
+| `--overview` | group recorded statuses into in progress, finished, and unavailable; retains records |  |
+| `--forget <UUID>` | remove one local record only; requires its recorded API/profile, makes no requests |  |
+| `--timeout <DURATION>` | maximum wait (default 10m) or overview duration (default 30s); positive |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+| `--logs` | read current failed-task logs from the exact recorded run; supports workload and run selectors |  |
+| `--results` | wait for success and collect exact recorded run outputs into ./results/JOB/RUN_ID |  |
+
+Examples:
+
+```sh
+gregale jobs resume
+gregale jobs resume --list
+gregale jobs resume --run RUN_ID
+gregale jobs resume --saved-job --latest --logs --dry-run
+```
+
 ### jobs list
 
 List jobs in this account
@@ -4040,6 +4071,20 @@ gregale jobs run --wait-ready --results
 
 ### jobs runs
 
+Human queued/running run output also pairs `jobs wait` with a profile-pinned
+`jobs cancel JOB RUN_UUID --dry-run` command. This applies to unfiltered history,
+`--status queued`/`--status running` history, and active `jobs status` output.
+The same three-group bound applies. Generating guidance sends no cancellation
+or additional read requests; JSON rows, status exits, and pagination are unchanged.
+
+Human failed/dead-letter run listings include a profile-pinned
+`jobs replay-failed JOB RUN_UUID --dry-run` command alongside task and log
+inspection guidance. This also applies to `--failed-only` and failure-status
+filters, and to failed `jobs status` output. Guidance is bounded to three
+failed/active run groups and uses already fetched data; it adds no API calls or
+eligibility checks. JSON/NDJSON receipts, status-check exits, and pagination are
+unchanged. Running the preview reads current source state without replaying it.
+
 List runs (saved Job by default)
 
 `gregale jobs runs [--failed-only] [--status <STATUS>] [--limit <N>] [--offset <N>] [--all] [<name>]`
@@ -4061,6 +4106,31 @@ gregale jobs runs --failed-only --all
 
 ### jobs overview
 
+Overview human output now shows the effective profile and API endpoint with
+their configuration sources. JSON adds `connection` containing `profile`,
+`profile_source`, `api_base`, `api_source`, and `address_redacted`. Connection
+metadata is captured before overview requests. URL credentials, query parameters,
+and fragments are omitted from display; malformed addresses are hidden. This
+describes the configured connection rather than a separate account/permission
+verification and adds no API calls. Other overview fields/actions and check exits
+remain unchanged; bare `jobs` includes the same context.
+
+Overview actions pin the effective profile and exact resolved run UUID.
+Queued/running runs offer waiting and a cancellation preview; failed,
+dead-letter, and cancelled runs offer unsuccessful-task/log inspection and a
+replay preview. Succeeded runs retain result collection. Recovery/cancellation
+suggestions use `--dry-run` and do not establish eligibility. Image/configuration
+and sampled failure-log actions also pin the profile. Readiness-check failure
+guidance uses the same state-specific pinned commands. This changes only existing
+action entries and adds no API requests, recovery submissions, or report fields.
+
+Bare `gregale jobs` opens this existing overview for the saved Job, using the
+same authenticated read-only requests, human/JSON receipt, next actions, and exit
+behavior as `gregale jobs overview`. Missing saved preferences show the resolved
+path and setup/explicit-Job examples without API calls. `gregale jobs --help`
+continues to show help. Explicit subcommands and `jobs overview JOB` are unchanged;
+bare jobs creates no separate summary or interactive flow.
+
 Summarize Job readiness, latest run, and next commands (saved Job by default)
 
 `gregale jobs overview [--check] [<name>]`
@@ -4078,6 +4148,15 @@ gregale jobs overview nightly-report --json
 ```
 
 ### jobs status
+
+Status, wait, and results support offline Tab completion of explicit Job names
+and matching run UUIDs from local records on the current profile/API. Completion
+uses no preferences, remote cache, or API calls. Options and their values are
+consumed separately from target positions; destination/filter/timing values
+receive no Job/run suggestions. Unsafe/missing/over-limit stores yield no
+candidates. Manually supplied remote UUIDs, saved-Job defaults, and `latest`
+behavior remain unchanged; a recorded run does not establish remote state or
+artifact availability.
 
 Read one exact or latest Job run summary (saved Job and latest by default)
 
@@ -4144,21 +4223,65 @@ gregale jobs wait my-job RUN_ID --timeout 10m --json
 
 ### jobs cancel
 
+Cancellation supports offline Tab completion for explicit Job names and exact
+run UUIDs from validated local records on the current profile/API. UUIDs are
+filtered by the selected Job. Completion reads no preferences or remote cache,
+calls no API, and does not imply that a recorded run is still active; use
+`--dry-run` to inspect current remote state. Missing/unsafe/over-limit stores
+yield no candidates, and manually entered remote UUIDs remain supported.
+
+Use `gregale jobs cancel JOB RUN_UUID --dry-run` to verify the Job/run identity
+and inspect status, task counts, and cancellation effects through authenticated
+GET requests. Queued/running sources include a profile-pinned cancellation
+command for the exact UUID; terminal sources report nothing to cancel and omit
+it. JSON includes `dry_run`, `changed: false`, `would_cancel`, counts, `effects`,
+`message`, and `inspect_command`, plus `cancel_command` for active sources.
+Both complete preview states return zero. Invalid identities, status/counts, or
+failed reads return nonzero without a partial report. The preview creates no
+records/files and sends no cancellation request. An exact UUID and explicit Job
+are required; it never selects a moving latest run. Ordinary cancellation and
+the interactive flow retain their existing behavior.
+
 Cancel a run
 
-`gregale jobs cancel [--interactive] [<name>] [<run-id>]`
+`gregale jobs cancel [--dry-run] [--interactive] [<name>] [<run-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | inspect the exact run and cancellation effects without cancelling |  |
 | `--interactive` | choose an unfinished run, review progress, and confirm cancellation |  |
 
 Examples:
 
 ```sh
 gregale jobs cancel --interactive
+gregale jobs cancel nightly-report RUN_UUID --dry-run
 ```
 
 ### jobs defaults
+
+`gregale jobs defaults` is equivalent to `gregale jobs defaults show`: it displays
+saved settings and recovery guidance, or setup guidance when no settings are
+saved. It reads local files without contacting the API or changing settings.
+Use `gregale jobs defaults --help` for command help.
+
+Defaults set/update offer offline Tab completion for the first positional Job
+name from validated local records on the current profile/API. Options and their
+values stay separate; existing saved-pattern completion for remove-include and
+remove-exclude remains available. Name suggestions do not require preferences,
+login, or API/cache reads and do not constrain manually entered names. Missing,
+unsafe, or over-limit record stores yield no candidates. Update still requires
+valid preferences when executed, and completion writes nothing.
+
+Saved-Job shortcuts in runs/status/wait/results/tasks/attempts/logs/retry/replay
+report missing preferences as `No saved Job`, with the resolved defaults path,
+a profile-pinned command-specific example, and a setup example using
+`jobs defaults set my-job`. Replace the illustrative Job name before using it.
+Retry/replay examples use `--dry-run`; selected task indexes are retained where
+applicable. These failures remain nonzero in the existing stderr JSON problem
+format and perform no API requests or setup writes. Malformed/unreadable files
+retain their original errors, and explicit Job targets keep their existing
+behavior. `jobs defaults show` still succeeds with its empty saved-state report.
 
 Manage non-secret project-local Job defaults
 
@@ -4201,6 +4324,19 @@ gregale jobs defaults update --all-artifacts
 
 #### jobs defaults show
 
+When no defaults file exists, show succeeds with the destination path and a
+setup example. JSON returns `saved: false`, `path`, `setup_command_template`,
+and `note`; recovery records are not scanned. Invalid or unreadable defaults
+remain errors.
+
+Show also reports local recovery readiness for the saved Job on the current
+profile/API. JSON adds `recovery` while retaining `defaults`, `path`, and
+`next_step`. A unique latest timestamp offers an offline recovery preview;
+missing records or timestamps and ties include inspection guidance. Unreadable
+stores return nonzero with a structured report and unknown counts omitted.
+All recovery checks are offline and read-only; remote status/access remain
+unverified, and new-run guidance keeps its existing behavior.
+
 Show saved Job defaults and their path
 
 `gregale jobs defaults show`
@@ -4212,6 +4348,16 @@ Remove saved Job defaults
 `gregale jobs defaults clear`
 
 ### jobs results
+
+Shared result-collection recovery commands now pin the effective profile.
+Continue-waiting commands preserve the exact run, output directory, timeout,
+poll interval, and effective artifact filters. Download commands preserve the
+same target/destination/filters and resume mode. Terminal-failure status guidance
+and incomplete-identity history guidance also pin the profile. This applies to
+results, wait with output collection, run/retry/replay with results, and recorded
+Job recovery with results. Receipt shapes and collection behavior are unchanged;
+only command text gains `--profile`. No extra API requests occur, and endpoint
+environment overrides still apply to copied commands.
 
 Wait for success and collect outputs, verifying matching existing files
 
@@ -4237,9 +4383,26 @@ gregale jobs results nightly-report latest --out-dir ./results --dry-run
 
 ### jobs tasks
 
+Tasks, logs, and attempts support offline Tab completion for explicit Job names
+and matching run UUIDs from validated local records on the current profile/API.
+Task-index positions and option values do not receive Job/run candidates.
+Interspersed filters, pagination, `--task`, retained-attempt, and byte-limit
+options are consumed separately. No preference, remote cache, or API lookup
+occurs. Unsafe/missing/over-limit stores yield no candidates; saved-Job/latest
+target behavior, manually entered remote UUIDs, and JSON output are unchanged.
+
+`--unsuccessful-only` scans all task pages from the starting offset and returns
+failed, timeout, oom, and cancelled tasks. It matches the states considered for
+retry/replay, without establishing current eligibility. It is mutually exclusive
+with enabled `--failed-only`, whose three-state filter is unchanged. Combine it
+with `--artifacts-only` and artifact filters to inspect matching recorded outputs.
+Human guidance includes exact-run retry previews for cancelled tasks too, bounded
+to three displayed failures/cancellations. JSON remains NDJSON task rows; no extra
+guidance requests or writes occur. False-valued flags remain inactive.
+
 List tasks (saved Job and latest run by default)
 
-`gregale jobs tasks [--all] [--limit <N>] [--offset <N>] [--failed-only] [--artifacts-only] [--include <GLOB>] [--exclude <GLOB>] [--interactive] [<name>] [<run-id|latest>]`
+`gregale jobs tasks [--all] [--limit <N>] [--offset <N>] [--failed-only] [--unsuccessful-only] [--artifacts-only] [--include <GLOB>] [--exclude <GLOB>] [--interactive] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4247,6 +4410,7 @@ List tasks (saved Job and latest run by default)
 | `--limit <N>` | task page size (1..200) |  |
 | `--offset <N>` | starting task offset (non-negative) |  |
 | `--failed-only` | scan all task pages and show failed, timeout, and oom tasks |  |
+| `--unsuccessful-only` | scan all task pages for failed, timeout, oom, and cancelled tasks |  |
 | `--artifacts-only` | scan task pages for valid manifests containing artifacts |  |
 | `--include <GLOB>` | repeatable artifact-name glob; requires --artifacts-only; quote patterns |  |
 | `--exclude <GLOB>` | repeatable artifact-name glob to omit; requires --artifacts-only; exclusions take precedence |  |
@@ -4266,14 +4430,29 @@ gregale jobs tasks --interactive
 
 ### jobs attempts
 
+Copied retained-output/artifact commands and next-page commands pin the effective
+profile with `--profile`, retaining run UUIDs, task/attempt indexes, explicit
+limits, filters, and offsets. Bulk-log unavailable-task read commands also pin
+the profile in human and JSON summaries. Generation adds no API calls and leaves
+attempt-page JSON unchanged; API endpoint environment overrides still apply.
+
+`--unsuccessful-only` filters fetched retained attempts to failed, timeout, oom,
+and cancelled outcomes. Use `--all` to fetch all retained pages from the starting
+offset; filtering alone does not change pagination. Human next-page commands
+retain the filter. JSON keeps the attempt-page receipt and its pagination fields.
+Enabled `--failed-only` and `--unsuccessful-only` conflict; false values are
+inactive. The original three-state failed-only filter is unchanged. Empty fetched
+matches return zero and do not establish that no earlier or expired attempts exist.
+
 List retained attempts for one task in an exact or latest run
 
-`gregale jobs attempts [--task <N>] [--failed-only] [--all] [--limit <N>] [--offset <N>] [--interactive] [<name>] [<run-id|latest>] [<task-index>]`
+`gregale jobs attempts [--task <N>] [--failed-only] [--unsuccessful-only] [--all] [--limit <N>] [--offset <N>] [--interactive] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--task <N>` | task index; omitted Job uses local defaults, omitted run uses latest |  |
 | `--failed-only` | filter fetched history to failed, timeout, and oom attempts |  |
+| `--unsuccessful-only` | filter fetched history to failed, timeout, oom, and cancelled attempts |  |
 | `--all` | read all retained attempt pages from the starting offset |  |
 | `--limit <N>` | history page size (1..200; server default 50) |  |
 | `--offset <N>` | starting history offset (non-negative) |  |
@@ -4291,12 +4470,50 @@ gregale jobs attempts --interactive
 
 ### jobs retry
 
+Retry and replay-failed support offline Tab completion for explicit Job names
+and run UUIDs from validated local accepted-run records on the current profile/API.
+Run suggestions are filtered by the preceding Job. Interspersed options are
+consumed as options/values, including retry `--task`; values and task-index
+positions receive no run/name suggestions. Suggestions are sorted/deduplicated,
+with no preference, API, or remote-cache lookup. Missing/unsafe/over-limit record
+stores yield no suggestions. Context probes are read-free. Manually entered
+remote UUIDs and supported `latest` syntax remain unchanged.
+
+Blocked retry/replay previews include optional `next_steps` JSON entries with
+`reason` and profile-pinned `command`, also rendered in human output. A blocked
+retry due to budget/window limits offers retained attempts and an exact-source
+replay preview preserving effective wait/results options. Nonretryable task
+states offer source status inspection. Blocked replays point to source status,
+Job/image inspection, or all task outcomes according to the blockers. Suggested
+commands inspect or preview only; they do not bypass eligibility and may require
+API access. Generating guidance adds no API calls, and eligible reports omit
+`next_steps`. Errors still produce no partial preview.
+
+Human `jobs tasks` listings include retry-preview commands beside the existing
+failure log/attempt guidance, for up to three displayed failed, timeout, or OOM
+tasks. Commands pin the current profile, resolved run UUID, and task index and
+use `--dry-run`. They add no API calls to the listing and do not establish retry
+eligibility. NDJSON task output remains unchanged.
+
+`--dry-run` reads the selected task and reports status, attempt count, retry
+maximum, remaining retry budget, backoff delay, and flexible start window.
+Observed eligibility uses the same task-state, budget, and time-window checks as
+interactive retry. Eligible targets include an exact-run, profile-pinned retry
+command preserving effective wait/results settings. Blocked targets report a
+reason and omit the command; complete previews return zero. Invalid identities,
+task pages, missing tasks, or failed reads return nonzero without a partial report.
+The preview uses authenticated GET requests, creates no records or files, and
+prints no input references, environment values, or task error messages. The server
+still checks image readiness, current limits, and eligibility when retry is sent.
+Waiting and results collection assess the whole run, not only the selected task.
+
 Retry one failed task; --task uses the saved Job and newest run
 
-`gregale jobs retry [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--task <N>] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id>] [<task-index>]`
+`gregale jobs retry [--dry-run] [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--task <N>] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | read task state and preview retry without starting another attempt |  |
 | `--results` | wait for success and collect outputs into ./results/JOB/RUN_ID, verifying existing files |  |
 | `--include <GLOB>` | artifact-name glob; requires --results |  |
 | `--exclude <GLOB>` | artifact-name glob to omit; requires --results |  |
@@ -4310,6 +4527,7 @@ Retry one failed task; --task uses the saved Job and newest run
 Examples:
 
 ```sh
+gregale jobs retry --task 2 --dry-run
 gregale jobs retry --task 2 --results
 gregale jobs retry --task 2
 gregale jobs retry nightly-report latest --task 2 --wait
@@ -4319,12 +4537,25 @@ gregale jobs retry --interactive
 
 ### jobs replay-failed
 
+Use `--dry-run` to read the source run and its complete task inventory without
+starting a recovery run. It reports unsuccessful task counts by status, source
+image digest, parallelism, task timeout, retry count, and effective follow/result
+options. A locally observed eligible source includes a profile-pinned replay
+command using its exact UUID. Blocked sources report reasons and omit the command;
+these complete previews return zero. Invalid identities, incomplete inventories,
+or failed reads return nonzero without a partial preview. The inventory is bounded
+to 100 pages of 200 tasks. No input references, environment values, task errors,
+or output manifests are printed. This preview requires authentication and GET
+requests; it does not reserve eligibility or check plan limits. The server
+rechecks eligibility when the replay command is executed.
+
 Replay unsuccessful tasks; omitted Job uses local defaults, omitted run uses latest
 
-`gregale jobs replay-failed [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id|latest>]`
+`gregale jobs replay-failed [--dry-run] [--results] [--include <GLOB>] [--exclude <GLOB>] [--all-artifacts] [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] [--interactive] [<name>] [<run-id|latest>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--dry-run` | read the source and preview replay without creating a recovery run |  |
 | `--results` | wait for recovery success and collect outputs into ./results/JOB/NEW_RUN_ID, verifying existing files |  |
 | `--include <GLOB>` | artifact-name glob; requires --results |  |
 | `--exclude <GLOB>` | artifact-name glob to omit; requires --results |  |
@@ -4338,6 +4569,7 @@ Examples:
 
 ```sh
 gregale jobs replay-failed --results
+gregale jobs replay-failed nightly-report latest --dry-run
 gregale jobs replay-failed
 gregale jobs replay-failed nightly-report latest --wait
 gregale jobs replay-failed nightly-report RUN_ID --wait
@@ -4410,13 +4642,33 @@ gregale jobs artifacts nightly-report latest 0
 
 ### jobs logs
 
+Without a task selection or explicit bulk-filter choice, `jobs logs [JOB]
+[RUN_UUID|latest]` defaults to current logs for failed, timeout, oom, and cancelled
+tasks. An omitted Job uses saved defaults; an omitted run resolves latest once.
+Human output explains the default on stderr; JSON uses the existing bulk log
+rows and summary with no extra announcement. Explicit task indexes/`--task`,
+retained `--attempt`, and bulk-filter choices keep their behavior. An explicit
+false-valued filter suppresses this implicit default, so it still requires a
+task selection unless another bulk filter is enabled. No prompts or mutations
+are added, and existing bulk limits/deadlines and unavailable-log exits apply.
+
+`--unsuccessful-only` reads current logs for failed, timeout, oom, and cancelled
+tasks discovered across all task pages. It uses the existing byte limits,
+deadline, continued reads after individual failures, and NDJSON log-row/summary
+format. The discovered status includes cancelled tasks; their logs may be empty
+or unavailable. Enabled `--failed-only` and `--unsuccessful-only` are mutually
+exclusive, and bulk filters cannot be combined with task indexes or retained
+`--attempt` reads. False values are inactive. No cancellation/retry/replay or local
+file writes occur; `--failed-only` retains its three-state behavior.
+
 Tail task logs from an exact or latest run
 
-`gregale jobs logs [--failed-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
+`gregale jobs logs [--failed-only] [--unsuccessful-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--failed-only` | scan task pages and read current logs for failed, timeout, and oom tasks |  |
+| `--unsuccessful-only` | scan task pages and read current logs for failed, timeout, oom, and cancelled tasks |  |
 | `--task <N>` | task index shortcut; omitted Job uses saved defaults, omitted run uses latest |  |
 | `--attempt <N>` | read retained output for a positive attempt number (explicit task only) |  |
 | `--interactive` | choose a Job, run, and task to inspect |  |
@@ -4793,6 +5045,97 @@ Publish the current automation draft
 Manage durable execution workflows
 
 `gregale workflows [<subcommand>]`
+
+### workflows resume-wait
+
+Resume read-only observation of an exact locally recorded accepted Workflow run
+
+`gregale workflows resume-wait [--saved-workflow] [--workflow <NAME>] [--app <SLUG>] [--run <UUID|PREFIX>|--latest] [--dry-run] [--list] [--overview] [--current-connection] [--forget <UUID>] [--timeout <DURATION>] [--poll-interval <DURATION>] [--diagnose]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--run <UUID\|PREFIX>` | exact recorded UUID or unique prefix of at least 8 characters on the current profile/API |  |
+| `--workflow <NAME>` | filter saved records by exact workflow name on the current profile/API |  |
+| `--saved-workflow` | use the workflow/app pair from project-local defaults; excludes --workflow, --app, and --forget |  |
+| `--app <SLUG>` | filter local workflow records by exact recorded app on the current profile/API; excludes --forget |  |
+| `--latest` | select the most recently recorded run; requires --workflow NAME and --app SLUG or --saved-workflow, and a unique newest timestamp |  |
+| `--dry-run` | preview recorded workflow, app, selected run, and action offline |  |
+| `--current-connection` | restrict --list or --overview to the current profile and API |  |
+| `--list` | list saved identifiers without API access |  |
+| `--overview` | group recorded statuses into in progress, finished, and unavailable; retains records |  |
+| `--forget <UUID>` | remove one local record only; requires its recorded API/profile, makes no requests |  |
+| `--timeout <DURATION>` | maximum wait (default 10m) or overview duration (default 30s); positive |  |
+| `--poll-interval <DURATION>` | poll interval (default 2s; 1s to 1h) |  |
+| `--diagnose` | read exact recorded workflow diagnostics; supports workflow and run selectors |  |
+
+Examples:
+
+```sh
+gregale workflows resume-wait
+gregale workflows resume-wait --list
+gregale workflows resume-wait --run RUN_ID
+gregale workflows resume-wait --run RUN_ID --diagnose --dry-run
+gregale workflows resume-wait --workflow order-processing --app payments-api --dry-run
+gregale workflows resume-wait --workflow order-processing --app payments-api --latest --diagnose --dry-run
+gregale workflows resume-wait --saved-workflow --latest --dry-run
+```
+
+### workflows defaults
+
+`gregale workflows defaults` displays the same local settings and recovery
+readiness as `gregale workflows defaults show`. Use `--help` for command help.
+
+Manage project-local recovery selectors in `.gregale/workflows.json`.
+
+```sh
+gregale workflows defaults set order-processing --app payments-api
+gregale workflows defaults set order-processing --app payments-api --dry-run
+gregale workflows defaults update --app billing-api --dry-run
+gregale workflows defaults update nightly-report --dry-run
+gregale workflows defaults show
+gregale workflows defaults clear --dry-run
+gregale workflows defaults clear
+```
+
+Clear with `--dry-run` shows the preference path, saved selectors, removal
+effects, and an explicit-selector command to list recorded runs. It creates or
+deletes no files and does not scan records or contact the API. Missing preferences
+are a successful no-op; malformed, oversized, or unsafe preference files return
+an error. JSON includes `dry_run`, `changed`, `cleared`, `would_change`,
+`before_saved`, `before`, `after` (null), `effects`, and `path`, plus `list_command`
+when preferences exist. Ordinary clear retains its existing behavior.
+
+Set validates the name and app slug locally and writes a private preference
+file; existence and access are not checked. Show reports the resolved path,
+selectors, matching local records, and latest-selection readiness on the current
+connection. It offers the latest preview only when a unique timestamped run can
+be selected, with listing and exact-UUID guidance otherwise. Unreadable stores
+return nonzero with a structured report; missing matches and timestamp
+limitations are advisory. Missing preferences report not saved without scanning
+records. All checks are offline and do not establish remote status or access.
+Clear removes only this preference, retaining linked targets and recovery
+records. Recovery reads preferences only with `--saved-workflow`.
+
+Set accepts `--dry-run` to preview the preference path, before/after pair, and
+local recovery readiness for the proposed selectors without saving. Generated
+commands use the explicit proposed workflow/app, so they work before the
+preference is changed. Invalid existing preference files must be reviewed before
+previewing. The same readiness advisory and unreadable-store exit rules apply.
+
+Update requires existing valid preferences and at least a workflow name or
+`--app`. It preserves the omitted selector and uses the same private atomic
+writer and receipt as set. `--dry-run` reports before/after and recovery
+readiness for the proposed pair, with explicit-selector guidance. Matching
+selectors produce `would_change: false`. Missing or invalid preferences are
+errors; update does not create an initial preference. Normal update does not
+scan recorded runs or contact the API.
+
+Defaults set/update complete workflow names and `--app` values from validated
+local workflow records on the current profile/API. Suggestions are sorted and
+deduplicated, with the other selector used to filter matching pairs. Update uses
+the saved omitted selector and requires valid preferences. Set needs no saved
+preference. Missing or unsafe records yield no suggestions; completion performs
+no API calls or writes and does not restrict manually entered selectors.
 
 ### workflows list
 
@@ -9657,6 +10000,12 @@ Remove the linked project from this checkout
 
 ## profile
 
+`gregale profile` is equivalent to `gregale profile list`: it displays sorted
+connection names, their configured API addresses, and the selected profile.
+Human and JSON output retain the existing list format. It makes no network
+requests, reads no credentials, and does not change settings. Use `--help` for
+command help.
+
 Manage named API connections and isolated credentials
 
 `gregale profile [<subcommand>]`
@@ -9715,9 +10064,105 @@ Remove an inactive connection and its credentials
 
 ## context
 
-Show the linked project and default app context
+Show linked targets, configuration sources, and missing defaults
 
-`gregale context`
+`gregale context [<subcommand>] [--check] [--verify] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | fail when a linked project or default app is missing; does not verify remote resources |  |
+| `--verify` | read authenticated account and verify configured linked project/app/environment |  |
+| `--timeout <DURATION>` | overall verification deadline (default 10s; requires --verify) |  |
+
+Examples:
+
+```sh
+gregale context
+gregale context --check --json
+```
+
+### context save
+
+Save current linked targets as a named local preset
+
+`gregale context save [--replace] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--replace` | explicitly replace an existing preset |  |
+
+### context use
+
+Validate and apply a preset for the currently linked project
+
+`gregale context use [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | validate and preview without saving linked defaults |  |
+
+### context presets
+
+`gregale context presets` is equivalent to `gregale context presets list`:
+it shows sorted saved contexts and their existing comparison with the current
+context, including JSON output. It makes no API requests or writes and does not
+apply a preset. Use `gregale context presets --help` for help.
+
+Inspect or remove local target presets
+
+#### context presets update
+
+Change selected preset targets without changing active context
+
+`gregale context presets update [--app <SLUG>] [--environment <SLUG>] [--clear-app] [--clear-environment] [--dry-run] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | validate and replace only the preset app |  |
+| `--environment <SLUG>` | validate and replace only the preset environment |  |
+| `--clear-app` | remove only the preset app |  |
+| `--clear-environment` | remove only the preset environment |  |
+| `--dry-run` | validate and preview without saving the preset |  |
+
+#### context presets list
+
+List preset targets and their source file
+
+`gregale context presets list`
+
+#### context presets show
+
+Show one saved target preset
+
+`gregale context presets show <name>`
+
+#### context presets delete
+
+Remove a local preset without changing linked targets
+
+`gregale context presets delete <name>`
+
+### context set
+
+Update selected linked defaults while preserving omitted settings
+
+`gregale context set [--dry-run] [--app <SLUG>] [--environment <SLUG>] [--clear-app] [--clear-environment]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | validate and display proposed defaults without saving |  |
+| `--app <SLUG>` | validate and replace the default app in the linked project |  |
+| `--environment <SLUG>` | validate and replace the default project environment |  |
+| `--clear-app` | remove only the default app locally |  |
+| `--clear-environment` | remove only the default environment locally |  |
+
+Examples:
+
+```sh
+gregale context set --environment staging
+gregale context set --app payments-api
+gregale context set --clear-environment
+```
 
 
 ## signup
@@ -9736,11 +10181,18 @@ Create a new account (signup [--email-only EMAIL | --password-stdin])
 
 Query runtime logs and HTTP request events (linked app or interactive picker)
 
-`gregale logs [<slug>] [--view <NAME>] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <YYYY-MM-DD>]`
+`gregale logs [<slug>] [--view <NAME>] [--latest-failure] [--latest-request-error] [--interactive] [--follow] [--deployment <ID>] [--release <ID|vN>] [--source <SOURCE>] [--grep <SUBSTR>] [--since <15m|3d|RFC3339>] [--level <LEVEL>] [--status <100..599>] [--route <PATH>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--all] [--explain] [--archive] [--instance <ID>] [--date <DAY>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--view <NAME>` | reuse a named local log view (only app target may be supplied alongside) |  |
+| `--dry-run` | preview effective target, source, and filters offline; no authentication or remote reads |  |
+| `--view <NAME>` | reuse a local log view with compatible one-off filter overrides; saved view stays unchanged |  |
+| `--clear-status` | remove the saved status filter for one ordinary HTTP view query; excludes --status |  |
+| `--clear-grep` | remove the saved text filter for one runtime view query; excludes --grep |  |
+| `--clear-level` | remove the saved level filter for one runtime view query; excludes --level |  |
+| `--clear-route` | remove the saved route filter for one HTTP view query; excludes --route |  |
+| `--latest-failure` | select latest failed deployment and read up to 500 retained build/deploy entries; accepts only an app target |  |
+| `--latest-request-error` | select newest retained HTTP 5xx row; default 15m window; accepts app, since, route |  |
 | `--interactive` | choose source, time window, and filters and show the equivalent command |  |
 | `--follow` | stream logs until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
@@ -9757,8 +10209,8 @@ Query runtime logs and HTTP request events (linked app or interactive picker)
 | `--all` | read every retained HTTP request page |  |
 | `--explain` | summarize the last failure and common error patterns |  |
 | `--archive` | read durable logs for one instance and UTC day |  |
-| `--instance <ID>` | instance id for --archive |  |
-| `--date <YYYY-MM-DD>` | UTC day for --archive |  |
+| `--instance <ID>` | instance id for --archive (1..128 ASCII letters, numbers, dots, underscores, or hyphens) |  |
+| `--date <DAY>` | UTC day for --archive: today, yesterday, or YYYY-MM-DD |  |
 
 Examples:
 
@@ -9770,9 +10222,68 @@ gregale logs views save runtime-errors --since 1h --level error
 gregale logs my-api --view runtime-errors
 ```
 
+### logs defaults
+
+`gregale logs defaults` displays the same preferred-view settings and reference
+status as `gregale logs defaults show`. Use `--help` for command help.
+
 ### logs views
 
-Manage reusable local log filters
+`logs views delete NAME --dry-run` also previews preferred-view impact. If NAME
+is preferred, optional `preference_guidance` warns that deletion would leave a
+missing reference and provides an after-deletion command to clear it. Unreadable
+preferences report unknown impact and offer inspection before deleting.
+Missing or unaffected preferences omit this guidance. The preview changes
+neither the saved-view store nor the preferred-view setting.
+
+Completed rename/delete operations report when the removed name is the
+preferred view. Human output supplies a profile-pinned command to select the
+new name after rename, or clear the preference after deletion. JSON adds
+`preference_guidance` with `status`, `message`, and `command` only for an affected
+or unreadable preference (`requires_update` or `unknown`). Unknown preferences
+offer local inspection guidance without failing the operation. Missing or
+unaffected preferences and copy operations retain their existing receipt
+fields. The operation never updates preferences or executes the repair command.
+
+`logs views copy OLD NEW --dry-run` and `logs views rename OLD NEW --dry-run`
+preview filters, storage path, destination, and whether the source would remain.
+The destination must be unused and source/destination names must differ, as for
+ordinary operations. Rename previews flag a preferred source view and provide
+an after-rename command to update the preference; unreadable preferences report
+unknown impact without blocking a valid preview. Copy preserves preference
+references. Preview commands use inline filters and the current profile so
+they work before the destination exists. JSON reports `dry_run: true`,
+`changed: false`, `would_change: true`, `source_preserved`, `preference_impact`
+(`unchanged`, `requires_update`, or `unknown`), and copyable commands. No files
+are written or API requests made. Ordinary operations retain their output;
+`--dry-run=false` performs the operation normally.
+
+`logs views save NAME --dry-run` validates proposed filters and previews the
+storage path, before/after settings, replacement status, and copyable inline
+query commands without writing files or contacting the API. Existing names
+require `--replace`, even for a preview. JSON reports `dry_run: true`,
+`changed: false`, `would_change`, `replacing`, `before` (null for new names),
+`after`, `path`, `run_command`, and `preview_command`. Commands use the current
+profile and proposed filters, so they work before the view is saved. Ordinary
+saves retain their existing behavior and output; `--dry-run=false` saves normally.
+
+List or manage reusable local log filters
+
+`gregale logs views` is equivalent to `gregale logs views list`, including
+sorted saved-view output, JSON output, and empty-store behavior. It reads local
+files without API requests or writes. Use `gregale logs views --help` for help.
+
+List options also work directly: `logs views --source http`,
+`logs views --name errors`, `logs views --app my-api`, and
+`gregale --json logs views --details`. They reuse the explicit list command's
+filters, validation, and output. Keep the subcommand for editing saved views.
+
+Human listings mark the preferred view used by `logs --saved-view`. Detailed
+JSON entries add `preferred`: true for that view, false otherwise, or null if
+local preferences cannot be safely read. Missing preferences mean false.
+Preference errors do not prevent listing valid views; human output reports an
+unknown preference or a preferred name missing from the store. Filters still
+limit the listing. Plain JSON remains a name-only array without preference reads.
 
 #### logs views list
 
@@ -9786,6 +10297,32 @@ Show saved filters
 
 `gregale logs views show <name>`
 
+#### logs views rename
+
+Rename a saved view without changing filters or overwriting another view
+
+`gregale logs views rename <old-name> <new-name>`
+
+#### logs views update
+
+Change selected filters while preserving view type and omitted settings
+
+`gregale logs views update [--dry-run] [--since <DURATION>] [--route <PATH>] [--grep <TEXT>] [--level <LEVEL>] [--status <N>] [--limit <N>] [--follow] [--clear-route] [--clear-grep] [--clear-level] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | validate proposed filters and show their run command without saving |  |
+| `--since <DURATION>` | replace relative window |  |
+| `--route <PATH>` | replace HTTP route |  |
+| `--grep <TEXT>` | replace runtime text filter |  |
+| `--level <LEVEL>` | replace runtime level |  |
+| `--status <N>` | replace HTTP status; 0 clears it |  |
+| `--limit <N>` | replace normal HTTP page size |  |
+| `--follow` | replace runtime follow mode; false disables it |  |
+| `--clear-route` | remove route filter |  |
+| `--clear-grep` | remove text filter |  |
+| `--clear-level` | remove level filter |  |
+
 #### logs views delete
 
 Delete a local log view
@@ -9796,10 +10333,11 @@ Delete a local log view
 
 Save filters as a named view
 
-`gregale logs views save [--source <SOURCE>] [--since <DURATION>] [--level <LEVEL>] [--grep <TEXT>] [--follow] [--status <100..599>] [--route <PATH>] [--limit <1..200>] [--replace] <name>`
+`gregale logs views save [--latest-request-error] [--source <SOURCE>] [--since <DURATION>] [--level <LEVEL>] [--grep <TEXT>] [--follow] [--status <100..599>] [--route <PATH>] [--limit <1..200>] [--replace] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--latest-request-error` | save newest HTTP 5xx selection with a relative window and optional route |  |
 | `--source <SOURCE>` | runtime (default) or http | one of `runtime` · `http` |
 | `--since <DURATION>` | relative window (default 15m) |  |
 | `--level <LEVEL>` | runtime log level |  |
@@ -11250,6 +11788,58 @@ Manage sealed secrets and environment secret references
 
 `gregale secrets [<subcommand>]`
 
+### secrets defaults
+
+`gregale secrets defaults` displays the same saved environment scopes as
+`gregale secrets defaults show`. Use `--help` for command help.
+
+Manage local saved secret comparison scopes
+
+#### secrets defaults set
+
+Replace saved comparison scope names
+
+`gregale secrets defaults set [--environments <SCOPE,...>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--environments <SCOPE,...>` | comma-separated scope names; 1–10 distinct names |  |
+
+#### secrets defaults show
+
+Show saved scopes and their source file
+
+`gregale secrets defaults show`
+
+#### secrets defaults clear
+
+Remove only the local comparison defaults
+
+`gregale secrets defaults clear`
+
+### secrets check
+
+Check required scoped secrets and current delivery evidence without reading values
+
+`gregale secrets check [--app <slug>] [--scope <SCOPE>] [--required <KEY>]... [--required-file <PATH>] [--missing-template <PATH>] [--environments <SCOPE,...|saved>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked app) |  |
+| `--scope <SCOPE>` | single environment scope (defaults to linked environment) |  |
+| `--required <KEY>` | required secret key name (repeatable) |  |
+| `--required-file <PATH>` | explicit JSON array of required keys; overrides project discovery |  |
+| `--missing-template <PATH>` | create a new private dotenv file containing only missing required names with empty values |  |
+| `--environments <SCOPE,...|saved>` | compare required names across explicit scopes or saved local scopes; excludes scope/template flags |  |
+
+Examples:
+
+```sh
+gregale secrets check
+gregale secrets check --app my-api --required DATABASE_URL
+gregale secrets check --required-file .gregale/required-secrets.json
+```
+
 ### secrets refs
 
 Manage destination-to-source names in a registered environment
@@ -11543,7 +12133,11 @@ Print the CLI version
 
 ## config
 
-Manage non-secret local CLI settings (config get|set|list)
+`gregale config` is equivalent to `gregale config list`: it shows effective
+settings and their sources using the existing human table or JSON output.
+It makes no API requests or writes. Use `gregale config --help` for help.
+
+Show or manage non-secret local CLI settings (config [get|set|list])
 
 `gregale config [<subcommand>]`
 
