@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const advanceEventExecutionReconciliations = `-- name: AdvanceEventExecutionReconciliations :execrows
+WITH pending AS (
+ SELECT c.subscription_id FROM event_execution_coverage c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+ WHERE c.reconciliation_requested_at IS NOT NULL AND NOT c.ledger_baseline_known
+ AND NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id)))
+ ORDER BY c.reconciliation_requested_at,c.subscription_id
+ FOR UPDATE OF c SKIP LOCKED LIMIT $1::integer
+), ready AS (
+ SELECT c.subscription_id FROM event_execution_coverage c JOIN pending p USING(subscription_id)
+ WHERE NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id)))
+)
+UPDATE event_execution_coverage c SET ledger_started_at=greatest(clock_timestamp(),c.ledger_started_at,c.reconciliation_requested_at,c.ledger_lost_through_at+interval '1 microsecond'),ledger_baseline_known=true
+FROM ready WHERE c.subscription_id=ready.subscription_id
+`
+
+func (q *Queries) AdvanceEventExecutionReconciliations(ctx context.Context, db DBTX, batchLimit int32) (int64, error) {
+	result, err := db.Exec(ctx, advanceEventExecutionReconciliations, batchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const associateEventExecutionRoot = `-- name: AssociateEventExecutionRoot :one
 WITH baseline AS (
  INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known)
@@ -386,6 +415,42 @@ func (q *Queries) EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg E
 	return i, err
 }
 
+const getEventExecutionReconciliation = `-- name: GetEventExecutionReconciliation :one
+SELECT coalesce(c.ledger_baseline_known,false)::boolean AS ledger_baseline_known,c.ledger_started_at,c.reconciliation_requested_at,
+ EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=$1::uuid AND i.app_id=$2::uuid
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id))) AS unattributed_execution_present
+FROM (SELECT $3::uuid AS subscription_id) target
+LEFT JOIN event_execution_coverage c ON c.subscription_id=target.subscription_id
+ AND c.account_id=$1::uuid AND c.app_id=$2::uuid
+`
+
+type GetEventExecutionReconciliationParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+}
+
+type GetEventExecutionReconciliationRow struct {
+	LedgerBaselineKnown          bool
+	LedgerStartedAt              pgtype.Timestamptz
+	ReconciliationRequestedAt    pgtype.Timestamptz
+	UnattributedExecutionPresent bool
+}
+
+func (q *Queries) GetEventExecutionReconciliation(ctx context.Context, db DBTX, arg GetEventExecutionReconciliationParams) (GetEventExecutionReconciliationRow, error) {
+	row := db.QueryRow(ctx, getEventExecutionReconciliation, arg.AccountID, arg.AppID, arg.SubscriptionID)
+	var i GetEventExecutionReconciliationRow
+	err := row.Scan(
+		&i.LedgerBaselineKnown,
+		&i.LedgerStartedAt,
+		&i.ReconciliationRequestedAt,
+		&i.UnattributedExecutionPresent,
+	)
+	return i, err
+}
+
 const pruneEventExecutionOutcomes = `-- name: PruneEventExecutionOutcomes :execrows
 DELETE FROM event_execution_outcomes WHERE (invocation_id,invocation_created_at,replay_generation,attempt,kind) IN (
  SELECT invocation_id,invocation_created_at,replay_generation,attempt,kind FROM event_execution_outcomes
@@ -431,4 +496,22 @@ func (q *Queries) PruneEventExecutionRoots(ctx context.Context, db DBTX, arg Pru
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const requestEventExecutionReconciliation = `-- name: RequestEventExecutionReconciliation :exec
+INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known,reconciliation_requested_at)
+SELECT $1::uuid,$2::uuid,$3::uuid,clock_timestamp(),false,clock_timestamp(),false,clock_timestamp()
+ON CONFLICT(subscription_id) DO UPDATE SET reconciliation_requested_at=coalesce(event_execution_coverage.reconciliation_requested_at,excluded.reconciliation_requested_at)
+WHERE event_execution_coverage.account_id=excluded.account_id AND event_execution_coverage.app_id=excluded.app_id AND NOT event_execution_coverage.ledger_baseline_known
+`
+
+type RequestEventExecutionReconciliationParams struct {
+	SubscriptionID pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+}
+
+func (q *Queries) RequestEventExecutionReconciliation(ctx context.Context, db DBTX, arg RequestEventExecutionReconciliationParams) error {
+	_, err := db.Exec(ctx, requestEventExecutionReconciliation, arg.SubscriptionID, arg.AccountID, arg.AppID)
+	return err
 }

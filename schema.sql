@@ -19474,6 +19474,7 @@ CREATE TABLE public.event_execution_coverage (
     ledger_started_at timestamp with time zone,
     ledger_baseline_known boolean DEFAULT false NOT NULL,
     ledger_lost_through_at timestamp with time zone,
+    reconciliation_requested_at timestamp with time zone,
     CONSTRAINT event_execution_coverage_check CHECK (((lost_at IS NULL) = (loss_reason = ''::text))),
     CONSTRAINT event_execution_coverage_loss_reason_check CHECK ((loss_reason = ANY (ARRAY[''::text, 'receipt_deleted'::text, 'recipient_deleted'::text, 'invocation_deleted'::text, 'attempt_deleted'::text, 'execution_replaced'::text])))
 );
@@ -56907,3 +56908,5 @@ BEGIN
  END IF;
 END $$;
 -- +goose StatementEnd
+
+CREATE INDEX event_execution_reconciliation_pending_idx ON public.event_execution_coverage(reconciliation_requested_at,subscription_id) WHERE reconciliation_requested_at IS NOT NULL AND NOT ledger_baseline_known;

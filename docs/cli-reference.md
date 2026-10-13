@@ -2282,6 +2282,18 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-execution-reconciliation
+
+Inspect durable execution coverage reconciliation
+
+`gregale events subscription-execution-reconciliation <app> <subscription-id>`
+
+### events subscription-reconcile-execution
+
+Request a forward-only execution coverage boundary
+
+`gregale events subscription-reconcile-execution <app> <subscription-id>`
+
 ### events subscription-execution-health
 
 Inspect retained consumer executions and handler outcomes

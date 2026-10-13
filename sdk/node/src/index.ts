@@ -383,3 +383,5 @@ export { defineDurableEntityClientContract, durableEntityClient, type DurableEnt
 
 export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement, defineDurableSessionEntity, durableSessionFrame, durableSessionRequestID, decodeDurableSessionCommand, DURABLE_ENTITY_MAX_SESSIONS, type DurableSessionCommand, type DurableSessionFrame, type DurableSessionState } from './durable-entity-session.js';
 export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';
+
+export type { EventExecutionReconciliation } from './generated/models/EventExecutionReconciliation.js';

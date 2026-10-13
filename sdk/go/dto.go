@@ -510,3 +510,5 @@ type EventDeliveryHealthSLOObservation = api.EventDeliveryHealthSLOObservation
 func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options EventDeliveryHealthSLOOptions) ([]EventDeliveryHealthSLOObservation, error) {
 	return api.EvaluateEventConsumerDeliverySLO(h, options)
 }
+
+type EventExecutionReconciliation = api.EventExecutionReconciliation

@@ -501,7 +501,6 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
-
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -1110,6 +1109,8 @@ from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
+from .event_execution_reconciliation import EventExecutionReconciliation
+from .event_execution_reconciliation_status import EventExecutionReconciliationStatus
 from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
 from .event_fanout_attempt_history_response_coverage import EventFanoutAttemptHistoryResponseCoverage
 from .event_fanout_attempt_response import EventFanoutAttemptResponse
@@ -4535,7 +4536,6 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
-
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -5124,6 +5124,8 @@ __all__ = (
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
+    "EventExecutionReconciliation",
+    "EventExecutionReconciliationStatus",
     "EventFanoutAttemptHistoryResponse",
     "EventFanoutAttemptHistoryResponseCoverage",
     "EventFanoutAttemptResponse",

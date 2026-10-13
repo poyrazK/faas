@@ -72,3 +72,24 @@ func (h EventConsumerExecutionHealth) CompleteWindowEvidence() bool {
 	}
 	return h.Coverage == "bounded_retained_execution_roots" && h.HistoryComplete && !h.Truncated && h.MissingRoots == 0 && h.Unknown == 0 && h.UnknownAttempts == 0 && h.RetainedRoots > 0
 }
+
+// EventExecutionReconciliation reports a durable forward-only coverage request.
+type EventExecutionReconciliation struct {
+	SubscriptionID               string     `json:"subscription_id"`
+	AppID                        string     `json:"app_id"`
+	Status                       string     `json:"status"`
+	RequestedAt                  *time.Time `json:"requested_at,omitempty"`
+	CollectionStartedAt          *time.Time `json:"collection_started_at,omitempty"`
+	UnattributedExecutionPresent bool       `json:"unattributed_execution_present"`
+}
+
+func (c *Client) GetEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
+	var out EventExecutionReconciliation
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/execution-reconciliation", nil, &out)
+	return out, err
+}
+func (c *Client) RequestEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
+	var out EventExecutionReconciliation
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/execution-reconciliation", nil, &out)
+	return out, err
+}

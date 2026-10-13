@@ -117,3 +117,39 @@ DELETE FROM event_execution_roots r WHERE (r.root_invocation_id,r.root_created_a
  AND NOT EXISTS (SELECT 1 FROM event_recovery_jobs j WHERE j.account_id=r.account_id AND j.app_id=r.app_id AND (j.state IN ('running','paused') OR (j.selection->>'mode'='execution' AND j.execution_finished_at IS NULL)))
  ORDER BY r.root_created_at,r.root_invocation_id FOR UPDATE OF r SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
 );
+
+-- name: RequestEventExecutionReconciliation :exec
+INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known,reconciliation_requested_at)
+SELECT sqlc.arg(subscription_id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,clock_timestamp(),false,clock_timestamp(),false,clock_timestamp()
+ON CONFLICT(subscription_id) DO UPDATE SET reconciliation_requested_at=coalesce(event_execution_coverage.reconciliation_requested_at,excluded.reconciliation_requested_at)
+WHERE event_execution_coverage.account_id=excluded.account_id AND event_execution_coverage.app_id=excluded.app_id AND NOT event_execution_coverage.ledger_baseline_known;
+
+-- name: GetEventExecutionReconciliation :one
+SELECT coalesce(c.ledger_baseline_known,false)::boolean AS ledger_baseline_known,c.ledger_started_at,c.reconciliation_requested_at,
+ EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id))) AS unattributed_execution_present
+FROM (SELECT sqlc.arg(subscription_id)::uuid AS subscription_id) target
+LEFT JOIN event_execution_coverage c ON c.subscription_id=target.subscription_id
+ AND c.account_id=sqlc.arg(account_id)::uuid AND c.app_id=sqlc.arg(app_id)::uuid;
+
+-- name: AdvanceEventExecutionReconciliations :execrows
+WITH pending AS (
+ SELECT c.subscription_id FROM event_execution_coverage c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
+ WHERE c.reconciliation_requested_at IS NOT NULL AND NOT c.ledger_baseline_known
+ AND NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id)))
+ ORDER BY c.reconciliation_requested_at,c.subscription_id
+ FOR UPDATE OF c SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
+), ready AS (
+ SELECT c.subscription_id FROM event_execution_coverage c JOIN pending p USING(subscription_id)
+ WHERE NOT EXISTS(SELECT 1 FROM invocations i WHERE i.account_id=c.account_id AND i.app_id=c.app_id
+ AND ((i.replay_root_invocation_id IS NULL)<>(i.replay_root_created_at IS NULL) OR NOT EXISTS(SELECT 1 FROM event_execution_roots r
+ WHERE r.root_invocation_id=coalesce(i.replay_root_invocation_id,i.id) AND r.root_created_at=coalesce(i.replay_root_created_at,i.created_at)
+ AND r.account_id=i.account_id AND r.app_id=i.app_id)))
+)
+UPDATE event_execution_coverage c SET ledger_started_at=greatest(clock_timestamp(),c.ledger_started_at,c.reconciliation_requested_at,c.ledger_lost_through_at+interval '1 microsecond'),ledger_baseline_known=true
+FROM ready WHERE c.subscription_id=ready.subscription_id;

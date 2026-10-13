@@ -2819,16 +2819,17 @@ type EventDeliverySlot struct {
 }
 
 type EventExecutionCoverage struct {
-	SubscriptionID      pgtype.UUID
-	AccountID           pgtype.UUID
-	AppID               pgtype.UUID
-	StartedAt           pgtype.Timestamptz
-	BaselineKnown       bool
-	LostAt              pgtype.Timestamptz
-	LossReason          string
-	LedgerStartedAt     pgtype.Timestamptz
-	LedgerBaselineKnown bool
-	LedgerLostThroughAt pgtype.Timestamptz
+	SubscriptionID            pgtype.UUID
+	AccountID                 pgtype.UUID
+	AppID                     pgtype.UUID
+	StartedAt                 pgtype.Timestamptz
+	BaselineKnown             bool
+	LostAt                    pgtype.Timestamptz
+	LossReason                string
+	LedgerStartedAt           pgtype.Timestamptz
+	LedgerBaselineKnown       bool
+	LedgerLostThroughAt       pgtype.Timestamptz
+	ReconciliationRequestedAt pgtype.Timestamptz
 }
 
 type EventExecutionOutcome struct {

@@ -559,6 +559,7 @@ export type { EventConsumerPendingSample } from './EventConsumerPendingSample.js
 export type { EventConsumerWaitingReasons } from './EventConsumerWaitingReasons.js';
 export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
+export type { EventExecutionReconciliation } from './EventExecutionReconciliation.js';
 export type { EventFanoutAttemptHistoryResponse } from './EventFanoutAttemptHistoryResponse.js';
 export type { EventFanoutAttemptResponse } from './EventFanoutAttemptResponse.js';
 export type { EventFanoutFailureResponse } from './EventFanoutFailureResponse.js';

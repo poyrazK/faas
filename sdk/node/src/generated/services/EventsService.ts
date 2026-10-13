@@ -14,6 +14,7 @@ import type { EventConsumerDeliveryHealth } from '../models/EventConsumerDeliver
 import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecutionHealth.js';
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
+import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
@@ -1493,8 +1494,78 @@ export class EventsService {
     });
   }
   /**
+   * Inspect durable execution coverage reconciliation.
+   * Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+   * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests.
+   * @throws ApiError
+   */
+  public static getEventExecutionReconciliation({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventExecutionReconciliation> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid subscription identifier.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Subscription reconciliation request timed out.`,
+      },
+    });
+  }
+  /**
+   * Request a forward-only execution coverage boundary.
+   * Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+   * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests.
+   * @throws ApiError
+   */
+  public static requestEventExecutionReconciliation({
+    slug,
+    subscriptionId,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier.
+     */
+    subscriptionId: string,
+  }): CancelablePromise<EventExecutionReconciliation> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      errors: {
+        400: `Invalid subscription identifier.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Subscription reconciliation request timed out.`,
+      },
+    });
+  }
+  /**
    * Inspect consumer execution health over a retained history window.
-   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
+   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown until requested forward-only reconciliation establishes a new boundary. Counts are not unique event totals. Completion latency starts at original event acceptance.
    * @returns EventConsumerExecutionHealth Retained execution states and windowed handler outcomes.
    * @throws ApiError
    */

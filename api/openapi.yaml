@@ -33561,12 +33561,91 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation:
+    get:
+      tags: [events]
+      operationId: getEventExecutionReconciliation
+      summary: Inspect durable execution coverage reconciliation.
+      description: Requires `apps:read` or `admin`. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Application event subscription identifier.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current reconciliation status, including completed or already qualified requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionReconciliation' }
+        '400':
+          description: Invalid subscription identifier.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Subscription reconciliation request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [events]
+      operationId: requestEventExecutionReconciliation
+      summary: Request a forward-only execution coverage boundary.
+      description: Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Application event subscription identifier.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current reconciliation status, including completed or already qualified requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionReconciliation' }
+        '202':
+          description: Durable request accepted; awaiting scheduler reconciliation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionReconciliation' }
+        '400':
+          description: Invalid subscription identifier.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '504':
+          description: Subscription reconciliation request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-health:
     get:
       tags: [events]
       operationId: getEventConsumerExecutionHealth
       summary: Inspect consumer execution health over a retained history window.
-      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
+      description: Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown until requested forward-only reconciliation establishes a new boundary. Counts are not unique event totals. Completion latency starts at original event acceptance.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -62282,6 +62361,20 @@ components:
           type: array
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+
+    EventExecutionReconciliation:
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, status, unattributed_execution_present]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [not_requested, waiting_for_lineage, completed, not_required] }
+        requested_at: { type: string, format: date-time }
+        collection_started_at: { type: string, format: date-time }
+        unattributed_execution_present:
+          type: boolean
+          description: A retained app invocation lacks authoritative ledger lineage; unrelated app invocations can conservatively block reconciliation.
 
     EventConsumerExecutionHealth:
       type: object
