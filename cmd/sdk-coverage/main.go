@@ -1442,6 +1442,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control":                                 "GetEventSubscriptionDeliveryControl",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause":                          "PauseEventSubscription",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/resume":                         "ResumeEventSubscription",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands":               "ListEventSubscriptionCapacityCommands",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}":   "GetEventSubscriptionCapacityCommand",
 	"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity":                        "SetEventSubscriptionCapacity",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                                           "GetEventConsumerHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":                                  "GetEventConsumerDeliveryHealth",

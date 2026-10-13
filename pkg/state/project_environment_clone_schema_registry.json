@@ -3704,6 +3704,20 @@
     "kind": "operational"
   },
   {
+    "table": "event_subscription_capacity_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_subscription_delivery_controls",
     "columns": [
       "account_id",
