@@ -160,9 +160,18 @@ func reportDetachedImageRun(resp api.ImageRunResponse) int {
 	return 0
 }
 
-// waitImageRun waits for the one task, prints its stored output and returns
-// its exit code. Ctrl-C cancels the run.
+// waitImageRun relays the task's output live (ADR-1163), waits for the run to
+// finish and returns the task's exit code. Ctrl-C cancels the run.
 func waitImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResponse) int {
+	var live jobTaskLogFollow
+	var liveErr error
+	if !jsonOutput {
+		live, liveErr = followJobTaskLogs(ctx, client, resp.Job, resp.RunID, 0, osStdout, osStderr)
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cancelImageRun(ctx, client, resp)
+			return 130
+		}
+	}
 	for {
 		run, err := client.GetJobRun(ctx, resp.Job, resp.RunID)
 		if err != nil {
@@ -174,7 +183,7 @@ func waitImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResp
 		}
 		switch run.AggregateStatus {
 		case "succeeded", "failed", "cancelled", "dead_letter":
-			return finishImageRun(ctx, client, resp)
+			return finishImageRun(ctx, client, resp, live, liveErr)
 		}
 		if err := sleepContext(ctx, imageRunPollInterval); err != nil {
 			cancelImageRun(ctx, client, resp)
@@ -198,7 +207,10 @@ type imageRunResult struct {
 	Exit int                  `json:"exit_code"`
 }
 
-func finishImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResponse) int {
+// finishImageRun reports the outcome. Output already relayed live is not
+// printed again; when the live stream was unavailable the stored output is
+// printed instead.
+func finishImageRun(ctx context.Context, client *api.Client, resp api.ImageRunResponse, live jobTaskLogFollow, liveErr error) int {
 	tasks, err := client.ListJobRunTasks(ctx, resp.Job, resp.RunID)
 	if err != nil || len(tasks.Tasks) == 0 {
 		return printErr("Could not read the task", errors.Join(err, errors.New("run has no task")))
@@ -215,9 +227,16 @@ func finishImageRun(ctx context.Context, client *api.Client, resp api.ImageRunRe
 		}
 		return result.Exit
 	}
-	_, _ = fmt.Fprint(osStdout, logs.LogContent)
-	if logs.Truncated {
-		PrintWarn(osStderr, "output truncated to the last %d bytes", logs.MaxBytes)
+	switch {
+	case live.Complete():
+	case live.Lines == 0:
+		_, _ = fmt.Fprint(osStdout, logs.LogContent)
+		if logs.Truncated {
+			PrintWarn(osStderr, "output truncated to the last %d bytes", logs.MaxBytes)
+		}
+	default:
+		PrintWarn(osStderr, "live output was incomplete (%s); stored output: %s jobs logs %s %s %d",
+			liveIncompleteReason(live, liveErr), recoveryCLI(), recoveryArgument(resp.Job), resp.RunID, task.TaskIndex)
 	}
 	if result.Exit != 0 && task.ErrorMessage != "" {
 		PrintWarn(osStderr, "%s", task.ErrorMessage)
@@ -251,5 +270,18 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func liveIncompleteReason(live jobTaskLogFollow, err error) string {
+	switch {
+	case live.Gaps > 0:
+		return "some lines were dropped before they could be sent"
+	case live.Reason != "":
+		return live.Reason
+	case err != nil:
+		return err.Error()
+	default:
+		return "the stream closed early"
 	}
 }

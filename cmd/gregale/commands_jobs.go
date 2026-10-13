@@ -1536,11 +1536,11 @@ func cmdJobsRetry(args []string) int {
 }
 
 // cmdJobsLogs implements `gregale jobs logs <name> <run-id>
-// <task-index> [--max-bytes N]`. Tails stdout/stderr via vmmd (same path the
-// dashboard uses for live app logs). Truncated=true means the
-// tail was capped at MaxBytes; re-fetch with --max-bytes N for
-// more. Empty LogContent with Truncated=false means the task
-// never produced output (common for OOM-killed tasks).
+// <task-index> [--max-bytes N] [--follow]`. Without --follow it prints the
+// task's stored output tail: Truncated=true means the tail was capped at
+// MaxBytes (re-fetch with --max-bytes N for more), and empty LogContent with
+// Truncated=false means the task produced no output. --follow streams the
+// task's output live until it finishes (ADR-1163).
 func cmdJobsLogs(args []string) int {
 	for _, arg := range args {
 		if arg == "--interactive" || arg == "-interactive" || strings.HasPrefix(arg, "--interactive=") || strings.HasPrefix(arg, "-interactive=") {
@@ -1554,7 +1554,7 @@ func cmdJobsLogs(args []string) int {
 	if failedOnly {
 		return cmdJobsFailedLogs(failedArgs)
 	}
-	args = failedArgs
+	args, follow := splitJobLogFollow(failedArgs)
 	taskArgs, taskFlag, taskSet, err := splitJobLogTask(args)
 	if err != nil {
 		return printErr("Invalid task selection", err)
@@ -1599,6 +1599,9 @@ func cmdJobsLogs(args []string) int {
 	if attempt > 0 && !jobSlugPattern.MatchString(positionals[0]) {
 		return printErr("Invalid Job name", fmt.Errorf("--attempt requires a valid Job name"))
 	}
+	if follow && (attempt > 0 || maxBytesSet || jsonOutput) {
+		return printErr("Invalid follow arguments", fmt.Errorf("--follow streams the current attempt; it cannot be combined with --attempt, --max-bytes or --json"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -1618,6 +1621,9 @@ func cmdJobsLogs(args []string) int {
 	}
 	if attempt > 0 {
 		return readRetainedJobAttemptLogs(ctx, client, positionals[0], runID, taskIdx, attempt, maxBytes)
+	}
+	if follow {
+		return followJobTaskLogsCommand(client, positionals[0], runID, taskIdx)
 	}
 	logs, err := client.GetJobTaskLogsWithMaxBytes(ctx, positionals[0], runID, taskIdx, maxBytes)
 	if err != nil {

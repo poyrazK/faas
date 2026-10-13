@@ -4819,10 +4819,11 @@ gregale jobs artifacts nightly-report latest 0
 
 Tail task logs from an exact or latest run
 
-`gregale jobs logs [--failed-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
+`gregale jobs logs [--follow] [--failed-only] [--task <N>] [--attempt <N>] [--interactive] [--max-bytes <N>] [<name>] [<run-id|latest>] [<task-index>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--follow` | stream the task&#39;s output live until it finishes (-f; ADR-1163) |  |
 | `--failed-only` | scan task pages and read current logs for failed, timeout, and oom tasks |  |
 | `--task <N>` | task index shortcut; omitted Job uses saved defaults, omitted run uses latest |  |
 | `--attempt <N>` | read retained output for a positive attempt number (explicit task only) |  |
@@ -4836,6 +4837,7 @@ gregale jobs logs --failed-only
 gregale jobs logs --task 0
 gregale jobs logs nightly-report --task 0
 gregale jobs logs nightly-report latest 0
+gregale jobs logs nightly-report latest 0 --follow
 gregale jobs logs --interactive
 ```
 
@@ -9150,7 +9152,7 @@ Run untrusted code in an isolated disposable microVM, or one command from an OCI
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
-| `--detach` | with --image, queue the run and print its id without waiting (-d) |  |
+| `--detach` | with --image, queue the run and print its id without waiting (-d); otherwise output streams live |  |
 | `--workflow-id <ID>` | caller-generated workflow grouping id |  |
 | `--step-label <LABEL>` | short label for this step within --workflow-id |  |
 | `--profile <P>` | preinstalled dependencies (data requires python313) | one of `standard` · `python-data-v1` |

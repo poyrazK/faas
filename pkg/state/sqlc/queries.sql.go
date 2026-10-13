@@ -30768,6 +30768,55 @@ func (q *Queries) IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const jobTaskLogTarget = `-- name: JobTaskLogTarget :one
+SELECT t.status,
+       t.attempt,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = $1::uuid
+  AND j.name = $2::text
+  AND j.status <> 'deleted'
+  AND r.id = $3::uuid
+  AND t.task_index = $4::int
+`
+
+type JobTaskLogTargetParams struct {
+	AccountID pgtype.UUID
+	JobName   string
+	RunID     pgtype.UUID
+	TaskIndex int32
+}
+
+type JobTaskLogTargetRow struct {
+	Status     string
+	Attempt    int32
+	InstanceID string
+	NodeID     string
+}
+
+// ADR-1163: the job task a live log stream follows, scoped to the account
+// and job name, with the node of its current instance (if any).
+func (q *Queries) JobTaskLogTarget(ctx context.Context, db DBTX, arg JobTaskLogTargetParams) (JobTaskLogTargetRow, error) {
+	row := db.QueryRow(ctx, jobTaskLogTarget,
+		arg.AccountID,
+		arg.JobName,
+		arg.RunID,
+		arg.TaskIndex,
+	)
+	var i JobTaskLogTargetRow
+	err := row.Scan(
+		&i.Status,
+		&i.Attempt,
+		&i.InstanceID,
+		&i.NodeID,
+	)
+	return i, err
+}
+
 const latchAutomationFailurePause = `-- name: LatchAutomationFailurePause :exec
 WITH changed AS (
  UPDATE workflow_automation_failure_guards SET generation=generation+1,paused_at=$1::timestamptz

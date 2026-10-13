@@ -27660,6 +27660,57 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Job whose task output is streamed.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Job-run identifier (UUIDv4) owning the task.
+      - name: idx
+        in: path
+        required: true
+        schema: { type: integer, minimum: 0 }
+        description: Zero-based index of the task within the run.
+      - name: since_seq
+        in: query
+        required: false
+        schema: { type: integer, minimum: 0, format: int64 }
+        description: "Resume the current attempt after this line sequence; 0 replays the attempt from its first line."
+    get:
+      tags: [jobs]
+      operationId: streamJobTaskLogs
+      summary: Stream a task's output live (SSE).
+      description: |
+        ADR-1163. Served by the compute gateway, not apid. Waits while the
+        task is queued, then relays the task VM's console output as it is
+        written, including each retry attempt in turn. Frames match the app
+        log stream: `event: log` (seq, instance, stream, line, written_at),
+        `event: gap` when the VM already dropped older lines, heartbeat
+        comments, and one final `event: end` whose `reason` is
+        `task_finished`, `timeout`, `node_unreachable` or `not_found`. After
+        `task_finished`, read the task for its outcome; the stored output
+        from `GET .../logs` remains available.
+      responses:
+        '200':
+          description: A text/event-stream of the task's output lines, ending with one `end` frame.
+          content:
+            text/event-stream: {}
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Live task output needs a plan with Jobs (not Free).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/jobs/{name}/runs/{id}/tasks/{idx}/attempts:
     parameters:
       - name: name
