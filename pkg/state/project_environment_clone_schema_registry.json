@@ -3301,6 +3301,23 @@
     "kind": "operational"
   },
   {
+    "table": "event_execution_lineage_retry_control_receipts",
+    "columns": [
+      "account_id",
+      "action",
+      "app_id",
+      "command_id",
+      "expected_created_at",
+      "job_request_id",
+      "recorded_at",
+      "result",
+      "retain_until",
+      "sequence",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_execution_lineage_retry_jobs",
     "columns": [
       "account_id",

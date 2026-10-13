@@ -1402,6 +1402,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/event-recoveries/{jobID}/resume":                                                                  "ResumeEventRecovery",
 	"PUT /v1/event-recoveries/{jobID}/rate":                                                                     "SetEventRecoveryRate",
 
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/controls":   "ListEventExecutionLineageRetryJobControls",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/pause":     "PauseEventExecutionLineageRetryJob",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/resume":    "ResumeEventExecutionLineageRetryJob",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}/cancel":    "CancelEventExecutionLineageRetryJob",
