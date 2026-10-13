@@ -17,7 +17,9 @@ def test_capture_posts_reason_route_and_wait() -> None:
         seen.append(request)
         return httpx.Response(200, json={"status": "captured", "capture_id": "c1"})
 
-    result = capture_crash_snapshot("checkout panic", route="/orders", wait_ms=5000, transport=httpx.MockTransport(handler))
+    result = capture_crash_snapshot(
+        "checkout panic", route="/orders", wait_ms=5000, transport=httpx.MockTransport(handler)
+    )
     assert result == CrashSnapshotResult(status="captured", capture_id="c1")
     assert str(seen[0].url) == CRASH_SNAPSHOT_ENDPOINT
     assert seen[0].method == "POST"
@@ -26,10 +28,14 @@ def test_capture_posts_reason_route_and_wait() -> None:
 
 def test_capture_reports_fork_refusal_and_unreachable() -> None:
     forked = capture_crash_snapshot(
-        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"status": "captured", "capture_id": "c2", "in_fork": True}))
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={"status": "captured", "capture_id": "c2", "in_fork": True})
+        )
     )
     assert forked == CrashSnapshotResult(status="captured", capture_id="c2", in_fork=True)
-    refused = capture_crash_snapshot(transport=httpx.MockTransport(lambda _: httpx.Response(409, json={"status": "refused"})))
+    refused = capture_crash_snapshot(
+        transport=httpx.MockTransport(lambda _: httpx.Response(409, json={"status": "refused"}))
+    )
     assert refused.status == "refused"
 
     def boom(_: httpx.Request) -> httpx.Response:

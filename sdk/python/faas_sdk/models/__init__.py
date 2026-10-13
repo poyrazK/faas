@@ -147,6 +147,14 @@ from .app_event_publish_status_response import AppEventPublishStatusResponse
 from .app_event_publish_status_response_acceptance import AppEventPublishStatusResponseAcceptance
 from .app_event_publish_status_response_reason import AppEventPublishStatusResponseReason
 from .app_event_publish_status_response_status import AppEventPublishStatusResponseStatus
+from .app_fork_exec_list_response import AppForkExecListResponse
+from .app_fork_exec_response import AppForkExecResponse
+from .app_fork_exec_response_failure import AppForkExecResponseFailure
+from .app_fork_exec_response_status import AppForkExecResponseStatus
+from .app_fork_list_response import AppForkListResponse
+from .app_fork_response import AppForkResponse
+from .app_fork_response_failure import AppForkResponseFailure
+from .app_fork_response_status import AppForkResponseStatus
 from .app_health_capacity import AppHealthCapacity
 from .app_health_changed_webhook_payload import AppHealthChangedWebhookPayload
 from .app_health_changed_webhook_payload_change import AppHealthChangedWebhookPayloadChange
@@ -506,7 +514,6 @@ from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
-
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -548,6 +555,8 @@ from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequ
 from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
+from .create_app_fork_exec_request import CreateAppForkExecRequest
+from .create_app_fork_request import CreateAppForkRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
 from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
@@ -4232,6 +4241,14 @@ __all__ = (
     "AppEventPublishStatusResponseAcceptance",
     "AppEventPublishStatusResponseReason",
     "AppEventPublishStatusResponseStatus",
+    "AppForkExecListResponse",
+    "AppForkExecResponse",
+    "AppForkExecResponseFailure",
+    "AppForkExecResponseStatus",
+    "AppForkListResponse",
+    "AppForkResponse",
+    "AppForkResponseFailure",
+    "AppForkResponseStatus",
     "AppHealthCapacity",
     "AppHealthChangedWebhookPayload",
     "AppHealthChangedWebhookPayloadChange",
@@ -4589,7 +4606,6 @@ __all__ = (
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
-
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -4629,6 +4645,8 @@ __all__ = (
     "CreateAPIConsumerRateCardRequestRouteWeights",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateAppForkExecRequest",
+    "CreateAppForkRequest",
     "CreateAppLogDrainRequest",
     "CreateAppLogDrainRequestKind",
     "CreateAppRequest",
