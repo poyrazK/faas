@@ -211,3 +211,32 @@ func TestListVolumes(t *testing.T) {
 		t.Fatalf("volumes = %+v, %v", vols, err)
 	}
 }
+
+// GrowVolume refuses what it must before touching the file; the grow
+// itself runs on metal (e2fsprogs).
+func TestGrowVolumeRefusals(t *testing.T) {
+	rt := testRuntime(t, &fakeLeaser{})
+	ctx := context.Background()
+	if err := rt.GrowVolume(ctx, testID, 2<<30); !errors.Is(err, ErrVolumeNotFound) {
+		t.Fatalf("grow a missing volume = %v", err)
+	}
+	if err := os.MkdirAll(rt.cfg.VolumeRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := rt.VolumePath(testID)
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, 2<<30); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.GrowVolume(ctx, testID, 1<<30); !errors.Is(err, ErrVolumeShrink) {
+		t.Fatalf("shrink = %v", err)
+	}
+	if err := rt.GrowVolume(ctx, testID, MaxVolumeBytes+1); err == nil {
+		t.Fatal("a volume past the maximum was accepted")
+	}
+	if info, _ := os.Stat(path); info.Size() != 2<<30 {
+		t.Fatalf("a refused grow changed the file: %d", info.Size())
+	}
+}

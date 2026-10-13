@@ -551,7 +551,35 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     `TestMetalQualifyProvider` runs them against real database VMs, and
     `TestMetalQualifyProviderWithRestore` adds the restore checks.
 
-Not yet: class/storage resize.
+### Resize
+
+- **Class and storage** change in place through `Update`; the major,
+  region and restore window are fixed. Storage only grows: shrinking ext4
+  under a database is not supported. `ClassResize` is advertised when the
+  backend has more than one class, and `ProbeComputeResize` qualifies it
+  (to the other class and back, data, credentials and replay preserved).
+- **schedd `ResizeDatabase`** records the new shape if the node fits it
+  (free volume capacity, and RAM while the VM is active) and marks it
+  `resize_pending`, moving the storage ledger to the new size in the same
+  transaction. Firecracker hotplugs neither vCPUs, memory nor disk, so a
+  running database is parked cleanly, its volume grown, and woken on the
+  new shape: a few seconds of downtime. A parked database takes the shape
+  at its next wake.
+- **vmmd `GrowDatabaseVolume`** extends the stopped volume's file, then
+  checks and grows its ext4 filesystem offline with the host's e2fsprogs
+  (`e2fsck -f -p`, `resize2fs`). It reads the superblock first, so a
+  class-only resize skips the check and a retry after a crash between the
+  two steps finishes the job.
+- The driver reports the database pending while `resize_pending` is set,
+  and the service's reconciler repeats `Update`, which resumes it.
+- Metal (`TestMetalResize`): a running database resized from 1 vCPU/384
+  MiB/1 GiB to 2 vCPU/1 GiB/2 GiB is back in 1.5 s with `shared_buffers`
+  88 MB -> 245 MB, its data intact and its filesystem 2 GiB; resized back
+  while parked, it boots small at its next wake. `QualifyProvider` passes
+  26 checks, including `compute_resize_probe`.
+- A customer-facing storage change has no API yet: the service's resize
+  operation carries a target class only. The driver and schedd accept a
+  larger `StorageLimitBytes` for when it does.
 
 ### Usage metering
 

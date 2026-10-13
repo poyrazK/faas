@@ -250,3 +250,13 @@ func TestDialRejectedConnect(t *testing.T) {
 		t.Fatal("Dial succeeded without a guest listener")
 	}
 }
+
+func TestFilesystemBytes(t *testing.T) {
+	out := []byte("Filesystem volume name:   gregale-db\nBlock count:              262144\nReserved block count:     0\nBlock size:               4096\n")
+	if n, err := FilesystemBytes(out); err != nil || n != 1<<30 {
+		t.Fatalf("filesystem bytes = %d, %v", n, err)
+	}
+	if _, err := FilesystemBytes([]byte("dumpe2fs: Bad magic number in super-block")); err == nil {
+		t.Fatal("garbage parsed")
+	}
+}

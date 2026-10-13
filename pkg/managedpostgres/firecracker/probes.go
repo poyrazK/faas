@@ -27,6 +27,7 @@ var (
 	_ managedpostgres.CredentialPrivilegeProber        = (*Provider)(nil)
 	_ managedpostgres.ReadOnlyCredentialProber         = (*Provider)(nil)
 	_ managedpostgres.ComputePolicyProber              = (*Provider)(nil)
+	_ managedpostgres.ComputeResizeProber              = (*Provider)(nil)
 	_ managedpostgres.RestoreDataProber                = (*Provider)(nil)
 	_ managedpostgres.RestoreCredentialIsolationProber = (*Provider)(nil)
 )
@@ -538,4 +539,104 @@ func (p *Provider) VerifyRestoreCredentialIsolation(ctx context.Context, source,
 		return managedpostgres.ErrConflict
 	}
 	return nil
+}
+
+// ProbeComputeResize moves the database to another class and back,
+// proving identity, data and credentials survive and the update replays
+// stably. That the VM restarts on each shape is schedd's to prove (its
+// metal test reads shared_buffers, a quarter of guest RAM).
+func (p *Provider) ProbeComputeResize(ctx context.Context, id string, spec managedpostgres.Spec) (evidence managedpostgres.ResizeEvidence, err error) {
+	key := probeKey("qualification-resize-")
+	fixture := fixtureName("gregale_resize_")
+	writerRequest := managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key + "-writer", IdempotencyKey: key + "-writer", Access: managedpostgres.CredentialMigration}
+	readerRequest := managedpostgres.CredentialRequest{ProviderResourceID: id, IdentityKey: key + "-reader", IdempotencyKey: key + "-reader", Access: managedpostgres.CredentialReadOnly}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		cleanupErr := p.dropFixtures(cleanup, id, fixture)
+		for _, r := range []managedpostgres.CredentialRequest{readerRequest, writerRequest} {
+			if revokeErr := p.RevokeCredentials(cleanup, r); revokeErr != nil {
+				cleanupErr = revokeErr
+			}
+		}
+		if err == nil && cleanupErr != nil {
+			err = managedpostgres.ErrUnavailable
+		}
+	}()
+	target := spec
+	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
+		if _, ok := p.cfg.Classes[class]; ok && class != spec.Class {
+			target.Class = class
+			break
+		}
+	}
+	observed, err := p.Inspect(ctx, id)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != spec || target.Class == spec.Class {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	writer, err := p.IssueCredentials(ctx, writerRequest)
+	if err != nil {
+		return evidence, err
+	}
+	table := "public." + fixture
+	conn, err := p.connect(ctx, writer)
+	if err != nil {
+		return evidence, err
+	}
+	_, err = conn.Exec(ctx, "CREATE TABLE "+table+" (value text PRIMARY KEY)")
+	if err == nil {
+		_, err = conn.Exec(ctx, "INSERT INTO "+table+" (value) VALUES ($1)", key)
+	}
+	_ = conn.Close(ctx)
+	if err != nil {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	reader, err := p.IssueCredentials(ctx, readerRequest)
+	if err != nil {
+		return evidence, err
+	}
+	markersIntact := func() bool {
+		return p.verifyMarker(ctx, writer, table, key, false) == nil && p.verifyMarker(ctx, reader, table, key, true) == nil
+	}
+	request := managedpostgres.UpdateRequest{ResourceID: id, DataResourceID: observed.DataResourceID, PreviousSpec: spec, Spec: target, Generation: 2, IdempotencyKey: key}
+	resized, err := p.awaitUpdate(ctx, request)
+	if err != nil {
+		return evidence, err
+	}
+	replayed, err := p.Update(ctx, request)
+	if err != nil || replayed.Status != managedpostgres.ProviderStatusReady || replayed.Spec != target || replayed.DataResourceID != resized.DataResourceID || replayed.ProviderResourceID != id {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	evidence.ReplayStable = true
+	if !markersIntact() {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	request.PreviousSpec, request.Spec, request.Generation, request.IdempotencyKey = target, spec, 3, key+"-restore"
+	restored, err := p.awaitUpdate(ctx, request)
+	if err != nil || restored.DataResourceID != observed.DataResourceID || restored.ProviderResourceID != id {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	if !markersIntact() {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	evidence.IdentityPreserved, evidence.DataPreserved, evidence.CredentialsPreserved, evidence.OriginalClassRestored = true, true, true, true
+	return evidence, nil
+}
+
+// awaitUpdate applies an update and waits until the database is ready on
+// its spec.
+func (p *Provider) awaitUpdate(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
+	obs, err := p.Update(ctx, req)
+	for err == nil && (obs.Status != managedpostgres.ProviderStatusReady || obs.Spec != req.Spec) {
+		if obs.Status != managedpostgres.ProviderStatusPending && obs.Status != managedpostgres.ProviderStatusReady {
+			return obs, managedpostgres.ErrUnavailable
+		}
+		select {
+		case <-ctx.Done():
+			return obs, ctx.Err()
+		case <-time.After(p.poll):
+		}
+		obs, err = p.Inspect(ctx, req.ResourceID)
+	}
+	return obs, err
 }

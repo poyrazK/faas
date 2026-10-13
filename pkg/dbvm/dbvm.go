@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/dbguest"
@@ -134,6 +136,82 @@ func CreateVolume(ctx context.Context, path string, sizeBytes int64) (err error)
 	}
 	return nil
 }
+
+// ErrVolumeShrink refuses a smaller size: shrinking ext4 under a database
+// is not supported.
+var ErrVolumeShrink = errors.New("dbvm: a volume cannot shrink")
+
+// GrowVolume enlarges a stopped database's volume file and its ext4
+// filesystem to sizeBytes, offline on the host. It reads the filesystem's
+// size from its superblock first: when it already fills sizeBytes there is
+// nothing to do (a resize that kept the volume), and when only the file
+// grew (a crash between the two steps) a retry finishes the job.
+func GrowVolume(ctx context.Context, path string, sizeBytes int64) error {
+	if sizeBytes < MinVolumeBytes || sizeBytes > MaxVolumeBytes {
+		return fmt.Errorf("dbvm: volume size %d out of range", sizeBytes)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("dbvm: grow volume: %w", err)
+	}
+	if sizeBytes < info.Size() {
+		return ErrVolumeShrink
+	}
+	if sizeBytes > info.Size() {
+		if err := os.Truncate(path, sizeBytes); err != nil {
+			return fmt.Errorf("dbvm: extend volume: %w", err)
+		}
+	}
+	super, err := exec.CommandContext(ctx, "dumpe2fs", "-h", path).Output()
+	if err != nil {
+		return fmt.Errorf("dbvm: read volume superblock: %w", err)
+	}
+	if fs, err := FilesystemBytes(super); err != nil {
+		return err
+	} else if fs >= sizeBytes {
+		return nil
+	}
+	// resize2fs grows an unmounted filesystem only after a full check.
+	// e2fsck -p exits 1 when it corrected something, which is fine.
+	out, err := exec.CommandContext(ctx, "e2fsck", E2fsckArgs(path)...).CombinedOutput()
+	var exit *exec.ExitError
+	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
+		return fmt.Errorf("dbvm: check volume: %w: %s", err, out)
+	}
+	if out, err := exec.CommandContext(ctx, "resize2fs", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("dbvm: grow filesystem: %w: %s", err, out)
+	}
+	return nil
+}
+
+// FilesystemBytes reads an ext4 filesystem's size from `dumpe2fs -h`.
+func FilesystemBytes(dumpe2fs []byte) (int64, error) {
+	var blocks, blockSize int64
+	for _, line := range strings.Split(string(dumpe2fs), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "Block count":
+			blocks = n
+		case "Block size":
+			blockSize = n
+		}
+	}
+	if blocks <= 0 || blockSize <= 0 {
+		return 0, errors.New("dbvm: no block count in the volume superblock")
+	}
+	return blocks * blockSize, nil
+}
+
+// E2fsckArgs checks a volume before an offline grow: forced, and fixing
+// only what is safe without asking.
+func E2fsckArgs(path string) []string { return []string{"-f", "-p", path} }
 
 // MkfsArgs formats a database volume: no reserved blocks (the plan quota is
 // the limit), lazy inode and journal init so creation stays fast on a sparse

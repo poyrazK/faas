@@ -414,3 +414,61 @@ func TestStoreUsageLedger(t *testing.T) {
 		})
 	}
 }
+
+// TestStoreResize: a resize must fit the node's free volume capacity (and
+// RAM while active), never shrinks, marks the record pending until
+// finished, and is a no-op for the same shape.
+func TestStoreResize(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 2048, VolumeCapacityBytes: 4 << 30, Lifecycle: NodeActive})
+			vm, err := s.Place(ctx, newVM(1<<30, 384))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Resize(ctx, vm.DatabaseID, Shape{VcpuCount: 2, MemMiB: 1024, VolumeBytes: 2 << 30}, time.Now()); !errors.Is(err, ErrConflict) {
+				t.Fatalf("resize while provisioning = %v", err)
+			}
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Resize(ctx, vm.DatabaseID, Shape{VcpuCount: 1, MemMiB: 384, VolumeBytes: 5 << 30}, time.Now()); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("past the node's volume capacity = %v", err)
+			}
+			if err := s.Resize(ctx, vm.DatabaseID, Shape{VcpuCount: 1, MemMiB: 384, VolumeBytes: 512 << 20}, time.Now()); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("shrink = %v", err)
+			}
+			shape := Shape{VcpuCount: 2, MemMiB: 1024, VolumeBytes: 4 << 30}
+			if err := s.Resize(ctx, vm.DatabaseID, shape, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := s.Get(ctx, vm.DatabaseID)
+			if got.shape() != shape || !got.ResizePending {
+				t.Fatalf("after resize = %+v", got)
+			}
+			if err := s.FinishResize(ctx, vm.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, vm.DatabaseID); got.ResizePending {
+				t.Fatal("finish left the resize pending")
+			}
+			if err := s.Resize(ctx, vm.DatabaseID, shape, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, vm.DatabaseID); got.ResizePending {
+				t.Fatal("the same shape marked a resize pending")
+			}
+			// Running, the new memory must fit the RAM ceiling.
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Resize(ctx, vm.DatabaseID, Shape{VcpuCount: 2, MemMiB: 4096, VolumeBytes: 4 << 30}, time.Now()); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("past the RAM ceiling while running = %v", err)
+			}
+		})
+	}
+}

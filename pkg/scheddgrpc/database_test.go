@@ -36,6 +36,7 @@ type fakeDatabases struct {
 	egress      int64
 	egressErr   error
 	touchErr    error
+	shape       dbsched.Shape
 }
 
 func (f *fakeDatabases) Provision(_ context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error) {
@@ -56,6 +57,12 @@ func (f *fakeDatabases) Admin(_ context.Context, _, sql string) (dbguest.Respons
 }
 func (f *fakeDatabases) Delete(context.Context, string) error            { return f.err }
 func (f *fakeDatabases) Get(context.Context, string) (dbsched.VM, error) { return f.vm, f.err }
+func (f *fakeDatabases) Resize(_ context.Context, _ string, shape dbsched.Shape) (dbsched.VM, error) {
+	f.shape = shape
+	vm := f.vm
+	vm.VcpuCount, vm.MemMiB, vm.VolumeBytes = shape.VcpuCount, shape.MemMiB, shape.VolumeBytes
+	return vm, f.err
+}
 func (f *fakeDatabases) Usage(_ context.Context, _ string, from, to time.Time) (dbsched.Usage, error) {
 	f.usageWindow = [2]time.Time{from, to}
 	return f.usage, f.err
@@ -106,6 +113,10 @@ func TestDatabaseRPCCallerIdentity(t *testing.T) {
 			_, err := s.TouchDatabase(c, &scheddpb.TouchDatabaseRequest{DatabaseId: testDBID})
 			return err
 		}, codes.OK},
+		{"pgproxyd cannot resize", callerPgproxy, func(c context.Context) error {
+			_, err := s.ResizeDatabase(c, &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID})
+			return err
+		}, codes.PermissionDenied},
 		{"pgproxyd cannot read usage", callerPgproxy, func(c context.Context) error {
 			_, err := s.DatabaseUsage(c, &scheddpb.DatabaseUsageRequest{DatabaseId: testDBID})
 			return err
@@ -247,5 +258,18 @@ func TestDatabaseUsageMapsTheWindow(t *testing.T) {
 	}
 	if _, err := s.DatabaseUsage(asCaller(callerAPID), &scheddpb.DatabaseUsageRequest{DatabaseId: testDBID}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("usage without a window = %v", err)
+	}
+}
+
+func TestResizeDatabaseRelaysTheShape(t *testing.T) {
+	f := &fakeDatabases{vm: dbsched.VM{DatabaseID: testDBID, State: dbsched.StateRunning, ResizePending: true}}
+	s := New(nil, nil, nil).WithDatabases(f)
+	rt, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 1024, VolumeBytes: 4 << 30})
+	if err != nil || f.shape != (dbsched.Shape{VcpuCount: 2, MemMiB: 1024, VolumeBytes: 4 << 30}) || rt.GetVcpuCount() != 2 || !rt.GetResizePending() {
+		t.Fatalf("resize = %v, %v (shape %+v)", rt, err, f.shape)
+	}
+	f.err = dbsched.ErrNoCapacity
+	if _, err := s.ResizeDatabase(asCaller(callerAPID), &scheddpb.ResizeDatabaseRequest{DatabaseId: testDBID, VcpuCount: 2, MemMib: 1024, VolumeBytes: 4 << 30}); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("no capacity = %v", err)
 	}
 }

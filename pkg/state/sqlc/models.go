@@ -1925,6 +1925,7 @@ type DatabaseVm struct {
 	RestoreTarget        pgtype.Timestamptz
 	RestoreRecoveredTo   pgtype.Timestamptz
 	RestoreLeaseUntil    pgtype.Timestamptz
+	ResizePending        bool
 	LastError            pgtype.Text
 	LastActiveAt         pgtype.Timestamptz
 	StateChangedAt       pgtype.Timestamptz

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -234,4 +235,71 @@ func TestMetalAlwaysOnKeepWarmAndLostVM(t *testing.T) {
 		t.Fatalf("back on scale-to-zero: ParkIdle = %d, %v, running %v", n, err, rt.Running(id))
 	}
 	t.Logf("lost VM detected and rebooted in %v", recovered.Round(time.Millisecond))
+}
+
+// adr: 1027 — resize a running database to a larger class and volume: it
+// restarts on the new shape (shared_buffers follows guest RAM), its volume
+// and ext4 filesystem grow, and its data survives. A class-only resize of a
+// parked database applies at its next wake.
+func TestMetalResize(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	}
+	s, _, rt := metalScheduler(t, workdir, base)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	id := uuid.NewString()
+	t.Cleanup(func() { _ = s.Delete(context.Background(), id) })
+	if _, err := s.Provision(ctx, ProvisionRequest{DatabaseID: id, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30}); err != nil {
+		t.Fatal(err)
+	}
+	password := uuid.NewString() + uuid.NewString()
+	for _, sql := range []string{"CREATE ROLE app LOGIN PASSWORD '" + password + "'", "CREATE DATABASE app OWNER app"} {
+		if resp, err := s.Admin(ctx, id, sql); err != nil || resp.Error != "" {
+			t.Fatalf("admin: %+v %v", resp, err)
+		}
+	}
+	query(ctx, t, rt, id, password, "CREATE TABLE kept(v text); INSERT INTO kept VALUES ('survives the resize')")
+	small := query(ctx, t, rt, id, password, "SELECT current_setting('shared_buffers')")
+
+	started := time.Now()
+	vm, err := s.Resize(ctx, id, Shape{VcpuCount: 2, MemMiB: 1024, VolumeBytes: 2 << 30})
+	took := time.Since(started)
+	if err != nil || vm.State != StateRunning || vm.ResizePending {
+		t.Fatalf("resize = %+v, %v", vm, err)
+	}
+	large := query(ctx, t, rt, id, password, "SELECT current_setting('shared_buffers')")
+	if large == small {
+		t.Fatalf("shared_buffers %s before and after: the VM did not restart on the new shape", small)
+	}
+	if got := query(ctx, t, rt, id, password, "SELECT v FROM kept"); got != "survives the resize" {
+		t.Fatalf("data after resize = %q", got)
+	}
+	if err := s.Park(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(rt.VolumePath(id)); err != nil || info.Size() != 2<<30 {
+		t.Fatalf("volume file = %v, %v", info, err)
+	}
+	super, err := exec.CommandContext(ctx, "dumpe2fs", "-h", rt.VolumePath(id)).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs, err := dbvm.FilesystemBytes(super); err != nil || fs != 2<<30 {
+		t.Fatalf("filesystem = %d bytes, %v; want the grown 2 GiB", fs, err)
+	}
+
+	// Back to the small class while parked: no boot until the next wake.
+	vm, err = s.Resize(ctx, id, Shape{VcpuCount: 1, MemMiB: 384, VolumeBytes: 2 << 30})
+	if err != nil || vm.State != StateParked || vm.ResizePending || rt.Running(id) {
+		t.Fatalf("parked resize = %+v, %v (running %v)", vm, err, rt.Running(id))
+	}
+	if _, err := s.Wake(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if got := query(ctx, t, rt, id, password, "SELECT current_setting('shared_buffers')"); got != small {
+		t.Fatalf("shared_buffers after resizing back = %s, want %s", got, small)
+	}
+	t.Logf("running resize (stop, grow 1->2 GiB, boot) %v; shared_buffers %s -> %s", took.Round(time.Millisecond), small, large)
 }

@@ -52,6 +52,7 @@ const (
 	Schedd_SetDatabaseAlwaysOn_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/SetDatabaseAlwaysOn"
 	Schedd_RestoreDatabase_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
 	Schedd_DatabaseUsage_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
+	Schedd_ResizeDatabase_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/ResizeDatabase"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -361,6 +362,10 @@ type ScheddClient interface {
 	// DatabaseUsage reports a database's metered consumption over a window,
 	// also after it was deleted (ADR-1027). apid only.
 	DatabaseUsage(ctx context.Context, in *DatabaseUsageRequest, opts ...grpc.CallOption) (*DatabaseUsageResponse, error)
+	// ResizeDatabase changes a database's VM shape and grows its volume
+	// (never shrinks it). A running database restarts on the new shape.
+	// Repeating the request resumes an interrupted resize. apid only.
+	ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 }
 
 type scheddClient struct {
@@ -626,6 +631,16 @@ func (c *scheddClient) DatabaseUsage(ctx context.Context, in *DatabaseUsageReque
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DatabaseUsageResponse)
 	err := c.cc.Invoke(ctx, Schedd_DatabaseUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ResizeDatabase(ctx context.Context, in *ResizeDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_ResizeDatabase_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -939,6 +954,10 @@ type ScheddServer interface {
 	// DatabaseUsage reports a database's metered consumption over a window,
 	// also after it was deleted (ADR-1027). apid only.
 	DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error)
+	// ResizeDatabase changes a database's VM shape and grows its volume
+	// (never shrinks it). A running database restarts on the new shape.
+	// Repeating the request resumes an interrupted resize. apid only.
+	ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -1020,6 +1039,9 @@ func (UnimplementedScheddServer) RestoreDatabase(context.Context, *RestoreDataba
 }
 func (UnimplementedScheddServer) DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DatabaseUsage not implemented")
+}
+func (UnimplementedScheddServer) ResizeDatabase(context.Context, *ResizeDatabaseRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResizeDatabase not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1449,6 +1471,24 @@ func _Schedd_DatabaseUsage_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_ResizeDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResizeDatabaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ResizeDatabase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ResizeDatabase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ResizeDatabase(ctx, req.(*ResizeDatabaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1539,6 +1579,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DatabaseUsage",
 			Handler:    _Schedd_DatabaseUsage_Handler,
+		},
+		{
+			MethodName: "ResizeDatabase",
+			Handler:    _Schedd_ResizeDatabase_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

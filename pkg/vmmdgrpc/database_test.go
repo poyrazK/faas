@@ -62,6 +62,10 @@ func (f *fakeDatabaseRuntime) ArchiveBytes(_ context.Context, ids []string) (map
 	}
 	return out, f.err
 }
+func (f *fakeDatabaseRuntime) GrowVolume(_ context.Context, _ string, size int64) error {
+	f.calls = append(f.calls, fmt.Sprintf("grow:%d", size))
+	return f.err
+}
 func (f *fakeDatabaseRuntime) ListVolumes() ([]dbvm.Volume, error) {
 	return f.volumes, f.err
 }
@@ -216,6 +220,22 @@ func TestDatabaseArchiveBytes(t *testing.T) {
 	}
 	if _, err := s.DatabaseArchiveBytes(unixCaller(), &vmmdpb.DatabaseArchiveBytesRequest{DatabaseIds: make([]string, maxArchiveSizeBatch+1)}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("oversized batch = %v", err)
+	}
+}
+
+func TestGrowDatabaseVolume(t *testing.T) {
+	rt := &fakeDatabaseRuntime{}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	if _, err := s.GrowDatabaseVolume(unixCaller(), &vmmdpb.GrowDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 2 << 30}); err != nil || strings.Join(rt.calls, ",") != "grow:2147483648" {
+		t.Fatalf("grow = %v (%v)", err, rt.calls)
+	}
+	rt.err = dbvm.ErrVolumeShrink
+	if _, err := s.GrowDatabaseVolume(unixCaller(), &vmmdpb.GrowDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 1 << 30}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("shrink = %v, want InvalidArgument", err)
+	}
+	rt.err = dbvm.ErrRunning
+	if _, err := s.GrowDatabaseVolume(unixCaller(), &vmmdpb.GrowDatabaseVolumeRequest{DatabaseId: testDatabaseID, SizeBytes: 2 << 30}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("grow while running = %v, want FailedPrecondition", err)
 	}
 }
 

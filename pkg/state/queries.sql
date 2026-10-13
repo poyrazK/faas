@@ -18468,13 +18468,13 @@ GROUP BY n.id ORDER BY n.id;
 -- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -18518,6 +18518,15 @@ SELECT EXISTS (SELECT 1 FROM database_usage WHERE database_id = sqlc.arg(databas
 -- name: PruneDatabaseUsage :execrows
 DELETE FROM database_usage
 WHERE ended_at < sqlc.arg(before) OR (meter = 'egress' AND started_at < sqlc.arg(before));
+
+-- name: ResizeDatabaseVM :execrows
+UPDATE database_vms
+SET vcpu_count = sqlc.arg(vcpu_count), mem_mib = sqlc.arg(mem_mib), volume_bytes = sqlc.arg(volume_bytes),
+    resize_pending = true
+WHERE database_id = sqlc.arg(database_id) AND state IN ('parked', 'running');
+
+-- name: FinishDatabaseVMResize :execrows
+UPDATE database_vms SET resize_pending = false WHERE database_id = sqlc.arg(database_id);
 
 -- name: RecordDatabaseVMRestore :execrows
 UPDATE database_vms SET restore_recovered_to = sqlc.arg(recovered_to)

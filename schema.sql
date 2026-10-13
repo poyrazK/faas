@@ -17657,6 +17657,7 @@ CREATE TABLE public.database_vms (
     restore_target timestamp with time zone,
     restore_recovered_to timestamp with time zone,
     restore_lease_until timestamp with time zone,
+    resize_pending boolean DEFAULT false NOT NULL,
     last_error text,
     last_active_at timestamp with time zone,
     state_changed_at timestamp with time zone DEFAULT now() NOT NULL,

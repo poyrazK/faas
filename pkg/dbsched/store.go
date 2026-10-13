@@ -7,6 +7,7 @@ package dbsched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -74,6 +75,9 @@ type VM struct {
 	// RestoreRecoveredTo is the restore's last replayed commit, recorded
 	// when it finished (zero: none replayed, or not recorded).
 	RestoreRecoveredTo time.Time
+	// ResizePending: the shape or volume changed and the VM has not been
+	// restarted on it yet.
+	ResizePending bool
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.
 	RestoreUntilEnd bool
@@ -138,8 +142,53 @@ type Store interface {
 	Usage(ctx context.Context, id string, from, to time.Time) (Usage, error)
 	// PruneUsage drops ledger rows that ended before before.
 	PruneUsage(ctx context.Context, before time.Time) (int64, error)
+	// Resize records a parked or running database's new shape and marks
+	// it pending, if the node fits it (volume capacity, and RAM while the
+	// VM is active). The same shape again is a no-op; a smaller volume is
+	// ErrInvalid. The storage ledger moves to the new volume size.
+	Resize(ctx context.Context, id string, shape Shape, at time.Time) error
+	// FinishResize clears the pending mark once the VM runs on the shape.
+	FinishResize(ctx context.Context, id string) error
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
+}
+
+// Shape is a database VM's size and volume.
+type Shape struct {
+	VcpuCount   int
+	MemMiB      int
+	VolumeBytes int64
+}
+
+func (vm VM) shape() Shape {
+	return Shape{VcpuCount: vm.VcpuCount, MemMiB: vm.MemMiB, VolumeBytes: vm.VolumeBytes}
+}
+
+// resizeFits checks a new shape against the node: the volume growth must
+// fit its free volume capacity, and an active VM's new memory its RAM
+// ceiling.
+func resizeFits(node Node, u nodeUsage, vm VM, shape Shape) error {
+	if node.Lifecycle == NodeUnavailable {
+		return ErrNodeUnavailable
+	}
+	if node.VolumeCapacityBytes-u.volumeBytes+vm.VolumeBytes < shape.VolumeBytes {
+		return ErrNoCapacity
+	}
+	if isActive(vm.State) && u.activeMB-billableMB(vm.MemMiB)+billableMB(shape.MemMiB) > int64(node.AdmissionCeilingMB) {
+		return ErrNoCapacity
+	}
+	return nil
+}
+
+// checkResize is what every store refuses before a resize.
+func checkResize(vm VM, shape Shape) error {
+	if vm.State != StateParked && vm.State != StateRunning {
+		return ErrConflict
+	}
+	if shape.VolumeBytes < vm.VolumeBytes {
+		return fmt.Errorf("%w: a volume cannot shrink", ErrInvalid)
+	}
+	return nil
 }
 
 // activeStates hold RAM on their node.

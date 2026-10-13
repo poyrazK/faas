@@ -14925,6 +14925,18 @@ func (q *Queries) FinishClonePostgresWriteFenceAbandonment(ctx context.Context, 
 	return i, err
 }
 
+const finishDatabaseVMResize = `-- name: FinishDatabaseVMResize :execrows
+UPDATE database_vms SET resize_pending = false WHERE database_id = $1
+`
+
+func (q *Queries) FinishDatabaseVMResize(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseVMResize, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishDevBridgeWebhookReplay = `-- name: FinishDevBridgeWebhookReplay :execrows
 UPDATE dev_bridge_webhook_replays SET state=$1,http_status=$2,completed_at=now()
 WHERE id=$3 AND account_id=$4 AND state='dispatching'
@@ -17473,7 +17485,7 @@ func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetD
 const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17496,6 +17508,7 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.RestoreTarget,
 		&i.RestoreRecoveredTo,
 		&i.RestoreLeaseUntil,
+		&i.ResizePending,
 		&i.LastError,
 		&i.LastActiveAt,
 		&i.StateChangedAt,
@@ -30481,7 +30494,7 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30510,6 +30523,7 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.RestoreTarget,
 			&i.RestoreRecoveredTo,
 			&i.RestoreLeaseUntil,
+			&i.ResizePending,
 			&i.LastError,
 			&i.LastActiveAt,
 			&i.StateChangedAt,
@@ -65786,6 +65800,33 @@ FROM workflow_runs r WHERE s.run_id=r.id AND r.id=$1 AND s.status='running'
 func (q *Queries) ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, resetWorkflowRunningSteps, runID)
 	return err
+}
+
+const resizeDatabaseVM = `-- name: ResizeDatabaseVM :execrows
+UPDATE database_vms
+SET vcpu_count = $1, mem_mib = $2, volume_bytes = $3,
+    resize_pending = true
+WHERE database_id = $4 AND state IN ('parked', 'running')
+`
+
+type ResizeDatabaseVMParams struct {
+	VcpuCount   int32
+	MemMib      int32
+	VolumeBytes int64
+	DatabaseID  pgtype.UUID
+}
+
+func (q *Queries) ResizeDatabaseVM(ctx context.Context, db DBTX, arg ResizeDatabaseVMParams) (int64, error) {
+	result, err := db.Exec(ctx, resizeDatabaseVM,
+		arg.VcpuCount,
+		arg.MemMib,
+		arg.VolumeBytes,
+		arg.DatabaseID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resolveEnvironmentFieldOwnershipScope = `-- name: ResolveEnvironmentFieldOwnershipScope :one

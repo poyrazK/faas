@@ -31,6 +31,9 @@ type VMM interface {
 	// ArchiveBytes sizes the databases' archives on node; ones it could
 	// not size are absent.
 	ArchiveBytes(ctx context.Context, node Node, ids []string) (map[string]int64, error)
+	// GrowVolume enlarges a stopped database's volume and filesystem to
+	// sizeBytes; already that size is a cheap no-op.
+	GrowVolume(ctx context.Context, node Node, id string, sizeBytes int64) error
 	Start(ctx context.Context, node Node, vm VM) error
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
@@ -370,6 +373,10 @@ func (s *Scheduler) pollReady(ctx context.Context, node Node, id string, timeout
 func (s *Scheduler) Wake(ctx context.Context, id string) (VM, error) {
 	unlock := s.lock(id)
 	defer unlock()
+	return s.wakeLocked(ctx, id)
+}
+
+func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 	vm, err := s.store.Get(ctx, id)
 	if err != nil {
 		return VM{}, err

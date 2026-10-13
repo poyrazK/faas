@@ -37,6 +37,7 @@ type DatabaseScheduler interface {
 	Restore(ctx context.Context, req dbsched.RestoreRequest) (dbsched.VM, error)
 	Usage(ctx context.Context, id string, from, to time.Time) (dbsched.Usage, error)
 	RecordEgress(ctx context.Context, id string, bytes int64) error
+	Resize(ctx context.Context, id string, shape dbsched.Shape) (dbsched.VM, error)
 }
 
 // WithDatabases enables the database RPCs.
@@ -80,6 +81,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError, VmmdTarget: vm.NodeTarget,
 		PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
 		AlwaysOn: vm.AlwaysOn, RestoreWindowSeconds: vm.RestoreWindowSeconds, RestoreSourceId: vm.RestoreSource,
+		ResizePending: vm.ResizePending,
 	}
 	if vm.RestoreSource != "" {
 		rt.RestoreTarget = timestamppb.New(vm.RestoreTarget)
@@ -177,6 +179,22 @@ func (s *Server) TouchDatabase(ctx context.Context, req *scheddpb.TouchDatabaseR
 		return nil, s.databaseStatus("touch", err)
 	}
 	return &scheddpb.TouchDatabaseResponse{}, nil
+}
+
+// ResizeDatabase changes a database's shape for the managed-Postgres
+// driver; schedd restarts a running database on it.
+func (s *Server) ResizeDatabase(ctx context.Context, req *scheddpb.ResizeDatabaseRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	vm, err := d.Resize(ctx, req.GetDatabaseId(), dbsched.Shape{
+		VcpuCount: int(req.GetVcpuCount()), MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(),
+	})
+	if err != nil {
+		return nil, s.databaseStatus("resize", err)
+	}
+	return databaseRuntime(vm), nil
 }
 
 // DatabaseUsage reports metered consumption for the managed-Postgres

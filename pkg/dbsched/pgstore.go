@@ -77,6 +77,7 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
 		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
+		ResizePending: r.ResizePending,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
@@ -431,6 +432,67 @@ func (s *PgStore) Usage(ctx context.Context, id string, from, to time.Time) (Usa
 		ledger[i] = UsageRow{Meter: r.Meter, Start: r.StartedAt.Time, End: r.EndedAt.Time, Rate: r.Rate}
 	}
 	return sumUsage(ledger, from, to, time.Now()), nil
+}
+
+func (s *PgStore) Resize(ctx context.Context, id string, shape Shape, at time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if err := checkResize(vm, shape); err != nil {
+			return VM{}, err
+		}
+		if vm.shape() == shape {
+			return VM{}, nil
+		}
+		row, err := s.q.LockDatabaseNode(ctx, tx, vm.NodeID)
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.NodeID, err)
+		}
+		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), VolumeCapacityBytes: row.VolumeCapacityBytes, Lifecycle: row.Lifecycle}
+		usage, err := s.usage(ctx, tx)
+		if err != nil {
+			return VM{}, err
+		}
+		if err := resizeFits(node, usage[node.ID], vm, shape); err != nil {
+			return VM{}, err
+		}
+		n, err := s.q.ResizeDatabaseVM(ctx, tx, sqlc.ResizeDatabaseVMParams{
+			VcpuCount: int32(shape.VcpuCount), MemMib: int32(shape.MemMiB), VolumeBytes: shape.VolumeBytes, DatabaseID: key,
+		})
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: resize %s: %w", id, err)
+		}
+		if n == 0 {
+			return VM{}, ErrConflict
+		}
+		if shape.VolumeBytes != vm.VolumeBytes {
+			if err := s.close(ctx, tx, key, MeterStorage, at); err != nil {
+				return VM{}, err
+			}
+			if err := s.open(ctx, tx, key, MeterStorage, shape.VolumeBytes, at); err != nil {
+				return VM{}, err
+			}
+		}
+		return VM{}, nil
+	})
+	return err
+}
+
+func (s *PgStore) FinishResize(ctx context.Context, id string) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	if _, err := s.q.FinishDatabaseVMResize(ctx, s.pool, key); err != nil {
+		return fmt.Errorf("dbsched: finish resize %s: %w", id, err)
+	}
+	return nil
 }
 
 func (s *PgStore) PruneUsage(ctx context.Context, before time.Time) (int64, error) {

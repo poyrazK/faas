@@ -524,6 +524,9 @@ service Vmmd {
   // ListDatabaseVolumes reports the node's database volumes, so schedd can
   // remove those of databases deleted while the node was lost.
   rpc ListDatabaseVolumes(ListDatabaseVolumesRequest) returns (ListDatabaseVolumesResponse);
+  // GrowDatabaseVolume enlarges a stopped database's volume and its
+  // filesystem; shrinking is refused.
+  rpc GrowDatabaseVolume(GrowDatabaseVolumeRequest) returns (GrowDatabaseVolumeResponse);
   // PruneDatabaseArchive prunes a database's archive in the shared bucket
   // to its restore window, through this node's dbbackupd. schedd sends it
   // for databases whose own node is lost.
@@ -2626,6 +2629,13 @@ message DatabaseArchiveBytesResponse {
   // Bytes by database id; a database this node could not size is absent.
   map<string, int64> bytes = 1;
 }
+
+message GrowDatabaseVolumeRequest {
+  string database_id = 1;
+  int64 size_bytes = 2;
+}
+
+message GrowDatabaseVolumeResponse {}
 
 message ListDatabaseVolumesRequest {}
 

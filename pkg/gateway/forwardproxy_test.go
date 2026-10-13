@@ -445,6 +445,10 @@ func (f *fakeVmmdClient) DatabaseArchiveBytes(context.Context, *vmmdpb.DatabaseA
 	panic("DatabaseArchiveBytes: not stubbed")
 }
 
+func (f *fakeVmmdClient) GrowDatabaseVolume(context.Context, *vmmdpb.GrowDatabaseVolumeRequest, ...grpc.CallOption) (*vmmdpb.GrowDatabaseVolumeResponse, error) {
+	panic("GrowDatabaseVolume: not stubbed")
+}
+
 func (f *fakeVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
 	panic("StartDatabase: not stubbed")
 }

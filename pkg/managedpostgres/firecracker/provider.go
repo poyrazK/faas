@@ -41,6 +41,7 @@ type Scheduler interface {
 	ParkDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	RestoreDatabase(ctx context.Context, in *scheddpb.RestoreDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	DatabaseUsage(ctx context.Context, in *scheddpb.DatabaseUsageRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseUsageResponse, error)
+	ResizeDatabase(ctx context.Context, in *scheddpb.ResizeDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore
@@ -205,6 +206,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		CredentialAccess:        []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
 		ScaleToZero:             true,
 		ScaleToZeroUpdate:       true,
+		ClassResize:             len(classes) > 1,
 		MaxStorageBytes:         p.cfg.MaxStorageBytes,
 		PointInTimeRestore:      p.cfg.MaxRestoreWindowSeconds > 0,
 		MaxRestoreWindowSeconds: p.cfg.MaxRestoreWindowSeconds,
@@ -299,16 +301,18 @@ func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.Observ
 		// the restore was placed.
 		obs.RestoreLineage = &managedpostgres.RestoreLineage{SourceResourceID: rt.GetRestoreSourceId(), PointInTime: rt.GetRestoreTarget().AsTime()}
 	}
-	switch rt.GetState() {
-	case "parked":
+	switch {
+	case rt.GetResizePending():
+		obs.Status = managedpostgres.ProviderStatusPending
+	case rt.GetState() == "parked":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateSuspended
-	case "running":
+	case rt.GetState() == "running":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateActive
-	case "waking", "parking":
+	case rt.GetState() == "waking", rt.GetState() == "parking":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateWaking
-	case "deleting":
+	case rt.GetState() == "deleting":
 		obs.Status = managedpostgres.ProviderStatusDeleting
-	case "failed":
+	case rt.GetState() == "failed":
 		obs.Status = managedpostgres.ProviderStatusFailed
 	default:
 		obs.Status = managedpostgres.ProviderStatusPending
@@ -331,25 +335,38 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 	return spec
 }
 
-// Update switches a database between scale-to-zero and always-on. Other
-// spec changes (class, storage, major) are not supported yet. Turning
-// always-on on leaves a parked database to schedd's keep-warm sweep, so
-// the observation may still be suspended for one sweep.
+// Update changes a database's class, storage limit or compute policy in
+// place. The major, region and restore window are fixed, and storage only
+// grows. A class or storage change resizes the VM through schedd, which
+// restarts a running database on the new shape; the observation stays
+// pending until that is done, and repeating the request resumes it.
+// Turning always-on on leaves a parked database to schedd's keep-warm
+// sweep, so the observation may still be suspended for one sweep.
 func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
 	if req.ResourceID == "" || (req.DataResourceID != "" && req.DataResourceID != req.ResourceID) {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
 	}
-	previous := req.PreviousSpec
-	previous.ScaleToZero = req.Spec.ScaleToZero
-	if previous != req.Spec {
+	changeable := req.PreviousSpec
+	changeable.ScaleToZero, changeable.Class, changeable.StorageLimitBytes = req.Spec.ScaleToZero, req.Spec.Class, req.Spec.StorageLimitBytes
+	if changeable != req.Spec || req.Spec.StorageLimitBytes < req.PreviousSpec.StorageLimitBytes {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 	}
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
 	}
-	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: resourceUUID(req.ResourceID), AlwaysOn: !req.Spec.ScaleToZero})
+	id := resourceUUID(req.ResourceID)
+	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: id, AlwaysOn: !req.Spec.ScaleToZero})
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, providerError(err)
+	}
+	if req.Spec.Class != req.PreviousSpec.Class || req.Spec.StorageLimitBytes != req.PreviousSpec.StorageLimitBytes || rt.GetResizePending() {
+		shape := p.cfg.Classes[req.Spec.Class]
+		rt, err = p.scheduler.ResizeDatabase(ctx, &scheddpb.ResizeDatabaseRequest{
+			DatabaseId: id, VcpuCount: int32(shape.vcpus), MemMib: int32(shape.memMiB), VolumeBytes: req.Spec.StorageLimitBytes,
+		})
+		if err != nil {
+			return managedpostgres.ObservedDatabase{}, providerError(err)
+		}
 	}
 	return p.observed(rt), nil
 }

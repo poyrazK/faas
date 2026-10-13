@@ -318,3 +318,45 @@ func (m *MemStore) PruneUsage(_ context.Context, before time.Time) (int64, error
 	}
 	return n, nil
 }
+
+func (m *MemStore) Resize(_ context.Context, id string, shape Shape, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if err := checkResize(vm, shape); err != nil {
+		return err
+	}
+	if vm.shape() == shape {
+		return nil
+	}
+	node, ok := m.nodes[vm.NodeID]
+	if !ok {
+		return ErrNodeUnavailable
+	}
+	if err := resizeFits(node, m.usageLocked()[node.ID], vm, shape); err != nil {
+		return err
+	}
+	grew := shape.VolumeBytes != vm.VolumeBytes
+	vm.VcpuCount, vm.MemMiB, vm.VolumeBytes, vm.ResizePending = shape.VcpuCount, shape.MemMiB, shape.VolumeBytes, true
+	m.vms[id] = vm
+	if grew {
+		m.closeLocked(id, MeterStorage, at)
+		m.openLocked(id, MeterStorage, shape.VolumeBytes, at)
+	}
+	return nil
+}
+
+func (m *MemStore) FinishResize(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	vm.ResizePending = false
+	m.vms[id] = vm
+	return nil
+}

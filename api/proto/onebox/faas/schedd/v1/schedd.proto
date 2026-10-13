@@ -335,6 +335,10 @@ service Schedd {
   // DatabaseUsage reports a database's metered consumption over a window,
   // also after it was deleted (ADR-1027). apid only.
   rpc DatabaseUsage(DatabaseUsageRequest) returns (DatabaseUsageResponse);
+  // ResizeDatabase changes a database's VM shape and grows its volume
+  // (never shrinks it). A running database restarts on the new shape.
+  // Repeating the request resumes an interrupted resize. apid only.
+  rpc ResizeDatabase(ResizeDatabaseRequest) returns (DatabaseRuntime);
 }
 
 message LivenessFailedReport {
@@ -1207,6 +1211,16 @@ message DatabaseRuntime {
   // The restore's last replayed commit: the target's, or earlier when the
   // source's node was lost and its archive ended first.
   google.protobuf.Timestamp restore_recovered_to = 15;
+  // A resize recorded but not yet applied: the VM still runs, or its
+  // volume still has, the old shape.
+  bool resize_pending = 16;
+}
+
+message ResizeDatabaseRequest {
+  string database_id = 1;
+  int32 vcpu_count = 2;
+  int32 mem_mib = 3;
+  int64 volume_bytes = 4;
 }
 
 // TouchDatabaseRequest keeps field 1 of DatabaseRef, so a DatabaseRef is

@@ -133,6 +133,16 @@ func (g *GRPCVMM) ArchiveBytes(ctx context.Context, node Node, ids []string) (ma
 	return resp.GetBytes(), nil
 }
 
+// GrowVolume enlarges a stopped database's volume on node.
+func (g *GRPCVMM) GrowVolume(ctx context.Context, node Node, id string, sizeBytes int64) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.GrowDatabaseVolume(ctx, &vmmdpb.GrowDatabaseVolumeRequest{DatabaseId: id, SizeBytes: sizeBytes})
+	return err
+}
+
 // ListVolumes reports node's database volumes.
 func (g *GRPCVMM) ListVolumes(ctx context.Context, node Node) ([]NodeVolume, error) {
 	c, err := g.client(ctx, node)

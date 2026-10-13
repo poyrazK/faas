@@ -27,10 +27,12 @@ const testDatabaseID = "0b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e"
 
 // fakeScheduler is schedd's database scheduler: one VM per id.
 type fakeScheduler struct {
-	mu        sync.Mutex
-	vms       map[string]*scheddpb.DatabaseRuntime
-	provision []*scheddpb.ProvisionDatabaseRequest
-	restores  []*scheddpb.RestoreDatabaseRequest
+	mu            sync.Mutex
+	vms           map[string]*scheddpb.DatabaseRuntime
+	provision     []*scheddpb.ProvisionDatabaseRequest
+	restores      []*scheddpb.RestoreDatabaseRequest
+	resizes       []*scheddpb.ResizeDatabaseRequest
+	resizePending bool
 	// usage answers DatabaseUsage (nil: NotFound); usageReq is the last ask.
 	usage    *scheddpb.DatabaseUsageResponse
 	usageReq *scheddpb.DatabaseUsageRequest
@@ -65,6 +67,23 @@ func (f *fakeScheduler) ProvisionDatabase(_ context.Context, in *scheddpb.Provis
 	if f.usage == nil {
 		f.usage = &scheddpb.DatabaseUsageResponse{} // the ledger opens at placement
 	}
+	return rt, nil
+}
+
+// ResizeDatabase applies the shape at once, unless resizePending holds it
+// pending (a resize schedd has recorded but not finished).
+func (f *fakeScheduler) ResizeDatabase(_ context.Context, in *scheddpb.ResizeDatabaseRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resizes = append(f.resizes, in)
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	if in.GetVolumeBytes() < rt.GetVolumeBytes() {
+		return nil, status.Error(codes.InvalidArgument, "dbsched: a volume cannot shrink")
+	}
+	rt.VcpuCount, rt.MemMib, rt.VolumeBytes, rt.ResizePending = in.GetVcpuCount(), in.GetMemMib(), in.GetVolumeBytes(), f.resizePending
 	return rt, nil
 }
 
@@ -330,7 +349,7 @@ func TestCapabilitiesAreValidAndHonest(t *testing.T) {
 	if err := caps.Validate(); err != nil {
 		t.Fatalf("capabilities invalid: %v", err)
 	}
-	if caps.PointInTimeRestore || caps.RestoreUsageIsolated || len(caps.UsageMeters) != 5 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || caps.ClassResize {
+	if caps.PointInTimeRestore || caps.RestoreUsageIsolated || len(caps.UsageMeters) != 5 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || !caps.ClassResize {
 		t.Fatalf("capabilities claim more than the backend does: %+v", caps)
 	}
 	if err := caps.Supports(devSpec()); err != nil {
@@ -430,11 +449,10 @@ func TestAlwaysOnRoundTripsAndToggles(t *testing.T) {
 		t.Fatalf("back to always-on: %+v, %v", obs.Spec, err)
 	}
 
-	bigger := always
-	bigger.Class = managedpostgres.ClassBurstable
+	otherMajor := always
+	otherMajor.PostgresMajor = 16
 	for name, req := range map[string]managedpostgres.UpdateRequest{
-		"class change":        {ResourceID: testDatabaseID, PreviousSpec: always, Spec: bigger},
-		"storage change":      {ResourceID: testDatabaseID, PreviousSpec: always, Spec: managedpostgres.Spec{Region: "eu-central", PostgresMajor: 17, Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, StorageLimitBytes: 2 << 30}},
+		"major change":        {ResourceID: testDatabaseID, PreviousSpec: always, Spec: otherMajor},
 		"other data resource": {ResourceID: testDatabaseID, DataResourceID: "other", PreviousSpec: always, Spec: toScale},
 		"missing resource id": {PreviousSpec: always, Spec: toScale},
 	} {
@@ -822,5 +840,49 @@ func TestResourceUUIDIsStable(t *testing.T) {
 	}
 	if _, err := uuid.Parse(a); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestUpdateResizesClassAndStorage: a class or storage change becomes one
+// schedd resize with the class's fixed shape; storage never shrinks; the
+// fixed fields never change; a pending resize observes as pending.
+func TestUpdateResizesClassAndStorage(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	spec := devSpec()
+	if _, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	target := spec
+	target.Class, target.StorageLimitBytes = managedpostgres.ClassBurstable, 4<<30
+	req := managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: spec, Spec: target, Generation: 2}
+	obs, err := p.Update(ctx, req)
+	if err != nil || obs.Status != managedpostgres.ProviderStatusReady || obs.Spec != target {
+		t.Fatalf("resize = %+v, %v", obs, err)
+	}
+	if r := sched.resizes[len(sched.resizes)-1]; r.GetVcpuCount() != 2 || r.GetMemMib() != 1024 || r.GetVolumeBytes() != 4<<30 {
+		t.Fatalf("resize request = %v", r)
+	}
+	// A repeat with the change applied asks schedd nothing new.
+	before := len(sched.resizes)
+	if _, err := p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: target, Generation: 3}); err != nil || len(sched.resizes) != before {
+		t.Fatalf("no-op update = %v, resizes %d -> %d", err, before, len(sched.resizes))
+	}
+	sched.resizePending = true
+	back := managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: spec, Generation: 4}
+	back.Spec.StorageLimitBytes = target.StorageLimitBytes
+	if obs, err := p.Update(ctx, back); err != nil || obs.Status != managedpostgres.ProviderStatusPending {
+		t.Fatalf("pending resize = %+v, %v", obs, err)
+	}
+	for name, mutate := range map[string]func(*managedpostgres.Spec){
+		"shrink storage": func(s *managedpostgres.Spec) { s.StorageLimitBytes = 1 << 30 },
+		"change major":   func(s *managedpostgres.Spec) { s.PostgresMajor = 16 },
+		"change window":  func(s *managedpostgres.Spec) { s.RestoreWindowSeconds = 60 },
+	} {
+		bad := target
+		mutate(&bad)
+		if _, err := p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: bad, Generation: 5}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+			t.Errorf("%s = %v, want ErrUnsupported", name, err)
+		}
 	}
 }

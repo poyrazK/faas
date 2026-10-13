@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS database_vms (
     restore_recovered_to timestamptz,
     -- The schedd replica running a restore holds this lease and renews it.
     restore_lease_until timestamptz,
+    -- The shape or volume above changed and the VM has not been restarted
+    -- on it yet (a resize in progress).
+    resize_pending boolean NOT NULL DEFAULT false,
     -- Stable error code of the last failed transition; never free text.
     last_error text
         CHECK (last_error IS NULL OR last_error ~ '^[a-z_]{1,64}$'),

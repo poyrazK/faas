@@ -35,6 +35,7 @@ type DatabaseRuntime interface {
 	// DropArchive deletes a deleted database's archive.
 	DropArchive(ctx context.Context, id string) error
 	ListVolumes() ([]dbvm.Volume, error)
+	GrowVolume(ctx context.Context, id string, sizeBytes int64) error
 	PruneArchive(ctx context.Context, id string, windowSeconds int64) (dbarchive.PruneResult, error)
 	ArchiveBytes(ctx context.Context, ids []string) (map[string]int64, error)
 	Start(ctx context.Context, req dbvm.BootRequest) error
@@ -118,6 +119,18 @@ func (s *Server) DeleteDatabaseVolume(ctx context.Context, req *vmmdpb.DeleteDat
 		return nil, s.databaseStatus("delete volume", err)
 	}
 	return &vmmdpb.DeleteDatabaseVolumeResponse{}, nil
+}
+
+// GrowDatabaseVolume enlarges a stopped database's volume for schedd.
+func (s *Server) GrowDatabaseVolume(ctx context.Context, req *vmmdpb.GrowDatabaseVolumeRequest) (*vmmdpb.GrowDatabaseVolumeResponse, error) {
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
+	if err != nil {
+		return nil, err
+	}
+	if err := rt.GrowVolume(ctx, req.GetDatabaseId(), req.GetSizeBytes()); err != nil {
+		return nil, s.databaseStatus("grow volume", err)
+	}
+	return &vmmdpb.GrowDatabaseVolumeResponse{}, nil
 }
 
 // ListDatabaseVolumes reports the node's database volumes to schedd.
@@ -295,7 +308,7 @@ func (s *Server) databaseStatus(op string, err error) error {
 
 func databaseCode(err error) codes.Code {
 	switch {
-	case errors.Is(err, dbvm.ErrInvalidID), errors.Is(err, dbvm.ErrUnknownMajor):
+	case errors.Is(err, dbvm.ErrInvalidID), errors.Is(err, dbvm.ErrUnknownMajor), errors.Is(err, dbvm.ErrVolumeShrink):
 		return codes.InvalidArgument
 	case errors.Is(err, dbvm.ErrVolumeExists):
 		return codes.AlreadyExists

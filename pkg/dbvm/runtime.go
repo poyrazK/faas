@@ -260,6 +260,21 @@ func (r *Runtime) ListVolumes() ([]Volume, error) {
 	return out, nil
 }
 
+// GrowVolume enlarges a stopped database's volume (see GrowVolume).
+func (r *Runtime) GrowVolume(ctx context.Context, id string, sizeBytes int64) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	if r.Running(id) {
+		return ErrRunning
+	}
+	path := r.VolumePath(id)
+	if _, err := os.Stat(path); err != nil {
+		return ErrVolumeNotFound
+	}
+	return GrowVolume(ctx, path, sizeBytes)
+}
+
 // Running reports whether the database VM is up.
 func (r *Runtime) Running(id string) bool {
 	r.mu.Lock()

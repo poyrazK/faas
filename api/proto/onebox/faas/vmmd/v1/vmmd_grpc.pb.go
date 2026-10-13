@@ -77,6 +77,7 @@ const (
 	Vmmd_CreateDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CreateDatabaseVolume"
 	Vmmd_DeleteDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DeleteDatabaseVolume"
 	Vmmd_ListDatabaseVolumes_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/ListDatabaseVolumes"
+	Vmmd_GrowDatabaseVolume_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/GrowDatabaseVolume"
 	Vmmd_PruneDatabaseArchive_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/PruneDatabaseArchive"
 	Vmmd_DatabaseArchiveBytes_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DatabaseArchiveBytes"
 	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
@@ -543,6 +544,9 @@ type VmmdClient interface {
 	// ListDatabaseVolumes reports the node's database volumes, so schedd can
 	// remove those of databases deleted while the node was lost.
 	ListDatabaseVolumes(ctx context.Context, in *ListDatabaseVolumesRequest, opts ...grpc.CallOption) (*ListDatabaseVolumesResponse, error)
+	// GrowDatabaseVolume enlarges a stopped database's volume and its
+	// filesystem; shrinking is refused.
+	GrowDatabaseVolume(ctx context.Context, in *GrowDatabaseVolumeRequest, opts ...grpc.CallOption) (*GrowDatabaseVolumeResponse, error)
 	// PruneDatabaseArchive prunes a database's archive in the shared bucket
 	// to its restore window, through this node's dbbackupd. schedd sends it
 	// for databases whose own node is lost.
@@ -1166,6 +1170,16 @@ func (c *vmmdClient) ListDatabaseVolumes(ctx context.Context, in *ListDatabaseVo
 	return out, nil
 }
 
+func (c *vmmdClient) GrowDatabaseVolume(ctx context.Context, in *GrowDatabaseVolumeRequest, opts ...grpc.CallOption) (*GrowDatabaseVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GrowDatabaseVolumeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_GrowDatabaseVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) PruneDatabaseArchive(ctx context.Context, in *PruneDatabaseArchiveRequest, opts ...grpc.CallOption) (*PruneDatabaseArchiveResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PruneDatabaseArchiveResponse)
@@ -1687,6 +1701,9 @@ type VmmdServer interface {
 	// ListDatabaseVolumes reports the node's database volumes, so schedd can
 	// remove those of databases deleted while the node was lost.
 	ListDatabaseVolumes(context.Context, *ListDatabaseVolumesRequest) (*ListDatabaseVolumesResponse, error)
+	// GrowDatabaseVolume enlarges a stopped database's volume and its
+	// filesystem; shrinking is refused.
+	GrowDatabaseVolume(context.Context, *GrowDatabaseVolumeRequest) (*GrowDatabaseVolumeResponse, error)
 	// PruneDatabaseArchive prunes a database's archive in the shared bucket
 	// to its restore window, through this node's dbbackupd. schedd sends it
 	// for databases whose own node is lost.
@@ -1882,6 +1899,9 @@ func (UnimplementedVmmdServer) DeleteDatabaseVolume(context.Context, *DeleteData
 }
 func (UnimplementedVmmdServer) ListDatabaseVolumes(context.Context, *ListDatabaseVolumesRequest) (*ListDatabaseVolumesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListDatabaseVolumes not implemented")
+}
+func (UnimplementedVmmdServer) GrowDatabaseVolume(context.Context, *GrowDatabaseVolumeRequest) (*GrowDatabaseVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GrowDatabaseVolume not implemented")
 }
 func (UnimplementedVmmdServer) PruneDatabaseArchive(context.Context, *PruneDatabaseArchiveRequest) (*PruneDatabaseArchiveResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PruneDatabaseArchive not implemented")
@@ -2836,6 +2856,24 @@ func _Vmmd_ListDatabaseVolumes_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_GrowDatabaseVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrowDatabaseVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).GrowDatabaseVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_GrowDatabaseVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).GrowDatabaseVolume(ctx, req.(*GrowDatabaseVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_PruneDatabaseArchive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PruneDatabaseArchiveRequest)
 	if err := dec(in); err != nil {
@@ -3127,6 +3165,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListDatabaseVolumes",
 			Handler:    _Vmmd_ListDatabaseVolumes_Handler,
+		},
+		{
+			MethodName: "GrowDatabaseVolume",
+			Handler:    _Vmmd_GrowDatabaseVolume_Handler,
 		},
 		{
 			MethodName: "PruneDatabaseArchive",

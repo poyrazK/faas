@@ -44,6 +44,7 @@ type fakeVMM struct {
 	volNode      map[string]string
 	pruneErr     map[string]error
 	archiveBytes map[string]int64
+	growErr      error
 }
 
 func newFakeVMM() *fakeVMM {
@@ -106,6 +107,16 @@ func (f *fakeVMM) PruneArchive(_ context.Context, node Node, id string, windowSe
 	defer f.mu.Unlock()
 	f.onNode = append(f.onNode, fmt.Sprintf("prune:%s:%d@%s", id, windowSeconds, node.ID))
 	return f.pruneErr[node.ID]
+}
+
+func (f *fakeVMM) GrowVolume(_ context.Context, node Node, id string, size int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.running[id] {
+		return errors.New("grow a running volume")
+	}
+	f.onNode = append(f.onNode, fmt.Sprintf("grow:%d@%s", size, node.ID))
+	return f.growErr
 }
 
 func (f *fakeVMM) ArchiveBytes(_ context.Context, node Node, ids []string) (map[string]int64, error) {
