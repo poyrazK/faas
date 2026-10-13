@@ -24,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/dbvm"
 )
@@ -49,6 +50,10 @@ func (f *fakeDatabaseRuntime) CreateVolume(_ context.Context, _ string, size int
 func (f *fakeDatabaseRuntime) DeleteVolume(context.Context, string) error {
 	f.calls = append(f.calls, "delete_volume")
 	return f.err
+}
+func (f *fakeDatabaseRuntime) PruneArchive(_ context.Context, _ string, windowSeconds int64) (dbarchive.PruneResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("prune_archive:%d", windowSeconds))
+	return dbarchive.PruneResult{Backups: 1, WAL: 7}, f.err
 }
 func (f *fakeDatabaseRuntime) ListVolumes() ([]dbvm.Volume, error) {
 	return f.volumes, f.err
@@ -178,6 +183,21 @@ func TestDeleteDatabaseVolumeDropsTheArchiveFirst(t *testing.T) {
 	}
 	if strings.Join(rt.calls, ",") != "drop_archive" {
 		t.Fatalf("volume deleted although the archive was not: %v", rt.calls)
+	}
+}
+
+func TestPruneDatabaseArchive(t *testing.T) {
+	rt := &fakeDatabaseRuntime{}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	resp, err := s.PruneDatabaseArchive(unixCaller(), &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: testDatabaseID, RestoreWindowSeconds: 3600})
+	if err != nil || resp.GetBackups() != 1 || resp.GetWal() != 7 || strings.Join(rt.calls, ",") != "prune_archive:3600" {
+		t.Fatalf("prune = %v, %v (%v)", resp, err, rt.calls)
+	}
+	if _, err := s.PruneDatabaseArchive(unixCaller(), &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: testDatabaseID, RestoreWindowSeconds: -1}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("negative window = %v", err)
+	}
+	if _, err := s.PruneDatabaseArchive(tlsCaller("pgproxyd.faas"), &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: testDatabaseID}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("pgproxyd pruning = %v", err)
 	}
 }
 

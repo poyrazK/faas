@@ -72,7 +72,7 @@ type VM struct {
 	RestoreSource string
 	RestoreTarget time.Time
 	// RestoreRecoveredTo is the restore's last replayed commit, recorded
-	// when it finished (zero: not recorded).
+	// when it finished (zero: none replayed, or not recorded).
 	RestoreRecoveredTo time.Time
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.

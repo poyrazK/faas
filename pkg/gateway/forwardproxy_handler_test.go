@@ -137,6 +137,10 @@ func (s *stubVmmdClient) ListDatabaseVolumes(context.Context, *vmmdpb.ListDataba
 	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
 }
 
+func (s *stubVmmdClient) PruneDatabaseArchive(context.Context, *vmmdpb.PruneDatabaseArchiveRequest, ...grpc.CallOption) (*vmmdpb.PruneDatabaseArchiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
 func (s *stubVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
 }

@@ -109,6 +109,17 @@ func (g *GRPCVMM) DropArchive(ctx context.Context, node Node, id string) error {
 	return err
 }
 
+// PruneArchive prunes a database's bucket archive through node's
+// dbbackupd.
+func (g *GRPCVMM) PruneArchive(ctx context.Context, node Node, id string, windowSeconds int64) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.PruneDatabaseArchive(ctx, &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: id, RestoreWindowSeconds: windowSeconds})
+	return err
+}
+
 // ListVolumes reports node's database volumes.
 func (g *GRPCVMM) ListVolumes(ctx context.Context, node Node) ([]NodeVolume, error) {
 	c, err := g.client(ctx, node)

@@ -2,6 +2,7 @@ package dbvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -72,6 +73,25 @@ func (r *Runtime) DropArchive(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// PruneArchive prunes a database's archive in the bucket to its restore
+// window, through dbbackupd's admin header.
+func (r *Runtime) PruneArchive(ctx context.Context, id string, windowSeconds int64) (dbarchive.PruneResult, error) {
+	if err := validID(id); err != nil {
+		return dbarchive.PruneResult{}, err
+	}
+	if r.cfg.ArchiveSocket == "" {
+		return dbarchive.PruneResult{}, ErrNoArchive
+	}
+	res, err := dbarchive.PruneArchive(ctx, r.cfg.ArchiveSocket, id, windowSeconds)
+	if err != nil {
+		return res, fmt.Errorf("dbvm: prune archive: %w", err)
+	}
+	return res, nil
+}
+
+// ErrNoArchive reports a runtime without dbbackupd.
+var ErrNoArchive = errors.New("dbvm: archiving is off on this node")
 
 func (r *Runtime) relayArchive(guest net.Conn, header dbarchive.Header) {
 	defer func() { _ = guest.Close() }()

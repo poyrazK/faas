@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +23,8 @@ import (
 
 // PruneResult counts what one pass removed.
 type PruneResult struct {
-	Backups int
-	WAL     int
+	Backups int `json:"backups"`
+	WAL     int `json:"wal"`
 }
 
 func (r *PruneResult) add(o PruneResult) {
@@ -70,17 +72,53 @@ func (s *LocalStore) Window(databaseID string) int64 {
 	return seconds
 }
 
-// Prune removes what restoring to cutoff or later does not need.
+// Prune removes what restoring to cutoff or later does not need, from the
+// archive this node keeps (and those files' bucket copies).
 func (s *TieredStore) Prune(ctx context.Context, databaseID string, cutoff time.Time) (PruneResult, error) {
 	s.maint.Lock()
 	defer s.maint.Unlock()
-	return s.prune(ctx, databaseID, cutoff)
+	return s.prune(ctx, databaseID, cutoff, false)
 }
 
-func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.Time) (PruneResult, error) {
+// PruneBucket prunes a database's archive as the bucket holds it, to
+// max(windowSeconds, MinRetention). schedd asks for it, through any node,
+// for databases whose own node is lost: nothing else prunes them, since
+// each node prunes from its local files.
+func (s *TieredStore) PruneBucket(ctx context.Context, databaseID string, windowSeconds int64) (PruneResult, error) {
+	if s.Remote == nil {
+		return PruneResult{}, errors.New("dbarchive: no bucket to prune")
+	}
+	if !ValidDatabaseID(databaseID) || windowSeconds < 0 {
+		return PruneResult{}, fmt.Errorf("dbarchive: invalid prune of %q", databaseID)
+	}
+	minimum := s.MinRetention
+	if minimum <= 0 {
+		minimum = DefaultMinRetention
+	}
+	retention := max(time.Duration(windowSeconds)*time.Second, minimum)
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	s.maint.Lock()
+	defer s.maint.Unlock()
+	return s.prune(ctx, databaseID, now().Add(-retention), true)
+}
+
+// DefaultMinRetention is the retention floor when none is configured.
+const DefaultMinRetention = 24 * time.Hour
+
+// prune removes backups older than the anchor and WAL before its start
+// segment. bucket widens the catalog and the files to the bucket's.
+func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.Time, bucket bool) (PruneResult, error) {
 	var res PruneResult
-	// The local catalog: pruning acts on the archive this node keeps.
-	backups, err := s.ListBackups(databaseID)
+	var backups []BackupManifest
+	var err error
+	if bucket {
+		backups, err = s.ListAllBackups(ctx, databaseID)
+	} else {
+		backups, err = s.ListBackups(databaseID)
+	}
 	if err != nil {
 		return res, err
 	}
@@ -97,40 +135,35 @@ func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.
 	if anchor < 0 {
 		return res, nil
 	}
+	keep := backups[anchor].StartWAL
+	if len(keep) != 24 {
+		return res, errors.New("dbarchive: anchor has no start segment")
+	}
 	baseDir, err := s.baseDir(databaseID)
 	if err != nil {
 		return res, err
 	}
-	// By file, not by listed backup, so a pass interrupted between a
-	// manifest and its data still removes the rest next time. ReadDir
-	// sorts, so a manifest goes before its data, here and in the bucket.
-	files, err := os.ReadDir(baseDir)
+	walDir := filepath.Join(s.dir, databaseID, "wal")
+	baseNames, walNames, err := s.archiveNames(ctx, databaseID, baseDir, walDir, bucket)
 	if err != nil {
 		return res, err
 	}
-	for _, f := range files {
-		id, ext, ok := strings.Cut(f.Name(), ".")
+	// By file, not by listed backup, so a pass interrupted between a
+	// manifest and its data still removes the rest next time. Names are
+	// sorted, so a manifest goes before its data, here and in the bucket.
+	for _, name := range baseNames {
+		id, ext, ok := strings.Cut(name, ".")
 		if !ok || !ValidBackupID(id) || id >= backups[anchor].ID || (ext != "json" && ext != "tar.zst") {
 			continue
 		}
-		if err := s.remove(ctx, databaseID, filepath.Join(baseDir, f.Name()), BaseKey(s.Prefix, databaseID, f.Name())); err != nil {
+		if err := s.remove(ctx, databaseID, filepath.Join(baseDir, name), BaseKey(s.Prefix, databaseID, name)); err != nil {
 			return res, err
 		}
 		if ext == "json" {
 			res.Backups++
 		}
 	}
-	keep := backups[anchor].StartWAL
-	if len(keep) != 24 {
-		return res, errors.New("dbarchive: anchor has no start segment")
-	}
-	walDir := filepath.Join(s.dir, databaseID, "wal")
-	entries, err := os.ReadDir(walDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return res, err
-	}
-	for _, e := range entries {
-		name := e.Name()
+	for _, name := range walNames {
 		if !ValidWALName(name) || strings.HasSuffix(name, ".history") {
 			continue
 		}
@@ -145,6 +178,36 @@ func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.
 		res.WAL++
 	}
 	return res, nil
+}
+
+// archiveNames lists the database's base-backup and WAL file names, from
+// the local directories and, with bucket, the bucket too; sorted, unique.
+func (s *TieredStore) archiveNames(ctx context.Context, databaseID, baseDir, walDir string, bucket bool) ([]string, []string, error) {
+	base, wal := map[string]bool{}, map[string]bool{}
+	for dir, set := range map[string]map[string]bool{baseDir: base, walDir: wal} {
+		entries, err := os.ReadDir(dir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
+		for _, e := range entries {
+			set[e.Name()] = true
+		}
+	}
+	if bucket {
+		prefix := strings.TrimSuffix(s.Prefix, "/") + "/" + databaseID + "/"
+		keys, err := s.Remote.List(ctx, prefix)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, k := range keys {
+			if name, ok := strings.CutPrefix(k, prefix+"base/"); ok {
+				base[name] = true
+			} else if name, ok := strings.CutPrefix(k, prefix+"wal/"); ok {
+				wal[name] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(base)), slices.Sorted(maps.Keys(wal)), nil
 }
 
 // remove deletes one archive file: the bucket copy first, so a failure
@@ -181,7 +244,7 @@ func (s *TieredStore) PruneAll(ctx context.Context, now time.Time, minRetention 
 			continue
 		}
 		retention := max(time.Duration(s.Window(e.Name()))*time.Second, minRetention)
-		res, err := s.prune(ctx, e.Name(), now.Add(-retention))
+		res, err := s.prune(ctx, e.Name(), now.Add(-retention), false)
 		total.add(res)
 		if err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("dbarchive: prune %s: %w", e.Name(), err)

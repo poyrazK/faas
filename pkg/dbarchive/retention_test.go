@@ -247,3 +247,63 @@ func TestDropNeedsTheAdminHeader(t *testing.T) {
 		t.Fatalf("admin drop left the archive: %v", err)
 	}
 }
+
+// A lost node's database is pruned from the bucket through another node,
+// whose disk holds none of it; a guest stream cannot ask for it.
+func TestPruneBucketForALostNode(t *testing.T) {
+	ctx := context.Background()
+	remote := &memRemote{objects: map[string][]byte{}}
+	lost := newStore(t)
+	putBackup(t, lost, dbA, 2, t0, true)
+	anchor := putBackup(t, lost, dbA, 5, t0.Add(time.Hour), true)
+	putBackup(t, lost, dbA, 9, t0.Add(2*time.Hour), true)
+	for n := 1; n <= 9; n++ {
+		putFile(t, lost, dbA, segName(n), "wal")
+	}
+	putFile(t, lost, dbA, "00000002.history", "history")
+	if _, err := (&Uploader{Store: lost, Remote: remote, Prefix: "native"}).RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	other := &TieredStore{LocalStore: newStore(t), Remote: remote, Prefix: "native", MinRetention: 30 * time.Minute,
+		now: func() time.Time { return t0.Add(3*time.Hour + 30*time.Minute) }}
+	sock := serveSocket(t, &Server{Store: other, Backups: other, Retention: other})
+
+	guest := serveServer(t, &Server{Store: other, Backups: other, Retention: other})(Header{DatabaseID: dbA})
+	if err := WriteLine(guest.rw, Request{Op: OpPrune, WindowSeconds: 1}); err != nil {
+		t.Fatal(err)
+	}
+	var refused Response
+	if err := ReadLine(guest.br, &refused); err != nil || refused.Error != ErrCodeInvalid {
+		t.Fatalf("guest prune = %+v, %v", refused, err)
+	}
+
+	// A two-hour window anchors on the 1 h backup.
+	res, err := PruneArchive(ctx, sock, dbA, int64((2 * time.Hour).Seconds()))
+	if err != nil || res.Backups != 1 || res.WAL != 5 {
+		t.Fatalf("bucket prune = %+v, %v; want the first backup, segments 1-4 and its history file", res, err)
+	}
+	all, err := other.ListAllBackups(ctx, dbA)
+	if err != nil || len(all) != 2 || all[0].ID != anchor.ID {
+		t.Fatalf("bucket catalog after prune = %+v, %v", all, err)
+	}
+	for _, gone := range []string{segName(1), segName(4), segName(2) + ".00000028.backup"} {
+		if remote.has(WALKey("native", dbA, gone)) {
+			t.Errorf("%s survived", gone)
+		}
+	}
+	for _, kept := range []string{segName(5), "00000002.history"} {
+		if !remote.has(WALKey("native", dbA, kept)) {
+			t.Errorf("%s was pruned", kept)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(other.dir, dbA)); !os.IsNotExist(err) {
+		t.Fatalf("pruning left local files on the other node: %v", err)
+	}
+	// The floor applies when the window is shorter.
+	if res, err := PruneArchive(ctx, sock, dbA, 0); err != nil || res.Backups != 1 {
+		t.Fatalf("prune to the 30 min floor = %+v, %v", res, err)
+	}
+	if _, err := (&TieredStore{LocalStore: newStore(t)}).PruneBucket(ctx, dbA, 0); err == nil {
+		t.Fatal("a bucket prune without a bucket succeeded")
+	}
+}

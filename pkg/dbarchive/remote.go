@@ -132,6 +132,9 @@ type TieredStore struct {
 	*LocalStore
 	Remote Remote
 	Prefix string
+	// MinRetention is PruneBucket's floor (DefaultMinRetention when zero).
+	MinRetention time.Duration
+	now          func() time.Time
 }
 
 func (s *TieredStore) OpenWAL(ctx context.Context, databaseID, name string) (io.ReadCloser, int64, error) {

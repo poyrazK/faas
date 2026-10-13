@@ -24,6 +24,7 @@ type BackupStore interface {
 type RetentionStore interface {
 	NoteWindow(databaseID string, seconds int64) error
 	Drop(ctx context.Context, databaseID string) error
+	PruneBucket(ctx context.Context, databaseID string, windowSeconds int64) (PruneResult, error)
 }
 
 // Server answers relayed guest streams on dbbackupd's socket.
@@ -136,15 +137,25 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// handleAdmin serves vmmd's own stream: one OpDrop. Guest streams never
-// reach it: the relay's header has no Admin.
+// handleAdmin serves vmmd's own stream: one OpDrop or OpPrune. Guest
+// streams never reach it: the relay's header has no Admin.
 func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reader, header Header) {
 	var req Request
 	if err := ReadLine(br, &req); err != nil {
 		return
 	}
-	if req.Op != OpDrop || s.Retention == nil {
+	if s.Retention == nil || (req.Op != OpDrop && req.Op != OpPrune) || req.WindowSeconds < 0 {
 		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return
+	}
+	if req.Op == OpPrune {
+		res, err := s.Retention.PruneBucket(ctx, header.DatabaseID, req.WindowSeconds)
+		if err != nil {
+			s.Log.Warn("dbarchive: bucket prune failed", "database_id", header.DatabaseID, "err", err)
+		} else if res.Backups+res.WAL > 0 {
+			s.Log.Info("dbarchive: bucket pruned", "database_id", header.DatabaseID, "backups", res.Backups, "wal", res.WAL)
+		}
+		_ = WriteLine(conn, Response{Error: codeFor(err), Pruned: &res})
 		return
 	}
 	err := s.Retention.Drop(ctx, header.DatabaseID)
@@ -159,26 +170,41 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 // DropArchive asks dbbackupd at socketPath to delete a deleted database's
 // archive. vmmd calls it; the admin header is what lets it through.
 func DropArchive(ctx context.Context, socketPath, databaseID string) error {
+	_, err := admin(ctx, socketPath, databaseID, Request{Op: OpDrop})
+	return err
+}
+
+// PruneArchive asks dbbackupd at socketPath to prune a database's archive
+// in the bucket to its restore window.
+func PruneArchive(ctx context.Context, socketPath, databaseID string, windowSeconds int64) (PruneResult, error) {
+	resp, err := admin(ctx, socketPath, databaseID, Request{Op: OpPrune, WindowSeconds: windowSeconds})
+	if err != nil || resp.Pruned == nil {
+		return PruneResult{}, err
+	}
+	return *resp.Pruned, nil
+}
+
+func admin(ctx context.Context, socketPath, databaseID string, req Request) (Response, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("dbarchive: dial %s: %w", socketPath, err)
+		return Response{}, fmt.Errorf("dbarchive: dial %s: %w", socketPath, err)
 	}
 	defer func() { _ = conn.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}
 	if err := WriteLine(conn, Header{DatabaseID: databaseID, Admin: true}); err != nil {
-		return err
+		return Response{}, err
 	}
-	if err := WriteLine(conn, Request{Op: OpDrop}); err != nil {
-		return err
+	if err := WriteLine(conn, req); err != nil {
+		return Response{}, err
 	}
 	var resp Response
 	if err := ReadLine(bufio.NewReader(conn), &resp); err != nil {
-		return err
+		return Response{}, err
 	}
-	return errorFor(resp.Error)
+	return resp, errorFor(resp.Error)
 }
 
 // handleBackup serves one backup op and reports whether the stream is still

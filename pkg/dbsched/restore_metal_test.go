@@ -47,7 +47,8 @@ func newMetalNode(t *testing.T, workdir, base, name string, capacity int64, leas
 	if err != nil {
 		t.Fatal(err)
 	}
-	tiered := &dbarchive.TieredStore{LocalStore: archive, Remote: bucket, Prefix: "native"}
+	// A floor this short lets the test prune right away.
+	tiered := &dbarchive.TieredStore{LocalStore: archive, Remote: bucket, Prefix: "native", MinRetention: time.Millisecond}
 	archiveLn, err := net.Listen("unix", filepath.Join(dir, "a.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +112,7 @@ func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
 		_ = a.rt.Stop(context.Background(), source)
 		_ = a.rt.DeleteVolume(context.Background(), source)
 	})
-	vm, err := s.Provision(ctx, ProvisionRequest{DatabaseID: source, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, RestoreWindowSeconds: 3600})
+	vm, err := s.Provision(ctx, ProvisionRequest{DatabaseID: source, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30})
 	if err != nil || vm.NodeID != "na" {
 		t.Fatalf("provision = %+v, %v", vm, err)
 	}
@@ -122,6 +123,10 @@ func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
 		}
 	}
 	query(ctx, t, a.rt, source, password, "CREATE TABLE kept(v text); INSERT INTO kept VALUES ('before the loss')")
+	// A second backup, so WAL before it is prunable.
+	if !s.takeBackup(ctx, a.node, source) {
+		t.Fatal("second base backup failed")
+	}
 	// Parking drains the archive; the uploader ships it off the node.
 	if err := s.Park(ctx, source); err != nil {
 		t.Fatal(err)
@@ -138,6 +143,19 @@ func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(a.archiveDir, source)); err != nil {
 		t.Fatal(err)
 	}
+	// Nothing prunes a lost node's archive but schedd's sweep, through B.
+	before, err := bucket.List(ctx, "native/"+source+"/wal/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.PruneLostArchives(ctx); err != nil || n != 1 {
+		t.Fatalf("prune lost archives = %d, %v", n, err)
+	}
+	after, err := bucket.List(ctx, "native/"+source+"/wal/")
+	if err != nil || len(after) >= len(before) {
+		t.Fatalf("bucket WAL %d -> %d files, %v; want WAL before the newest backup pruned", len(before), len(after), err)
+	}
+	t.Logf("pruned the lost database's bucket WAL from %d to %d files", len(before), len(after))
 
 	started := time.Now()
 	vm, err = s.Restore(ctx, RestoreRequest{
@@ -155,7 +173,9 @@ func TestMetalRestoreOntoAnotherNodeAfterNodeLoss(t *testing.T) {
 		vm, _ = store.Get(ctx, restored)
 	}
 	took := time.Since(started)
-	if vm.State != StateParked || !vm.Bootstrapped || vm.RestoreRecoveredTo.IsZero() || vm.RestoreRecoveredTo.After(target) {
+	// The pruned archive starts at the newest backup, taken after the last
+	// commit, so recovery replays no transaction and reports no point.
+	if vm.State != StateParked || !vm.Bootstrapped || vm.RestoreRecoveredTo.After(target) {
 		t.Fatalf("restored = %+v", vm)
 	}
 	if _, err := s.Wake(ctx, restored); err != nil {

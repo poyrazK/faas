@@ -6,6 +6,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 func markNode(t *testing.T, store *MemStore, id, lifecycle string) {
@@ -97,5 +100,60 @@ func TestCollectOrphansAfterTheNodeReturns(t *testing.T) {
 	}
 	if n, _ := s.CollectOrphans(ctx); n != 0 {
 		t.Fatalf("second collect = %d", n)
+	}
+}
+
+// A lost node's databases are pruned in the bucket through a live node,
+// with their own windows, at most hourly; databases on live nodes are left
+// to their own node's dbbackupd.
+func TestPruneLostArchives(t *testing.T) {
+	ctx := context.Background()
+	s, store, vmm, first := twoNodeScheduler(t, true)
+	second, err := s.Provision(ctx, ProvisionRequest{DatabaseID: uuid.NewString(), Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, RestoreWindowSeconds: 7200})
+	if err != nil || second.NodeID != "db-a" {
+		t.Fatalf("second = %+v, %v", second, err)
+	}
+	onB, err := s.Provision(ctx, ProvisionRequest{DatabaseID: uuid.NewString(), Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30})
+	if err != nil || onB.NodeID != "db-b" {
+		t.Fatalf("third = %+v, %v", onB, err)
+	}
+	if n, err := s.PruneLostArchives(ctx); err != nil || n != 0 {
+		t.Fatalf("no node lost = %d, %v", n, err)
+	}
+	markNode(t, store, "db-a", NodeUnavailable)
+	vmm.onNode = nil
+	vmm.pruneErr = map[string]error{"db-b": errors.New("dbbackupd down")}
+	if n, _ := s.PruneLostArchives(ctx); n != 0 {
+		t.Fatalf("prune with the live node failing = %d", n)
+	}
+	vmm.pruneErr = nil
+	vmm.onNode = nil
+	if n, err := s.PruneLostArchives(ctx); err != nil || n != 2 {
+		t.Fatalf("prune = %d, %v", n, err)
+	}
+	calls := vmm.nodeCalls()
+	for _, want := range []string{
+		"prune:" + first.DatabaseID + ":0@db-b",
+		"prune:" + second.DatabaseID + ":7200@db-b",
+	} {
+		if !strings.Contains(calls, want) {
+			t.Errorf("calls %q lack %q", calls, want)
+		}
+	}
+	if strings.Contains(calls, "@db-a") || strings.Contains(calls, onB.DatabaseID) {
+		t.Fatalf("pruned through the lost node or a live node's database: %s", calls)
+	}
+	if n, _ := s.PruneLostArchives(ctx); n != 0 {
+		t.Fatalf("pruned again within the hour: %d", n)
+	}
+	later := time.Now().Add(2 * time.Hour)
+	s.now = func() time.Time { return later }
+	if n, _ := s.PruneLostArchives(ctx); n != 2 {
+		t.Fatalf("an hour later = %d", n)
+	}
+	s.cfg.SharedArchive = false
+	s.now = func() time.Time { return later.Add(2 * time.Hour) }
+	if n, _ := s.PruneLostArchives(ctx); n != 0 {
+		t.Fatalf("without a shared archive = %d", n)
 	}
 }

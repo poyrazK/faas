@@ -77,6 +77,7 @@ const (
 	Vmmd_CreateDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CreateDatabaseVolume"
 	Vmmd_DeleteDatabaseVolume_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/DeleteDatabaseVolume"
 	Vmmd_ListDatabaseVolumes_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/ListDatabaseVolumes"
+	Vmmd_PruneDatabaseArchive_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/PruneDatabaseArchive"
 	Vmmd_StartDatabase_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/StartDatabase"
 	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
 	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
@@ -541,6 +542,10 @@ type VmmdClient interface {
 	// ListDatabaseVolumes reports the node's database volumes, so schedd can
 	// remove those of databases deleted while the node was lost.
 	ListDatabaseVolumes(ctx context.Context, in *ListDatabaseVolumesRequest, opts ...grpc.CallOption) (*ListDatabaseVolumesResponse, error)
+	// PruneDatabaseArchive prunes a database's archive in the shared bucket
+	// to its restore window, through this node's dbbackupd. schedd sends it
+	// for databases whose own node is lost.
+	PruneDatabaseArchive(ctx context.Context, in *PruneDatabaseArchiveRequest, opts ...grpc.CallOption) (*PruneDatabaseArchiveResponse, error)
 	// StartDatabase cold-boots the database VM and returns once guest-init
 	// answers. Database VMs are never snapshotted.
 	StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error)
@@ -1157,6 +1162,16 @@ func (c *vmmdClient) ListDatabaseVolumes(ctx context.Context, in *ListDatabaseVo
 	return out, nil
 }
 
+func (c *vmmdClient) PruneDatabaseArchive(ctx context.Context, in *PruneDatabaseArchiveRequest, opts ...grpc.CallOption) (*PruneDatabaseArchiveResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PruneDatabaseArchiveResponse)
+	err := c.cc.Invoke(ctx, Vmmd_PruneDatabaseArchive_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) StartDatabase(ctx context.Context, in *StartDatabaseRequest, opts ...grpc.CallOption) (*StartDatabaseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StartDatabaseResponse)
@@ -1658,6 +1673,10 @@ type VmmdServer interface {
 	// ListDatabaseVolumes reports the node's database volumes, so schedd can
 	// remove those of databases deleted while the node was lost.
 	ListDatabaseVolumes(context.Context, *ListDatabaseVolumesRequest) (*ListDatabaseVolumesResponse, error)
+	// PruneDatabaseArchive prunes a database's archive in the shared bucket
+	// to its restore window, through this node's dbbackupd. schedd sends it
+	// for databases whose own node is lost.
+	PruneDatabaseArchive(context.Context, *PruneDatabaseArchiveRequest) (*PruneDatabaseArchiveResponse, error)
 	// StartDatabase cold-boots the database VM and returns once guest-init
 	// answers. Database VMs are never snapshotted.
 	StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error)
@@ -1846,6 +1865,9 @@ func (UnimplementedVmmdServer) DeleteDatabaseVolume(context.Context, *DeleteData
 }
 func (UnimplementedVmmdServer) ListDatabaseVolumes(context.Context, *ListDatabaseVolumesRequest) (*ListDatabaseVolumesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListDatabaseVolumes not implemented")
+}
+func (UnimplementedVmmdServer) PruneDatabaseArchive(context.Context, *PruneDatabaseArchiveRequest) (*PruneDatabaseArchiveResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PruneDatabaseArchive not implemented")
 }
 func (UnimplementedVmmdServer) StartDatabase(context.Context, *StartDatabaseRequest) (*StartDatabaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartDatabase not implemented")
@@ -2794,6 +2816,24 @@ func _Vmmd_ListDatabaseVolumes_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_PruneDatabaseArchive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PruneDatabaseArchiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).PruneDatabaseArchive(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_PruneDatabaseArchive_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).PruneDatabaseArchive(ctx, req.(*PruneDatabaseArchiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_StartDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StartDatabaseRequest)
 	if err := dec(in); err != nil {
@@ -3049,6 +3089,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListDatabaseVolumes",
 			Handler:    _Vmmd_ListDatabaseVolumes_Handler,
+		},
+		{
+			MethodName: "PruneDatabaseArchive",
+			Handler:    _Vmmd_PruneDatabaseArchive_Handler,
 		},
 		{
 			MethodName: "StartDatabase",

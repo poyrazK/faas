@@ -459,8 +459,16 @@ guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
   archive with it. Metal: after a node-loss restore, the original is
   deleted while its node is lost, then the node returns and its volume is
   collected.
-- Not yet: pruning a lost node's live databases' bucket objects (they keep
-  their archive until they are deleted).
+- **Pruning a lost node's databases.** Each node's dbbackupd prunes from
+  its own disk, so a lost node's databases would keep their bucket archive
+  forever. With a shared archive, schedd's maintenance sweep asks a live
+  node (`PruneDatabaseArchive`, an admin `prune` stream to its dbbackupd)
+  to prune each such database in the bucket, at most hourly, with the
+  database's window and that node's `min_retention`. The catalog and the
+  files come from the bucket listing. The archive no longer grows, so it
+  shrinks to its newest base backup and the WAL after it, which still
+  restores to its end. Metal: the lost database's bucket archive is pruned
+  before the node-loss restore reads it.
 
 ### Driver
 

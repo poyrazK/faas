@@ -4,6 +4,7 @@ package dbsched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -39,8 +40,9 @@ type fakeVMM struct {
 	flushes      map[string]time.Time
 	// onNode records node-scoped calls as "op@node"; volNode is where each
 	// volume was created.
-	onNode  []string
-	volNode map[string]string
+	onNode   []string
+	volNode  map[string]string
+	pruneErr map[string]error
 }
 
 func newFakeVMM() *fakeVMM {
@@ -96,6 +98,13 @@ func (f *fakeVMM) DropArchive(_ context.Context, node Node, _ string) error {
 	f.record("drop_archive")
 	f.onNode = append(f.onNode, "drop_archive@"+node.ID)
 	return nil
+}
+
+func (f *fakeVMM) PruneArchive(_ context.Context, node Node, id string, windowSeconds int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, fmt.Sprintf("prune:%s:%d@%s", id, windowSeconds, node.ID))
+	return f.pruneErr[node.ID]
 }
 
 func (f *fakeVMM) ListVolumes(_ context.Context, node Node) ([]NodeVolume, error) {

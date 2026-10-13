@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/dbvm"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -34,6 +35,7 @@ type DatabaseRuntime interface {
 	// DropArchive deletes a deleted database's archive.
 	DropArchive(ctx context.Context, id string) error
 	ListVolumes() ([]dbvm.Volume, error)
+	PruneArchive(ctx context.Context, id string, windowSeconds int64) (dbarchive.PruneResult, error)
 	Start(ctx context.Context, req dbvm.BootRequest) error
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
@@ -132,6 +134,23 @@ func (s *Server) ListDatabaseVolumes(ctx context.Context, _ *vmmdpb.ListDatabase
 		out.Volumes = append(out.Volumes, &vmmdpb.DatabaseVolume{DatabaseId: v.ID, Running: v.Running})
 	}
 	return out, nil
+}
+
+// PruneDatabaseArchive prunes a lost node's database's archive in the
+// shared bucket.
+func (s *Server) PruneDatabaseArchive(ctx context.Context, req *vmmdpb.PruneDatabaseArchiveRequest) (*vmmdpb.PruneDatabaseArchiveResponse, error) {
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetRestoreWindowSeconds() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "negative restore window")
+	}
+	res, err := rt.PruneArchive(ctx, req.GetDatabaseId(), req.GetRestoreWindowSeconds())
+	if err != nil {
+		return nil, s.databaseStatus("prune archive", err)
+	}
+	return &vmmdpb.PruneDatabaseArchiveResponse{Backups: int32(res.Backups), Wal: int32(res.WAL)}, nil
 }
 
 func (s *Server) StartDatabase(ctx context.Context, req *vmmdpb.StartDatabaseRequest) (*vmmdpb.StartDatabaseResponse, error) {
@@ -262,7 +281,7 @@ func databaseCode(err error) codes.Code {
 		return codes.AlreadyExists
 	case errors.Is(err, dbvm.ErrVolumeNotFound):
 		return codes.NotFound
-	case errors.Is(err, dbvm.ErrRunning), errors.Is(err, dbvm.ErrNotRunning):
+	case errors.Is(err, dbvm.ErrRunning), errors.Is(err, dbvm.ErrNotRunning), errors.Is(err, dbvm.ErrNoArchive):
 		return codes.FailedPrecondition
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return codes.DeadlineExceeded

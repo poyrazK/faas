@@ -133,7 +133,8 @@ type Response struct {
 	// Backup is the id of the base backup OpBaseBackup stored.
 	Backup string `json:"backup,omitempty"`
 	// RecoveredTo is a restored database's last replayed commit: at or
-	// before the target, and earlier when the archive ended first.
+	// before the target, and earlier when the archive ended first. Zero
+	// when recovery replayed none: the restore is its base backup.
 	RecoveredTo time.Time `json:"recovered_to,omitzero"`
 }
 

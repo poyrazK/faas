@@ -77,7 +77,7 @@ func run(ctx context.Context, configPath string, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("dbbackupd: store: %w", err)
 	}
-	store := &dbarchive.TieredStore{LocalStore: local}
+	store := &dbarchive.TieredStore{LocalStore: local, MinRetention: cfg.MinRetention}
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	m := newMetrics(reg)

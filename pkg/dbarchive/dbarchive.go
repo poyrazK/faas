@@ -31,6 +31,9 @@ const (
 	// OpDrop deletes the database's whole archive. Only vmmd's own admin
 	// streams may send it, never a relayed guest stream.
 	OpDrop = "drop"
+	// OpPrune prunes the database's archive in the bucket to
+	// Request.WindowSeconds (see TieredStore.PruneBucket). Admin only.
+	OpPrune = "prune"
 )
 
 // Stable error codes in Response.Error.
@@ -78,7 +81,8 @@ type Header struct {
 	// RestoreWindowSeconds is the database's restore window, which sets
 	// how long its archive is kept (see retention.go).
 	RestoreWindowSeconds int64 `json:"restore_window_seconds,omitempty"`
-	// Admin marks vmmd's own stream for OpDrop. The relay never sets it.
+	// Admin marks vmmd's own stream for OpDrop and OpPrune. The relay
+	// never sets it.
 	Admin bool `json:"admin,omitempty"`
 }
 
@@ -100,6 +104,8 @@ type Request struct {
 	Size int64  `json:"size,omitempty"`
 	// Target is OpGetBackup's recovery target time (RFC 3339).
 	Target string `json:"target,omitempty"`
+	// WindowSeconds is OpPrune's restore window.
+	WindowSeconds int64 `json:"window_seconds,omitempty"`
 }
 
 // Response answers one request. For OpGetWAL, Size payload bytes follow a
@@ -109,6 +115,8 @@ type Response struct {
 	Size  int64  `json:"size,omitempty"`
 	// Name is the backup id of OpPutBackup and OpGetBackup.
 	Name string `json:"name,omitempty"`
+	// Pruned is what OpPrune removed.
+	Pruned *PruneResult `json:"pruned,omitempty"`
 }
 
 // WriteLine writes v as one JSON line.

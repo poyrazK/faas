@@ -524,6 +524,10 @@ service Vmmd {
   // ListDatabaseVolumes reports the node's database volumes, so schedd can
   // remove those of databases deleted while the node was lost.
   rpc ListDatabaseVolumes(ListDatabaseVolumesRequest) returns (ListDatabaseVolumesResponse);
+  // PruneDatabaseArchive prunes a database's archive in the shared bucket
+  // to its restore window, through this node's dbbackupd. schedd sends it
+  // for databases whose own node is lost.
+  rpc PruneDatabaseArchive(PruneDatabaseArchiveRequest) returns (PruneDatabaseArchiveResponse);
   // StartDatabase cold-boots the database VM and returns once guest-init
   // answers. Database VMs are never snapshotted.
   rpc StartDatabase(StartDatabaseRequest) returns (StartDatabaseResponse);
@@ -2600,6 +2604,16 @@ message DeleteDatabaseVolumeRequest {
 }
 
 message DeleteDatabaseVolumeResponse {}
+
+message PruneDatabaseArchiveRequest {
+  string database_id = 1;
+  int64 restore_window_seconds = 2;
+}
+
+message PruneDatabaseArchiveResponse {
+  int32 backups = 1;
+  int32 wal = 2;
+}
 
 message ListDatabaseVolumesRequest {}
 

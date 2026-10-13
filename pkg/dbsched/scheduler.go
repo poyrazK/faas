@@ -25,6 +25,9 @@ type VMM interface {
 	DropArchive(ctx context.Context, node Node, id string) error
 	// ListVolumes reports the database volumes on node.
 	ListVolumes(ctx context.Context, node Node) ([]NodeVolume, error)
+	// PruneArchive prunes a database's archive in the shared bucket to its
+	// restore window, through node's dbbackupd.
+	PruneArchive(ctx context.Context, node Node, id string, windowSeconds int64) error
 	Start(ctx context.Context, node Node, vm VM) error
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
@@ -129,6 +132,8 @@ type Scheduler struct {
 	// restores are the restores this process runs, by database id.
 	restores  sync.Map // database id -> *restoreRun
 	restoreWG sync.WaitGroup
+	// lostPruned is when each lost node's database was last pruned.
+	lostPruned sync.Map // database id -> time.Time
 }
 
 // New builds a Scheduler with defaults for zero Config fields.
@@ -290,8 +295,8 @@ func (s *Scheduler) BackupDue(ctx context.Context) (int, error) {
 	return taken, nil
 }
 
-// RunBackupLoop runs BackupDue and CollectOrphans every interval until ctx
-// ends. It is apart from the idle loop: a backup can take minutes and must
+// RunBackupLoop runs BackupDue, CollectOrphans and PruneLostArchives every
+// interval until ctx ends. It is apart from the idle loop: a backup can take minutes and must
 // not delay parking.
 func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -308,6 +313,9 @@ func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
 			}
 			if _, err := s.CollectOrphans(ctx); err != nil {
 				s.log.Warn("dbsched: orphan sweep failed", "err", err)
+			}
+			if _, err := s.PruneLostArchives(ctx); err != nil {
+				s.log.Warn("dbsched: lost-node prune sweep failed", "err", err)
 			}
 		}
 	}
@@ -532,6 +540,68 @@ func (s *Scheduler) dropLostArchive(ctx context.Context, id string) error {
 		errs = append(errs, err)
 	}
 	return fmt.Errorf("%w: no node dropped the archive: %w", ErrNodeUnavailable, errors.Join(errs...))
+}
+
+// lostPruneInterval spaces bucket prunes of one lost node's database: its
+// archive no longer grows, and each prune lists and reads the bucket.
+const lostPruneInterval = time.Hour
+
+// PruneLostArchives prunes, through a live node, the bucket archives of
+// databases whose node is lost: each node's dbbackupd prunes only from its
+// own disk, so nothing else would. A database restorable from its archive
+// keeps max(restore window, the node's minimum) of it, and at least its
+// newest base backup and the WAL after it. It reports how many it pruned.
+func (s *Scheduler) PruneLostArchives(ctx context.Context) (int, error) {
+	if !s.cfg.SharedArchive {
+		return 0, nil
+	}
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	lost, live := map[string]bool{}, []Node{}
+	for _, n := range nodes {
+		if n.Lifecycle == NodeUnavailable {
+			lost[n.ID] = true
+		} else {
+			live = append(live, n)
+		}
+	}
+	if len(live) == 0 {
+		return 0, nil
+	}
+	vms, err := s.store.List(ctx, StateParked, StateWaking, StateRunning, StateParking, StateFailed)
+	if err != nil {
+		return 0, err
+	}
+	known := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		known[n.ID] = true
+	}
+	pruned := 0
+	for _, vm := range vms {
+		if !lost[vm.NodeID] && known[vm.NodeID] {
+			continue
+		}
+		if last, ok := s.lostPruned.Load(vm.DatabaseID); ok && s.now().Sub(last.(time.Time)) < lostPruneInterval {
+			continue
+		}
+		var errs []error
+		for _, n := range live {
+			err := s.vmm.PruneArchive(ctx, n, vm.DatabaseID, vm.RestoreWindowSeconds)
+			if err == nil {
+				s.lostPruned.Store(vm.DatabaseID, s.now())
+				pruned++
+				errs = nil
+				break
+			}
+			errs = append(errs, err)
+		}
+		if len(errs) > 0 {
+			s.log.Warn("dbsched: prune a lost node's archive", "database_id", vm.DatabaseID, "node_id", vm.NodeID, "err", errors.Join(errs...))
+		}
+	}
+	return pruned, nil
 }
 
 // CollectOrphans removes database volumes no record names: those of
