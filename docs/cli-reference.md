@@ -11512,7 +11512,7 @@ Add sign-up, sessions and users to your application (application Auth, not your 
 
 Deploy a managed GoTrue Auth server bound to your database
 
-`gregale auth create --database <DATABASE> --site-url <URL> [--redirect-urls <URLS>] [--scope <SCOPE>] [--autoconfirm] [--disable-signup] [--authz <FILE>] [--resume] <name>`
+`gregale auth create --database <DATABASE> --site-url <URL> [--redirect-urls <URLS>] [--scope <SCOPE>] [--autoconfirm] [--disable-signup] [--authz <FILE>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--resume] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -11523,6 +11523,9 @@ Deploy a managed GoTrue Auth server bound to your database
 | `--autoconfirm` | sign users in without email confirmation (development only) |  |
 | `--disable-signup` | allow only invited or administrator-created users |  |
 | `--authz <FILE>` | JSON file declaring custom roles and policies (applied on deploy) |  |
+| `--email-provider <PROVIDER>` | HTTPS email provider | one of `resend` · `postmark` |
+| `--email-from <SENDER>` | sender, &#34;Name &lt;address&gt;&#34; or an address |  |
+| `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
 
 Examples:

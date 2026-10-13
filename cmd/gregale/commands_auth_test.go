@@ -193,7 +193,8 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	}
 	for name, bound := range map[string]int{"accessTokenSeconds": api.AuthAccessTokenTTLSeconds, "pool": api.AuthMaxPoolConnections, "frontPool": api.AuthFrontPoolConnections,
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
-		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds} {
+		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
+		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -354,6 +355,69 @@ func TestAuthTemplatePinsVerifiedMigrations(t *testing.T) {
 		body, _ := os.ReadFile("templates/auth/overlay/" + overlay.Name())
 		if !strings.Contains(string(body), "Gregale overlay (ADR-1190)") {
 			t.Fatalf("overlay %s does not explain its change", overlay.Name())
+		}
+	}
+}
+
+func TestAuthEmailSettingsTakeTheKeyOnlyFromStdin(t *testing.T) {
+	withStdin := func(value string) {
+		previous := osStdin
+		osStdin = strings.NewReader(value)
+		t.Cleanup(func() { osStdin = previous })
+	}
+	withStdin("re_test_key_123\n")
+	var opts authCreateOptions
+	if err := authEmailSettings(&opts, "resend", "Shop <auth@shop.example.com>", true); err != nil {
+		t.Fatal(err)
+	}
+	if opts.emailProvider != "resend" || opts.emailFrom != "Shop <auth@shop.example.com>" || opts.emailAPIKey != "re_test_key_123" {
+		t.Fatalf("unexpected settings: %+v", opts)
+	}
+	for _, tc := range []struct{ provider, from, key string }{
+		{"smtp", "auth@shop.example.com", "re_test_key_123"},
+		{"resend", "not an address", "re_test_key_123"},
+		{"resend", "auth@localhost", "re_test_key_123"},
+		{"postmark", "Shop <auth@shop.example.com>\r\nBcc: x@y.z", "re_test_key_123"},
+		{"postmark", "auth@shop.example.com", "short"},
+		{"postmark", "auth@shop.example.com", "has space key"},
+		{"postmark", "auth@shop.example.com", ""},
+	} {
+		withStdin(tc.key)
+		if err := authEmailSettings(&authCreateOptions{}, tc.provider, tc.from, true); err == nil {
+			t.Fatalf("accepted %+v", tc)
+		}
+	}
+	if code := cmdAuth([]string{"create", "shop-auth", "--database", "db", "--site-url", "https://shop.example.com", "--email-from", "auth@shop.example.com"}); code == 0 {
+		t.Fatal("--email-from accepted without --email-provider")
+	}
+}
+
+// Node tests import modules from the template directory, so a module the
+// Dockerfile forgets to copy passes every unit test and breaks the image.
+func TestAuthTemplateImageCopiesEveryRuntimeFile(t *testing.T) {
+	dockerfile, err := os.ReadFile("templates/auth/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir("templates/auth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyLine := regexp.MustCompile(`(?m)^COPY ([^\n]+) \./$`)
+	copied := map[string]bool{}
+	for _, m := range copyLine.FindAllStringSubmatch(string(dockerfile), -1) {
+		for _, name := range strings.Fields(m[1]) {
+			copied[name] = true
+		}
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".mjs") && !copied[entry.Name()] {
+			t.Errorf("Dockerfile does not copy %s into the image", entry.Name())
+		}
+	}
+	for _, dir := range []string{"sql/", "ui/"} {
+		if !strings.Contains(string(dockerfile), "COPY "+dir+" ./"+dir) {
+			t.Errorf("Dockerfile does not copy %s", dir)
 		}
 	}
 }

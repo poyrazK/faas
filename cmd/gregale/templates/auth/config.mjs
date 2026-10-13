@@ -86,7 +86,6 @@ export function runtimeConfig(env) {
     GOTRUE_JWT_EXP: String(limits.accessTokenSeconds),
     GOTRUE_JWT_AUD: 'authenticated',
     GOTRUE_JWT_ISSUER: api,
-    GOTRUE_JWT_DEFAULT_GROUP_NAME: 'authenticated',
     GOTRUE_JWT_ADMIN_ROLES: 'service_role',
     GOTRUE_EXTERNAL_EMAIL_ENABLED: passthrough.GOTRUE_EXTERNAL_EMAIL_ENABLED ?? 'true',
     GOTRUE_MAILER_AUTOCONFIRM: env.AUTH_AUTOCONFIRM === '1' ? 'true' : 'false',
@@ -94,7 +93,8 @@ export function runtimeConfig(env) {
     GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: 'true',
     // The public gateway replaces X-Real-IP with the verified client address.
     GOTRUE_RATE_LIMIT_HEADER: 'X-Real-IP',
-    // Request logs would carry verification tokens from /verify query strings.
+    // GoTrue v2.197.0 does not apply this to its request and audit logs,
+    // which carry user email addresses; logs.mjs filters them as well.
     GOTRUE_LOG_LEVEL: 'warn',
   }
   return { external, api, gotrueEnv, redirects, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email: emailConfig(env), app: new URL(site).host }

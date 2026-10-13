@@ -33,7 +33,7 @@ Configure sign-in providers, MFA, password rules and CAPTCHA by setting
 `GOTRUE_SECURITY_CAPTCHA_*` secrets; any other `GOTRUE_*` secret stops startup
 because Gregale owns that setting.
 
-Email delivery is not available yet: tenant egress blocks SMTP and the HTTPS
-email hook arrives in a later phase. Until then, use `--autoconfirm` for
-development or OAuth providers. GoTrue logs at `warn` so verification tokens in
-request URLs are not written to logs.
+Email goes through GoTrue's send-email hook to a loopback-only listener in the
+front, which delivers through Resend or Postmark over HTTPS (`AUTH_EMAIL_*`);
+tenant egress blocks SMTP. Hosted pages are served under `/ui`. The front drops
+GoTrue's info-level logs and redacts email addresses from the rest.

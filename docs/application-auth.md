@@ -131,13 +131,40 @@ CREATE POLICY docs_read ON api.docs
 Both read only the caller's verified token claims; your other bindings,
 including read-only ones, can call them but cannot read the organization tables.
 
+## Email
+
+Application email goes through your own provider over HTTPS; Gregale sends
+none itself, and tenant egress blocks SMTP.
+
+```sh
+printf '%s' "$RESEND_API_KEY" | gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --email-provider resend --email-from "Shop <auth@shop.example.com>" --email-api-key-stdin
+```
+
+Use `postmark` with a Postmark server token the same way. Confirmation,
+magic-link, password-reset and invitation emails then link back to the Auth
+app, and organization invitations are emailed instead of returned to the
+inviter. Without a provider, flows that need email fail with
+`email_provider_unconfigured`; use OAuth providers, or `--autoconfirm` during
+development. Links and codes are never logged.
+
+## Hosted pages
+
+Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The
+pages handle sign-in (password, magic link, enabled OAuth providers), sign-up,
+password reset and invitations, then return to `redirect_to` with the session
+in the URL fragment. Only your site URL and paths under `--redirect-urls` are
+accepted as targets. Read the session with `@gregale/auth`:
+
+```ts
+import { createAuthClient } from '@gregale/auth'
+
+const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
+await auth.sessionFromUrl()
+const token = await auth.getAccessToken()
+```
+
 ## Current limits
 
-- Email delivery is not available yet. Tenant egress blocks SMTP, and the HTTPS
-  email hook is a later phase. Use OAuth providers, or `--autoconfirm` for
-  development.
-- Invitation tokens are returned to the inviter to share until email delivery
-  ships.
 - Storage downloads, realtime channels and workflow starts call
   `authorize()` in a later phase; today, call `POST /authz/v1/authorize` from
   your backend.

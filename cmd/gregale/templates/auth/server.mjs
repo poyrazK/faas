@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url'
 import pg from 'pg'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
+import { filterLogs } from './logs.mjs'
 import { gotrue, limits, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
@@ -112,7 +113,9 @@ export function start(env = process.env) {
   const mailer = createMailer(config.email)
   const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app })
   hooks.listen(hookAddress.port, hookAddress.host)
-  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret) }, stdio: ['ignore', 'inherit', 'inherit'] })
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret) }, stdio: ['ignore', 'pipe', 'pipe'] })
+  filterLogs(child.stdout, process.stdout)
+  filterLogs(child.stderr, process.stderr)
   // Short idle lifetime: a parked or restored instance must not reuse a
   // connection that the database closed while it slept.
   const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })

@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1 (the `auth` credential mode), 2 (the template, `gregale auth create|status`) and 3 (organizations, roles, `authorize()`, `--auth`) implemented, not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–4 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -71,10 +71,12 @@ configure providers, MFA, password rules and CAPTCHA through
 `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*` and
 `GOTRUE_SECURITY_CAPTCHA_*` app secrets; any other `GOTRUE_*` secret stops
 startup rather than being ignored. GoTrue rate-limits on `X-Real-IP`, which the
-public gateway replaces with the verified client address, and logs at `warn`
-because its request logs would include verification tokens from `/verify`
-query strings. `--autoconfirm` (development) and `--disable-signup` map to
-GoTrue's own settings.
+public gateway replaces with the verified client address. GoTrue v2.197.0
+logs requests and audit events at info, with user email addresses, even when
+its log level is set to `warn`, so the front reads GoTrue's output and drops
+info and debug lines, and replaces personal fields (`actor_username`, `email`,
+`phone`) in the warnings and errors it keeps. `--autoconfirm` (development)
+and `--disable-signup` map to GoTrue's own settings.
 
 ### Database credential mode `auth`
 
@@ -198,11 +200,42 @@ Each surface reaches the same function:
 ### Email
 
 Tenant egress denies ports 25, 465 and 587, so GoTrue's SMTP sender stays off.
-GoTrue's send-email hook calls the front on loopback, and the front sends
-through the customer's email provider's HTTPS API (Resend or Postmark first)
-using a sealed key. Gregale operates no sender for application email. Without
-a configured provider, email flows fail with `email_provider_unconfigured`.
-Links and one-time codes are never logged.
+GoTrue's send-email hook is always enabled and calls a separate loopback-only
+listener in the front (`127.0.0.1:9998`), which the gateway cannot reach. The
+front generates a Standard Webhooks secret at each boot and passes it to the
+GoTrue child, so nothing needs sealing and a snapshot restores both halves;
+each call's HMAC-SHA256 signature and five-minute timestamp are verified.
+
+The front sends through the customer's provider over HTTPS: Resend (with one
+idempotency key per hook message, so GoTrue retries do not duplicate mail) or
+Postmark, configured by `gregale auth create --email-provider --email-from
+--email-api-key-stdin`. Verification, magic-link, recovery and invite emails
+link to `/auth/v1/verify`. A secure email change mails the current address
+with GoTrue's `token_hash_new` and the new address with `token_hash`. Codes,
+reauthentication and security notifications are supported; HTML is escaped.
+Gregale operates no sender for application email. Without a provider, email
+flows fail with `email_provider_unconfigured`. Links and codes are never
+logged.
+
+Organization invitations are emailed when a provider is configured. The send
+happens inside the invitation transaction, so a failed send leaves no pending
+invitation, and the token is then withheld from the inviter. The link carries
+the token in the URL fragment of the hosted invitation page.
+
+### Hosted pages and SDK
+
+The front serves dependency-free pages under `/ui`: sign-in (password, magic
+link and the OAuth providers GoTrue reports enabled), sign-up, forgot and
+reset password, and invitation acceptance. They hand the session to the
+application only in the URL fragment, only to the site URL or a path under an
+allowed redirect URL, and never write tokens to storage. They are served with
+a `default-src 'none'` content security policy, no framing and no referrer, and
+are always in GoTrue's redirect allow list so recovery links return to them.
+
+`@gregale/auth` (`sdk/auth`, restricted publication) wraps sign-up, sign-in,
+`sessionFromUrl`, sign-out, user updates and the `/authz/v1` calls. Refresh is
+single-flight because refresh tokens rotate, and `getAccessToken` plugs into
+`@gregale/data`.
 
 ### Scale to zero
 
@@ -274,7 +307,11 @@ task also applied the `gregale_auth` SQL and an `AUTH_AUTHZ` document, twice
 idempotently; read-only issuance still verified next to the real schema; and
 two real users created an organization, invited, accepted, were authorized by a
 declared policy, and lost access at the next check after sign-out (about
-134 MiB under emulation). Native acceptance must show sign-up, Data
+134 MiB under emulation). With phase 4, GoTrue's own signed send-email hook
+calls reached the loopback listener and passed verification, sign-up and
+magic links reported `email_provider_unconfigured` without a provider, and the
+container logs held no user email addresses. Provider delivery is covered by
+request-shape tests; live Resend and Postmark sends are still owed. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits. This ADR alone
 changes no production gate.

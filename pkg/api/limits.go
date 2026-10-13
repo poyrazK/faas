@@ -10247,6 +10247,12 @@ const (
 	// what one end user can create in the customer's database.
 	AuthMaxOrganizationsPerUser     = 100
 	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
+	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
+	// bounds the sealed provider key.
+	AuthEmailTimeoutMs      = 10000
+	AuthHookBodyBytes       = 256 << 10
+	AuthEmailAPIKeyMaxBytes = 512
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

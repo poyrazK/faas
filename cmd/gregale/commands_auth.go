@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"strings"
@@ -48,9 +49,10 @@ func cmdAuth(args []string) int {
 }
 
 type authCreateOptions struct {
-	database, scope, siteURL, authz string
-	redirectURLs                    []string
-	autoconfirm, noSignup           bool
+	database, scope, siteURL, authz       string
+	emailProvider, emailFrom, emailAPIKey string
+	redirectURLs                          []string
+	autoconfirm, noSignup                 bool
 }
 
 func cmdAuthCreate(args []string) int {
@@ -63,6 +65,9 @@ func cmdAuthCreate(args []string) int {
 	noSignup := fs.Bool("disable-signup", false, "allow only invited or administrator-created users")
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
 	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on deploy)")
+	emailProvider := fs.String("email-provider", "", "HTTPS email provider: resend or postmark")
+	emailFrom := fs.String("email-from", "", `sender, "Name <address>" or an address`)
+	emailKeyStdin := fs.Bool("email-api-key-stdin", false, "read the email provider API key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -75,6 +80,11 @@ func cmdAuthCreate(args []string) int {
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || opts.database == "" || api.ValidateScope(opts.scope) != nil || !authRedirectURL(opts.siteURL) {
 		PrintUsage(os.Stderr, "usage: gregale auth create NAME --database DATABASE --site-url URL [--redirect-urls URLS] [--scope SCOPE] [--autoconfirm] [--disable-signup] [--resume]", "auth")
 		return 1
+	}
+	if *emailProvider != "" || *emailFrom != "" || *emailKeyStdin {
+		if err := authEmailSettings(&opts, *emailProvider, *emailFrom, *emailKeyStdin); err != nil {
+			return printErr("Invalid email settings", err)
+		}
 	}
 	if *authzFile != "" {
 		authz, err := readAuthzFile(*authzFile)
@@ -165,9 +175,12 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		"AUTH_AUTOCONFIRM":    authFlag(opts.autoconfirm),
 		"AUTH_DISABLE_SIGNUP": authFlag(opts.noSignup),
 	}
-	// AUTH_AUTHZ is declarative; leaving --authz out keeps the current file.
+	// AUTH_AUTHZ and the email settings are kept when the flags are left out.
 	if opts.authz != "" {
 		settings["AUTH_AUTHZ"] = opts.authz
+	}
+	if opts.emailProvider != "" {
+		settings["AUTH_EMAIL_PROVIDER"], settings["AUTH_EMAIL_FROM"], settings["AUTH_EMAIL_API_KEY"] = opts.emailProvider, opts.emailFrom, opts.emailAPIKey
 	}
 	// Signing material is generated once. A resumed or repeated create must
 	// not replace keys that already signed live sessions.
@@ -195,7 +208,7 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 		settings[authJWTSecretName] = secret
 	}
-	for _, key := range []string{"AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", authSigningKeysName, authJWTSecretName} {
+	for _, key := range []string{"AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", "AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY", authSigningKeysName, authJWTSecretName} {
 		value, ok := settings[key]
 		if !ok {
 			continue
@@ -204,6 +217,27 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 			return err
 		}
 	}
+	return nil
+}
+
+// authEmailSettings validates the HTTPS email provider. The API key comes
+// only from stdin or a terminal prompt, never from an argument.
+func authEmailSettings(opts *authCreateOptions, provider, from string, keyFromStdin bool) error {
+	if provider != "resend" && provider != "postmark" {
+		return errors.New("--email-provider must be resend or postmark")
+	}
+	address, err := mail.ParseAddress(from)
+	if err != nil || strings.ContainsAny(from, "\r\n") || !strings.Contains(address.Address, ".") {
+		return errors.New(`--email-from must be an address or "Name <address>"`)
+	}
+	key, _, err := readRealtimeEndpointSecret("", keyFromStdin, "email-api-key", "Email provider API key: ", api.AuthEmailAPIKeyMaxBytes, true)
+	if err != nil {
+		return err
+	}
+	if len(key) < 8 || strings.ContainsAny(key, " \t\r\n") {
+		return errors.New("the email provider API key looks malformed")
+	}
+	opts.emailProvider, opts.emailFrom, opts.emailAPIKey = provider, from, key
 	return nil
 }
 
