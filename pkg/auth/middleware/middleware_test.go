@@ -33,7 +33,9 @@ type fakeAuthn struct {
 	authKey    map[string]authResult // hash → (acct, key)
 	authOIDC   map[string]authResult // hash → (acct, key) for the OIDC branch (issue #270 / ADR-101)
 	acctByID   map[string]state.Account
+	acctErr    error // when set, AccountByID fails with it
 	appBySlug  map[string]state.App
+	appErr     error // when set, AppBySlug fails with it
 	touchCalls []string
 	mu         sync.Mutex
 }
@@ -81,6 +83,9 @@ func (f *fakeAuthn) AuthenticateOIDCBearer(_ context.Context, hash []byte) (stat
 func (f *fakeAuthn) AccountByID(_ context.Context, id string) (state.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.acctErr != nil {
+		return state.Account{}, f.acctErr
+	}
 	a, ok := f.acctByID[id]
 	if !ok {
 		return state.Account{}, state.ErrNotFound
@@ -91,6 +96,9 @@ func (f *fakeAuthn) AccountByID(_ context.Context, id string) (state.Account, er
 func (f *fakeAuthn) AppBySlug(_ context.Context, slug string) (state.App, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.appErr != nil {
+		return state.App{}, f.appErr
+	}
 	a, ok := f.appBySlug[slug]
 	if !ok {
 		return state.App{}, state.ErrNotFound

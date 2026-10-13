@@ -200,7 +200,7 @@ export {
 // Opaque login-target signal for opt-in pre-auth abuse observation.
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
-export { createIssueReporter, type IssueContext, type IssueReporterOptions } from './issues.js';
+export { createIssueReporter, type IssueContext, type IssueReporterOptions, type IssueSourceMap } from './issues.js';
 
 export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
 export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
@@ -326,6 +326,21 @@ export { businessCompensationPayload, type OperationBusinessEffectReference, typ
 export { installRealtimeChangefeed, removeRealtimeChangefeed } from './realtime-changefeeds.js';
 export type { RealtimeChangefeedConfig } from './realtime-changefeeds.js';
 
+export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
+  withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
+  type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
+  type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
+
+export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
+
+export { getCommitDeliveryReport, CommitDeliveryReportError, type CommitDeliveryReport, type CommitDeliveryReportItem, type CommitDeliveryReportChange, type CommitDeliveryReportSubscriber, type CommitDeliveryReportRecovery } from './commit-delivery-report.js';
+
+export { planCommitRecovery, CommitRecoveryPlanError, type CommitRecoveryPlan, type CommitRecoveryPlanItem } from './commit-recovery-plan.js';
+
+export { applyCommitRecovery, CommitRecoveryApplyError, type CommitRecoveryApplyResult, type CommitRecoveryApplyItem } from './commit-recovery-apply.js';
+
+export { diagnoseCommitRecoveryStatus, type CommitRecoveryDiagnostics, type CommitRecoveryDiagnosticProgress, type CommitRecoveryDiagnosticEstimate, type CommitRecoveryDiagnosticConsumer, type CommitRecoveryConsumerStall, type CommitRecoveryBlockerIncident, type CommitRecoveryAlertOutbox, type CommitRecoveryAlertAcknowledgement, type CommitRecoveryBlockerTransition, type CommitRecoveryPersistentBlocker, type CommitRecoveryDiagnosticObservation, type CommitRecoveryDiagnosticRouting, type CommitRecoveryDiagnosticOrdering, type CommitRecoveryDiagnosticChange, watchCommitRecoveryStatus, commitRecoveryStatusSettled, getCommitRecoveryStatus, CommitRecoveryStatusError, type CommitRecoveryStatusResult, type CommitRecoveryStatusItem, type CommitRecoveryStatusSelection, type CommitRecoveryMonitoring, type CommitRecoveryStatusObservation, type CommitRecoveryStatusChange } from './commit-recovery-status.js';
+
 export type { OperationWorkflowChangeReason } from "./customer-operation-decisions.js";
 
 export type { OperationWorkflowOutcomeLink } from './customer-operations.js';
@@ -395,6 +410,16 @@ export { RealtimeExpiryDiagnostics, type RealtimeMessageExpiry, type RealtimeMes
 export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
+
+export type { BindingReleasePolicy } from './generated/models/BindingReleasePolicy.js';
+
+export type { SetBindingReleasePolicyRequest } from './generated/models/SetBindingReleasePolicyRequest.js';
+
+export type { SetObjectStorageBindingReleasePolicyRequest } from './generated/models/SetObjectStorageBindingReleasePolicyRequest.js';
+
+export type { ObjectStorageReleaseRequirements } from './generated/models/ObjectStorageReleaseRequirements.js';
+
+export type { BindingCheckReport } from './generated/models/BindingCheckReport.js';
 
 export { defineDurableEntity, createDurableEntityRegistry, type DurableEntityDefinition, type DurableEntityRegistry } from './durable-entity-runtime.js';
 

@@ -40,6 +40,9 @@ type aiBudgetState struct {
 	inflightTokens, inflightBindingTokens, inflightCost int64
 	// The call's end user today and its live reservations (ADR-994).
 	userTokens, userCost, inflightUserTokens, inflightUserCost int64
+	// userUntracked marks a new end user the day's tracking cap leaves no
+	// row for; with per-user limits set it is refused (ADR-996).
+	userUntracked bool
 }
 
 // aiBudgetLimits are the effective AI limits; nil means unlimited. The
@@ -52,6 +55,9 @@ type aiBudgetLimits struct {
 // aiReservation is one call's admission-time estimate (ADR-991).
 type aiReservation struct {
 	tokens, cost int64
+	// estimate is the usage the reservation priced; a billable call whose
+	// usage cannot be read settles at it (ADR-996, ADR-997).
+	estimate AIUsage
 }
 
 // positiveLimit maps a stored COALESCE(limit, 0) value to an optional limit.
@@ -85,6 +91,11 @@ func aiReservationFromSpec(spec AdmissionSpec) aiReservation {
 func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLimits, reserve aiReservation) (string, time.Duration, bool) {
 	nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
 	nextMonth := time.Date(utcNow.Year(), utcNow.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+	if state.userUntracked && (limits.userTokens != nil || limits.userCost != nil) {
+		// ADR-996: an end user the cap cannot track cannot be limited, so
+		// with per-user limits set it is refused rather than let through.
+		return ReasonUserTrackingFull, retryUntil(utcNow, nextDay), true
+	}
 	checks := []struct {
 		limit            *int64
 		used, held, call int64

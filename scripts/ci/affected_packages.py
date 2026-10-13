@@ -57,7 +57,7 @@ SPLIT_PACKAGES = ("pkg/apid/apidserver", "pkg/state")
 # the whole PostgreSQL catalogue. Give apid separate CI services, and split
 # its long race suite by test name so each hosted runner finishes promptly.
 ISOLATED_APID_FIRST_SHARD = 4
-LIGHT_TEST_SHARDS = 6
+LIGHT_TEST_SHARDS = 9
 
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
@@ -144,7 +144,8 @@ def internal_deps(root, pkgs):
 
 def shard(dirs, index, count):
     """Longest-processing-time assignment: deterministic and roughly balanced."""
-    if count == LIGHT_TEST_SHARDS:
+    # Retain the original six-job topology for callers outside ci-light.
+    if count in (6, LIGHT_TEST_SHARDS):
         if index >= ISOLATED_APID_FIRST_SHARD:
             return ["pkg/apid/apidserver"] if "pkg/apid/apidserver" in dirs else []
         # Preserve the established first three package assignments; moving

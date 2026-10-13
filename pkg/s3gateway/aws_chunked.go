@@ -436,15 +436,16 @@ func verifyRequestChecksum(header http.Header, body []byte) error {
 }
 
 type requestIntegrityReader struct {
-	body             io.ReadCloser
-	remaining        int64
-	payloadHash      hash.Hash
-	expectedPayload  []byte
-	md5Hash          hash.Hash
-	expectedMD5      []byte
-	checksum         hash.Hash
-	expectedChecksum []byte
-	err              error
+	multipartChecksum hash.Hash
+	body              io.ReadCloser
+	remaining         int64
+	payloadHash       hash.Hash
+	expectedPayload   []byte
+	md5Hash           hash.Hash
+	expectedMD5       []byte
+	checksum          hash.Hash
+	expectedChecksum  []byte
+	err               error
 }
 
 func newRequestIntegrityReader(body io.ReadCloser, size int64, payloadHash string, header http.Header) (*requestIntegrityReader, error) {
@@ -485,7 +486,7 @@ func (r *requestIntegrityReader) Read(p []byte) (int, error) {
 	}
 	n, err := r.body.Read(p)
 	if n > 0 {
-		for _, digest := range []hash.Hash{r.payloadHash, r.md5Hash, r.checksum} {
+		for _, digest := range []hash.Hash{r.payloadHash, r.md5Hash, r.checksum, r.multipartChecksum} {
 			if digest != nil {
 				_, _ = digest.Write(p[:n])
 			}

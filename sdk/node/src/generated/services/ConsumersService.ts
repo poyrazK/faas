@@ -250,6 +250,60 @@ export class ConsumersService {
     });
   }
   /**
+   * Check one API consumer's billed usage against request telemetry.
+   * Compares successful requests in the billing ledger with successful
+   * requests in request telemetry, hour by hour, so usage the ledger
+   * never received is visible before a statement is invoiced. Only whole
+   * UTC hours that have settled (10 minutes) and that telemetry still
+   * retains (14 days) are checked. Telemetry is sampled, so it proves a
+   * lower bound of missing usage but cannot prove completeness of every
+   * request. Read-only; nothing is stored.
+   *
+   * @returns APIConsumerUsageCompletenessResponse Completeness of billed usage over the checked hours.
+   * @throws ApiError
+   */
+  public static getApiConsumerUsageCompleteness({
+    slug,
+    consumerId,
+    since,
+    until,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer identity whose billed usage is checked.
+     */
+    consumerId: string,
+    /**
+     * RFC3339 start of the period to check, usually a statement's period_start.
+     */
+    since: string,
+    /**
+     * RFC3339 exclusive end of the period to check; at most 90 days after since.
+     */
+    until: string,
+  }): CancelablePromise<APIConsumerUsageCompletenessResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-completeness',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      query: {
+        'since': since,
+        'until': until,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * List durable API consumer usage statements.
    * Returns immutable quote snapshots newest period first.
    * @returns APIConsumerUsageStatementListResponse Durable usage statements for the consumer.
@@ -580,195 +634,6 @@ export class ConsumersService {
     });
   }
   /**
-   * Fetch one API consumer rate card.
-   * @returns APIConsumerRateCardResponse The requested immutable rate card.
-   * @throws ApiError
-   */
-  public static getApiConsumerRateCard({
-    slug,
-    rateCardId,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Immutable API consumer rate-card UUID.
-     */
-    rateCardId: string,
-  }): CancelablePromise<APIConsumerRateCardResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/rate-cards/{rate_card_id}',
-      path: {
-        'slug': slug,
-        'rate_card_id': rateCardId,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-      },
-    });
-  }
-  /**
-   * List credentials for an API consumer (secret omitted).
-   * @returns ConsumerKeyListResponse Consumer keys without plaintext secrets.
-   * @throws ApiError
-   */
-  public static listConsumerKeys({
-    slug,
-    consumerId,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * API consumer identity UUID owning these credentials.
-     */
-    consumerId: string,
-  }): CancelablePromise<ConsumerKeyListResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/consumers/{consumer_id}/keys',
-      path: {
-        'slug': slug,
-        'consumer_id': consumerId,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-      },
-    });
-  }
-  /**
-   * Issue a new consumer credential. Plaintext is returned once.
-   * @returns ConsumerKeyResponse The created credential; key is returned exactly once.
-   * @throws ApiError
-   */
-  public static createConsumerKey({
-    slug,
-    consumerId,
-    requestBody,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * API consumer identity UUID owning these credentials.
-     */
-    consumerId: string,
-    requestBody: CreateConsumerKeyRequest,
-  }): CancelablePromise<ConsumerKeyResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/apps/{slug}/consumers/{consumer_id}/keys',
-      path: {
-        'slug': slug,
-        'consumer_id': consumerId,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        401: `code: unauthorized`,
-        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
-        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
-      },
-    });
-  }
-  /**
-   * Revoke a consumer credential.
-   * @returns ConsumerKeyResponse The revoked credential (secret omitted).
-   * @throws ApiError
-   */
-  public static revokeConsumerKey({
-    slug,
-    consumerId,
-    keyId,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * API consumer identity UUID for the key being revoked.
-     */
-    consumerId: string,
-    /**
-     * Consumer credential UUID.
-     */
-    keyId: string,
-  }): CancelablePromise<ConsumerKeyResponse> {
-    return __request(OpenAPI, {
-      method: 'DELETE',
-      url: '/v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}',
-      path: {
-        'slug': slug,
-        'consumer_id': consumerId,
-        'key_id': keyId,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-      },
-    });
-  }
-  /**
-   * Check one API consumer's billed usage against request telemetry.
-   * Compares successful requests in the billing ledger with successful
-   * requests in request telemetry, hour by hour, so usage the ledger
-   * never received is visible before a statement is invoiced. Only whole
-   * UTC hours that have settled (10 minutes) and that telemetry still
-   * retains (14 days) are checked. Telemetry is sampled, so it proves a
-   * lower bound of missing usage but cannot prove completeness of every
-   * request. Read-only; nothing is stored.
-   *
-   * @returns APIConsumerUsageCompletenessResponse Completeness of billed usage over the checked hours.
-   * @throws ApiError
-   */
-  public static getApiConsumerUsageCompleteness({
-    slug,
-    consumerId,
-    since,
-    until,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Consumer identity whose billed usage is checked.
-     */
-    consumerId: string,
-    /**
-     * RFC3339 start of the period to check, usually a statement's period_start.
-     */
-    since: string,
-    /**
-     * RFC3339 exclusive end of the period to check; at most 90 days after since.
-     */
-    until: string,
-  }): CancelablePromise<APIConsumerUsageCompletenessResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-completeness',
-      path: {
-        'slug': slug,
-        'consumer_id': consumerId,
-      },
-      query: {
-        'since': since,
-        'until': until,
-      },
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-      },
-    });
-  }
-  /**
    * List an app's consumer plans.
    * @returns APIConsumerPlanListResponse Consumer plans by name.
    * @throws ApiError
@@ -984,6 +849,141 @@ export class ConsumersService {
       path: {
         'slug': slug,
         'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Fetch one API consumer rate card.
+   * @returns APIConsumerRateCardResponse The requested immutable rate card.
+   * @throws ApiError
+   */
+  public static getApiConsumerRateCard({
+    slug,
+    rateCardId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Immutable API consumer rate-card UUID.
+     */
+    rateCardId: string,
+  }): CancelablePromise<APIConsumerRateCardResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/rate-cards/{rate_card_id}',
+      path: {
+        'slug': slug,
+        'rate_card_id': rateCardId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * List credentials for an API consumer (secret omitted).
+   * @returns ConsumerKeyListResponse Consumer keys without plaintext secrets.
+   * @throws ApiError
+   */
+  public static listConsumerKeys({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API consumer identity UUID owning these credentials.
+     */
+    consumerId: string,
+  }): CancelablePromise<ConsumerKeyListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/keys',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Issue a new consumer credential. Plaintext is returned once.
+   * @returns ConsumerKeyResponse The created credential; key is returned exactly once.
+   * @throws ApiError
+   */
+  public static createConsumerKey({
+    slug,
+    consumerId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API consumer identity UUID owning these credentials.
+     */
+    consumerId: string,
+    requestBody: CreateConsumerKeyRequest,
+  }): CancelablePromise<ConsumerKeyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/keys',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+      },
+    });
+  }
+  /**
+   * Revoke a consumer credential.
+   * @returns ConsumerKeyResponse The revoked credential (secret omitted).
+   * @throws ApiError
+   */
+  public static revokeConsumerKey({
+    slug,
+    consumerId,
+    keyId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API consumer identity UUID for the key being revoked.
+     */
+    consumerId: string,
+    /**
+     * Consumer credential UUID.
+     */
+    keyId: string,
+  }): CancelablePromise<ConsumerKeyResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'key_id': keyId,
       },
       errors: {
         401: `code: unauthorized`,

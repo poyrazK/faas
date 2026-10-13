@@ -23,7 +23,7 @@ type converseMessage struct {
 // translateBedrockChat sends chat completions to /model/{id}/converse, or
 // converse-stream for streams.
 func translateBedrockChat(request openAIChatRequest, format openAIResponseFormat, model string, includeUsage bool) (routeTranslation, error) {
-	translated, err := openAIToConverse(request, format)
+	translated, err := openAIToConverse(request, format, model)
 	if err != nil {
 		return routeTranslation{}, err
 	}
@@ -35,8 +35,9 @@ func translateBedrockChat(request openAIChatRequest, format openAIResponseFormat
 		translator: newConverseTranslator(request.Stream, includeUsage, model)}, nil
 }
 
-// openAIToConverse maps a chat-completions request to a Converse request.
-func openAIToConverse(request openAIChatRequest, format openAIResponseFormat) ([]byte, error) {
+// openAIToConverse maps a chat-completions request to a Converse request
+// for one Bedrock model.
+func openAIToConverse(request openAIChatRequest, format openAIResponseFormat, model string) ([]byte, error) {
 	var system []converseBlock
 	var messages []converseMessage
 	usesTools := false
@@ -94,12 +95,15 @@ func openAIToConverse(request openAIChatRequest, format openAIResponseFormat) ([
 		inference["stopSequences"] = stops
 	}
 	out := map[string]any{"messages": messages, "inferenceConfig": inference}
-	if len(system) > 0 {
-		out["system"] = system
-	}
-	toolConfig, err := converseToolConfig(request, usesTools)
+	toolConfig, instruction, err := converseToolConfig(request, usesTools, model)
 	if err != nil {
 		return nil, err
+	}
+	if instruction != "" {
+		system = append(system, converseBlock{"text": instruction})
+	}
+	if len(system) > 0 {
+		out["system"] = system
 	}
 	if toolConfig != nil {
 		out["toolConfig"] = toolConfig
@@ -120,17 +124,22 @@ func openAIToConverse(request openAIChatRequest, format openAIResponseFormat) ([
 
 // converseToolConfig maps tools and tool_choice. Converse has no "none"
 // choice, so "none" leaves the tools out, which it allows only while the
-// conversation has no tool calls.
-func converseToolConfig(request openAIChatRequest, usesTools bool) (map[string]any, error) {
+// conversation has no tool calls. A Claude model that refuses forced tool
+// use gets "auto" and a system instruction instead (ADR-996).
+func converseToolConfig(request openAIChatRequest, usesTools bool, model string) (map[string]any, string, error) {
 	if len(request.Tools) == 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 	mode, name := openAIToolChoice(request.ToolChoice)
 	if mode == "none" {
 		if usesTools {
-			return nil, refuseTranslation(`Bedrock targets cannot honor tool_choice "none" in a conversation with tool calls`)
+			return nil, "", refuseTranslation(`Bedrock targets cannot honor tool_choice "none" in a conversation with tool calls`)
 		}
-		return nil, nil
+		return nil, "", nil
+	}
+	instruction := ""
+	if (mode == "required" || mode == "function") && claudeRejectsForcedToolChoice(model) {
+		instruction, mode = forcedToolInstruction(mode, name), "auto"
 	}
 	specs := make([]map[string]any, 0, len(request.Tools))
 	for _, tool := range request.Tools {
@@ -141,6 +150,9 @@ func converseToolConfig(request openAIChatRequest, usesTools bool) (map[string]a
 		spec := map[string]any{"name": tool.Function.Name, "inputSchema": map[string]any{"json": schema}}
 		if tool.Function.Description != "" {
 			spec["description"] = tool.Function.Description
+		}
+		if tool.Function.Strict != nil && *tool.Function.Strict {
+			spec["strict"] = true
 		}
 		specs = append(specs, map[string]any{"toolSpec": spec})
 	}
@@ -153,7 +165,7 @@ func converseToolConfig(request openAIChatRequest, usesTools bool) (map[string]a
 	case "function":
 		config["toolChoice"] = map[string]any{"tool": map[string]any{"name": name}}
 	}
-	return config, nil
+	return config, instruction, nil
 }
 
 // converseImageFormats maps image media types to Converse image formats.

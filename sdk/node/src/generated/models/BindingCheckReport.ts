@@ -6,10 +6,12 @@ import type { BindingCheckBindingResult } from './BindingCheckBindingResult.js';
 import type { BindingCheckFinding } from './BindingCheckFinding.js';
 import type { BindingInventoryIssue } from './BindingInventoryIssue.js';
 import type { BindingRuntimeDeployment } from './BindingRuntimeDeployment.js';
+import type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
 /**
  * Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a passed report does not independently establish application readiness or credential use. Optional application acknowledgements are version-bound self-attestations.
  */
 export type BindingCheckReport = {
+  object_storage_requirements?: ObjectStorageReleaseRequirements;
   expected_deployment_id?: string;
   app: string;
   scope: string;

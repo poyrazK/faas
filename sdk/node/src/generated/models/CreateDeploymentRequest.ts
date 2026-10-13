@@ -72,6 +72,10 @@ export type CreateDeploymentRequest = {
    */
   rollback_on_5xx?: boolean | null;
   /**
+   * One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide.
+   */
+  mcp_task_migration_override?: boolean;
+  /**
    * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;
@@ -83,9 +87,5 @@ export type CreateDeploymentRequest = {
    * Tri-state full-rootfs override: null uses the plan default, true forces full-rootfs, false forces the shared-base path.
    */
   full_rootfs_override?: boolean | null;
-  /**
-   * One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide.
-   */
-  mcp_task_migration_override?: boolean;
 };
 

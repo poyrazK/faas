@@ -14,10 +14,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneSnapshotFailureStore struct {
-	*state.PgStore
+	PgStore                                              *state.PgStore
 	loseReservation, failRecord, loseRecord, loseCleanup bool
 }
 
@@ -233,7 +234,7 @@ func cloneSnapshotWorkerFixture(t *testing.T, majors ...int) (cloneCoordinatorFi
 		t.Fatal(err)
 	}
 	store := &cloneSnapshotFailureStore{PgStore: f.store.PgStore}
-	f.srv.store = store
+	f.srv.store = statetest.NewPg(store)
 	return f, store, provider, source.ID
 }
 
@@ -262,10 +263,10 @@ func TestPGClonePostgresSnapshotWorkerRecoversReceipts(t *testing.T) {
 		t.Fatalf("lost receipt reply = %v", err)
 	}
 	stale := f.lease
-	if err := store.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +280,7 @@ func TestPGClonePostgresSnapshotWorkerRecoversReceipts(t *testing.T) {
 	if err != nil || provider.creates != 1 || provider.finds != 3 || provider.deadlineMissing {
 		t.Fatalf("retained takeover = %v", err)
 	}
-	receipt, err := store.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, f.lease, sourceID)
+	receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, f.lease, sourceID)
 	if err != nil || receipt.State != "retained" || receipt.ProviderSnapshotID != provider.actual.ProviderSnapshotID || !receipt.CapturePoint.Equal(provider.request.PointInTime) {
 		t.Fatalf("receipt = %+v, %v", receipt, err)
 	}
@@ -291,7 +292,7 @@ func TestPGClonePostgresSnapshotWorkerRecoversReceipts(t *testing.T) {
 	if f.lease.Operation.Status != state.CloneOperationCapturing || len(provider.restores) != 0 {
 		t.Fatal("metadata snapshot advanced capture or restored target")
 	}
-	if _, err := store.ProjectEnvironmentBySlug(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, "snapshots"); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.PgStore.ProjectEnvironmentBySlug(ctx, f.lease.Operation.AccountID, f.lease.Operation.ProjectID, "snapshots"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("snapshot receipt published target")
 	}
 }
@@ -315,7 +316,7 @@ func TestPGClonePostgresSnapshotCleanupRecoversUnknownCreation(t *testing.T) {
 				t.Fatal(err)
 			}
 			op := f.lease.Operation
-			f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+			f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -333,7 +334,7 @@ func TestPGClonePostgresSnapshotCleanupRecoversUnknownCreation(t *testing.T) {
 			if err != nil || done == (mode == "pending") || provider.creates != before || provider.deadlineMissing {
 				t.Fatalf("cleanup done=%v error=%v", done, err)
 			}
-			receipt, err := store.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, f.lease, sourceID)
+			receipt, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, f.lease, sourceID)
 			want := "deleted"
 			if mode == "pending" {
 				want = "deleting"
@@ -368,7 +369,7 @@ func TestPGClonePostgresSnapshotUnknownDispatchDoesNotRecaptureOrReleaseHold(t *
 	if _, err := store.ReserveProjectEnvironmentClonePostgresSnapshot(ctx, f.lease, sourceID); err != nil {
 		t.Fatal(err)
 	}
-	receipt, dispatch, err := store.ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx, f.lease, sourceID)
+	receipt, dispatch, err := store.PgStore.ClaimProjectEnvironmentClonePostgresSnapshotRequest(ctx, f.lease, sourceID)
 	if err != nil || !dispatch || receipt.RequestStartedAt.IsZero() {
 		t.Fatalf("dispatch=%v err=%v", dispatch, err)
 	}
@@ -379,7 +380,7 @@ func TestPGClonePostgresSnapshotUnknownDispatchDoesNotRecaptureOrReleaseHold(t *
 		t.Fatalf("unknown dispatch recaptured: %v", err)
 	}
 	op := f.lease.Operation
-	f.lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
+	f.lease.Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, op.Resources, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +389,7 @@ func TestPGClonePostgresSnapshotUnknownDispatchDoesNotRecaptureOrReleaseHold(t *
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || done || provider.creates != 0 || provider.deletes != 0 {
 		t.Fatalf("unknown cleanup done=%v err=%v", done, err)
 	}
-	receipt, err = store.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, f.lease, sourceID)
+	receipt, err = store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(ctx, f.lease, sourceID)
 	if err != nil || receipt.State != "deleting" || !receipt.CleanupObservedAt.IsZero() {
 		t.Fatalf("unknown outcome hold = %+v, %v", receipt, err)
 	}

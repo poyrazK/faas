@@ -76,12 +76,12 @@ class SourceTarballDeployRequest:
     rollback_on_5xx: bool | None | Unset = UNSET
     """Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
     defaulting to false."""
-    disable_startup_cpu_boost: bool | None | Unset = UNSET
-    """Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the
-    default boost."""
     mcp_task_migration_override: bool | Unset = UNSET
     """One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler
     versions it does not provide."""
+    disable_startup_cpu_boost: bool | None | Unset = UNSET
+    """Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the
+    default boost."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -137,13 +137,13 @@ class SourceTarballDeployRequest:
         else:
             rollback_on_5xx = self.rollback_on_5xx
 
+        mcp_task_migration_override = self.mcp_task_migration_override
+
         disable_startup_cpu_boost: bool | None | Unset
         if isinstance(self.disable_startup_cpu_boost, Unset):
             disable_startup_cpu_boost = UNSET
         else:
             disable_startup_cpu_boost = self.disable_startup_cpu_boost
-
-        mcp_task_migration_override = self.mcp_task_migration_override
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -172,10 +172,10 @@ class SourceTarballDeployRequest:
             field_dict["canary"] = canary
         if rollback_on_5xx is not UNSET:
             field_dict["rollback_on_5xx"] = rollback_on_5xx
-        if disable_startup_cpu_boost is not UNSET:
-            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
         if mcp_task_migration_override is not UNSET:
             field_dict["mcp_task_migration_override"] = mcp_task_migration_override
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
 
         return field_dict
 
@@ -262,6 +262,8 @@ class SourceTarballDeployRequest:
 
         rollback_on_5xx = _parse_rollback_on_5xx(d.pop("rollback_on_5xx", UNSET))
 
+        mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
+
         def _parse_disable_startup_cpu_boost(data: object) -> bool | None | Unset:
             if data is None:
                 return data
@@ -270,8 +272,6 @@ class SourceTarballDeployRequest:
             return cast(bool | None | Unset, data)
 
         disable_startup_cpu_boost = _parse_disable_startup_cpu_boost(d.pop("disable_startup_cpu_boost", UNSET))
-
-        mcp_task_migration_override = d.pop("mcp_task_migration_override", UNSET)
 
         source_tarball_deploy_request = cls(
             healthcheck=healthcheck,
@@ -286,8 +286,8 @@ class SourceTarballDeployRequest:
             traffic_percent=traffic_percent,
             canary=canary,
             rollback_on_5xx=rollback_on_5xx,
-            disable_startup_cpu_boost=disable_startup_cpu_boost,
             mcp_task_migration_override=mcp_task_migration_override,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
         )
 
         source_tarball_deploy_request.additional_properties = d

@@ -189,13 +189,13 @@ test('durable refresh drains requests, survives engine replacement, preserves RL
     readySince ??= performance.now()
     return performance.now() - readySince >= 300
   })
-  let replayResult
   try {
-    replayResult = await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})
+    assert.equal((await runHostedReplay(options,replayEnv,{fetcher,emit:event=>events.push(event)})).failed,0)
   } catch (error) {
-    assert.fail(`${error.message}: ${JSON.stringify(events)}`)
+    // Emit only the hosted entrypoint's redacted assertion results.
+    error.message += ': ' + JSON.stringify(events.filter(event => event.event === 'replay_result' && !event.passed))
+    throw error
   }
-  assert.equal(replayResult.failed,0)
   scenarios.scenarios[0].requests[1].expect.json=[{id:1}]
   await writeFile(collection,JSON.stringify(scenarios))
   await assert.rejects(runHostedReplay(options,replayEnv,{fetcher,emit:()=>{}}))

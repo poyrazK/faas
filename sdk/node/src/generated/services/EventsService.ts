@@ -10,6 +10,7 @@ import type { ControlWorkflowRecoveryPolicyRequest } from '../models/ControlWork
 import type { EventBacklogResponse } from '../models/EventBacklogResponse.js';
 import type { EventCircuitBreakerPolicy } from '../models/EventCircuitBreakerPolicy.js';
 import type { EventCircuitBreakerResponse } from '../models/EventCircuitBreakerResponse.js';
+import type { EventConsumerDeliveryHealth } from '../models/EventConsumerDeliveryHealth.js';
 import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecutionHealth.js';
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
@@ -17,6 +18,9 @@ import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAtt
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
 import type { EventReceiptReplayHistoryResponse } from '../models/EventReceiptReplayHistoryResponse.js';
 import type { EventReceiptResponse } from '../models/EventReceiptResponse.js';
+import type { EventRecipientBlockerBatchRequest } from '../models/EventRecipientBlockerBatchRequest.js';
+import type { EventRecipientBlockerBatchResponse } from '../models/EventRecipientBlockerBatchResponse.js';
+import type { EventRecipientBlockerResponse } from '../models/EventRecipientBlockerResponse.js';
 import type { EventRecoveryControlRequest } from '../models/EventRecoveryControlRequest.js';
 import type { EventRecoveryHealth } from '../models/EventRecoveryHealth.js';
 import type { EventRecoveryHistory } from '../models/EventRecoveryHistory.js';
@@ -608,6 +612,95 @@ export class EventsService {
     });
   }
   /**
+   * Read an ordered batch of exact recipient routing diagnostics.
+   * Read-only. One independent snapshot per item, up to 50 items and 65536 body bytes. Duplicate queries are processed independently. All guards validate before reads. Results preserve request order and echo each query. Per-item read failures contain no evidence. A shared five second deadline bounds work; remaining items return read_timeout. No atomic batch snapshot or handler completion guarantee.
+   * @returns EventRecipientBlockerBatchResponse Independent ordered results and errors, with Cache-Control no-store.
+   * @throws ApiError
+   */
+  public static getEventRecipientBlockers({
+    requestBody,
+  }: {
+    requestBody: EventRecipientBlockerBatchRequest,
+  }): CancelablePromise<EventRecipientBlockerBatchResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/events/recipient-blockers',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect routing blockers for one exact retained recipient.
+   * Requires apps:read or admin. Reads only the authenticated account, in
+   * one repeatable read snapshot. Matches source, ID, precise acceptance and
+   * recipient before inspecting current routing controls. No backlog pagination
+   * or consumer aggregation. Returns available for current routing evidence,
+   * not_waiting only when the retained recipient has left pending/processing,
+   * unavailable for missing or inconsistent retained evidence, or
+   * acceptance_replaced when the retained identity has a different timestamp.
+   * Not_waiting never implies handler completion or replay attribution.
+   * Foreign and missing receipts both return unavailable with receipt_unavailable.
+   * Read-only; never follows links, claims work or submits recovery.
+   *
+   * @returns EventRecipientBlockerResponse Exact recipient routing observation, including unavailable evidence.
+   * @throws ApiError
+   */
+  public static getEventRecipientBlocker({
+    source,
+    id,
+    subscriptionId,
+    expectedAcceptedAt,
+  }: {
+    /**
+     * Original event source for the exact recipient lookup.
+     */
+    source: string,
+    /**
+     * Original event identifier within the source.
+     */
+    id: string,
+    /**
+     * Consumer subscription captured by the original event acceptance.
+     */
+    subscriptionId: string,
+    /**
+     * Exact original acceptance instant, preserving fractional precision.
+     */
+    expectedAcceptedAt: string,
+  }): CancelablePromise<EventRecipientBlockerResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/events/recipient-blocker',
+      query: {
+        'source': source,
+        'id': id,
+        'subscription_id': subscriptionId,
+        'expected_accepted_at': expectedAcceptedAt,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Read timeout or storage unavailable.`,
+      },
+    });
+  }
+  /**
    * Discover waiting event consumers and recipient counts.
    * Requires apps:read or admin. Reads only the authenticated account's
    * captured application and workflow recipients plus added backfill
@@ -770,6 +863,7 @@ export class EventsService {
   public static getEventReceipt({
     source,
     id,
+    expectedAcceptedAt,
     after,
     limit = 100,
   }: {
@@ -781,6 +875,10 @@ export class EventsService {
      * Published event ID paired with the required source for this receipt lookup.
      */
     id: string,
+    /**
+     * Optional original acceptance time. Returns 409 if the retained event belongs to a replacement acceptance.
+     */
+    expectedAcceptedAt?: string,
     /**
      * Opaque next_after cursor bound to account, source, ID, and retained receipt. Mismatched or stale cursors return 400.
      */
@@ -794,6 +892,7 @@ export class EventsService {
       method: 'GET',
       url: '/v1/events/receipt',
       query: {
+        'expected_accepted_at': expectedAcceptedAt,
         'source': source,
         'id': id,
         'after': after,
@@ -804,6 +903,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1350,8 +1450,51 @@ export class EventsService {
     });
   }
   /**
+   * Inspect subscription delivery health across routing and retained execution evidence.
+   * Requires `apps:read` or `admin`. Combines independent reads under one bounded deadline, not a single database snapshot. Routing counts cover the live backlog. Current execution counts include bounded retained handler replays. Attempt rates and completion latency use durable per-subscription window evidence, with explicit completeness and retention boundaries. Pending sample blocker counts cover at most 50 oldest pending application recipients and are sampled when truncated. Capacity-wait and waiting-reason counts cover all retained pending application recipients independently of that sample. Component observed_at timestamps describe each read; top-level observed_at marks assembly completion. Configured rate and pause/circuit state are controls, not proof that every recipient is blocked. Latest successful completion is the latest in bounded retained execution coverage, not an all-time watermark.
+   * @returns EventConsumerDeliveryHealth Independent routing, execution, and oldest pending sample reads.
+   * @throws ApiError
+   */
+  public static getEventConsumerDeliveryHealth({
+    slug,
+    subscriptionId,
+    window = '5m',
+  }: {
+    /**
+     * Application slug for this operation: inspect combined routing, execution and pending delivery health.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier for this operation: inspect combined routing, execution and pending delivery health.
+     */
+    subscriptionId: string,
+    /**
+     * Retained observation window for this operation: inspect combined routing, execution and pending delivery health.
+     */
+    window?: '5m' | '15m' | '1h' | '6h' | '24h',
+  }): CancelablePromise<EventConsumerDeliveryHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'window': window,
+      },
+      errors: {
+        400: `Invalid subscription identifier or combined delivery observation window.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `The combined delivery health request exceeded its bounded deadline.`,
+      },
+    });
+  }
+  /**
    * Inspect consumer execution health over a retained history window.
-   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Receipt and invocation retention bound coverage; history_complete is always false. Counts are not unique event totals. Completion latency starts at original event acceptance.
+   * Requires `apps:read` or `admin`. Reports current retained execution states and windowed attempt outcomes for admitted deliveries and handler replays. Current state coverage is bounded by retained roots. Windowed outcomes use an immutable per-subscription ledger with 30-day retention and independent completeness diagnostics; source cleanup does not erase retained ledger outcomes. Legacy ledger baselines remain unknown. Counts are not unique event totals. Completion latency starts at original event acceptance.
    * @returns EventConsumerExecutionHealth Retained execution states and windowed handler outcomes.
    * @throws ApiError
    */
@@ -2310,669 +2453,6 @@ export class EventsService {
     });
   }
   /**
-   * Assess a frozen recovery selection without admitting work.
-   * Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. With retry=true, review every saved item of a terminal native workflow recovery using one consistent snapshot. Only saved failures matching the retained run generation can be retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not a prospective child.
-   * @returns EventRecoveryPreflight Current eligibility observations and optimistic timing estimate.
-   * @throws ApiError
-   */
-  public static getEventRecoveryPreflight({
-    jobId,
-    retry,
-  }: {
-    /**
-     * Durable recovery job identifier for this operation: assess a frozen recovery selection without admitting work.
-     */
-    jobId: string,
-    /**
-     * Review saved native workflow outcomes for an explicit child retry instead of pending parent admissions. Only true is accepted; omit for ordinary preflight.
-     */
-    retry?: boolean,
-  }): CancelablePromise<EventRecoveryPreflight> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/preflight',
-      path: {
-        'jobID': jobId,
-      },
-      query: {
-        'retry': retry,
-      },
-      errors: {
-        400: `Invalid job ID or query parameters.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `Retry view requires a terminal native workflow recovery parent.`,
-        504: `Recovery preflight timed out.`,
-      },
-    });
-  }
-  /**
-   * Inspect recovery notification capture and receiver acknowledgements.
-   * Requires apps:read or admin and MFA. Read-only account-scoped report for a retained recovery job. Admission and execution notifications are separate. Preserved receiver snapshots and retained outbox rows can establish complete selection; retained deliveries alone cannot. Reports up to 100 receivers per notification and marks incomplete counts. Missing/pruned evidence is unknown, never proof of acknowledgement. Existing retry paths require their normal write scope and MFA. No query parameters are accepted.
-   * @returns EventRecoveryNotifications Current metadata-only notification and delivery report.
-   * @throws ApiError
-   */
-  public static getEventRecoveryNotifications({
-    jobId,
-  }: {
-    /**
-     * Retained recovery job ID.
-     */
-    jobId: string,
-  }): CancelablePromise<EventRecoveryNotifications> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/notifications',
-      path: {
-        'jobID': jobId,
-      },
-      errors: {
-        400: `Invalid recovery notification job ID or unsupported query parameters.`,
-        401: `Authentication is required to inspect recovery notification delivery.`,
-        403: `Read scope or MFA required.`,
-        404: `Recovery job not found or not owned.`,
-        429: `Request rate limited.`,
-        500: `Internal notification reporting failure or invalid capture metadata.`,
-      },
-    });
-  }
-  /**
-   * Preview selective recovery notification retries.
-   * Requires apps:read or admin and MFA. Read-only preview of admission and execution receivers. Only retained dead deliveries with an enabled owned receiver and an eligible current plan are eligible. Incomplete evidence remains explicit; preview reserves nothing and accepts no query parameters.
-   * @returns EventRecoveryNotificationRetryPreview Notification retry-preview decision for the selected job.
-   * @throws ApiError
-   */
-  public static previewEventRecoveryNotificationRetry({
-    jobId,
-  }: {
-    /**
-     * Retained recovery job identifier for retry-preview.
-     */
-    jobId: string,
-  }): CancelablePromise<EventRecoveryNotificationRetryPreview> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/notifications/retry-preview',
-      path: {
-        'jobID': jobId,
-      },
-      errors: {
-        400: `Invalid notification retry-preview input or query parameters.`,
-        401: `Authentication required for notification retry-preview.`,
-        403: `Required scope or MFA missing for notification retry-preview.`,
-        404: `Retained job unavailable for notification retry-preview.`,
-        429: `Notification retry-preview request rate limited.`,
-        500: `Notification retry-preview storage failure.`,
-        504: `Notification retry-preview request exceeded its time budget.`,
-      },
-    });
-  }
-  /**
-   * Retry selected recovery notification deliveries.
-   * Requires deploy:write or admin and MFA. Explicit targets require notification kind, webhook and delivery identity, and expected replay generation. Revalidates each receiver and records queued or skipped decisions atomically with resets. A stable request_id returns the saved decision regardless of later delivery state; reuse with different targets conflicts. At most 100 targets and 100 saved decisions per retained job. Decisions expire with job pruning. Delivery IDs and source event IDs remain stable; queued means pending delivery, not acknowledgement. No query parameters are accepted.
-   * @returns EventRecoveryNotificationRetryResponse Notification retry decision for the selected job.
-   * @throws ApiError
-   */
-  public static retryEventRecoveryNotifications({
-    jobId,
-    requestBody,
-  }: {
-    /**
-     * Retained recovery job identifier for retry.
-     */
-    jobId: string,
-    requestBody: EventRecoveryNotificationRetryRequest,
-  }): CancelablePromise<EventRecoveryNotificationRetryResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/event-recoveries/{jobID}/notifications/retry',
-      path: {
-        'jobID': jobId,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `Invalid notification retry input or query parameters.`,
-        401: `Authentication required for notification retry.`,
-        403: `Required scope or MFA missing for notification retry.`,
-        404: `Retained job unavailable for notification retry.`,
-        409: `Notification retry request ID conflicts or saved decision limit reached.`,
-        429: `Notification retry request rate limited.`,
-        500: `Notification retry storage failure.`,
-        504: `Notification retry request exceeded its time budget.`,
-      },
-    });
-  }
-  /**
-   * List saved recovery notification retry decisions.
-   * Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. The optional status filter selects a comma-separated union of original-generation request statuses. Totals cover all retained requests before filtering; matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is pruned.
-   * @returns EventRecoveryNotificationRetryHistory Saved retry request summaries and counts.
-   * @throws ApiError
-   */
-  public static listEventRecoveryNotificationRetryHistory({
-    jobId,
-    status,
-  }: {
-    /**
-     * Retained recovery job identifier whose retry decisions are listed.
-     */
-    jobId: string,
-    /**
-     * Comma-separated distinct request statuses selected as a union; omitting returns all retained requests. Aggregate totals remain unfiltered.
-     */
-    status?: string,
-  }): CancelablePromise<EventRecoveryNotificationRetryHistory> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions',
-      path: {
-        'jobID': jobId,
-      },
-      query: {
-        'status': status,
-      },
-      errors: {
-        400: `Invalid job identifier or unsupported query parameters for retry history.`,
-        401: `Authentication required to list retry decisions.`,
-        403: `Read scope or MFA required to list retry decisions.`,
-        404: `Recovery job not found or not owned for retry history.`,
-        429: `Retry history request rate limited.`,
-        500: `Saved retry history could not be read.`,
-      },
-    });
-  }
-  /**
-   * Inspect a saved recovery notification retry decision.
-   * Requires apps:read or admin and MFA. Returns the original queued or skipped decision for each target and current retained delivery status observed now. Missing or pruned deliveries are unavailable; original decisions remain unchanged. Query parameters are not accepted.
-   * @returns EventRecoveryNotificationRetryDecisionDetail Frozen decision and latest retained delivery status.
-   * @throws ApiError
-   */
-  public static getEventRecoveryNotificationRetryDecision({
-    jobId,
-    requestId,
-  }: {
-    /**
-     * Retained recovery job that owns the saved retry decision.
-     */
-    jobId: string,
-    /**
-     * Canonical request identifier returned by retry history.
-     */
-    requestId: string,
-  }): CancelablePromise<EventRecoveryNotificationRetryDecisionDetail> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}',
-      path: {
-        'jobID': jobId,
-        'requestID': requestId,
-      },
-      errors: {
-        400: `Invalid request or recovery identifier or unsupported query parameters.`,
-        401: `Authentication required to inspect a saved retry decision.`,
-        403: `Read scope or MFA required to inspect a saved retry decision.`,
-        404: `Recovery job or saved request not found or not owned.`,
-        429: `Retry decision detail request rate limited.`,
-        500: `Saved retry decision could not be read.`,
-      },
-    });
-  }
-  /**
-   * Inspect retained recovery control audit history.
-   * Requires apps:read or admin and MFA. Entries are ordered by ID ascending. Actor identity is server-resolved. Failed requests and no-op controls add no entry. Expiry discovered by controls commits a system entry even when the request returns 409. History is retained and deleted with its job. Existing jobs have no fabricated historical entries.
-   * @returns EventRecoveryHistory Retained audit history page.
-   * @throws ApiError
-   */
-  public static listEventRecoveryHistory({
-    jobId,
-    after,
-    limit = 100,
-  }: {
-    /**
-     * Durable recovery job identifier for this operation: inspect retained recovery control audit history.
-     */
-    jobId: string,
-    /**
-     * Exclusive last history entry ID; IDs need not be contiguous.
-     */
-    after?: number,
-    /**
-     * Maximum page size for this operation: inspect retained recovery control audit history.
-     */
-    limit?: number,
-  }): CancelablePromise<EventRecoveryHistory> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/history',
-      path: {
-        'jobID': jobId,
-      },
-      query: {
-        'after': after,
-        'limit': limit,
-      },
-      errors: {
-        400: `Invalid pagination.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        504: `Recovery history request timed out.`,
-      },
-    });
-  }
-  /**
-   * Read a stable page of selected recipients and recovery outcomes.
-   * Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
-   * @returns EventRecoveryItems Read a stable page of selected recipients and recovery outcomes: recovery result.
-   * @throws ApiError
-   */
-  public static listEventRecoveryItems({
-    jobId,
-    after,
-    limit = 100,
-  }: {
-    /**
-     * Durable recovery job identifier for this operation: read a stable page of selected recipients and recovery outcomes.
-     */
-    jobId: string,
-    /**
-     * Last item position returned on the preceding page of this job.
-     */
-    after?: number,
-    /**
-     * Maximum page size for this operation: read a stable page of selected recipients and recovery outcomes.
-     */
-    limit?: number,
-  }): CancelablePromise<EventRecoveryItems> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-recoveries/{jobID}/items',
-      path: {
-        'jobID': jobId,
-      },
-      query: {
-        'after': after,
-        'limit': limit,
-      },
-      errors: {
-        400: `Read a stable page of selected recipients and recovery outcomes: invalid request or selection larger than 10000 recipients.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        504: `Read a stable page of selected recipients and recovery outcomes: recovery request timed out.`,
-      },
-    });
-  }
-  /**
-   * Read durable event backfill progress.
-   * Returns account-scoped scan and per-envelope routing counts without exposing payloads.
-   * @returns EventReplayBackfillJobResponse Current replay job progress.
-   * @throws ApiError
-   */
-  public static getEventReplayBackfill({
-    jobId,
-  }: {
-    /**
-     * Durable backfill job identifier returned at creation.
-     */
-    jobId: string,
-  }): CancelablePromise<EventReplayBackfillJobResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-replays/{jobID}',
-      path: {
-        'jobID': jobId,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        503: `Job status read timed out.`,
-      },
-    });
-  }
-  /**
-   * List per-envelope outcomes for a durable backfill.
-   * Returns stable, acceptance-ordered metadata pages. Event identity and routing outcomes remain readable after the source envelope is pruned; event payloads are never returned.
-   * @returns EventReplayBackfillItemsResponse One metadata-only page of backfill outcomes.
-   * @throws ApiError
-   */
-  public static listEventReplayBackfillItems({
-    jobId,
-    state,
-    after,
-    limit = 50,
-  }: {
-    /**
-     * Durable backfill job identifier.
-     */
-    jobId: string,
-    /**
-     * Filter items to one durable routing outcome.
-     */
-    state?: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled',
-    /**
-     * Opaque continuation cursor. Keep the job and state filter unchanged.
-     */
-    after?: string,
-    /**
-     * Maximum items returned in this page.
-     */
-    limit?: number,
-  }): CancelablePromise<EventReplayBackfillItemsResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/event-replays/{jobID}/items',
-      path: {
-        'jobID': jobId,
-      },
-      query: {
-        'state': state,
-        'after': after,
-        'limit': limit,
-      },
-      errors: {
-        400: `code: validation_failed | env_var_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        503: `Item read timed out.`,
-      },
-    });
-  }
-  /**
-   * Retry a bounded batch of failed backfill deliveries.
-   * Resets up to 100 failed routing recipients in this job with a fresh routing generation; handler retries and dead letters remain independent.
-   * @returns EventReplayBackfillRetryResponse Failed routing deliveries requeued.
-   * @throws ApiError
-   */
-  public static retryFailedEventReplayBackfill({
-    jobId,
-    requestBody,
-  }: {
-    /**
-     * Backfill job whose eligible failed routing deliveries are being retried.
-     */
-    jobId: string,
-    requestBody: EventReplayBackfillRetryRequest,
-  }): CancelablePromise<EventReplayBackfillRetryResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/event-replays/{jobID}/retry-failed',
-      path: {
-        'jobID': jobId,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | env_var_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `Job has not completed with failures (event_replay_backfill_state).`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        503: `Retry request timed out.`,
-      },
-    });
-  }
-  /**
-   * Inspect event delivery lifecycle for an app.
-   * Returns original event-triggered invocation metadata, operator replay
-   * invocations carrying event identity headers, and terminal fanout
-   * recipient failures, each newest first. The projections include the
-   * published event identity, subscription, lifecycle state, attempts,
-   * and last error without returning payloads. The two histories have
-   * independent pagination cursors. event_id alone searches across event
-   * sources; provide event_source with event_id to select one event identity.
-   *
-   * @returns EventDeliveryListResponse App-scoped event deliveries and terminal fanout failures, newest first.
-   * @throws ApiError
-   */
-  public static listEventDeliveries({
-    slug,
-    eventSource,
-    eventId,
-    state,
-    before,
-    limit = 20,
-    fanoutBefore,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Optional exact published event source; requires event_id.
-     */
-    eventSource?: string,
-    /**
-     * Published event ID; without event_source, matching IDs from all sources are included.
-     */
-    eventId?: string,
-    /**
-     * Exact delivery state to include; failed also includes pre-invocation recipient routing failures.
-     */
-    state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'dead_letter',
-    /**
-     * Opaque cursor from next_before, bound to this app and the event identity and state filters.
-     */
-    before?: string,
-    /**
-     * Maximum number of rows to return; capped at 200.
-     */
-    limit?: number,
-    /**
-     * Opaque cursor from next_fanout_before for this app and event source and ID filters.
-     */
-    fanoutBefore?: string,
-  }): CancelablePromise<EventDeliveryListResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/event-deliveries',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'event_source': eventSource,
-        'event_id': eventId,
-        'state': state,
-        'before': before,
-        'limit': limit,
-        'fanout_before': fanoutBefore,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Inspect one event recipient's fanout attempt history.
-   * Returns the routing outcomes and explicit operator replay requests
-   * retained for one app-scoped event identity. This immutable history is
-   * separate from the current recipient checkpoint and survives replay.
-   * Event source and ID are required so reused IDs cannot mix histories.
-   *
-   * @returns EventFanoutAttemptHistoryResponse Recipient routing attempt history, newest first.
-   * @throws ApiError
-   */
-  public static listEventFanoutAttemptHistory({
-    slug,
-    eventSource,
-    eventId,
-    subscriptionId,
-    before,
-    limit = 20,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Exact published event source.
-     */
-    eventSource: string,
-    /**
-     * Exact published event ID.
-     */
-    eventId: string,
-    /**
-     * Optional filter for one captured recipient.
-     */
-    subscriptionId?: string,
-    /**
-     * Opaque cursor from next_before, bound to this app, event identity, and recipient filter.
-     */
-    before?: string,
-    /**
-     * Maximum number of rows to return; capped at 200.
-     */
-    limit?: number,
-  }): CancelablePromise<EventFanoutAttemptHistoryResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/event-deliveries/attempts',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'event_source': eventSource,
-        'event_id': eventId,
-        'subscription_id': subscriptionId,
-        'before': before,
-        'limit': limit,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Retry one terminal event recipient routing failure.
-   * Requeues only the named failed recipient captured at acceptance or
-   * added by a retained historical backfill. Backfill failures must be
-   * retryable and have a running or completed-with-failures job; reopening
-   * a completed job observes active-job limits. Other recipients and
-   * their outcomes are left untouched. With independent recipient routing,
-   * a terminal recipient can be replayed while siblings are active and gets
-   * a fresh routing retry budget. Legacy receipts must settle first.
-   *
-   * @returns ReplayEventFanoutFailureResponse One recipient accepted for replay.
-   * @throws ApiError
-   */
-  public static replayEventFanoutFailure({
-    slug,
-    requestBody,
-    idempotencyKey,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: ReplayEventFanoutFailureRequest,
-    /**
-     * Idempotency key for the POST. Stored for 24h. On replay the server
-     * returns the original response with `Idempotent-Replayed: true`.
-     *
-     */
-    idempotencyKey?: string,
-  }): CancelablePromise<ReplayEventFanoutFailureResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/apps/{slug}/event-deliveries:replay-fanout-failure',
-      path: {
-        'slug': slug,
-      },
-      headers: {
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Replay a bounded batch of retryable event recipient failures.
-   * Requeues up to 100 terminal recipients for the app whose stable failure
-   * classification marks them retryable. Optional event_source and event_id
-   * narrow the action to one published event and must be supplied together.
-   * Non-retryable recipients are left alone. Independent recipient routing
-   * permits replay while siblings are active and renews each selected
-   * recipient's routing retry budget. Legacy receipts with active whole-event
-   * claims are skipped; repeat after they settle if has_more remains true.
-   *
-   * @returns ReplayRetryableEventFanoutFailuresResponse Bounded replay accepted.
-   * @throws ApiError
-   */
-  public static replayRetryableEventFanoutFailures({
-    slug,
-    requestBody,
-    idempotencyKey,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: ReplayRetryableEventFanoutFailuresRequest,
-    /**
-     * Idempotency key for the POST. Stored for 24h. On replay the server
-     * returns the original response with `Idempotent-Replayed: true`.
-     *
-     */
-    idempotencyKey?: string,
-  }): CancelablePromise<ReplayRetryableEventFanoutFailuresResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/apps/{slug}/event-deliveries:replay-retryable-fanout-failures',
-      path: {
-        'slug': slug,
-      },
-      headers: {
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
    * Inspect the recovery policy
    * Returns the current app policy and scheduler evaluation status. An unconfigured app has a disabled version-zero policy.
    * @returns WorkflowRecoveryPolicyResponse Result of getWorkflowRecoveryPolicy.
@@ -3665,6 +3145,669 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Assess a frozen recovery selection without admitting work.
+   * Requires apps:read or admin and MFA. Read-only observations of all pending items, with up to 100 sample positions. Current per-item eligibility and capacity are not reservations. Conditions can change before admission. The optimistic rate-window estimate includes all pending admissions/skips and spent permits, assumes immediate resume, and excludes future contention, worker delays and handler execution. With retry=true, review every saved item of a terminal native workflow recovery using one consistent snapshot. Only saved failures matching the retained run generation can be retried. Capacity is temporary; changed, missing, unsafe, and resume-limit targets cannot be selected. This view never creates a job or resumes a run. Timing fields describe the parent job, not a prospective child.
+   * @returns EventRecoveryPreflight Current eligibility observations and optimistic timing estimate.
+   * @throws ApiError
+   */
+  public static getEventRecoveryPreflight({
+    jobId,
+    retry,
+  }: {
+    /**
+     * Durable recovery job identifier for this operation: assess a frozen recovery selection without admitting work.
+     */
+    jobId: string,
+    /**
+     * Review saved native workflow outcomes for an explicit child retry instead of pending parent admissions. Only true is accepted; omit for ordinary preflight.
+     */
+    retry?: boolean,
+  }): CancelablePromise<EventRecoveryPreflight> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/preflight',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'retry': retry,
+      },
+      errors: {
+        400: `Invalid job ID or query parameters.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Retry view requires a terminal native workflow recovery parent.`,
+        504: `Recovery preflight timed out.`,
+      },
+    });
+  }
+  /**
+   * Inspect recovery notification capture and receiver acknowledgements.
+   * Requires apps:read or admin and MFA. Read-only account-scoped report for a retained recovery job. Admission and execution notifications are separate. Preserved receiver snapshots and retained outbox rows can establish complete selection; retained deliveries alone cannot. Reports up to 100 receivers per notification and marks incomplete counts. Missing/pruned evidence is unknown, never proof of acknowledgement. Existing retry paths require their normal write scope and MFA. No query parameters are accepted.
+   * @returns EventRecoveryNotifications Current metadata-only notification and delivery report.
+   * @throws ApiError
+   */
+  public static getEventRecoveryNotifications({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job ID.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotifications> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notifications',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid recovery notification job ID or unsupported query parameters.`,
+        401: `Authentication is required to inspect recovery notification delivery.`,
+        403: `Read scope or MFA required.`,
+        404: `Recovery job not found or not owned.`,
+        429: `Request rate limited.`,
+        500: `Internal notification reporting failure or invalid capture metadata.`,
+      },
+    });
+  }
+  /**
+   * Preview selective recovery notification retries.
+   * Requires apps:read or admin and MFA. Read-only preview of admission and execution receivers. Only retained dead deliveries with an enabled owned receiver and an eligible current plan are eligible. Incomplete evidence remains explicit; preview reserves nothing and accepts no query parameters.
+   * @returns EventRecoveryNotificationRetryPreview Notification retry-preview decision for the selected job.
+   * @throws ApiError
+   */
+  public static previewEventRecoveryNotificationRetry({
+    jobId,
+  }: {
+    /**
+     * Retained recovery job identifier for retry-preview.
+     */
+    jobId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryPreview> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notifications/retry-preview',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `Invalid notification retry-preview input or query parameters.`,
+        401: `Authentication required for notification retry-preview.`,
+        403: `Required scope or MFA missing for notification retry-preview.`,
+        404: `Retained job unavailable for notification retry-preview.`,
+        429: `Notification retry-preview request rate limited.`,
+        500: `Notification retry-preview storage failure.`,
+        504: `Notification retry-preview request exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * Retry selected recovery notification deliveries.
+   * Requires deploy:write or admin and MFA. Explicit targets require notification kind, webhook and delivery identity, and expected replay generation. Revalidates each receiver and records queued or skipped decisions atomically with resets. A stable request_id returns the saved decision regardless of later delivery state; reuse with different targets conflicts. At most 100 targets and 100 saved decisions per retained job. Decisions expire with job pruning. Delivery IDs and source event IDs remain stable; queued means pending delivery, not acknowledgement. No query parameters are accepted.
+   * @returns EventRecoveryNotificationRetryResponse Notification retry decision for the selected job.
+   * @throws ApiError
+   */
+  public static retryEventRecoveryNotifications({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Retained recovery job identifier for retry.
+     */
+    jobId: string,
+    requestBody: EventRecoveryNotificationRetryRequest,
+  }): CancelablePromise<EventRecoveryNotificationRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-recoveries/{jobID}/notifications/retry',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid notification retry input or query parameters.`,
+        401: `Authentication required for notification retry.`,
+        403: `Required scope or MFA missing for notification retry.`,
+        404: `Retained job unavailable for notification retry.`,
+        409: `Notification retry request ID conflicts or saved decision limit reached.`,
+        429: `Notification retry request rate limited.`,
+        500: `Notification retry storage failure.`,
+        504: `Notification retry request exceeded its time budget.`,
+      },
+    });
+  }
+  /**
+   * List saved recovery notification retry decisions.
+   * Requires apps:read or admin and MFA. Lists at most 100 immutable request summaries in decision time order for the retained owned recovery job. The optional status filter selects a comma-separated union of original-generation request statuses. Totals cover all retained requests before filtering; matched_count counts returned rows. Other query parameters, repeated status parameters, duplicate statuses, empty selections, and unknown statuses are rejected. Decisions expire when the job is pruned.
+   * @returns EventRecoveryNotificationRetryHistory Saved retry request summaries and counts.
+   * @throws ApiError
+   */
+  public static listEventRecoveryNotificationRetryHistory({
+    jobId,
+    status,
+  }: {
+    /**
+     * Retained recovery job identifier whose retry decisions are listed.
+     */
+    jobId: string,
+    /**
+     * Comma-separated distinct request statuses selected as a union; omitting returns all retained requests. Aggregate totals remain unfiltered.
+     */
+    status?: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'status': status,
+      },
+      errors: {
+        400: `Invalid job identifier or unsupported query parameters for retry history.`,
+        401: `Authentication required to list retry decisions.`,
+        403: `Read scope or MFA required to list retry decisions.`,
+        404: `Recovery job not found or not owned for retry history.`,
+        429: `Retry history request rate limited.`,
+        500: `Saved retry history could not be read.`,
+      },
+    });
+  }
+  /**
+   * Inspect a saved recovery notification retry decision.
+   * Requires apps:read or admin and MFA. Returns the original queued or skipped decision for each target and current retained delivery status observed now. Missing or pruned deliveries are unavailable; original decisions remain unchanged. Query parameters are not accepted.
+   * @returns EventRecoveryNotificationRetryDecisionDetail Frozen decision and latest retained delivery status.
+   * @throws ApiError
+   */
+  public static getEventRecoveryNotificationRetryDecision({
+    jobId,
+    requestId,
+  }: {
+    /**
+     * Retained recovery job that owns the saved retry decision.
+     */
+    jobId: string,
+    /**
+     * Canonical request identifier returned by retry history.
+     */
+    requestId: string,
+  }): CancelablePromise<EventRecoveryNotificationRetryDecisionDetail> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/notification-retry-decisions/{requestID}',
+      path: {
+        'jobID': jobId,
+        'requestID': requestId,
+      },
+      errors: {
+        400: `Invalid request or recovery identifier or unsupported query parameters.`,
+        401: `Authentication required to inspect a saved retry decision.`,
+        403: `Read scope or MFA required to inspect a saved retry decision.`,
+        404: `Recovery job or saved request not found or not owned.`,
+        429: `Retry decision detail request rate limited.`,
+        500: `Saved retry decision could not be read.`,
+      },
+    });
+  }
+  /**
+   * Inspect retained recovery control audit history.
+   * Requires apps:read or admin and MFA. Entries are ordered by ID ascending. Actor identity is server-resolved. Failed requests and no-op controls add no entry. Expiry discovered by controls commits a system entry even when the request returns 409. History is retained and deleted with its job. Existing jobs have no fabricated historical entries.
+   * @returns EventRecoveryHistory Retained audit history page.
+   * @throws ApiError
+   */
+  public static listEventRecoveryHistory({
+    jobId,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Durable recovery job identifier for this operation: inspect retained recovery control audit history.
+     */
+    jobId: string,
+    /**
+     * Exclusive last history entry ID; IDs need not be contiguous.
+     */
+    after?: number,
+    /**
+     * Maximum page size for this operation: inspect retained recovery control audit history.
+     */
+    limit?: number,
+  }): CancelablePromise<EventRecoveryHistory> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/history',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Recovery history request timed out.`,
+      },
+    });
+  }
+  /**
+   * Read a stable page of selected recipients and recovery outcomes.
+   * Read a stable page of selected recipients and recovery outcomes. Requires `apps:read` or `admin`.
+   * @returns EventRecoveryItems Read a stable page of selected recipients and recovery outcomes: recovery result.
+   * @throws ApiError
+   */
+  public static listEventRecoveryItems({
+    jobId,
+    after,
+    limit = 100,
+  }: {
+    /**
+     * Durable recovery job identifier for this operation: read a stable page of selected recipients and recovery outcomes.
+     */
+    jobId: string,
+    /**
+     * Last item position returned on the preceding page of this job.
+     */
+    after?: number,
+    /**
+     * Maximum page size for this operation: read a stable page of selected recipients and recovery outcomes.
+     */
+    limit?: number,
+  }): CancelablePromise<EventRecoveryItems> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-recoveries/{jobID}/items',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Read a stable page of selected recipients and recovery outcomes: invalid request or selection larger than 10000 recipients.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Read a stable page of selected recipients and recovery outcomes: recovery request timed out.`,
+      },
+    });
+  }
+  /**
+   * Read durable event backfill progress.
+   * Returns account-scoped scan and per-envelope routing counts without exposing payloads.
+   * @returns EventReplayBackfillJobResponse Current replay job progress.
+   * @throws ApiError
+   */
+  public static getEventReplayBackfill({
+    jobId,
+  }: {
+    /**
+     * Durable backfill job identifier returned at creation.
+     */
+    jobId: string,
+  }): CancelablePromise<EventReplayBackfillJobResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-replays/{jobID}',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Job status read timed out.`,
+      },
+    });
+  }
+  /**
+   * List per-envelope outcomes for a durable backfill.
+   * Returns stable, acceptance-ordered metadata pages. Event identity and routing outcomes remain readable after the source envelope is pruned; event payloads are never returned.
+   * @returns EventReplayBackfillItemsResponse One metadata-only page of backfill outcomes.
+   * @throws ApiError
+   */
+  public static listEventReplayBackfillItems({
+    jobId,
+    state,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Durable backfill job identifier.
+     */
+    jobId: string,
+    /**
+     * Filter items to one durable routing outcome.
+     */
+    state?: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled',
+    /**
+     * Opaque continuation cursor. Keep the job and state filter unchanged.
+     */
+    after?: string,
+    /**
+     * Maximum items returned in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<EventReplayBackfillItemsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/event-replays/{jobID}/items',
+      path: {
+        'jobID': jobId,
+      },
+      query: {
+        'state': state,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Item read timed out.`,
+      },
+    });
+  }
+  /**
+   * Retry a bounded batch of failed backfill deliveries.
+   * Resets up to 100 failed routing recipients in this job with a fresh routing generation; handler retries and dead letters remain independent.
+   * @returns EventReplayBackfillRetryResponse Failed routing deliveries requeued.
+   * @throws ApiError
+   */
+  public static retryFailedEventReplayBackfill({
+    jobId,
+    requestBody,
+  }: {
+    /**
+     * Backfill job whose eligible failed routing deliveries are being retried.
+     */
+    jobId: string,
+    requestBody: EventReplayBackfillRetryRequest,
+  }): CancelablePromise<EventReplayBackfillRetryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-replays/{jobID}/retry-failed',
+      path: {
+        'jobID': jobId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Job has not completed with failures (event_replay_backfill_state).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Retry request timed out.`,
+      },
+    });
+  }
+  /**
+   * Inspect event delivery lifecycle for an app.
+   * Returns original event-triggered invocation metadata, operator replay
+   * invocations carrying event identity headers, and terminal fanout
+   * recipient failures, each newest first. The projections include the
+   * published event identity, subscription, lifecycle state, attempts,
+   * and last error without returning payloads. The two histories have
+   * independent pagination cursors. event_id alone searches across event
+   * sources; provide event_source with event_id to select one event identity.
+   *
+   * @returns EventDeliveryListResponse App-scoped event deliveries and terminal fanout failures, newest first.
+   * @throws ApiError
+   */
+  public static listEventDeliveries({
+    slug,
+    eventSource,
+    eventId,
+    state,
+    before,
+    limit = 20,
+    fanoutBefore,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Optional exact published event source; requires event_id.
+     */
+    eventSource?: string,
+    /**
+     * Published event ID; without event_source, matching IDs from all sources are included.
+     */
+    eventId?: string,
+    /**
+     * Exact delivery state to include; failed also includes pre-invocation recipient routing failures.
+     */
+    state?: 'pending' | 'dispatching' | 'completed' | 'failed' | 'dead_letter',
+    /**
+     * Opaque cursor from next_before, bound to this app and the event identity and state filters.
+     */
+    before?: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+    /**
+     * Opaque cursor from next_fanout_before for this app and event source and ID filters.
+     */
+    fanoutBefore?: string,
+  }): CancelablePromise<EventDeliveryListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-deliveries',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'event_source': eventSource,
+        'event_id': eventId,
+        'state': state,
+        'before': before,
+        'limit': limit,
+        'fanout_before': fanoutBefore,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect one event recipient's fanout attempt history.
+   * Returns the routing outcomes and explicit operator replay requests
+   * retained for one app-scoped event identity. This immutable history is
+   * separate from the current recipient checkpoint and survives replay.
+   * Event source and ID are required so reused IDs cannot mix histories.
+   *
+   * @returns EventFanoutAttemptHistoryResponse Recipient routing attempt history, newest first.
+   * @throws ApiError
+   */
+  public static listEventFanoutAttemptHistory({
+    slug,
+    eventSource,
+    eventId,
+    subscriptionId,
+    before,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact published event source.
+     */
+    eventSource: string,
+    /**
+     * Exact published event ID.
+     */
+    eventId: string,
+    /**
+     * Optional filter for one captured recipient.
+     */
+    subscriptionId?: string,
+    /**
+     * Opaque cursor from next_before, bound to this app, event identity, and recipient filter.
+     */
+    before?: string,
+    /**
+     * Maximum number of rows to return; capped at 200.
+     */
+    limit?: number,
+  }): CancelablePromise<EventFanoutAttemptHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-deliveries/attempts',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'event_source': eventSource,
+        'event_id': eventId,
+        'subscription_id': subscriptionId,
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Retry one terminal event recipient routing failure.
+   * Requeues only the named failed recipient captured at acceptance or
+   * added by a retained historical backfill. Backfill failures must be
+   * retryable and have a running or completed-with-failures job; reopening
+   * a completed job observes active-job limits. Other recipients and
+   * their outcomes are left untouched. With independent recipient routing,
+   * a terminal recipient can be replayed while siblings are active and gets
+   * a fresh routing retry budget. Legacy receipts must settle first.
+   *
+   * @returns ReplayEventFanoutFailureResponse One recipient accepted for replay.
+   * @throws ApiError
+   */
+  public static replayEventFanoutFailure({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ReplayEventFanoutFailureRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ReplayEventFanoutFailureResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries:replay-fanout-failure',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replay a bounded batch of retryable event recipient failures.
+   * Requeues up to 100 terminal recipients for the app whose stable failure
+   * classification marks them retryable. Optional event_source and event_id
+   * narrow the action to one published event and must be supplied together.
+   * Non-retryable recipients are left alone. Independent recipient routing
+   * permits replay while siblings are active and renews each selected
+   * recipient's routing retry budget. Legacy receipts with active whole-event
+   * claims are skipped; repeat after they settle if has_more remains true.
+   *
+   * @returns ReplayRetryableEventFanoutFailuresResponse Bounded replay accepted.
+   * @throws ApiError
+   */
+  public static replayRetryableEventFanoutFailures({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: ReplayRetryableEventFanoutFailuresRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ReplayRetryableEventFanoutFailuresResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-deliveries:replay-retryable-fanout-failures',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
       },
     });
   }

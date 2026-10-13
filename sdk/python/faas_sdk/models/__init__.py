@@ -281,6 +281,8 @@ from .app_static_egress_ip_response import AppStaticEgressIPResponse
 from .app_streaming_status import AppStreamingStatus
 from .app_streaming_status_cap_kind import AppStreamingStatusCapKind
 from .app_streaming_status_status import AppStreamingStatusStatus
+from .app_task_attach_info import AppTaskAttachInfo
+from .app_task_attach_info_subprotocol import AppTaskAttachInfoSubprotocol
 from .app_task_failure import AppTaskFailure
 from .app_task_list_response import AppTaskListResponse
 from .app_task_response import AppTaskResponse
@@ -422,6 +424,10 @@ from .binding_application_adoption import BindingApplicationAdoption
 from .binding_application_adoption_source import BindingApplicationAdoptionSource
 from .binding_application_adoption_status import BindingApplicationAdoptionStatus
 from .binding_check_binding_result import BindingCheckBindingResult
+from .binding_check_binding_result_object_storage_mode import BindingCheckBindingResultObjectStorageMode
+from .binding_check_binding_result_required_object_storage_mode import (
+    BindingCheckBindingResultRequiredObjectStorageMode,
+)
 from .binding_check_finding import BindingCheckFinding
 from .binding_check_report import BindingCheckReport
 from .binding_inventory_issue import BindingInventoryIssue
@@ -439,6 +445,7 @@ from .binding_runtime_freshness import BindingRuntimeFreshness
 from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
 from .binding_verification import BindingVerification
 from .binding_verification_check import BindingVerificationCheck
+from .binding_verification_object_storage_mode import BindingVerificationObjectStorageMode
 from .budget_threshold_webhook_payload import BudgetThresholdWebhookPayload
 from .build_export_response import BuildExportResponse
 from .build_list_response import BuildListResponse
@@ -489,14 +496,18 @@ from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
+from .commit_event_publication import CommitEventPublication
 from .commit_event_request import CommitEventRequest
 from .commit_operation_response import CommitOperationResponse
 from .commit_operation_response_state import CommitOperationResponseState
+from .commit_publication_history_item import CommitPublicationHistoryItem
+from .commit_publication_history_response import CommitPublicationHistoryResponse
 from .commit_receipt_response import CommitReceiptResponse
 from .commit_routing import CommitRouting
 from .commit_routing_version import CommitRoutingVersion
 from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
+from .commit_source_response_destination import CommitSourceResponseDestination
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
@@ -553,6 +564,7 @@ from .create_app_webhook_request_retry_policy import CreateAppWebhookRequestRetr
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
+from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
 from .create_cors_preset_request import CreateCorsPresetRequest
@@ -582,6 +594,7 @@ from .create_edge_rule_request_validate_mode import CreateEdgeRuleRequestValidat
 from .create_environment_git_source_request import CreateEnvironmentGitSourceRequest
 from .create_environment_git_source_request_approval_policy import CreateEnvironmentGitSourceRequestApprovalPolicy
 from .create_environment_git_source_request_mode import CreateEnvironmentGitSourceRequestMode
+from .create_environment_git_source_request_provider import CreateEnvironmentGitSourceRequestProvider
 from .create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
 from .create_financial_budget_request import CreateFinancialBudgetRequest
 from .create_inbound_webhook_endpoint_request import CreateInboundWebhookEndpointRequest
@@ -626,6 +639,7 @@ from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
 from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
@@ -858,6 +872,9 @@ from .dev_bridge_session_summary import DevBridgeSessionSummary
 from .dev_bridge_session_summary_connection_state import DevBridgeSessionSummaryConnectionState
 from .dev_bridge_webhook_replay import DevBridgeWebhookReplay
 from .dev_bridge_webhook_replay_state import DevBridgeWebhookReplayState
+from .dev_bucket_request import DevBucketRequest
+from .dev_bucket_request_permission import DevBucketRequestPermission
+from .dev_bucket_response import DevBucketResponse
 from .dev_patch_preview import DevPatchPreview
 from .dev_patch_preview_reason import DevPatchPreviewReason
 from .dev_patch_status_response import DevPatchStatusResponse
@@ -1046,6 +1063,7 @@ from .environment_git_source import EnvironmentGitSource
 from .environment_git_source_spec import EnvironmentGitSourceSpec
 from .environment_git_source_spec_approval_policy import EnvironmentGitSourceSpecApprovalPolicy
 from .environment_git_source_spec_mode import EnvironmentGitSourceSpecMode
+from .environment_git_source_spec_provider import EnvironmentGitSourceSpecProvider
 from .environment_git_source_update import EnvironmentGitSourceUpdate
 from .environment_git_source_update_mode import EnvironmentGitSourceUpdateMode
 from .environment_job_schedule import EnvironmentJobSchedule
@@ -1073,6 +1091,7 @@ from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
+from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
 from .event_backlog_recipient import EventBacklogRecipient
 from .event_backlog_recipient_capacity_scope import EventBacklogRecipientCapacityScope
 from .event_backlog_recipient_consumer_kind import EventBacklogRecipientConsumerKind
@@ -1084,10 +1103,22 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_capacity_waits import EventConsumerCapacityWaits
+from .event_consumer_capacity_waits_coverage import EventConsumerCapacityWaitsCoverage
+from .event_consumer_delivery_health import EventConsumerDeliveryHealth
 from .event_consumer_execution_health import EventConsumerExecutionHealth
 from .event_consumer_execution_health_coverage import EventConsumerExecutionHealthCoverage
+from .event_consumer_execution_health_history_status import EventConsumerExecutionHealthHistoryStatus
+from .event_consumer_execution_health_window_coverage import EventConsumerExecutionHealthWindowCoverage
+from .event_consumer_execution_health_window_history_status import EventConsumerExecutionHealthWindowHistoryStatus
 from .event_consumer_health import EventConsumerHealth
 from .event_consumer_health_coverage import EventConsumerHealthCoverage
+from .event_consumer_pending_sample import EventConsumerPendingSample
+from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
+from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
+from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
+from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
 from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
@@ -1134,6 +1165,14 @@ from .event_receipt_routing_response_capacity_scope import EventReceiptRoutingRe
 from .event_receipt_routing_response_filter_reason import EventReceiptRoutingResponseFilterReason
 from .event_receipt_routing_response_retry_stop_reason import EventReceiptRoutingResponseRetryStopReason
 from .event_receipt_routing_response_state import EventReceiptRoutingResponseState
+from .event_recipient_blocker_batch_item import EventRecipientBlockerBatchItem
+from .event_recipient_blocker_batch_item_error import EventRecipientBlockerBatchItemError
+from .event_recipient_blocker_batch_request import EventRecipientBlockerBatchRequest
+from .event_recipient_blocker_batch_response import EventRecipientBlockerBatchResponse
+from .event_recipient_blocker_query import EventRecipientBlockerQuery
+from .event_recipient_blocker_response import EventRecipientBlockerResponse
+from .event_recipient_blocker_response_reason import EventRecipientBlockerResponseReason
+from .event_recipient_blocker_response_status import EventRecipientBlockerResponseStatus
 from .event_recovery_capacity_wait import EventRecoveryCapacityWait
 from .event_recovery_capacity_wait_gate import EventRecoveryCapacityWaitGate
 from .event_recovery_capacity_wait_scope import EventRecoveryCapacityWaitScope
@@ -1445,6 +1484,7 @@ from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
 from .get_event_backlog_origin import GetEventBacklogOrigin
 from .get_event_backlog_state import GetEventBacklogState
 from .get_event_backlog_waiting_reason import GetEventBacklogWaitingReason
+from .get_event_consumer_delivery_health_window import GetEventConsumerDeliveryHealthWindow
 from .get_event_consumer_execution_health_window import GetEventConsumerExecutionHealthWindow
 from .get_event_consumer_health_window import GetEventConsumerHealthWindow
 from .get_exclusive_operation_trigger_binding_source import GetExclusiveOperationTriggerBindingSource
@@ -1557,10 +1597,19 @@ from .issue_action_request_action import IssueActionRequestAction
 from .issue_activity import IssueActivity
 from .issue_activity_details import IssueActivityDetails
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
+from .issue_cause import IssueCause
+from .issue_cause_frame_order import IssueCauseFrameOrder
 from .issue_detail import IssueDetail
 from .issue_event import IssueEvent
+from .issue_event_frame_order import IssueEventFrameOrder
+from .issue_event_grouping_strategy import IssueEventGroupingStrategy
 from .issue_event_response import IssueEventResponse
 from .issue_frame import IssueFrame
+from .issue_grouping_explanation import IssueGroupingExplanation
+from .issue_grouping_explanation_basis import IssueGroupingExplanationBasis
+from .issue_grouping_explanation_discriminator_kind import IssueGroupingExplanationDiscriminatorKind
+from .issue_grouping_explanation_strategy import IssueGroupingExplanationStrategy
+from .issue_grouping_frame import IssueGroupingFrame
 from .issue_impact import IssueImpact
 from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
@@ -1570,6 +1619,13 @@ from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
 from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
+from .issue_split_matcher import IssueSplitMatcher
+from .issue_split_matcher_source_kind import IssueSplitMatcherSourceKind
+from .issue_split_preview import IssueSplitPreview
+from .issue_split_preview_application_status import IssueSplitPreviewApplicationStatus
+from .issue_split_rule import IssueSplitRule
+from .issue_split_rule_undo_request import IssueSplitRuleUndoRequest
+from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
@@ -2018,9 +2074,13 @@ from .object_storage_charge import ObjectStorageCharge
 from .object_storage_compute_binding import ObjectStorageComputeBinding
 from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
 from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
+from .object_storage_compute_trigger import ObjectStorageComputeTrigger
+from .object_storage_compute_trigger_events_item import ObjectStorageComputeTriggerEventsItem
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
 from .object_storage_pricing import ObjectStoragePricing
+from .object_storage_release_requirements import ObjectStorageReleaseRequirements
+from .object_storage_release_requirements_additional_property import ObjectStorageReleaseRequirementsAdditionalProperty
 from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_report import ObjectStorageUsageReport
 from .object_storage_usage_response import ObjectStorageUsageResponse
@@ -2547,9 +2607,22 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_content_body import OutboundAIContentBody
+from .outbound_ai_content_body_encoding import OutboundAIContentBodyEncoding
+from .outbound_ai_content_policy import OutboundAIContentPolicy
+from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
+from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
+from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
+from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_replay import OutboundAIReplay
+from .outbound_ai_replay_result import OutboundAIReplayResult
+from .outbound_ai_replay_source import OutboundAIReplaySource
+from .outbound_ai_replay_state import OutboundAIReplayState
+from .outbound_ai_replay_target import OutboundAIReplayTarget
+from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
@@ -3191,6 +3264,7 @@ from .realtime_worker_heartbeat_request import RealtimeWorkerHeartbeatRequest
 from .rebind_environment_git_source_request import RebindEnvironmentGitSourceRequest
 from .rebind_environment_git_source_request_approval_policy import RebindEnvironmentGitSourceRequestApprovalPolicy
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
 from .record_dev_sync_request import RecordDevSyncRequest
 from .record_dev_sync_request_status import RecordDevSyncRequestStatus
 from .recover_rollout_request import RecoverRolloutRequest
@@ -3293,6 +3367,7 @@ from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_advice_evidence import RouteAdviceEvidence
 from .route_advice_impact import RouteAdviceImpact
 from .route_advice_response import RouteAdviceResponse
+from .route_advice_setting import RouteAdviceSetting
 from .route_advice_suggestion import RouteAdviceSuggestion
 from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
@@ -3482,6 +3557,10 @@ from .route_policy_receipt import RoutePolicyReceipt
 from .route_policy_rule_usage import RoutePolicyRuleUsage
 from .route_priorities_response import RoutePrioritiesResponse
 from .route_priorities_response_source import RoutePrioritiesResponseSource
+from .route_priority_queue_class import RoutePriorityQueueClass
+from .route_priority_queue_class_class import RoutePriorityQueueClassClass
+from .route_priority_queue_stats import RoutePriorityQueueStats
+from .route_priority_queue_stats_source import RoutePriorityQueueStatsSource
 from .route_priority_rule import RoutePriorityRule
 from .route_priority_rule_class import RoutePriorityRuleClass
 from .route_priority_rule_method import RoutePriorityRuleMethod
@@ -3611,7 +3690,10 @@ from .service_rollout_handoff_response_action import ServiceRolloutHandoffRespon
 from .service_rollout_handoff_response_phase import ServiceRolloutHandoffResponsePhase
 from .service_rollout_recovery_receipt import ServiceRolloutRecoveryReceipt
 from .service_rollout_recovery_receipt_status import ServiceRolloutRecoveryReceiptStatus
+from .service_wake_ahead_learned import ServiceWakeAheadLearned
+from .service_wake_ahead_learned_source import ServiceWakeAheadLearnedSource
 from .service_wake_ahead_response import ServiceWakeAheadResponse
+from .service_wake_ahead_target import ServiceWakeAheadTarget
 from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
@@ -3631,6 +3713,7 @@ from .set_grace_window_request import SetGraceWindowRequest
 from .set_object_bucket_access_grant_request import SetObjectBucketAccessGrantRequest
 from .set_object_bucket_access_grant_request_permission import SetObjectBucketAccessGrantRequestPermission
 from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
+from .set_object_storage_binding_release_policy_request import SetObjectStorageBindingReleasePolicyRequest
 from .set_password_request import SetPasswordRequest
 from .set_platform_tenant_consumer_provisioning_policy_request import SetPlatformTenantConsumerProvisioningPolicyRequest
 from .set_platform_tenant_credential_policy_request import SetPlatformTenantCredentialPolicyRequest
@@ -4422,6 +4505,8 @@ __all__ = (
     "AppStreamingStatus",
     "AppStreamingStatusCapKind",
     "AppStreamingStatusStatus",
+    "AppTaskAttachInfo",
+    "AppTaskAttachInfoSubprotocol",
     "AppTaskFailure",
     "AppTaskListResponse",
     "AppTaskResponse",
@@ -4524,6 +4609,8 @@ __all__ = (
     "BindingApplicationAdoptionSource",
     "BindingApplicationAdoptionStatus",
     "BindingCheckBindingResult",
+    "BindingCheckBindingResultObjectStorageMode",
+    "BindingCheckBindingResultRequiredObjectStorageMode",
     "BindingCheckFinding",
     "BindingCheckReport",
     "BindingInventoryIssue",
@@ -4541,6 +4628,7 @@ __all__ = (
     "BindingRuntimeInstanceCounts",
     "BindingVerification",
     "BindingVerificationCheck",
+    "BindingVerificationObjectStorageMode",
     "BudgetThresholdWebhookPayload",
     "BuildExportResponse",
     "BuildListResponse",
@@ -4591,14 +4679,18 @@ __all__ = (
     "ClearObsoleteReport",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
+    "CommitEventPublication",
     "CommitEventRequest",
     "CommitOperationResponse",
     "CommitOperationResponseState",
+    "CommitPublicationHistoryItem",
+    "CommitPublicationHistoryResponse",
     "CommitReceiptResponse",
     "CommitRouting",
     "CommitRoutingVersion",
     "CommitSourceResponse",
     "CommitSourceResponseContractVersion",
+    "CommitSourceResponseDestination",
     "ComparePlatformTenantSelfWorkflowReadinessBody",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
@@ -4653,6 +4745,7 @@ __all__ = (
     "CreateCommitSourceBody",
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
+    "CreateCommitSourceRequestDestination",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
     "CreateCorsPresetRequest",
@@ -4682,6 +4775,7 @@ __all__ = (
     "CreateEnvironmentGitSourceRequest",
     "CreateEnvironmentGitSourceRequestApprovalPolicy",
     "CreateEnvironmentGitSourceRequestMode",
+    "CreateEnvironmentGitSourceRequestProvider",
     "CreateExecutionArtifactGrantRequest",
     "CreateFinancialBudgetRequest",
     "CreateInboundWebhookEndpointRequest",
@@ -4720,6 +4814,7 @@ __all__ = (
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgRequest",
+    "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
     "CreateOutboundCredentialKeyRequest",
@@ -4942,6 +5037,9 @@ __all__ = (
     "DevBridgeSessionSummaryConnectionState",
     "DevBridgeWebhookReplay",
     "DevBridgeWebhookReplayState",
+    "DevBucketRequest",
+    "DevBucketRequestPermission",
+    "DevBucketResponse",
     "DevPatchPreview",
     "DevPatchPreviewReason",
     "DevPatchStatusResponse",
@@ -5128,6 +5226,7 @@ __all__ = (
     "EnvironmentGitSourceSpec",
     "EnvironmentGitSourceSpecApprovalPolicy",
     "EnvironmentGitSourceSpecMode",
+    "EnvironmentGitSourceSpecProvider",
     "EnvironmentGitSourceUpdate",
     "EnvironmentGitSourceUpdateMode",
     "EnvironmentJobSchedule",
@@ -5155,6 +5254,7 @@ __all__ = (
     "ErrorNewWebhookPayload",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
+    "EventBacklogConsumerPendingWaitingReasons",
     "EventBacklogRecipient",
     "EventBacklogRecipientCapacityScope",
     "EventBacklogRecipientConsumerKind",
@@ -5166,10 +5266,22 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerCapacityWaits",
+    "EventConsumerCapacityWaitsCoverage",
+    "EventConsumerDeliveryHealth",
     "EventConsumerExecutionHealth",
     "EventConsumerExecutionHealthCoverage",
+    "EventConsumerExecutionHealthHistoryStatus",
+    "EventConsumerExecutionHealthWindowCoverage",
+    "EventConsumerExecutionHealthWindowHistoryStatus",
     "EventConsumerHealth",
     "EventConsumerHealthCoverage",
+    "EventConsumerPendingSample",
+    "EventConsumerPendingSampleCoverage",
+    "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerWaitingReasons",
+    "EventConsumerWaitingReasonsCounts",
+    "EventConsumerWaitingReasonsCoverage",
     "EventDeliveryListResponse",
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
@@ -5214,6 +5326,14 @@ __all__ = (
     "EventReceiptRoutingResponseFilterReason",
     "EventReceiptRoutingResponseRetryStopReason",
     "EventReceiptRoutingResponseState",
+    "EventRecipientBlockerBatchItem",
+    "EventRecipientBlockerBatchItemError",
+    "EventRecipientBlockerBatchRequest",
+    "EventRecipientBlockerBatchResponse",
+    "EventRecipientBlockerQuery",
+    "EventRecipientBlockerResponse",
+    "EventRecipientBlockerResponseReason",
+    "EventRecipientBlockerResponseStatus",
     "EventRecoveryCapacityWait",
     "EventRecoveryCapacityWaitGate",
     "EventRecoveryCapacityWaitScope",
@@ -5515,6 +5635,7 @@ __all__ = (
     "GetEventBacklogOrigin",
     "GetEventBacklogState",
     "GetEventBacklogWaitingReason",
+    "GetEventConsumerDeliveryHealthWindow",
     "GetEventConsumerExecutionHealthWindow",
     "GetEventConsumerHealthWindow",
     "GetExclusiveOperationTriggerBindingSource",
@@ -5625,10 +5746,19 @@ __all__ = (
     "IssueActivity",
     "IssueActivityDetails",
     "IssueBrowserCSRFTokenAction",
+    "IssueCause",
+    "IssueCauseFrameOrder",
     "IssueDetail",
     "IssueEvent",
+    "IssueEventFrameOrder",
+    "IssueEventGroupingStrategy",
     "IssueEventResponse",
     "IssueFrame",
+    "IssueGroupingExplanation",
+    "IssueGroupingExplanationBasis",
+    "IssueGroupingExplanationDiscriminatorKind",
+    "IssueGroupingExplanationStrategy",
+    "IssueGroupingFrame",
     "IssueImpact",
     "IssueImpactAlertPolicy",
     "IssueImpactSummary",
@@ -5638,6 +5768,13 @@ __all__ = (
     "IssueOwnershipRules",
     "IssueOwnershipRuleSourceKind",
     "IssueRelease",
+    "IssueSplitMatcher",
+    "IssueSplitMatcherSourceKind",
+    "IssueSplitPreview",
+    "IssueSplitPreviewApplicationStatus",
+    "IssueSplitRule",
+    "IssueSplitRuleUndoRequest",
+    "IssueSplitRuleUpdate",
     "IssueState",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
@@ -6048,9 +6185,13 @@ __all__ = (
     "ObjectStorageComputeBinding",
     "ObjectStorageComputeBindingList",
     "ObjectStorageComputeBindingSecretKeys",
+    "ObjectStorageComputeTrigger",
+    "ObjectStorageComputeTriggerEventsItem",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
     "ObjectStoragePricing",
+    "ObjectStorageReleaseRequirements",
+    "ObjectStorageReleaseRequirementsAdditionalProperty",
     "ObjectStorageUsage",
     "ObjectStorageUsageReport",
     "ObjectStorageUsageResponse",
@@ -6527,9 +6668,22 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIContentBody",
+    "OutboundAIContentBodyEncoding",
+    "OutboundAIContentPolicy",
+    "OutboundAIContentPolicyEmail",
+    "OutboundAIContentPolicyIban",
+    "OutboundAIContentPolicyPaymentCard",
+    "OutboundAIContentPolicySecret",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIReplay",
+    "OutboundAIReplayResult",
+    "OutboundAIReplaySource",
+    "OutboundAIReplayState",
+    "OutboundAIReplayTarget",
+    "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
     "OutboundAIRequestLogEntryOutcome",
     "OutboundAIRequestLogList",
@@ -7119,6 +7273,7 @@ __all__ = (
     "RebindEnvironmentGitSourceRequest",
     "RebindEnvironmentGitSourceRequestApprovalPolicy",
     "ReceiveInboundWebhookBody",
+    "ReconcileObjectStorageComputeTriggersRequest",
     "RecordDevSyncRequest",
     "RecordDevSyncRequestStatus",
     "RecoverRolloutRequest",
@@ -7215,6 +7370,7 @@ __all__ = (
     "RouteAdviceEvidence",
     "RouteAdviceImpact",
     "RouteAdviceResponse",
+    "RouteAdviceSetting",
     "RouteAdviceSuggestion",
     "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
@@ -7404,6 +7560,10 @@ __all__ = (
     "RoutePolicyRuleUsage",
     "RoutePrioritiesResponse",
     "RoutePrioritiesResponseSource",
+    "RoutePriorityQueueClass",
+    "RoutePriorityQueueClassClass",
+    "RoutePriorityQueueStats",
+    "RoutePriorityQueueStatsSource",
     "RoutePriorityRule",
     "RoutePriorityRuleClass",
     "RoutePriorityRuleMethod",
@@ -7529,7 +7689,10 @@ __all__ = (
     "ServiceRolloutHandoffResponsePhase",
     "ServiceRolloutRecoveryReceipt",
     "ServiceRolloutRecoveryReceiptStatus",
+    "ServiceWakeAheadLearned",
+    "ServiceWakeAheadLearnedSource",
     "ServiceWakeAheadResponse",
+    "ServiceWakeAheadTarget",
     "SessionInfo",
     "SessionListResponse",
     "SessionsRevokeAllResponse",
@@ -7549,6 +7712,7 @@ __all__ = (
     "SetObjectBucketAccessGrantRequest",
     "SetObjectBucketAccessGrantRequestPermission",
     "SetObjectS3CopySourceRequest",
+    "SetObjectStorageBindingReleasePolicyRequest",
     "SetPasswordRequest",
     "SetPlatformTenantConsumerProvisioningPolicyRequest",
     "SetPlatformTenantCredentialPolicyRequest",

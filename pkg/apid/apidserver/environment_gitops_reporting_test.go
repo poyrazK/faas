@@ -25,7 +25,7 @@ func reportGitOpsSource(t *testing.T, store *state.MemStore, source state.Enviro
 	return source
 }
 
-func waitGitOpsReport(t *testing.T, store *state.MemStore, source state.EnvironmentGitSource, previousID string) state.EnvironmentGitOpsRun {
+func waitGitOpsReport(t *testing.T, store state.EnvironmentGitOpsStore, source state.EnvironmentGitSource, previousID string) state.EnvironmentGitOpsRun {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

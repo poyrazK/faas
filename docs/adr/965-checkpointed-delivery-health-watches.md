@@ -1,0 +1,21 @@
+# ADR-965: Checkpointed delivery-health watches and alert outboxes
+
+## Status
+Accepted.
+
+## Context
+Delivery-health and waiting-reason watch alerts were invocation-local. A process restart lost pending notifications and opened new incident identities even when the same condition remained breached.
+
+## Decision
+Add opt-in DurableAlerts and Resume to the Go watch options. Expose a versioned checkpoint containing the requested app, bound app ID, subscription, window, session namespace, sequence, configured conditions, each condition's last observation timestamp and scalar evidence, and ordered pending notifications. Checkpoints contain historical evidence, never restored live confirmation. Resume requires the same app/subscription, normalized window, and deterministic metric/threshold selection; interval, timeout, and freshness bounds may change.
+
+Restore incident IDs in unknown state. A fresh, strictly advancing qualifying sample confirms the same incident without another opening notification. Fresh clearing evidence resolves it. Locally sustained conditions restart their duration measurement and require two or more fresh samples spanning the configured threshold before confirmation; nonzero samples during this period retain the unknown incident identity. A fresh zero resolves it. Invalid, stale, missing, or nonadvancing evidence emits confirmation_lost and closes the saved episode. Observation high-water marks survive evidence loss, preventing repeated or regressing samples from reopening incidents. Restart does not count downtime toward sustained thresholds or establish uninterrupted blockage.
+
+Bound pending notifications plus active closing reservations to 1,024 slots and keep sequences within 9,007,199,254,740,991. Opening an incident requires two slots and two available sequence numbers: an opening and its eventual closing. New incidents stop with alert_outbox_full when reservations cannot be made. Existing closings retain capacity. Never evict queued notifications; acknowledgement frees pending slots. CLI printing and replay do not acknowledge delivery, so consumers must deduplicate by session/sequence and explicitly acknowledge after processing. SDK callers must persist detached callback progress before sending notifications, and stop the watch before acknowledging and resuming a modified checkpoint; a running watch owns its in-memory queue. DurableAlerts by itself does not write files or send messages.
+
+CLI --checkpoint PATH creates a new private checkpoint; --resume reuses it and rejects mismatched thresholds before polling. Existing files require explicit resume. Reuse the existing atomic temporary-file write, file fsync, rename and directory fsync helper, generalized to accept either checkpoint DTO. Hold its stable private sidecar lock across the entire watch. Save progress before emitting each batch of notifications, and preserve the last checkpoint on validation or callback failure.
+
+Add entirely local events delivery-health-alerts --checkpoint PATH operations: inspect queue and capacity, --replay ordered pending JSON lines, or --ack-alerts FILE with an array of exact incident_id/sequence pairs. All operations take the same exclusive checkpoint lock. Acknowledgements validate the entire historical queue, reject unknown or duplicate pairs, remove only selected notifications, and atomically save without changing session, sequence, conditions, or reservations. Repeating an already removed acknowledgement is rejected. No live confirmation is restored by these offline operations. Reuse the existing 64 MiB bounded JSON input and checkpoint writer limits.
+
+## Consequences
+CLI and Go SDK can recover pending alert delivery across restarts without server changes, migrations, automatic recovery, background workers, or compliance registry edits. Delivery is at least once when a consumer replays after interruption; explicit acknowledgement defines removal. An acknowledged transition has no permanent local deduplication ledger. Node and Python summary APIs remain unchanged. Checkpoints do not authenticate evidence or carry credentials; account authorization continues to be enforced by fresh API reads. They must be kept under the operator's control.

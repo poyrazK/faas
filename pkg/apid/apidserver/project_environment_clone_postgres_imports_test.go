@@ -21,10 +21,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type importWorkerFailureStore struct {
-	*state.PgStore
+	PgStore                            *state.PgStore
 	loseClaim, loseRecord, loseReserve bool
 }
 
@@ -140,7 +141,7 @@ func cloneImportWorkerFixtureWithPreparation(t *testing.T, prepare bool) *import
 	})
 	x := f.db.x
 	f.store = &importWorkerFailureStore{PgStore: x.store.PgStore}
-	x.f.srv.store = f.store
+	x.f.srv.store = statetest.NewPg(f.store)
 	reqs, err := f.db.exports.RequirementsForWorker()
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +203,7 @@ func cloneImportWorkerFixtureWithPreparation(t *testing.T, prepare bool) *import
 		if selected != f.target.DatabaseName {
 			return nil, managedpostgres.ErrConflict
 		}
-		owner, err := f.store.ProjectEnvironmentClonePostgresImportForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		owner, err := f.store.PgStore.ProjectEnvironmentClonePostgresImportForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 		if err != nil || owner.State != "importing" {
 			return nil, errors.New("child borrow preceded durable import claim")
 		}
@@ -249,7 +250,7 @@ func (f *importWorkerFixture) run(t *testing.T) (copyarchive.RestoreExecution, e
 func (f *importWorkerFixture) owner(t *testing.T) state.ProjectEnvironmentClonePostgresImport {
 	t.Helper()
 	x := f.db.x
-	o, err := f.store.ProjectEnvironmentClonePostgresImportForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+	o, err := f.store.PgStore.ProjectEnvironmentClonePostgresImportForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,11 +318,11 @@ func TestPGClonePostgresImportRealArchiveAndCommittedReceiptRecoveryNeverRepeats
 	mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{current, nil, old} }
 	setSecretRecipient = nil
 	previous := x.f.lease
-	if err := f.store.ReleaseProjectEnvironmentCloneLease(t.Context(), previous, 0); err != nil {
+	if err := f.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), previous, 0); err != nil {
 		t.Fatal(err)
 	}
 	var err error
-	x.f.lease, err = f.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
+	x.f.lease, err = f.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +386,7 @@ func TestPGClonePostgresImportCorruptInputBudgetAndLostClaimNeverWriteTarget(t *
 			case "spool budget":
 				budget = 5
 			case "corrupt input":
-				a, err := f.store.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+				a, err := f.store.PgStore.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -473,11 +474,11 @@ func TestPGClonePostgresImportLostWindowReplyHandoffClosesOriginalWithoutRestore
 			// Strict closed-catalogue verification would reject the opening case here;
 			// handoff must open retained metadata and close the original window first.
 			previous := x.f.lease
-			if err := f.store.ReleaseProjectEnvironmentCloneLease(t.Context(), previous, 0); err != nil {
+			if err := f.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), previous, 0); err != nil {
 				t.Fatal(err)
 			}
 			var err error
-			x.f.lease, err = f.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
+			x.f.lease, err = f.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), 2*time.Minute)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -552,7 +553,7 @@ func TestPGClonePostgresImportRejectsOriginalInputAndOwnershipChangesBeforeIO(t 
 					t.Fatal(err)
 				}
 			case "legacy":
-				a, err := f.store.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+				a, err := f.store.PgStore.ProjectEnvironmentClonePostgresArchiveForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -571,7 +572,7 @@ func TestPGClonePostgresImportRejectsOriginalInputAndOwnershipChangesBeforeIO(t 
 				other, _ := age.GenerateX25519Identity()
 				mfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{other} }
 			case "stale":
-				if err := f.store.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
+				if err := f.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
 					t.Fatal(err)
 				}
 			case "phase":

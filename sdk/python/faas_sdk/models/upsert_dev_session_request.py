@@ -14,6 +14,7 @@ from ..models.upsert_dev_session_request_type import UpsertDevSessionRequestType
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.dev_bucket_request import DevBucketRequest
     from ..models.dev_postgres_request import DevPostgresRequest
 
 
@@ -31,6 +32,10 @@ class UpsertDevSessionRequest:
     sessions."""
     postgres: DevPostgresRequest | Unset = UNSET
     """Opts the developer environment into an isolated managed PostgreSQL database."""
+    buckets: list[DevBucketRequest] | Unset = UNSET
+    """Explicitly provision private workspace buckets and bindings. Requires storage:manage or admin in addition to
+    developer session authorization. Omission preserves existing resources. Repeating a revoked binding returns
+    conflict."""
     lease_seconds: int | Unset = UNSET
     """How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's
     developer lease maximum return 403 plan_limit_developer_lease."""
@@ -51,6 +56,13 @@ class UpsertDevSessionRequest:
         if not isinstance(self.postgres, Unset):
             postgres = self.postgres.to_dict()
 
+        buckets: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.buckets, Unset):
+            buckets = []
+            for buckets_item_data in self.buckets:
+                buckets_item = buckets_item_data.to_dict()
+                buckets.append(buckets_item)
+
         lease_seconds = self.lease_seconds
 
         field_dict: dict[str, Any] = {}
@@ -64,6 +76,8 @@ class UpsertDevSessionRequest:
             field_dict["workspace_id"] = workspace_id
         if postgres is not UNSET:
             field_dict["postgres"] = postgres
+        if buckets is not UNSET:
+            field_dict["buckets"] = buckets
         if lease_seconds is not UNSET:
             field_dict["lease_seconds"] = lease_seconds
 
@@ -71,6 +85,7 @@ class UpsertDevSessionRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.dev_bucket_request import DevBucketRequest
         from ..models.dev_postgres_request import DevPostgresRequest
 
         d = dict(src_dict)
@@ -97,6 +112,15 @@ class UpsertDevSessionRequest:
         else:
             postgres = DevPostgresRequest.from_dict(_postgres)
 
+        _buckets = d.pop("buckets", UNSET)
+        buckets: list[DevBucketRequest] | Unset = UNSET
+        if _buckets is not UNSET:
+            buckets = []
+            for buckets_item_data in _buckets:
+                buckets_item = DevBucketRequest.from_dict(buckets_item_data)
+
+                buckets.append(buckets_item)
+
         lease_seconds = d.pop("lease_seconds", UNSET)
 
         upsert_dev_session_request = cls(
@@ -104,6 +128,7 @@ class UpsertDevSessionRequest:
             runtime=runtime,
             workspace_id=workspace_id,
             postgres=postgres,
+            buckets=buckets,
             lease_seconds=lease_seconds,
         )
 

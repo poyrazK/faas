@@ -138,6 +138,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventExecutionRoots                  map[executionLedgerRootKey]executionLedgerRoot
+	eventExecutionOutcomes               map[executionLedgerOutcomeKey]executionLedgerOutcome
+	eventExecutionCoverage               map[string]executionCoverage
 	mcpTaskPromotionHolds                map[string]MCPTaskPromotionHold
 	workflowFailureEvidence              map[string][]workflowFailureEvidence
 	workflowFailureCaptureStartedAt      time.Time
@@ -166,6 +169,7 @@ type MemStore struct {
 	qualificationExecutions              map[string]EnvironmentQualificationExecutionStatus
 	environmentExternalOwners            map[string]environmentExternalFieldOwner
 	environmentGitOps                    map[string]*environmentGitOpsMemory
+	gitlabOAuthConnections               map[string]GitLabOAuthConnection
 	financialEvidence                    []FinancialUsageRecord
 	financialSamplingWindows             map[time.Time]financialSamplingWindow
 	financialNextSequence                int64
@@ -285,6 +289,8 @@ type MemStore struct {
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
+	outboundAIRequestContent    map[string]OutboundAIRequestContent
+	outboundAIReplays           map[string]OutboundAIReplay
 	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
@@ -733,6 +739,8 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskAttach holds ADR-1037 interactive-session records by task id.
+	appTaskAttach map[string]AppTaskAttach
 	// runtimeSnapshots mirrors the durable sanitized runtime catalog. Keys are
 	// immutable compatibility catalog keys; retirement only changes state.
 	runtimeSnapshots map[string]RuntimeSnapshotRecord
@@ -6547,6 +6555,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	}
 	for key, v := range m.invocations {
 		if v.AppID == id {
+			m.captureEventExecutionTransitionLocked(v, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(v.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, key)
 			delete(m.eventDeliverySlots, key)
 			m.deleteInvocationAttemptsLocked(key)
@@ -6673,6 +6683,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
+	m.deleteEventExecutionLedgerAppLocked(id)
 	delete(m.apps, id)
 	delete(m.appHealthHistory, id)
 	return nil
@@ -26128,6 +26139,8 @@ func (m *MemStore) DeleteInvocationsByIDs(_ context.Context, ids []string) (int,
 		}
 		if inv, ok := m.invocations[id]; ok {
 			m.captureRecoveryInvocationResultLocked(inv, time.Now().UTC())
+			m.captureEventExecutionTransitionLocked(inv, Invocation{}, time.Now().UTC(), true)
+			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
 			delete(m.eventDeliverySlots, id)
 			m.deleteInvocationAttemptsLocked(id)

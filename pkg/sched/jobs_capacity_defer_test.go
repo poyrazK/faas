@@ -9,10 +9,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type claimAfterJobBatchStore struct {
-	state.Store
+	Store state.Store
 	claim func() error
 }
 
@@ -66,7 +67,7 @@ func TestDispatchJobsCapacityDeferralPreservesConcurrentClaim(t *testing.T) {
 		winnerID, winnerLease, err = claim(2)
 		return err
 	}}
-	engine := &Engine{store: raced, log: testLog()}
+	engine := &Engine{store: statetest.NewStore(raced), log: testLog()}
 	if err := engine.DispatchJobsTick(ctx); err != nil {
 		t.Fatal(err)
 	}

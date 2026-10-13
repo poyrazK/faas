@@ -1263,7 +1263,7 @@ Read the stored release policy
 
 Replace the release policy using its current revision
 
-`gregale bindings release-policy set [--scope <SCOPE>] [--mode <off|enforce>] [--require-verification] [--max-age <DURATION>] [--require-application-ack] --expected-revision <N> [--reason <TEXT>] <app>`
+`gregale bindings release-policy set [--scope <SCOPE>] [--mode <off|enforce>] [--require-verification] [--max-age <DURATION>] [--require-application-ack] [--object-storage-require <PREFIX=read|write|read_write>] [--clear-object-storage-requirements] --expected-revision <N> [--reason <TEXT>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1272,6 +1272,8 @@ Replace the release policy using its current revision
 | `--require-verification` | alias for --mode enforce |  |
 | `--max-age <DURATION>` | maximum verification age (default 10m; 1s to 24h) |  |
 | `--require-application-ack` | require current application acknowledgements |  |
+| `--object-storage-require <PREFIX=read|write|read_write>` | require storage operations (repeatable; replaces all storage requirements) |  |
+| `--clear-object-storage-requirements` | explicitly remove all storage operation requirements |  |
 | `--expected-revision <N>` | current policy revision; use 0 initially | required |
 | `--reason <TEXT>` | update reason; required when disabling enforcement |  |
 
@@ -1304,7 +1306,7 @@ gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expec
 
 Evaluate recorded binding evidence and runtime freshness for CI
 
-`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
+`gregale bindings check [--interactive] [--app <SLUG>] [--scope <SCOPE>] [--max-verification-age <DURATION>] [--deployment <ID|vN>] [--allow-unsupported] [--require-application-ack] [--release-policy] [--object-storage-require <PREFIX=read|write|read_write>] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1315,8 +1317,10 @@ Evaluate recorded binding evidence and runtime freshness for CI
 | `--deployment <ID|vN>` | exact live deployment whose evidence must pass, including zero-traffic candidates |  |
 | `--allow-unsupported` | waive connectivity coverage for active queue and outbound bindings |  |
 | `--require-application-ack` | require current PostgreSQL/object-storage application acknowledgements |  |
+| `--release-policy` | apply stored scope requirements and confirm the policy after every inventory evaluation (read-only) |  |
+| `--object-storage-require <PREFIX=read|write|read_write>` | require recorded storage operation evidence (repeatable; no writes) |  |
 | `--wait` | poll read-only inventory while probes, refreshes or application acknowledgements are pending |  |
-| `--timeout <DURATION>` | maximum preflight wait (default 5m) |  |
+| `--timeout <DURATION>` | maximum waiting or policy-aware preflight time (default 5m) |  |
 | `--poll-interval <DURATION>` | inventory polling interval with --wait (default 1s) |  |
 
 Examples:
@@ -1325,6 +1329,7 @@ Examples:
 gregale bindings check --app my-api --interactive
 gregale bindings check my-api --max-verification-age 10m --json
 gregale bindings check my-api --scope production
+gregale bindings check my-api --deployment v12 --release-policy --wait --json
 gregale bindings check my-api --deployment v12 --max-verification-age 10m --json
 ```
 
@@ -1378,17 +1383,20 @@ gregale bindings object-storage revoke my-api assets BINDING_ID
 
 Check a private service route or test a managed PostgreSQL or object-storage binding
 
-`gregale bindings verify [--all] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
+`gregale bindings verify [--all] [--release-policy] [--dry-run] [--postgres <ENVIRONMENT_KEY>] [--outbound <INTEGRATION_ID>] [--object-storage <PREFIX>] [--object-storage-write] [--deployment <ID|vN>] [--poll-interval <D>] [--wait-timeout <D>] <app> [<service>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--all` | verify services, managed PostgreSQL, object storage and configured outbound bindings |  |
+| `--release-policy` | run the stored policy&#39;s required storage canaries and finish with policy-aware preflight |  |
+| `--dry-run` | preview --release-policy storage operations without creating tasks |  |
 | `--postgres <ENVIRONMENT_KEY>` | verify one managed PostgreSQL binding by environment key |  |
 | `--outbound <INTEGRATION_ID>` | verify a configured outbound integration by UUID |  |
 | `--object-storage <PREFIX>` | verify one object-storage binding by environment prefix (read access only) |  |
+| `--object-storage-write` | opt into a tiny upload and cleanup; also verify download for read/write bindings |  |
 | `--deployment <ID|vN>` | exact live deployment to verify, including zero-traffic candidates |  |
 | `--poll-interval <D>` | status polling interval while the canary runs |  |
-| `--wait-timeout <D>` | maximum time to wait for the canary task |  |
+| `--wait-timeout <D>` | maximum time to wait for canaries; bounds the entire --release-policy workflow |  |
 
 Examples:
 
@@ -1398,6 +1406,8 @@ gregale bindings verify my-api --all
 gregale bindings verify my-api --deployment v12 --all
 gregale bindings verify my-api --postgres DATABASE_URL
 gregale bindings verify my-api --object-storage GREGALE_S3_ASSETS
+gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
+gregale bindings verify my-api --deployment v12 --release-policy --object-storage-write --json
 ```
 
 ### bindings smoke
@@ -1450,13 +1460,16 @@ gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
+gregale ai logs show <integration-id> <request-id>
+gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
+gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini
 ```
 
 ### ai policy
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1465,8 +1478,24 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
 | `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
+| `--request-log-content <on|off>` | also keep the first 32 KiB of each logged call&#39;s bodies for 3 days | one of `on` · `off` |
 | `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
 | `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
+
+### ai content-policy
+
+Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)
+
+`gregale ai content-policy [--email <ACTION>] [--payment-card <ACTION>] [--iban <ACTION>] [--secrets <ACTION>] [--block-term <TERM>] [--clear-terms] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--email <ACTION>` | e-mail addresses | one of `off` · `redact` · `block` |
+| `--payment-card <ACTION>` | payment card numbers | one of `off` · `redact` · `block` |
+| `--iban <ACTION>` | IBANs | one of `off` · `redact` · `block` |
+| `--secrets <ACTION>` | API keys, tokens and private keys | one of `off` · `redact` · `block` |
+| `--block-term <TERM>` | block requests containing this term, ignoring case (repeat) |  |
+| `--clear-terms` | remove every blocked term first |  |
 
 ### ai app-limit
 
@@ -1501,7 +1530,7 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 
 | Flag | Meaning | |
 |---|---|---|
-| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
+| `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears) |  |
 
 ### ai catalog
 
@@ -1571,11 +1600,23 @@ List budget alerts recorded at 80% and 100%
 |---|---|---|
 | `--limit <N>` | alerts to show, 1 to 100 |  |
 
+### ai replay
+
+Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay
+
+`gregale ai replay [--target <TARGET>] [--no-wait] [--timeout <duration>] [show] <integration-id|replay-id> [<request-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] to replay on (repeat, at most 5) |  |
+| `--no-wait` | print the replay without waiting for results |  |
+| `--timeout <duration>` | how long to wait for results (default 3m) |  |
+
 ### ai logs
 
-Page the opt-in AI request log, newest first
+Page the opt-in AI request log, newest first, or show one call&#39;s captured bodies
 
-`gregale ai logs [--limit <N>] [--before <TIME>] <integration-id>`
+`gregale ai logs [--limit <N>] [--before <TIME>] [show] <integration-id> [<request-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1796,13 +1837,14 @@ Manage transactional PostgreSQL outbox sources (internal)
 
 Register a fixed app destination
 
-`gregale commit add --name <NAME> --operation-policy <NAME> [--contract-version <VERSION>] [--allow-tenant-selection]`
+`gregale commit add --name <NAME> [--destination <DESTINATION>] [--operation-policy <NAME>] [--contract-version <VERSION>] [--allow-tenant-selection]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | account source name | required |
-| `--operation-policy <NAME>` | managed Operations queue policy | required |
-| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` |
+| `--destination <DESTINATION>` | immutable destination (default operation) | one of `operation` · `event` |
+| `--operation-policy <NAME>` | required for operation destinations; forbidden for event destinations |  |
+| `--contract-version <VERSION>` | immutable source contract version (default 1) | one of `1` · `2` · `3` |
 | `--allow-tenant-selection` | grant version 2 account-owner customer selection |  |
 
 ### commit connection
@@ -1837,6 +1879,98 @@ Read-only source diagnostics and optional local database checks
 |---|---|---|
 | `--file <PATH>` | local TLS PostgreSQL credential file; never uploaded |  |
 
+### commit recovery-alerts
+
+Manage saved historical alerts without polling
+
+`gregale commit recovery-alerts [--checkpoint <PATH>] [--replay] [--ack-alerts <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--checkpoint <PATH>` | saved recovery watch checkpoint |  |
+| `--replay` | emit pending historical alerts as JSON lines |  |
+| `--ack-alerts <PATH>` | atomically acknowledge exact incident_id/sequence entries |  |
+
+### commit recovery-status
+
+Read current delivery evidence for saved recovery attempts
+
+`gregale commit recovery-status [--plan <PATH>] [--result <PATH>] [--resume <PATH>] [--refresh <PATH>] [--watch] [--watch-diagnostics] [--checkpoint <PATH>] [--read-retries <N>] [--diagnostics] [--ack-alerts <PATH>] [--alerts-json] [--stall-threshold <DURATION>] [--max-diagnostic-age <DURATION>] [--max-observation-age <DURATION>] [--interval <DURATION>] [--limit <N>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan JSON |  |
+| `--result <PATH>` | saved apply result JSON |  |
+| `--resume <PATH>` | continue saved status unread items and failed reads |  |
+| `--refresh <PATH>` | reread saved status selection and track changes |  |
+| `--watch` | monitor acknowledged recovery executions |  |
+| `--watch-diagnostics` | watch until complete, fresh diagnostic coverage; enables watch and diagnostics |  |
+| `--checkpoint <PATH>` | atomically save watch progress for restart |  |
+| `--read-retries <N>` | total transient watch read retries (0..20; default 0) |  |
+| `--diagnostics` | include bounded live delivery blocker diagnostics |  |
+| `--ack-alerts <PATH>` | exact alert acknowledgements JSON (requires checkpoint and resume or refresh) |  |
+| `--alerts-json` | watch blocker lifecycle JSON lines on stderr (requires stall-threshold) |  |
+| `--stall-threshold <DURATION>` | persistent blocker alerts (100ms-24h; requires watch, diagnostics and max-diagnostic-age) |  |
+| `--max-diagnostic-age <DURATION>` | diagnostic sample age limit (100ms-24h; requires diagnostics) |  |
+| `--max-observation-age <DURATION>` | watch evidence age limit (100ms-24h; default disabled) |  |
+| `--interval <DURATION>` | watch interval (100ms-1m; default 1s) |  |
+| `--limit <N>` | subscriber observations (1..50; default 50) |  |
+| `--recipient-pages <N>` | receipt pages per item (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall timeout (default 2m) |  |
+
+### commit recovery-apply
+
+Apply freshly revalidated reviewed recovery actions
+
+`gregale commit recovery-apply [--plan <PATH>] [--yes] [--limit <N>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan JSON |  |
+| `--yes` | confirm recovery submissions |  |
+| `--limit <N>` | eligible items examined (1..50; default 50) |  |
+| `--recipient-pages <N>` | receipt pages per item (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall timeout (default 2m) |  |
+
+### commit recovery-plan
+
+Plan selective recovery from fresh receipt evidence
+
+`gregale commit recovery-plan [--report <PATH>] [--recipient-pages <N>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--report <PATH>` | saved delivery report; fixes selection and filter |  |
+| `--recipient-pages <N>` | recipient pages per publication (1..20; default 1) |  |
+| `--timeout <DURATION>` | overall read timeout (default 2m) |  |
+
+### commit delivery-report
+
+Sample recent publication subscriber outcomes
+
+`gregale commit delivery-report [--refresh <PATH>] [--resume <PATH>] [--recipient-pages <N>] [--limit <N>] [--before <CURSOR>] [--subscription-id <UUID>] [--timeout <DURATION>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--refresh <PATH>` | reread saved selection with fresh observations |  |
+| `--resume <PATH>` | resume saved report; fixes selection and filter |  |
+| `--recipient-pages <N>` | recipient pages per publication (1..20; default 1) |  |
+| `--limit <N>` | publications per page (1..200; default 50) |  |
+| `--before <CURSOR>` | history next_before cursor |  |
+| `--subscription-id <UUID>` | filter original subscriber |  |
+| `--timeout <DURATION>` | overall read timeout (default 2m) |  |
+
+### commit history
+
+List retained publication acceptance receipts
+
+`gregale commit history [--before <CURSOR>] [--limit <N>] <source>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--before <CURSOR>` | next_before continuation cursor |  |
+| `--limit <N>` | receipts per page (1..200; default 50) |  |
+
 ### commit inspect
 
 Inspect event acceptance, retained execution and blocked observations
@@ -1845,10 +1979,11 @@ Inspect event acceptance, retained execution and blocked observations
 
 Wait without cancelling durable work on timeout
 
-`gregale commit wait [--until <STATE>] [--timeout <D>] [--interval <D>]`
+`gregale commit wait [--subscription-id <UUID>] [--until <STATE>] [--timeout <D>] [--interval <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--subscription-id <UUID>` | original application subscriber; requires --until completed |  |
 | `--until <STATE>` | accepted or completed |  |
 | `--timeout <D>` | maximum wait (default 2m) |  |
 | `--interval <D>` | poll interval (default 1s) |  |
@@ -2197,6 +2332,51 @@ Inspect retained consumer executions and handler outcomes
 | Flag | Meaning | |
 |---|---|---|
 | `--window <5m|15m|1h|6h|24h>` | attempt and completion window (default 5m) |  |
+
+### events delivery-health-alerts
+
+Inspect, replay, or acknowledge a local delivery health alert queue
+
+`gregale events delivery-health-alerts [--checkpoint <PATH>] [--replay] [--ack-alerts <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--checkpoint <PATH>` | delivery health checkpoint |  |
+| `--replay` | replay pending JSON lines |  |
+| `--ack-alerts <PATH>` | exact acknowledgements JSON |  |
+
+### events subscription-delivery-health
+
+Inspect routing, retained executions, and oldest pending blockers
+
+`gregale events subscription-delivery-health [--window <WINDOW>] [--watch] [--alerts-json] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--window <WINDOW>` | 5m\|15m\|1h\|6h\|24h |  |
+| `--watch` | watch configured local health thresholds |  |
+| `--alerts-json` | lifecycle alert JSON lines on stderr |  |
+| `--interval <DURATION>` | poll interval (100ms-1m) |  |
+| `--timeout <DURATION>` | watch deadline (up to 24h) |  |
+| `--max-age <DURATION>` | maximum sample age |  |
+| `--oldest-pending-threshold <DURATION>` | pending acceptance age threshold |  |
+| `--retrying-threshold <N>` | retained retrying execution threshold |  |
+| `--dead-letters-threshold <N>` | retained dead-letter execution threshold |  |
+| `--pause-threshold <DURATION>` | subscription pause duration threshold |  |
+| `--circuit-threshold <DURATION>` | locally sampled circuit restriction duration |  |
+| `--capacity-threshold <DURATION>` | locally sampled capacity wait duration |  |
+| `--waiting-reason-count <REASON=N>` | repeatable pending reason count threshold |  |
+| `--waiting-reason-duration <REASON=DURATION>` | repeatable sustained nonzero reason threshold |  |
+| `--checkpoint <PATH>` | persist delivery health watch state |  |
+| `--resume` | resume checkpoint with fresh evidence |  |
+| `--ack-inbox <PATH>` | live acknowledgement JSON batch; requires checkpoint |  |
+| `--slo-routing-latency <DURATION>` | recorded routing p95 target |  |
+| `--slo-completion-latency <DURATION>` | successful completion p95 target |  |
+| `--slo-retry-rate <N>` | routing retries/second target |  |
+| `--slo-dead-letter-rate <N>` | dead letters/second target |  |
+| `--slo-routing-failure-budget <PERCENT>` | terminal routing failure budget |  |
+| `--slo-min-samples <N>` | minimum window samples |  |
+| `--slo-sustain <DURATION>` | sustained fresh breach duration |  |
 
 ### events subscription-health
 
@@ -2562,10 +2742,12 @@ Inspect immutable routing outcomes and replay history for one event
 
 Retry one terminal pre-invocation recipient failure using its event identity and subscription ID from events deliveries
 
-`gregale events replay [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
+`gregale events replay [--expected-accepted-at <RFC3339>] [--expected-generation <N>] [--allow-expired] --event-id <ID> --event-source <SOURCE> --subscription-id <ID> <app>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--expected-accepted-at <RFC3339>` | guard original acceptance in replay transaction |  |
+| `--expected-generation <N>` | guard routing generation; requires expected-accepted-at |  |
 | `--allow-expired` | explicitly bypass captured delivery age |  |
 | `--event-id <ID>` | published event id | required |
 | `--event-source <SOURCE>` | published event source | required |
@@ -2985,10 +3167,12 @@ Follow an accepted fresh restart without submitting another request
 
 Run a one-off command against the live deployment
 
-`gregale app <slug> exec [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale app <slug> exec [--interactive] [--tty] [--shell] [--detach] [--timeout-seconds <N>] [--max-output-bytes <N>] [--operation-policy <NAME>] [--operation-key <JSON>] [--equivalence-key <KEY>] [--idempotency-key <KEY>] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--interactive` | attach stdin and stream output live (-i; default command /bin/sh) |  |
+| `--tty` | allocate a remote terminal (-t; use -it) |  |
 | `--shell` | interpret one command string through the app shell |  |
 | `--detach` | return after the task is queued |  |
 | `--timeout-seconds <N>` | server-side command timeout |  |
@@ -2999,6 +3183,27 @@ Run a one-off command against the live deployment
 | `--idempotency-key <KEY>` | stable retry identity for this submission |  |
 | `--poll-interval <D>` | status polling interval while attached |  |
 | `--wait-timeout <D>` | maximum attached wait |  |
+
+### app cp
+
+Copy a path out of a fresh VM of the live deployment
+
+`gregale app <slug> cp [--wait-timeout <D>] <remote-path> <local-path|->`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
+
+### app port-forward
+
+Forward a local port to HOST:PORT reached from inside the app&#39;s network
+
+`gregale app <slug> port-forward [--address <A>] [--wait-timeout <D>] [LOCAL_PORT:]HOST:PORT`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--address <A>` | local address to listen on (default 127.0.0.1) |  |
+| `--wait-timeout <D>` | maximum time to wait for the task VM to start |  |
 
 ### app security
 
@@ -6011,7 +6216,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -6158,7 +6363,7 @@ Show durable TLS status for all domains
 
 Sync local changes to a developer environment
 
-`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
+`gregale dev [<subcommand>] [--path <DIR>] [--all] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--once] [--stop] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--postgres-seed <CMD>] [--reseed] [--debug] [--debug-port <PORT>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6171,6 +6376,7 @@ Sync local changes to a developer environment
 | `--stop` | tear down the developer environment |  |
 | `--no-logs` | do not attach the live runtime log stream |  |
 | `--open` | open the developer environment URL after the first live sync |  |
+| `--bucket <NAME>` | provision a private workspace bucket; repeatable |  |
 | `--postgres` | provision an isolated PostgreSQL database and inject DATABASE_URL |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--postgres-seed <CMD>` | shell command run once in the developer app after its database is ready |  |
@@ -6302,7 +6508,7 @@ run `gregale delayed-task add` against the developer app
 
 preflight a project and prepare the first developer environment
 
-`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
+`gregale dev setup [--path <DIR>] [--name <PROJECT>] [--env-file <PATH>] [--service-override-file <PATH>] [--start] [--once] [--no-logs] [--open] [--bucket <NAME>] [--postgres] [--postgres-region <REGION>] [--ttl <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -6314,6 +6520,7 @@ preflight a project and prepare the first developer environment
 | `--once` | sync once and exit |  |
 | `--no-logs` | do not attach runtime logs |  |
 | `--open` | open the verified URL |  |
+| `--bucket <NAME>` | provision a private workspace bucket; repeatable |  |
 | `--postgres` | provision an isolated PostgreSQL database |  |
 | `--postgres-region <REGION>` | choose managed database placement |  |
 | `--ttl <DURATION>` | environment lease after the latest sync |  |
@@ -7559,7 +7766,7 @@ Show what the edge rejected for an app: pre-auth blocks, validation failures, an
 
 Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breaker, and async-route policy; --config loads reusable JSON scenarios (see edge-rule-trace docs)
 
-`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
+`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7570,6 +7777,7 @@ Simulate composed edge-rule outcomes and budget, throttle, retry, circuit-breake
 | `--client-ip <IP>` | simulated client IP for kind=ip rules |  |
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--asn <AS>` | simulated client autonomous system for asn conditions (e.g. AS13335) |  |
+| `--verified-bot` | simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims) |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 | `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 | `--proposal <file|->` | compare against a proposed change: JSON {add,update,remove} file or - for stdin |  |
@@ -8870,7 +9078,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |

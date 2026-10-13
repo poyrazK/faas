@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -92,7 +93,7 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 			if _, err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
 				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
 				Source: row.Source, Type: row.Type, Filter: row.Filter, SchemaVersions: row.SchemaVersions,
-			}, now, false); err != nil {
+			}, now, false, 0); err != nil {
 				routeErrs = append(routeErrs, err)
 			}
 		}
@@ -200,7 +201,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 			}
 			matched, routeErr = result.Matched, err
 		} else {
-			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true)
+			matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, recipient, now, true, work.ID)
 		}
 		finishedAt := time.Now().UTC()
 		if l.now != nil {
@@ -230,7 +231,7 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 	return err
 }
 
-func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool) (bool, error) {
+func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, eventPayload []byte, row state.PublishedEventRecipient, now time.Time, requireActiveApp bool, acceptanceID int64) (bool, error) {
 	if row.ObjectNotification != nil {
 		return l.routeObjectNotification(ctx, envelope, row, now)
 	}
@@ -284,14 +285,18 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		"tracestate":  envelope.Tracestate,
 		"baggage":     envelope.Baggage,
 	}
+	eventHeaders := map[string]string{
+		"x-gregale-event-id":              envelope.ID,
+		"x-gregale-event-source":          envelope.Source,
+		"x-gregale-event-type":            envelope.Type,
+		"x-gregale-event-subscription-id": row.ID,
+	}
+	if acceptanceID > 0 {
+		eventHeaders["x-gregale-event-acceptance-id"] = strconv.FormatInt(acceptanceID, 10)
+	}
 	headers, err := json.Marshal(pkgtrace.MergeHeaderMap(
 		pkgtrace.ExtractHeaders(ctx, producerHeaders),
-		map[string]string{
-			"x-gregale-event-id":              envelope.ID,
-			"x-gregale-event-source":          envelope.Source,
-			"x-gregale-event-type":            envelope.Type,
-			"x-gregale-event-subscription-id": row.ID,
-		},
+		eventHeaders,
 	))
 	if err != nil {
 		return true, fmt.Errorf("subscription %s: encode invocation headers: %w", row.ID, &eventFanoutRouteError{
@@ -646,7 +651,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 				}
 				matched, routeErr = result.Matched, err
 			} else {
-				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true)
+				matched, routeErr = l.routeSubscription(ctx, envelope, eventPayload, work.Recipient, now, true, work.OutboxID)
 			}
 		}
 		finishedAt := time.Now().UTC()

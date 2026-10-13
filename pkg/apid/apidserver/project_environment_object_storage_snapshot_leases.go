@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -50,6 +51,13 @@ func (s cloneObjectSnapshotLeaseAdapter) ProjectEnvironmentCloneObjectManifest(c
 		return state.ProjectEnvironmentCloneObjectManifest{}, state.ErrNotFound
 	}
 	manifest, err := s.ProjectEnvironmentCloneLeasedObjectManifestStore.ProjectEnvironmentCloneObjectManifest(ctx, accountID, projectID, operationID, sourceBucketID)
+	if errors.Is(err, state.ErrNotFound) {
+		for _, resource := range op.Resources {
+			if resource.Kind == "data_checkpoint" {
+				return state.ProjectEnvironmentCloneObjectManifest{}, state.ErrConflict
+			}
+		}
+	}
 	if err == nil {
 		err = s.verifyRetention(ctx, manifest)
 	}

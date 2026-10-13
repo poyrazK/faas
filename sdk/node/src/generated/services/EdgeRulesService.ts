@@ -80,6 +80,162 @@ export class EdgeRulesService {
     });
   }
   /**
+   * List the account's reusable edge-rule lists.
+   * ADR-963. Items are omitted here; fetch one list for its items.
+   * referenced_by names the rules whose match conditions use the list.
+   *
+   * @returns ListEdgeRuleListsResponse The account's lists, by name.
+   * @throws ApiError
+   */
+  public static listEdgeRuleLists(): CancelablePromise<ListEdgeRuleListsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/edge-rule-lists',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create a reusable edge-rule list.
+   * ADR-963. Items are validated for the list kind and stored
+   * canonicalized, deduplicated and sorted. Lists per account and items
+   * per list are plan limits.
+   *
+   * @returns EdgeRuleListResponse The created list.
+   * @throws ApiError
+   */
+  public static createEdgeRuleList({
+    requestBody,
+  }: {
+    requestBody: CreateEdgeRuleListRequest,
+  }): CancelablePromise<EdgeRuleListResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/edge-rule-lists',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_edge_rule_lists | plan_limit_edge_rule_list_items`,
+        409: `code: edge_rule_list_exists`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get one edge-rule list with its items.
+   * @returns EdgeRuleListResponse The list.
+   * @throws ApiError
+   */
+  public static getEdgeRuleList({
+    name,
+  }: {
+    /**
+     * Edge-rule list name, unique within the account.
+     */
+    name: string,
+  }): CancelablePromise<EdgeRuleListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/edge-rule-lists/{name}',
+      path: {
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: edge_rule_list_not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Edit an edge-rule list.
+   * ADR-963. items replaces the list; add and remove edit it in place
+   * (remove applies after add) and cannot be combined with items.
+   * Gateways pick up the change for every referencing rule within a few
+   * seconds; no rule-set version is recorded.
+   *
+   * @returns EdgeRuleListResponse The updated list.
+   * @throws ApiError
+   */
+  public static updateEdgeRuleList({
+    name,
+    requestBody,
+  }: {
+    /**
+     * Edge-rule list name, unique within the account.
+     */
+    name: string,
+    requestBody: UpdateEdgeRuleListRequest,
+  }): CancelablePromise<EdgeRuleListResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/edge-rule-lists/{name}',
+      path: {
+        'name': name,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: plan_limit_edge_rule_list_items`,
+        404: `code: edge_rule_list_not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an unreferenced edge-rule list.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteEdgeRuleList({
+    name,
+  }: {
+    /**
+     * Edge-rule list name, unique within the account.
+     */
+    name: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/edge-rule-lists/{name}',
+      path: {
+        'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: edge_rule_list_not_found`,
+        409: `code: edge_rule_list_in_use (rules still reference the list)`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List every edge rule bound to one app.
    * @returns EdgeRuleResponse Edge rules for this app, ordered by priority ASC.
    * @throws ApiError
@@ -275,214 +431,6 @@ export class EdgeRulesService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Per-route throttle recommender (ADR-091 D20.5 amendment,
-   * issue #881). Read-only: returns a suggested rps/burst per
-   * route over the window, clamped to the customer's plan
-   * ceiling so the suggestion is always settable.
-   *
-   * The recommender is ADVICE-ONLY — it never auto-applies.
-   * Customers confirm via POST /v1/apps/{slug}/edge-rules.
-   *
-   * @returns ThrottleSuggestionsResponse Suggestion payload. Source is `prometheus` on success
-   * or `degraded: <reason>` on Prometheus failure
-   * (response is still 200 with empty Suggestions — the
-   * dashboard's empty-state branch handles it).
-   *
-   * @throws ApiError
-   */
-  public static getAppThrottleSuggestions({
-    slug,
-    range = '5m',
-  }: {
-    /**
-     * App slug (lowercase, kebab-case; per-account unique). The recommender walks the per-route rate() for this app's gatewayd-internal reader.
-     */
-    slug: string,
-    /**
-     * Prometheus window. Closed vocabulary (see
-     * `pkg/appmetrics.Ranges`). Defaults to 5m.
-     *
-     */
-    range?: string,
-  }): CancelablePromise<ThrottleSuggestionsResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/throttle-suggestions',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'range': range,
-      },
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * List the account's reusable edge-rule lists.
-   * ADR-963. Items are omitted here; fetch one list for its items.
-   * referenced_by names the rules whose match conditions use the list.
-   *
-   * @returns ListEdgeRuleListsResponse The account's lists, by name.
-   * @throws ApiError
-   */
-  public static listEdgeRuleLists(): CancelablePromise<ListEdgeRuleListsResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/edge-rule-lists',
-      errors: {
-        401: `code: unauthorized`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Create a reusable edge-rule list.
-   * ADR-963. Items are validated for the list kind and stored
-   * canonicalized, deduplicated and sorted. Lists per account and items
-   * per list are plan limits.
-   *
-   * @returns EdgeRuleListResponse The created list.
-   * @throws ApiError
-   */
-  public static createEdgeRuleList({
-    requestBody,
-  }: {
-    requestBody: CreateEdgeRuleListRequest,
-  }): CancelablePromise<EdgeRuleListResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/edge-rule-lists',
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: plan_limit_edge_rule_lists | plan_limit_edge_rule_list_items`,
-        409: `code: edge_rule_list_exists`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Get one edge-rule list with its items.
-   * @returns EdgeRuleListResponse The list.
-   * @throws ApiError
-   */
-  public static getEdgeRuleList({
-    name,
-  }: {
-    /**
-     * Edge-rule list name, unique within the account.
-     */
-    name: string,
-  }): CancelablePromise<EdgeRuleListResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/edge-rule-lists/{name}',
-      path: {
-        'name': name,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        404: `code: edge_rule_list_not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Edit an edge-rule list.
-   * ADR-963. items replaces the list; add and remove edit it in place
-   * (remove applies after add) and cannot be combined with items.
-   * Gateways pick up the change for every referencing rule within a few
-   * seconds; no rule-set version is recorded.
-   *
-   * @returns EdgeRuleListResponse The updated list.
-   * @throws ApiError
-   */
-  public static updateEdgeRuleList({
-    name,
-    requestBody,
-  }: {
-    /**
-     * Edge-rule list name, unique within the account.
-     */
-    name: string,
-    requestBody: UpdateEdgeRuleListRequest,
-  }): CancelablePromise<EdgeRuleListResponse> {
-    return __request(OpenAPI, {
-      method: 'PATCH',
-      url: '/v1/edge-rule-lists/{name}',
-      path: {
-        'name': name,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        403: `code: plan_limit_edge_rule_list_items`,
-        404: `code: edge_rule_list_not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Delete an unreferenced edge-rule list.
-   * @returns void
-   * @throws ApiError
-   */
-  public static deleteEdgeRuleList({
-    name,
-  }: {
-    /**
-     * Edge-rule list name, unique within the account.
-     */
-    name: string,
-  }): CancelablePromise<void> {
-    return __request(OpenAPI, {
-      method: 'DELETE',
-      url: '/v1/edge-rule-lists/{name}',
-      path: {
-        'name': name,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        404: `code: edge_rule_list_not_found`,
-        409: `code: edge_rule_list_in_use (rules still reference the list)`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -719,6 +667,58 @@ export class EdgeRulesService {
         404: `code: not_found`,
         409: `The version references a CORS preset that no longer exists.`,
         412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Per-route throttle recommender (ADR-091 D20.5 amendment,
+   * issue #881). Read-only: returns a suggested rps/burst per
+   * route over the window, clamped to the customer's plan
+   * ceiling so the suggestion is always settable.
+   *
+   * The recommender is ADVICE-ONLY — it never auto-applies.
+   * Customers confirm via POST /v1/apps/{slug}/edge-rules.
+   *
+   * @returns ThrottleSuggestionsResponse Suggestion payload. Source is `prometheus` on success
+   * or `degraded: <reason>` on Prometheus failure
+   * (response is still 200 with empty Suggestions — the
+   * dashboard's empty-state branch handles it).
+   *
+   * @throws ApiError
+   */
+  public static getAppThrottleSuggestions({
+    slug,
+    range = '5m',
+  }: {
+    /**
+     * App slug (lowercase, kebab-case; per-account unique). The recommender walks the per-route rate() for this app's gatewayd-internal reader.
+     */
+    slug: string,
+    /**
+     * Prometheus window. Closed vocabulary (see
+     * `pkg/appmetrics.Ranges`). Defaults to 5m.
+     *
+     */
+    range?: string,
+  }): CancelablePromise<ThrottleSuggestionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/throttle-suggestions',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'range': range,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

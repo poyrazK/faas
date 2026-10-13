@@ -330,6 +330,15 @@ full Linux/macOS race suites and three lifecycle leak checks.
 Customer cutover activation remains disabled, and supported native lifecycle
 acceptance remains pending.
 
+Managed PostgreSQL drain plans (2026-10-13, [ADR-1153](adr/1153-managed-postgres-durable-drain-plans.md))
+capture the app instance catalog and native member reservations atomically under
+an existing admission fence and ownership epoch. Restart recovery reuses the
+original receipts. Unsupported members, empty/oversized inventories and stale
+authority block the catalog verdict; terminal rows alone are never receipts.
+The `catalog_retired` observation remains separate from external SQL-session
+isolation, route convergence and customer activation. Production provisioning
+and customer activation remain disabled; native KVM acceptance is outstanding.
+
 Startup can now retire absent, fully checkpointed, unclaimed prepared-network
 reservations from a different kernel boot
 ([ADR-478](adr/478-managed-postgres-prior-boot-spare-retirement.md)). Current UID

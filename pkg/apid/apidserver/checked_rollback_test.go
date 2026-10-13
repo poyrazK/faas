@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func checkedRollbackAPIFixture(t *testing.T) (testEnv, state.App, state.Deployment, state.Deployment) {
@@ -190,8 +191,8 @@ func TestCheckedRollbackAPIServiceWaitsForMatchingHandoff(t *testing.T) {
 }
 
 type failingCheckedRollbackStore struct {
-	*state.MemStore
-	err error
+	MemStore *state.MemStore
+	err      error
 }
 
 func (f failingCheckedRollbackStore) CreateCheckedRollback(context.Context, string, string, string, string, string) (api.RollbackOperation, error) {
@@ -205,7 +206,7 @@ func TestCheckedRollbackPersistFailureIsLogged(t *testing.T) {
 	e, app, target, current := checkedRollbackAPIFixture(t)
 	var logs bytes.Buffer
 	e.s.log = slog.New(slog.NewJSONHandler(&logs, nil))
-	e.s.store = failingCheckedRollbackStore{MemStore: e.store, err: errors.New("canceling statement due to statement timeout")}
+	e.s.store = statetest.NewMem(failingCheckedRollbackStore{MemStore: e.store, err: errors.New("canceling statement due to statement timeout")})
 	_, _, problem := e.s.persistCheckedRollback(t.Context(), e.acct, app, api.RollbackRequest{}, target, current.ID)
 	if problem == nil || problem.Status != http.StatusServiceUnavailable {
 		t.Fatalf("problem = %+v, want the retryable 503", problem)

@@ -30,7 +30,7 @@ func newWorkloadFixture(t *testing.T, basic gitOpsTestStore, mode string, plan a
 		t.Fatal(err)
 	}
 	desired, err := environmentsync.Compile(api.EnvironmentDefinition{APIVersion: environmentsync.APIVersion, Project: project.Slug, Environment: "production", Workloads: map[string]api.EnvironmentWorkload{
-		"api":      {ServiceBindings: map[string]api.EnvironmentServiceBinding{"function": {Workload: "function", EnvKey: "FUNCTION_URL"}}, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "example/api@sha256:" + strings.Repeat("a", 64)}, Runtime: json.RawMessage(`{"port":8081}`)},
+		"api":      {ServiceBindings: map[string]api.EnvironmentServiceBinding{"function": {Workload: "function", EnvKey: "FUNCTION_URL"}}, Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "example/api@sha256:" + strings.Repeat("a", 64), FullRootfs: true}, Runtime: json.RawMessage(`{"port":8081}`)},
 		"function": {Source: &api.EnvironmentWorkloadSource{Kind: "function", Runtime: "node22"}, Runtime: json.RawMessage(`{"port":8080}`)},
 		"job": {Source: &api.EnvironmentWorkloadSource{Kind: "image", Image: "example/job@sha256:" + strings.Repeat("b", 64)}, Runtime: json.RawMessage(`{"execution_mode":"job"}`),
 			JobSmoke:      &api.EnvironmentJobSmoke{Command: []string{"node", "scripts/qualify.js"}, TimeoutSeconds: 30},
@@ -141,6 +141,16 @@ func TestEnvironmentGitOpsNewWorkloadReservation(t *testing.T) {
 			}
 			switch frozen.Resource {
 			case "workload/api":
+				if dep.FullRootfsOverride == nil || !*dep.FullRootfsOverride || frozen.Source == nil || !frozen.Source.FullRootfs ||
+					frozen.DeploymentInputs != nil {
+					t.Fatalf("new image candidate lost reviewed full-rootfs opt-in: deployment=%+v frozen=%+v", dep, frozen)
+				}
+				withoutOptIn := dep
+				disabled := false
+				withoutOptIn.FullRootfsOverride = &disabled
+				if _, err := withoutOptIn.ScopedWorkloadRuntime(); err == nil {
+					t.Fatal("candidate accepted full-rootfs policy different from its reviewed inputs")
+				}
 				binding, ok := frozen.ServiceBindings["function"]
 				if !ok || binding.TargetAppID != ids["function"] || binding.EnvKey != "FUNCTION_URL" {
 					t.Fatalf("new API candidate lost its pinned function binding: %+v", frozen.ServiceBindings)

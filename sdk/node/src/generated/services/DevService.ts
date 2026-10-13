@@ -291,12 +291,16 @@ export class DevService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }
   /**
    * Inspect a remote developer environment.
-   * Returns the stable URL, app, lease expiry, and safe PostgreSQL binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
+   * Returns the stable URL, app, lease expiry, and safe PostgreSQL and automatic bucket binding state of one developer environment. Unlike the upsert, this read never renews the lease or provisions resources.
    * @returns DevSessionResponse Developer environment.
    * @throws ApiError
    */
@@ -330,6 +334,10 @@ export class DevService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -369,6 +377,10 @@ export class DevService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -490,6 +502,33 @@ export class DevService {
     });
   }
   /**
+   * Read fault-match counts for the current scenario plan.
+   * Returns run-scoped counts of HTTP requests and TCP connections matched by the current or most recently cleared fault plan.
+   * @returns ScenarioTestChaosMatchesResponse Fault-match evidence for the current plan generation.
+   * @throws ApiError
+   */
+  public static getScenarioTestChaosMatches({
+    runId,
+  }: {
+    /**
+     * Lowercase hexadecimal ID shared by all developer sessions in this scenario run.
+     */
+    runId: string,
+  }): CancelablePromise<ScenarioTestChaosMatchesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/dev/test-runs/{run_id}/chaos/matches',
+      path: {
+        'run_id': runId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
    * Record a redacted edit-to-live receipt.
    * Stores bounded phase timings for one developer deployment. Repeating the same app and deployment ID is idempotent.
    * @returns DevSyncHistoryItem Receipt stored or already present.
@@ -567,33 +606,6 @@ export class DevService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-      },
-    });
-  }
-  /**
-   * Read fault-match counts for the current scenario plan.
-   * Returns run-scoped counts of HTTP requests and TCP connections matched by the current or most recently cleared fault plan.
-   * @returns ScenarioTestChaosMatchesResponse Fault-match evidence for the current plan generation.
-   * @throws ApiError
-   */
-  public static getScenarioTestChaosMatches({
-    runId,
-  }: {
-    /**
-     * Lowercase hexadecimal ID shared by all developer sessions in this scenario run.
-     */
-    runId: string,
-  }): CancelablePromise<ScenarioTestChaosMatchesResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/dev/test-runs/{run_id}/chaos/matches',
-      path: {
-        'run_id': runId,
-      },
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        404: `code: not_found`,
       },
     });
   }

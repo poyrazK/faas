@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -104,7 +105,7 @@ func TestEngineTransition_EventWriteFailureDoesNotRollback(t *testing.T) {
 	wrapped := &failingEventStore{Store: inner}
 	vmm := &fakeVMM{}
 	ops := wire.NewOpsMetrics("schedd")
-	engine := newEngine(t, wrapped, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
+	engine := newEngine(t, statetest.NewStore(wrapped), vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(ops)
 
 	res, err := engine.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
@@ -334,7 +335,7 @@ func TestMemStoreAppendEvent_HexSubjectRoundTrips(t *testing.T) {
 // transition is best-effort: an AppendEvent failure must NOT roll
 // back the state write.
 type failingEventStore struct {
-	state.Store
+	Store    state.Store
 	failures int64
 }
 

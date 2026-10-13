@@ -18,12 +18,12 @@ func TestClassifyAIEndpoint(t *testing.T) {
 		want           aiEndpoint
 	}{
 		{api.OutboundAIProviderOpenAI, "/v1/chat/completions", aiEndpoint{format: aiFormatOpenAI, generation: true, openAIOutputField: "max_completion_tokens"}},
-		{api.OutboundAIProviderOpenAI, "/v1/embeddings", aiEndpoint{format: aiFormatOpenAI}},
+		{api.OutboundAIProviderOpenAI, "/v1/embeddings", aiEndpoint{format: aiFormatOpenAI, embedding: true}},
 		{api.OutboundAIProviderAzureOpenAI, "/openai/deployments/prod-4o/chat/completions", aiEndpoint{format: aiFormatOpenAI, generation: true, pathModel: "prod-4o", openAIOutputField: "max_completion_tokens"}},
 		{api.OutboundAIProviderAnthropic, "/v1/messages", aiEndpoint{format: aiFormatAnthropic, generation: true}},
 		{api.OutboundAIProviderAnthropic, "/v1/messages/count_tokens", aiEndpoint{format: aiFormatAnthropic}},
 		{api.OutboundAIProviderGemini, "/v1beta/models/gemini-2.5-pro:streamGenerateContent", aiEndpoint{format: aiFormatGemini, generation: true, pathModel: "gemini-2.5-pro"}},
-		{api.OutboundAIProviderGemini, "/v1beta/models/text-embedding-004:embedContent", aiEndpoint{format: aiFormatGemini, pathModel: "text-embedding-004"}},
+		{api.OutboundAIProviderGemini, "/v1beta/models/text-embedding-004:embedContent", aiEndpoint{format: aiFormatGemini, embedding: true, pathModel: "text-embedding-004"}},
 		{api.OutboundAIProviderVertex, "/v1/projects/p/locations/us-east5/publishers/anthropic/models/claude-sonnet-4@20250514:streamRawPredict",
 			aiEndpoint{format: aiFormatAnthropic, generation: true, pathModel: "claude-sonnet-4@20250514"}},
 		{api.OutboundAIProviderVertex, "/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent",

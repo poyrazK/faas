@@ -753,6 +753,476 @@ export class OperationsService {
     });
   }
   /**
+   * List ranked contributors to a workflow performance group.
+   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at least one overdue selected condition once, across all refresh owners. The former ranks by oldest overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow identity breaks ties. These overall rankings remain available with zero contributors and are independent of condition and owner display caps. Each contributor includes refresh_priority with the oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus the bounded condition preview. Age ranking does not mean most past deadline or highest business severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner dimension requires ongoing cohort and cohort_token and an exact returned condition_coverage.missing_groups row selected by contract_version, current state and exactly one of owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors are rejected. Counts and eligibility use full condition coverage before previews. Each workflow appears once in its selected group and ranks by full observed workflow blocked duration with stable identity ties. Missing evidence has no report timestamp and is not failed verification; expectations come from the latest reporting Operation pinned definition. Missing condition entries and pinned guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The baseline must not be later than the current token evaluation. Select an exact returned new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current report comparisons permit contract boundaries while baseline history must be continuous within its contract; ranking uses full observed report-only blocked intervals without changing eligibility for existing duration groups. Generic duration coverage remains separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing cohort and both cohort_token and baseline_token with the same comparison scope and baseline time rules. It returns each eligible workflow once, independent of displayed group caps. Optional gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty results are valid. Each contributor includes gap_queue_priority with all category counts, sorted assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking explanation before filters or previews. gap_progress counts and previews contain only filtered gaps. Ranking measures observed report-only blocked intervals, omitting intervals spanning contract boundaries, with stable workflow identity ties.
+   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowPerformanceInstances({
+    slug,
+    scope,
+    workflow,
+    cohort,
+    dimension,
+    tenantId,
+    baselineToken,
+    gapStatus,
+    contractVersion,
+    state,
+    operation,
+    code,
+    owner,
+    unassigned,
+    cohortToken,
+    kind,
+    decisionCode,
+    ruleId,
+    ruleVersion,
+    groupId,
+    pathId,
+    conditionId,
+    conditionDescription,
+    conditionEvidenceStatus,
+    conditionResult,
+    outcomeCode,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared business workflow to investigate.
+     */
+    workflow: string,
+    /**
+     * Completed or ongoing cohort.
+     */
+    cohort: 'completed' | 'ongoing',
+    /**
+     * Overall measure or exact breakdown dimension.
+     */
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner' | 'condition_gap_queue',
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Saved account performance baseline; required for condition_gap_owner and condition_gap_queue; rejected by other dimensions.
+     */
+    baselineToken?: string,
+    /**
+     * Exact account returned reporting-gap category; required for condition_gap_owner, optional for condition_gap_queue.
+     */
+    gapStatus?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed',
+    /**
+     * Required for state and blocker dimensions.
+     */
+    contractVersion?: number,
+    /**
+     * Exact contributing state. Required for the state dimension.
+     */
+    state?: string,
+    /**
+     * Exact blocker target Operation. Required for the blocker dimension.
+     */
+    operation?: string,
+    /**
+     * Exact blocker code. Required for the blocker dimension.
+     */
+    code?: string,
+    /**
+     * Exact public owner. Mutually exclusive with unassigned.
+     */
+    owner?: string,
+    /**
+     * Select the empty owner group. Mutually exclusive with owner.
+     */
+    unassigned?: boolean,
+    /**
+     * Opaque selector-bound cohort token from the summary or a previous contributor response.
+     */
+    cohortToken?: string,
+    /**
+     * Decision outcome group kind.
+     */
+    kind?: 'decision' | 'path',
+    /**
+     * Exact reported decision code for decision outcome dimensions.
+     */
+    decisionCode?: string,
+    /**
+     * Exact rule ID for decision outcome dimensions.
+     */
+    ruleId?: string,
+    /**
+     * Exact rule version for decision outcome dimensions.
+     */
+    ruleVersion?: string,
+    /**
+     * Exact selected prerequisite group for path outcome dimensions.
+     */
+    groupId?: string,
+    /**
+     * Exact selected path for path outcome dimensions.
+     */
+    pathId?: string,
+    /**
+     * Exact reported condition ID for account condition outcome dimensions.
+     */
+    conditionId?: string,
+    /**
+     * Exact public condition description for the account returned condition group; UTF-8 byte bound without controls.
+     */
+    conditionDescription?: string,
+    /**
+     * Account active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
+     */
+    conditionEvidenceStatus?: 'within_budget' | 'overdue' | 'no_budget',
+    /**
+     * Exact observed condition result for the account condition outcome group.
+     */
+    conditionResult?: 'pass' | 'fail' | 'unknown',
+    /**
+     * Exact latest reported outcome for decision outcome dimensions.
+     */
+    outcomeCode?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-performance/instances',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'tenant_id': tenantId,
+        'cohort': cohort,
+        'dimension': dimension,
+        'baseline_token': baselineToken,
+        'gap_status': gapStatus,
+        'contract_version': contractVersion,
+        'state': state,
+        'operation': operation,
+        'code': code,
+        'owner': owner,
+        'unassigned': unassigned,
+        'cohort_token': cohortToken,
+        'kind': kind,
+        'decision_code': decisionCode,
+        'rule_id': ruleId,
+        'rule_version': ruleVersion,
+        'group_id': groupId,
+        'path_id': pathId,
+        'condition_id': conditionId,
+        'condition_description': conditionDescription,
+        'condition_evidence_status': conditionEvidenceStatus,
+        'condition_result': conditionResult,
+        'outcome_code': outcomeCode,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The retained cohort changed. Refresh the summary and use its new cohort_token.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List ranked performance contributors for the authenticated customer.
+   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at least one overdue selected condition once, across all refresh owners. The former ranks by oldest overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow identity breaks ties. These overall rankings remain available with zero contributors and are independent of condition and owner display caps. Each contributor includes refresh_priority with the oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus the bounded condition preview. Age ranking does not mean most past deadline or highest business severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner dimension requires ongoing cohort and cohort_token and an exact returned condition_coverage.missing_groups row selected by contract_version, current state and exactly one of owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors are rejected. Counts and eligibility use full condition coverage before previews. Each workflow appears once in its selected group and ranks by full observed workflow blocked duration with stable identity ties. Missing evidence has no report timestamp and is not failed verification; expectations come from the latest reporting Operation pinned definition. Missing condition entries and pinned guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The baseline must not be later than the current token evaluation. Select an exact returned new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current report comparisons permit contract boundaries while baseline history must be continuous within its contract; ranking uses full observed report-only blocked intervals without changing eligibility for existing duration groups. Generic duration coverage remains separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing cohort and both cohort_token and baseline_token with the same comparison scope and baseline time rules. It returns each eligible workflow once, independent of displayed group caps. Optional gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty results are valid. Each contributor includes gap_queue_priority with all category counts, sorted assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking explanation before filters or previews. gap_progress counts and previews contain only filtered gaps. Ranking measures observed report-only blocked intervals, omitting intervals spanning contract boundaries, with stable workflow identity ties.
+   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors within the authenticated customer's selected group.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowPerformanceInstances({
+    appId,
+    scope,
+    workflow,
+    cohort,
+    dimension,
+    baselineToken,
+    gapStatus,
+    contractVersion,
+    state,
+    operation,
+    code,
+    owner,
+    unassigned,
+    cohortToken,
+    kind,
+    decisionCode,
+    ruleId,
+    ruleVersion,
+    groupId,
+    pathId,
+    conditionId,
+    conditionDescription,
+    conditionEvidenceStatus,
+    conditionResult,
+    outcomeCode,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared workflow to investigate for the authenticated customer.
+     */
+    workflow: string,
+    /**
+     * Completed or ongoing customer workflow cohort.
+     */
+    cohort: 'completed' | 'ongoing',
+    /**
+     * Customer cohort duration measure or exact breakdown dimension.
+     */
+    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner' | 'condition_gap_queue',
+    /**
+     * Saved authenticated customer performance baseline; required for condition_gap_owner and condition_gap_queue; rejected by other dimensions.
+     */
+    baselineToken?: string,
+    /**
+     * Exact authenticated customer returned reporting-gap category; required for condition_gap_owner, optional for condition_gap_queue.
+     */
+    gapStatus?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed',
+    /**
+     * Contract version required when selecting a customer state or blocker group.
+     */
+    contractVersion?: number,
+    /**
+     * Contributing state in the customer's state dimension.
+     */
+    state?: string,
+    /**
+     * Blocker target Operation in the authenticated customer's blocker dimension.
+     */
+    operation?: string,
+    /**
+     * Blocker code selecting the customer's exact blocker group.
+     */
+    code?: string,
+    /**
+     * Public owner of the customer's selected group; mutually exclusive with unassigned.
+     */
+    owner?: string,
+    /**
+     * Select an empty-owner customer group; mutually exclusive with owner.
+     */
+    unassigned?: boolean,
+    /**
+     * Customer selector-bound cohort token from a prior summary or contributor response.
+     */
+    cohortToken?: string,
+    /**
+     * Decision outcome group kind. Scoped to the authenticated customer.
+     */
+    kind?: 'decision' | 'path',
+    /**
+     * Exact reported decision code for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    decisionCode?: string,
+    /**
+     * Exact rule ID for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    ruleId?: string,
+    /**
+     * Exact rule version for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    ruleVersion?: string,
+    /**
+     * Exact selected prerequisite group for path outcome dimensions. Scoped to the authenticated customer.
+     */
+    groupId?: string,
+    /**
+     * Exact selected path for path outcome dimensions. Scoped to the authenticated customer.
+     */
+    pathId?: string,
+    /**
+     * Exact reported condition ID for customer condition outcome dimensions.
+     */
+    conditionId?: string,
+    /**
+     * Exact public condition description for the customer returned condition group; UTF-8 byte bound without controls.
+     */
+    conditionDescription?: string,
+    /**
+     * Customer active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
+     */
+    conditionEvidenceStatus?: 'within_budget' | 'overdue' | 'no_budget',
+    /**
+     * Exact observed condition result for the customer condition outcome group.
+     */
+    conditionResult?: 'pass' | 'fail' | 'unknown',
+    /**
+     * Exact latest reported outcome for decision outcome dimensions. Scoped to the authenticated customer.
+     */
+    outcomeCode?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-performance/instances',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+        'cohort': cohort,
+        'dimension': dimension,
+        'baseline_token': baselineToken,
+        'gap_status': gapStatus,
+        'contract_version': contractVersion,
+        'state': state,
+        'operation': operation,
+        'code': code,
+        'owner': owner,
+        'unassigned': unassigned,
+        'cohort_token': cohortToken,
+        'kind': kind,
+        'decision_code': decisionCode,
+        'rule_id': ruleId,
+        'rule_version': ruleVersion,
+        'group_id': groupId,
+        'path_id': pathId,
+        'condition_id': conditionId,
+        'condition_description': conditionDescription,
+        'condition_evidence_status': conditionEvidenceStatus,
+        'condition_result': conditionResult,
+        'outcome_code': outcomeCode,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The customer's retained cohort changed; refresh its performance summary for a new cohort_token.`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize business workflow performance across retained instances.
+   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+   * @returns OperationWorkflowPerformanceSummary Separate completed and ongoing cohorts with coverage and ranked durations.
+   * @throws ApiError
+   */
+  public static summarizeAccountWorkflowPerformance({
+    slug,
+    scope,
+    workflow,
+    tenantId,
+    baselineToken,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Declared workflow name to compare across instances.
+     */
+    workflow: string,
+    /**
+     * Optional account-owned customer selector on an operator milestone timeline.
+     */
+    tenantId?: string,
+    /**
+     * Account optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+     */
+    baselineToken?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-performance/summary',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'tenant_id': tenantId,
+        'baseline_token': baselineToken,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Summarize retained business workflow performance for the authenticated customer.
+   * Customer identity comes from credentials and tenant overrides are rejected. Requires platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
+   * @returns OperationWorkflowPerformanceSummary Authenticated customer performance cohorts with observed durations and retained-history coverage.
+   * @throws ApiError
+   */
+  public static summarizePlatformTenantSelfWorkflowPerformance({
+    appId,
+    scope,
+    workflow,
+    baselineToken,
+  }: {
+    /**
+     * App selected within the authenticated customer's milestone feed.
+     */
+    appId: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Business workflow to compare within the authenticated customer app and environment.
+     */
+    workflow: string,
+    /**
+     * Customer optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
+     */
+    baselineToken?: string,
+  }): CancelablePromise<OperationWorkflowPerformanceSummary> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-performance/summary',
+      query: {
+        'app_id': appId,
+        'scope': scope,
+        'workflow': workflow,
+        'baseline_token': baselineToken,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Summarize completed workflows with explicit business outcomes.
    * Account outcome summary — Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
    * @returns OperationWorkflowOutcomeSummary All matching workflow count and a bounded group page ordered by value ascending.
@@ -1047,6 +1517,57 @@ export class OperationsService {
     });
   }
   /**
+   * Compare account transition readiness with a saved queue snapshot.
+   * Requires account read scope and MFA; customer selectors stay within account ownership.
+   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
+   * Snapshot scope binds the account, app, environment, customer selector and role.
+   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
+   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+   * Each distinct saved workflow is reread once with readiness-only projections,
+   * independent of recent queue sampling and current owner or requirement filters.
+   * The exact Operation/from/to edge and declared requirements must remain comparable.
+   * Contract changes, terminal or unavailable state, unavailable edges and older retained
+   * revisions are counted separately and never classified as newly ready or newly blocked.
+   * Comparisons provide added and resolved requirement codes plus changed blocker,
+   * prerequisite, pending-verification and reporting evidence categories.
+   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
+   * The returned snapshot includes available current edges before filtering and can be saved
+   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+   * not the complete sampled backlog. Applications retain authorization and execution.
+   *
+   * @returns OperationWorkflowReadinessComparisonResponse Account readiness changes and comparison coverage over saved transitions.
+   * @throws ApiError
+   */
+  public static compareAccountWorkflowReadiness({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: OperationWorkflowReadinessComparisonRequest,
+  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/workflow-readiness/compare',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
+      },
+    });
+  }
+  /**
    * Customer transition readiness — Check reported requirements for a proposed workflow transition.
    * Requires platform-tenant operations read scope. app_id is mandatory and tenant_id must be omitted; ownership comes from the authenticated customer. Evaluates a proposed declared edge against retained state, target-specific blockers, direct prerequisites and planned milestone names. Ready is observational and grants no execution authority. Planned names are not committed evidence; transaction-time business checks and report validation still apply. A denied readiness result is a successful HTTP 200 response.
    * @returns OperationWorkflowReadinessResponse Customer transition readiness — Observed transition readiness including reasons and advisories.
@@ -1067,6 +1588,49 @@ export class OperationsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Compare customer transition readiness with a saved queue snapshot.
+   * Requires platform-tenant Operations read scope; ownership comes from authentication and overrides are rejected.
+   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
+   * Snapshot scope binds the account, app, environment, customer selector and role.
+   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
+   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
+   * Each distinct saved workflow is reread once with readiness-only projections,
+   * independent of recent queue sampling and current owner or requirement filters.
+   * The exact Operation/from/to edge and declared requirements must remain comparable.
+   * Contract changes, terminal or unavailable state, unavailable edges and older retained
+   * revisions are counted separately and never classified as newly ready or newly blocked.
+   * Comparisons provide added and resolved requirement codes plus changed blocker,
+   * prerequisite, pending-verification and reporting evidence categories.
+   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
+   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
+   * The returned snapshot includes available current edges before filtering and can be saved
+   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
+   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
+   * not the complete sampled backlog. Applications retain authorization and execution.
+   *
+   * @returns OperationWorkflowReadinessComparisonResponse Customer readiness changes and comparison coverage over saved transitions.
+   * @throws ApiError
+   */
+  public static comparePlatformTenantSelfWorkflowReadiness({
+    requestBody,
+  }: {
+    requestBody: OperationWorkflowReadinessComparisonRequest,
+  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/platform-tenant-self/workflow-readiness/compare',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
       },
     });
   }
@@ -1175,6 +1739,88 @@ export class OperationsService {
         'tenant_id': tenantId,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List account transition readiness across ongoing business workflows.
+   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+   * @returns OperationWorkflowReadinessQueueResponse Account transition readiness rows with explicit live sampling counts.
+   * @throws ApiError
+   */
+  public static listAccountWorkflowReadinessQueue({
+    slug,
+    scope,
+    workflow,
+    targetOperation,
+    owner,
+    unassigned,
+    tenantId,
+    requirement,
+    limit = 20,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Account readiness queue. Optional declared workflow name within the app and environment.
+     */
+    workflow?: string,
+    /**
+     * Account readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+     */
+    targetOperation?: string,
+    /**
+     * Account readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+     */
+    owner?: string,
+    /**
+     * Account readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
+     * Account readiness queue. Optional customer UUID within the authenticated account.
+     */
+    tenantId?: string,
+    /**
+     * Account readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+     */
+    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
+    /**
+     * Account readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/workflow-readiness/queue',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'owner': owner,
+        'unassigned': unassigned,
+        'tenant_id': tenantId,
+        'requirement': requirement,
+        'limit': limit,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -1409,6 +2055,80 @@ export class OperationsService {
         'reason': reason,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List customer transition readiness across ongoing business workflows.
+   * Requires platform-tenant operations read scope. Customer ownership derives from authentication. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
+   * @returns OperationWorkflowReadinessQueueResponse Customer transition readiness rows with explicit live sampling counts.
+   * @throws ApiError
+   */
+  public static listPlatformTenantSelfWorkflowReadinessQueue({
+    scope,
+    appId,
+    workflow,
+    targetOperation,
+    owner,
+    unassigned,
+    requirement,
+    limit = 20,
+  }: {
+    /**
+     * Explicit environment containing the related business Operations.
+     */
+    scope: string,
+    /**
+     * Customer readiness queue. Explicit application UUID within the authenticated account.
+     */
+    appId: string,
+    /**
+     * Customer readiness queue. Optional declared workflow name within the app and environment.
+     */
+    workflow?: string,
+    /**
+     * Customer readiness queue. Select declared transitions targeting this Operation name before edge sampling.
+     */
+    targetOperation?: string,
+    /**
+     * Customer readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
+     */
+    owner?: string,
+    /**
+     * Customer readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
+     */
+    unassigned?: boolean,
+    /**
+     * Customer readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
+     */
+    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
+    /**
+     * Customer readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
+     */
+    limit?: number,
+  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/platform-tenant-self/workflow-readiness/queue',
+      query: {
+        'scope': scope,
+        'workflow': workflow,
+        'target_operation': targetOperation,
+        'owner': owner,
+        'unassigned': unassigned,
+        'app_id': appId,
+        'requirement': requirement,
+        'limit': limit,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
@@ -4000,726 +4720,6 @@ export class OperationsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * List ranked contributors to a workflow performance group.
-   * Requires account read scope and MFA. Optional tenant selection stays within account ownership. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at least one overdue selected condition once, across all refresh owners. The former ranks by oldest overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow identity breaks ties. These overall rankings remain available with zero contributors and are independent of condition and owner display caps. Each contributor includes refresh_priority with the oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus the bounded condition preview. Age ranking does not mean most past deadline or highest business severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner dimension requires ongoing cohort and cohort_token and an exact returned condition_coverage.missing_groups row selected by contract_version, current state and exactly one of owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors are rejected. Counts and eligibility use full condition coverage before previews. Each workflow appears once in its selected group and ranks by full observed workflow blocked duration with stable identity ties. Missing evidence has no report timestamp and is not failed verification; expectations come from the latest reporting Operation pinned definition. Missing condition entries and pinned guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The baseline must not be later than the current token evaluation. Select an exact returned new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current report comparisons permit contract boundaries while baseline history must be continuous within its contract; ranking uses full observed report-only blocked intervals without changing eligibility for existing duration groups. Generic duration coverage remains separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing cohort and both cohort_token and baseline_token with the same comparison scope and baseline time rules. It returns each eligible workflow once, independent of displayed group caps. Optional gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty results are valid. Each contributor includes gap_queue_priority with all category counts, sorted assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking explanation before filters or previews. gap_progress counts and previews contain only filtered gaps. Ranking measures observed report-only blocked intervals, omitting intervals spanning contract boundaries, with stable workflow identity ties.
-   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors and exact selected group distribution.
-   * @throws ApiError
-   */
-  public static listAccountWorkflowPerformanceInstances({
-    slug,
-    scope,
-    workflow,
-    cohort,
-    dimension,
-    tenantId,
-    baselineToken,
-    gapStatus,
-    contractVersion,
-    state,
-    operation,
-    code,
-    owner,
-    unassigned,
-    cohortToken,
-    kind,
-    decisionCode,
-    ruleId,
-    ruleVersion,
-    groupId,
-    pathId,
-    conditionId,
-    conditionDescription,
-    conditionEvidenceStatus,
-    conditionResult,
-    outcomeCode,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Explicit environment containing the related business Operations.
-     */
-    scope: string,
-    /**
-     * Declared business workflow to investigate.
-     */
-    workflow: string,
-    /**
-     * Completed or ongoing cohort.
-     */
-    cohort: 'completed' | 'ongoing',
-    /**
-     * Overall measure or exact breakdown dimension.
-     */
-    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner' | 'condition_gap_queue',
-    /**
-     * Optional account-owned customer selector on an operator milestone timeline.
-     */
-    tenantId?: string,
-    /**
-     * Saved account performance baseline; required for condition_gap_owner and condition_gap_queue; rejected by other dimensions.
-     */
-    baselineToken?: string,
-    /**
-     * Exact account returned reporting-gap category; required for condition_gap_owner, optional for condition_gap_queue.
-     */
-    gapStatus?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed',
-    /**
-     * Required for state and blocker dimensions.
-     */
-    contractVersion?: number,
-    /**
-     * Exact contributing state. Required for the state dimension.
-     */
-    state?: string,
-    /**
-     * Exact blocker target Operation. Required for the blocker dimension.
-     */
-    operation?: string,
-    /**
-     * Exact blocker code. Required for the blocker dimension.
-     */
-    code?: string,
-    /**
-     * Exact public owner. Mutually exclusive with unassigned.
-     */
-    owner?: string,
-    /**
-     * Select the empty owner group. Mutually exclusive with owner.
-     */
-    unassigned?: boolean,
-    /**
-     * Opaque selector-bound cohort token from the summary or a previous contributor response.
-     */
-    cohortToken?: string,
-    /**
-     * Decision outcome group kind.
-     */
-    kind?: 'decision' | 'path',
-    /**
-     * Exact reported decision code for decision outcome dimensions.
-     */
-    decisionCode?: string,
-    /**
-     * Exact rule ID for decision outcome dimensions.
-     */
-    ruleId?: string,
-    /**
-     * Exact rule version for decision outcome dimensions.
-     */
-    ruleVersion?: string,
-    /**
-     * Exact selected prerequisite group for path outcome dimensions.
-     */
-    groupId?: string,
-    /**
-     * Exact selected path for path outcome dimensions.
-     */
-    pathId?: string,
-    /**
-     * Exact reported condition ID for account condition outcome dimensions.
-     */
-    conditionId?: string,
-    /**
-     * Exact public condition description for the account returned condition group; UTF-8 byte bound without controls.
-     */
-    conditionDescription?: string,
-    /**
-     * Account active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
-     */
-    conditionEvidenceStatus?: 'within_budget' | 'overdue' | 'no_budget',
-    /**
-     * Exact observed condition result for the account condition outcome group.
-     */
-    conditionResult?: 'pass' | 'fail' | 'unknown',
-    /**
-     * Exact latest reported outcome for decision outcome dimensions.
-     */
-    outcomeCode?: string,
-  }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/workflow-performance/instances',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'scope': scope,
-        'workflow': workflow,
-        'tenant_id': tenantId,
-        'cohort': cohort,
-        'dimension': dimension,
-        'baseline_token': baselineToken,
-        'gap_status': gapStatus,
-        'contract_version': contractVersion,
-        'state': state,
-        'operation': operation,
-        'code': code,
-        'owner': owner,
-        'unassigned': unassigned,
-        'cohort_token': cohortToken,
-        'kind': kind,
-        'decision_code': decisionCode,
-        'rule_id': ruleId,
-        'rule_version': ruleVersion,
-        'group_id': groupId,
-        'path_id': pathId,
-        'condition_id': conditionId,
-        'condition_description': conditionDescription,
-        'condition_evidence_status': conditionEvidenceStatus,
-        'condition_result': conditionResult,
-        'outcome_code': outcomeCode,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `The retained cohort changed. Refresh the summary and use its new cohort_token.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * List ranked performance contributors for the authenticated customer.
-   * Requires platform_tenant:operations:read. Customer identity comes from credentials; tenant overrides are rejected. Explicit app/environment/workflow and cohort/dimension selection are required. Uses the same latest 100 instances per cohort and complete-history eligibility as the performance summary. State groups require state and contract_version; blocker groups require operation/code/contract_version and exactly one of owner or unassigned=true; verification_owner groups require exactly one of owner or unassigned=true. Overall dimensions reject group selectors. An optional cohort_token binds the evaluation time and retained evidence to a prior summary; changed or expired cohorts return 409 and require refreshing the summary. Without a token this evaluates a fresh cohort. Returns every matching eligible contributor up to 100 sorted by observed duration descending with stable identity ties. No cursor is supported. Current blockers can differ from historical contributing groups; pending verification previews are bounded independently of exact counts. Decision dimensions require completed cohort and cohort_token, an exact kind/contract_version/outcome_code and decision_code/rule_id/rule_version for decision groups. Path groups additionally require group_id/path_id; the decision triple is either fully supplied or fully omitted. The exact group must be present in the bounded decision_outcomes summary. Decision dimensions reject state/blocker/owner selectors. Returns the earliest qualifying report and optional business decision fact per contributor; reports after the first terminal revision do not qualify. Condition dimensions also require completed cohort and cohort_token and an exact returned condition_outcomes group selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result and outcome_code. They reject kind/path/state/blocker/owner selectors. Each workflow contributes once per observed result; changed results can produce overlapping groups. The earliest qualifying fact and all results observed for that exact identity are returned. Missing conditions are not classified as unknown. Active condition dimensions require ongoing cohort and cohort_token, an exact returned active_conditions identity selected by contract_version and decision_code/rule_id/rule_version and condition_id/condition_description/condition_result. Outcome and kind/path/state/blocker/owner selectors are rejected. They use latest explicit decision snapshots in the current contract, return evidence age at the bound evaluation time and measure whole-workflow elapsed or blocked duration. Metadata-only reports preserve evidence; explicit condition omission clears prior results. The optional condition_evidence_status selector restricts active contributors to within_budget, overdue or no_budget. Status counters partition each returned group and the chosen status must have contributors. Budgets come from the reporting Operation pinned definition; deadlines measure report age, not business verification age. The condition_refresh_owner dimension requires ongoing cohort and cohort_token and an exact returned active_conditions.refresh_owners group selected by exactly one of owner or unassigned=true. It rejects contract/state/blocker/condition/result/status and decision/path/outcome selectors. Contributors are ranked by whole-workflow blocked duration and include bounded overdue condition facts with pinned refresh guidance; counts remain exact beyond the preview limit. The condition_refresh_age and condition_refresh_blocked dimensions require ongoing cohort and cohort_token and reject all group selectors. Each returns eligible workflows with at least one overdue selected condition once, across all refresh owners. The former ranks by oldest overdue report age in whole seconds, the latter by full workflow blocked duration; stable workflow identity breaks ties. These overall rankings remain available with zero contributors and are independent of condition and owner display caps. Each contributor includes refresh_priority with the oldest qualifying fact, complete assigned owner list, exact unassigned count and explanation, plus the bounded condition preview. Age ranking does not mean most past deadline or highest business severity. Conflicting snapshots and incomplete histories are excluded. The condition_missing_owner dimension requires ongoing cohort and cohort_token and an exact returned condition_coverage.missing_groups row selected by contract_version, current state and exactly one of owner or unassigned=true. All condition/result/status, decision/path/outcome and blocker selectors are rejected. Counts and eligibility use full condition coverage before previews. Each workflow appears once in its selected group and ranks by full observed workflow blocked duration with stable identity ties. Missing evidence has no report timestamp and is not failed verification; expectations come from the latest reporting Operation pinned definition. Missing condition entries and pinned guidance are previewed up to 16 with exact counts and explicit truncation. The condition_gap_owner dimension requires ongoing cohort, cohort_token and baseline_token bound to the same scope. The baseline must not be later than the current token evaluation. Select an exact returned new_missing_progress.groups row with contract_version, current state, gap_status and exactly one of owner or unassigned=true. All other selectors are rejected; dimensions outside condition_gap_owner and condition_gap_queue reject baseline_token and gap_status. Counts and grouping precede previews; each contributor includes up to 16 matching gap_progress changes with exact counts, prior evidence and pinned guidance. Current report comparisons permit contract boundaries while baseline history must be continuous within its contract; ranking uses full observed report-only blocked intervals without changing eligibility for existing duration groups. Generic duration coverage remains separate from new_missing_progress coverage. The condition_gap_queue dimension requires ongoing cohort and both cohort_token and baseline_token with the same comparison scope and baseline time rules. It returns each eligible workflow once, independent of displayed group caps. Optional gap_status and exactly one of owner or unassigned=true filter matching current gaps; both may be omitted. Contract/state/blocker/condition/decision/path/outcome selectors are rejected. Empty results are valid. Each contributor includes gap_queue_priority with all category counts, sorted assigned owners, exact unassigned count, all pinned missing expectation guidance and a ranking explanation before filters or previews. gap_progress counts and previews contain only filtered gaps. Ranking measures observed report-only blocked intervals, omitting intervals spanning contract boundaries, with stable workflow identity ties.
-   * @returns OperationWorkflowPerformanceInstancesResponse Ranked complete-history contributors within the authenticated customer's selected group.
-   * @throws ApiError
-   */
-  public static listPlatformTenantSelfWorkflowPerformanceInstances({
-    appId,
-    scope,
-    workflow,
-    cohort,
-    dimension,
-    baselineToken,
-    gapStatus,
-    contractVersion,
-    state,
-    operation,
-    code,
-    owner,
-    unassigned,
-    cohortToken,
-    kind,
-    decisionCode,
-    ruleId,
-    ruleVersion,
-    groupId,
-    pathId,
-    conditionId,
-    conditionDescription,
-    conditionEvidenceStatus,
-    conditionResult,
-    outcomeCode,
-  }: {
-    /**
-     * App selected within the authenticated customer's milestone feed.
-     */
-    appId: string,
-    /**
-     * Explicit environment containing the related business Operations.
-     */
-    scope: string,
-    /**
-     * Declared workflow to investigate for the authenticated customer.
-     */
-    workflow: string,
-    /**
-     * Completed or ongoing customer workflow cohort.
-     */
-    cohort: 'completed' | 'ongoing',
-    /**
-     * Customer cohort duration measure or exact breakdown dimension.
-     */
-    dimension: 'state_time' | 'blocked_time' | 'verification_wait' | 'state' | 'blocker' | 'verification_owner' | 'decision_completion' | 'decision_blocked' | 'condition_completion' | 'condition_blocked' | 'active_condition_elapsed' | 'active_condition_blocked' | 'condition_refresh_owner' | 'condition_refresh_age' | 'condition_refresh_blocked' | 'condition_missing_owner' | 'condition_gap_owner' | 'condition_gap_queue',
-    /**
-     * Saved authenticated customer performance baseline; required for condition_gap_owner and condition_gap_queue; rejected by other dimensions.
-     */
-    baselineToken?: string,
-    /**
-     * Exact authenticated customer returned reporting-gap category; required for condition_gap_owner, optional for condition_gap_queue.
-     */
-    gapStatus?: 'report_lost' | 'new_expectation' | 'still_missing' | 'expectation_changed' | 'contract_changed',
-    /**
-     * Contract version required when selecting a customer state or blocker group.
-     */
-    contractVersion?: number,
-    /**
-     * Contributing state in the customer's state dimension.
-     */
-    state?: string,
-    /**
-     * Blocker target Operation in the authenticated customer's blocker dimension.
-     */
-    operation?: string,
-    /**
-     * Blocker code selecting the customer's exact blocker group.
-     */
-    code?: string,
-    /**
-     * Public owner of the customer's selected group; mutually exclusive with unassigned.
-     */
-    owner?: string,
-    /**
-     * Select an empty-owner customer group; mutually exclusive with owner.
-     */
-    unassigned?: boolean,
-    /**
-     * Customer selector-bound cohort token from a prior summary or contributor response.
-     */
-    cohortToken?: string,
-    /**
-     * Decision outcome group kind. Scoped to the authenticated customer.
-     */
-    kind?: 'decision' | 'path',
-    /**
-     * Exact reported decision code for decision outcome dimensions. Scoped to the authenticated customer.
-     */
-    decisionCode?: string,
-    /**
-     * Exact rule ID for decision outcome dimensions. Scoped to the authenticated customer.
-     */
-    ruleId?: string,
-    /**
-     * Exact rule version for decision outcome dimensions. Scoped to the authenticated customer.
-     */
-    ruleVersion?: string,
-    /**
-     * Exact selected prerequisite group for path outcome dimensions. Scoped to the authenticated customer.
-     */
-    groupId?: string,
-    /**
-     * Exact selected path for path outcome dimensions. Scoped to the authenticated customer.
-     */
-    pathId?: string,
-    /**
-     * Exact reported condition ID for customer condition outcome dimensions.
-     */
-    conditionId?: string,
-    /**
-     * Exact public condition description for the customer returned condition group; UTF-8 byte bound without controls.
-     */
-    conditionDescription?: string,
-    /**
-     * Customer active-condition report freshness filter. Only ongoing active condition dimensions accept it; the selected status must have contributors in the returned group.
-     */
-    conditionEvidenceStatus?: 'within_budget' | 'overdue' | 'no_budget',
-    /**
-     * Exact observed condition result for the customer condition outcome group.
-     */
-    conditionResult?: 'pass' | 'fail' | 'unknown',
-    /**
-     * Exact latest reported outcome for decision outcome dimensions. Scoped to the authenticated customer.
-     */
-    outcomeCode?: string,
-  }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/platform-tenant-self/workflow-performance/instances',
-      query: {
-        'app_id': appId,
-        'scope': scope,
-        'workflow': workflow,
-        'cohort': cohort,
-        'dimension': dimension,
-        'baseline_token': baselineToken,
-        'gap_status': gapStatus,
-        'contract_version': contractVersion,
-        'state': state,
-        'operation': operation,
-        'code': code,
-        'owner': owner,
-        'unassigned': unassigned,
-        'cohort_token': cohortToken,
-        'kind': kind,
-        'decision_code': decisionCode,
-        'rule_id': ruleId,
-        'rule_version': ruleVersion,
-        'group_id': groupId,
-        'path_id': pathId,
-        'condition_id': conditionId,
-        'condition_description': conditionDescription,
-        'condition_evidence_status': conditionEvidenceStatus,
-        'condition_result': conditionResult,
-        'outcome_code': outcomeCode,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `The customer's retained cohort changed; refresh its performance summary for a new cohort_token.`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Summarize business workflow performance across retained instances.
-   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
-   * @returns OperationWorkflowPerformanceSummary Separate completed and ongoing cohorts with coverage and ranked durations.
-   * @throws ApiError
-   */
-  public static summarizeAccountWorkflowPerformance({
-    slug,
-    scope,
-    workflow,
-    tenantId,
-    baselineToken,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Explicit environment containing the related business Operations.
-     */
-    scope: string,
-    /**
-     * Declared workflow name to compare across instances.
-     */
-    workflow: string,
-    /**
-     * Optional account-owned customer selector on an operator milestone timeline.
-     */
-    tenantId?: string,
-    /**
-     * Account optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
-     */
-    baselineToken?: string,
-  }): CancelablePromise<OperationWorkflowPerformanceSummary> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/workflow-performance/summary',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'scope': scope,
-        'workflow': workflow,
-        'tenant_id': tenantId,
-        'baseline_token': baselineToken,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Summarize retained business workflow performance for the authenticated customer.
-   * Customer identity comes from credentials and tenant overrides are rejected. Requires platform_tenant:operations:read. Explicit app/environment/workflow selection is required. The latest 100 completed and 100 ongoing retained instances form separate cohorts. Matching counts include all retained instances. Incomplete histories are excluded from durations and nearest-rank p50/p95 percentiles with explicit coverage reasons. Each instance contributes one accumulated duration per reported group. At most 1024 reports per instance and 32 output groups per dimension; group truncation does not change cohort totals. Ongoing durations run through evaluation time. No cursor or time-window filter is supported. Retention and newly published reports can change results.
-   * @returns OperationWorkflowPerformanceSummary Authenticated customer performance cohorts with observed durations and retained-history coverage.
-   * @throws ApiError
-   */
-  public static summarizePlatformTenantSelfWorkflowPerformance({
-    appId,
-    scope,
-    workflow,
-    baselineToken,
-  }: {
-    /**
-     * App selected within the authenticated customer's milestone feed.
-     */
-    appId: string,
-    /**
-     * Explicit environment containing the related business Operations.
-     */
-    scope: string,
-    /**
-     * Business workflow to compare within the authenticated customer app and environment.
-     */
-    workflow: string,
-    /**
-     * Customer optional saved performance token anchoring refresh progress by evaluation time and exact query scope. Changed evidence is expected; the old fingerprint is not validated. Progress reconstructs visible reports in current completed and ongoing samples, not original cohort membership. Future or malformed tokens and scope mismatches are rejected.
-     */
-    baselineToken?: string,
-  }): CancelablePromise<OperationWorkflowPerformanceSummary> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/platform-tenant-self/workflow-performance/summary',
-      query: {
-        'app_id': appId,
-        'scope': scope,
-        'workflow': workflow,
-        'baseline_token': baselineToken,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * Compare account transition readiness with a saved queue snapshot.
-   * Requires account read scope and MFA; customer selectors stay within account ownership.
-   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
-   * Snapshot scope binds the account, app, environment, customer selector and role.
-   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
-   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
-   * Each distinct saved workflow is reread once with readiness-only projections,
-   * independent of recent queue sampling and current owner or requirement filters.
-   * The exact Operation/from/to edge and declared requirements must remain comparable.
-   * Contract changes, terminal or unavailable state, unavailable edges and older retained
-   * revisions are counted separately and never classified as newly ready or newly blocked.
-   * Comparisons provide added and resolved requirement codes plus changed blocker,
-   * prerequisite, pending-verification and reporting evidence categories.
-   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
-   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
-   * The returned snapshot includes available current edges before filtering and can be saved
-   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
-   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
-   * not the complete sampled backlog. Applications retain authorization and execution.
-   *
-   * @returns OperationWorkflowReadinessComparisonResponse Account readiness changes and comparison coverage over saved transitions.
-   * @throws ApiError
-   */
-  public static compareAccountWorkflowReadiness({
-    slug,
-    requestBody,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    requestBody: OperationWorkflowReadinessComparisonRequest,
-  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/apps/{slug}/workflow-readiness/compare',
-      path: {
-        'slug': slug,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
-      },
-    });
-  }
-  /**
-   * Compare customer transition readiness with a saved queue snapshot.
-   * Requires platform-tenant Operations read scope; ownership comes from authentication and overrides are rejected.
-   * This read-only comparison accepts a caller-held snapshot emitted by the queue.
-   * Snapshot scope binds the account, app, environment, customer selector and role.
-   * Baseline data is advisory and is not authenticated historical evidence or execution authority.
-   * At most 100 saved transitions are accepted in a body of at most 1048576 bytes.
-   * Each distinct saved workflow is reread once with readiness-only projections,
-   * independent of recent queue sampling and current owner or requirement filters.
-   * The exact Operation/from/to edge and declared requirements must remain comparable.
-   * Contract changes, terminal or unavailable state, unavailable edges and older retained
-   * revisions are counted separately and never classified as newly ready or newly blocked.
-   * Comparisons provide added and resolved requirement codes plus changed blocker,
-   * prerequisite, pending-verification and reporting evidence categories.
-   * Age counters alone are excluded from evidence fingerprints; freshness expiry can change readiness.
-   * Change filters and the row limit apply after comparison; counts cover all saved transitions.
-   * The returned snapshot includes available current edges before filtering and can be saved
-   * as the next baseline. It omits unavailable edges. Reads are live and not atomic.
-   * Empty snapshots are valid. Snapshot rows are limited to previously returned queue rows,
-   * not the complete sampled backlog. Applications retain authorization and execution.
-   *
-   * @returns OperationWorkflowReadinessComparisonResponse Customer readiness changes and comparison coverage over saved transitions.
-   * @throws ApiError
-   */
-  public static comparePlatformTenantSelfWorkflowReadiness({
-    requestBody,
-  }: {
-    requestBody: OperationWorkflowReadinessComparisonRequest,
-  }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/platform-tenant-self/workflow-readiness/compare',
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
-      },
-    });
-  }
-  /**
-   * List account transition readiness across ongoing business workflows.
-   * Requires account read scope and MFA. Optional customer selection stays within account ownership. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
-   * @returns OperationWorkflowReadinessQueueResponse Account transition readiness rows with explicit live sampling counts.
-   * @throws ApiError
-   */
-  public static listAccountWorkflowReadinessQueue({
-    slug,
-    scope,
-    workflow,
-    targetOperation,
-    owner,
-    unassigned,
-    tenantId,
-    requirement,
-    limit = 20,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-    /**
-     * Explicit environment containing the related business Operations.
-     */
-    scope: string,
-    /**
-     * Account readiness queue. Optional declared workflow name within the app and environment.
-     */
-    workflow?: string,
-    /**
-     * Account readiness queue. Select declared transitions targeting this Operation name before edge sampling.
-     */
-    targetOperation?: string,
-    /**
-     * Account readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
-     */
-    owner?: string,
-    /**
-     * Account readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
-     */
-    unassigned?: boolean,
-    /**
-     * Account readiness queue. Optional customer UUID within the authenticated account.
-     */
-    tenantId?: string,
-    /**
-     * Account readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
-     */
-    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
-    /**
-     * Account readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
-     */
-    limit?: number,
-  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/workflow-readiness/queue',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'scope': scope,
-        'workflow': workflow,
-        'target_operation': targetOperation,
-        'owner': owner,
-        'unassigned': unassigned,
-        'tenant_id': tenantId,
-        'requirement': requirement,
-        'limit': limit,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
-        `,
-      },
-    });
-  }
-  /**
-   * List customer transition readiness across ongoing business workflows.
-   * Requires platform-tenant operations read scope. Customer ownership derives from authentication. Explicit app and environment required. Samples the 100 most recently updated retained ongoing workflows, ordered by update time then stable identity descending. Evaluates up to 100 sorted current-state transitions per workflow with no planned evidence. Target Operation filters before edge sampling; owner and requirement filters apply after evaluation but before row limit. Owner means an application-assigned blocker owner or pending verification owner for the target Operation; all retained pending obligations are considered before preview limits. Unassigned means one such finding has no owner. Reporting advisories never satisfy the requirement filter or change readiness. Unmet rows precede ready rows, preserving workflow sample order and Operation/from/to edge order. Sampling and row truncation are reported separately; counts cover evaluated transitions, not an account-wide backlog. Reads are live and not an atomic snapshot; changed workflow identities are excluded. No execution authority is granted. Unknown or terminal state is not enumerated. Duplicate, empty, and unsupported query parameters are rejected.
-   * @returns OperationWorkflowReadinessQueueResponse Customer transition readiness rows with explicit live sampling counts.
-   * @throws ApiError
-   */
-  public static listPlatformTenantSelfWorkflowReadinessQueue({
-    scope,
-    appId,
-    workflow,
-    targetOperation,
-    owner,
-    unassigned,
-    requirement,
-    limit = 20,
-  }: {
-    /**
-     * Explicit environment containing the related business Operations.
-     */
-    scope: string,
-    /**
-     * Customer readiness queue. Explicit application UUID within the authenticated account.
-     */
-    appId: string,
-    /**
-     * Customer readiness queue. Optional declared workflow name within the app and environment.
-     */
-    workflow?: string,
-    /**
-     * Customer readiness queue. Select declared transitions targeting this Operation name before edge sampling.
-     */
-    targetOperation?: string,
-    /**
-     * Customer readiness queue. Exact case-sensitive blocker or pending verification owner for the transition Operation. Maximum 128 UTF-8 bytes without controls. Mutually exclusive with unassigned=true.
-     */
-    owner?: string,
-    /**
-     * Customer readiness queue. Select transitions with an unassigned blocker or pending verification obligation. Mutually exclusive with owner. Explicit values must be true or false.
-     */
-    unassigned?: boolean,
-    /**
-     * Customer readiness queue. Select an unmet declared readiness requirement. Reporting advisories are excluded.
-     */
-    requirement?: 'state_unknown' | 'terminal' | 'transition_undeclared' | 'from_state_mismatch' | 'revision_mismatch' | 'contract_version_mismatch' | 'application_blocked' | 'dependency_unmet' | 'milestone_required' | 'policy_evidence_required' | 'dependency_required' | 'invariant_evidence_required' | 'effect_evidence_required' | 'retained_milestone_required' | 'retained_milestone_invalidated' | 'retained_milestone_expired' | 'retained_milestone_group_unmet' | 'path_selection_invalid',
-    /**
-     * Customer readiness queue. Maximum matching transitions returned after filtering. No cursor is issued for this live sample.
-     */
-    limit?: number,
-  }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/platform-tenant-self/workflow-readiness/queue',
-      query: {
-        'scope': scope,
-        'workflow': workflow,
-        'target_operation': targetOperation,
-        'owner': owner,
-        'unassigned': unassigned,
-        'app_id': appId,
-        'requirement': requirement,
-        'limit': limit,
-      },
-      errors: {
-        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).

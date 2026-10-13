@@ -325,6 +325,9 @@ func normalizeSource(source *api.EnvironmentWorkloadSource) error {
 	}
 	switch source.Kind {
 	case "source", "dockerfile", "function":
+		if source.FullRootfs {
+			return fmt.Errorf("full_rootfs is only supported for image sources")
+		}
 		if source.Kind == "function" {
 			if !api.ValidFunctionRuntime(source.Runtime) || source.Dockerfile != "" {
 				return fmt.Errorf("function source requires a supported runtime and no dockerfile")

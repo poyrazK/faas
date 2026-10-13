@@ -1840,6 +1840,40 @@ export class DeploymentsService {
     });
   }
   /**
+   * Schedule another recovery attempt for an active MCP compatibility hold.
+   * Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration override.
+   * @returns DeploymentResponse Current deployment status after scheduling; promotion remains asynchronous.
+   * @throws ApiError
+   */
+  public static retryDeploymentMcpTaskHold({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<DeploymentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/mcp-task-hold/retry',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `Deployment write scope or MFA is missing.`,
+        404: `No deployment owned by this account.`,
+        409: `The candidate has no active queued hold or is no longer eligible.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        500: `Recovery scheduling or status refresh failed.`,
+      },
+    });
+  }
+  /**
    * Retry a failed deployment from a named stage (ADR-117 production-ready follow-on C2).
    * Closes the production-ready gap exposed by ADR-117 §C4: a
    * deployment that fails partway is restorable via
@@ -2179,40 +2213,6 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The SBOM populator has not produced an artefact for this build (code=build_sbom_unavailable), or the storage backend failed (code=capacity_unavailable).`,
-      },
-    });
-  }
-  /**
-   * Schedule another recovery attempt for an active MCP compatibility hold.
-   * Requires deployment write scope and MFA policy. Returns 202 when recovery is already due or a new retry is scheduled. An active lease is preserved and schedules a follow-up. The worker repeats compatibility, readiness, smoke and lifecycle checks; this action does not grant a migration override.
-   * @returns DeploymentResponse Current deployment status after scheduling; promotion remains asynchronous.
-   * @throws ApiError
-   */
-  public static retryDeploymentMcpTaskHold({
-    id,
-  }: {
-    /**
-     * 32-hex-char opaque ID (NOT canonical UUID).
-     */
-    id: string,
-  }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/deployments/{id}/mcp-task-hold/retry',
-      path: {
-        'id': id,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `Deployment write scope or MFA is missing.`,
-        404: `No deployment owned by this account.`,
-        409: `The candidate has no active queued hold or is no longer eligible.`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        500: `Recovery scheduling or status refresh failed.`,
       },
     });
   }

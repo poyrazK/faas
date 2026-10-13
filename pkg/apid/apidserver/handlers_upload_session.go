@@ -60,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -409,6 +410,10 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 
+	// Receiving the chunk may have spent the request budget: 16 MiB at the
+	// supported 512 KiB/s takes 32 s (H9-157). The bookkeeping gets its own bound.
+	ctx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(r.Context())), uploadCommitFinishTimeout)
+	defer cancel()
 	// The database CAS protects the offset, while this lock protects
 	// the paired row/file transition. Re-read after acquiring it: the
 	// first row read can race a commit, cancel, or the reaper while the
@@ -416,7 +421,7 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 	mu := acquireUploadSessionLock(uploadID)
 	mu.Lock()
 	defer mu.Unlock()
-	row, err = s.store.GetUploadSession(r.Context(), uploadID)
+	row, err = s.store.GetUploadSession(ctx, uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
@@ -432,7 +437,7 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	if row.Status != "open" {
-		s.writeUploadSessionTerminalProblem(r.Context(), w, row)
+		s.writeUploadSessionTerminalProblem(ctx, w, row)
 		return
 	}
 	if uploadSessionExpired(row) {
@@ -485,14 +490,14 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 
 	// Atomic CAS: only durable bytes may become the advertised offset.
 	newReceived := clientOffset + int64(len(chunk))
-	appendRow, err := s.store.AppendUploadBytes(r.Context(), sqlc.AppendUploadBytesParams{
+	appendRow, err := s.store.AppendUploadBytes(ctx, sqlc.AppendUploadBytesParams{
 		ID:                    uploadID,
 		NewReceivedBytes:      newReceived,
 		ExpectedReceivedBytes: clientOffset,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrConflict) {
-			current, getErr := s.store.GetUploadSession(r.Context(), uploadID)
+			current, getErr := s.store.GetUploadSession(ctx, uploadID)
 			if getErr != nil {
 				api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeUploadSessionOffsetConflict,
 					"Upload session offset conflict",

@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copydatabases"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type verificationReadBudgetFailureStore struct {
@@ -48,13 +49,13 @@ func readBudgetWorkerFixture(t *testing.T) (*verificationWorkerFixture, *verific
 	t.Helper()
 	v, base := retryVerificationWorkerFixture(t)
 	store := &verificationReadBudgetFailureStore{verificationRetryFailureStore: base}
-	v.f.db.x.f.srv.store = store
+	v.f.db.x.f.srv.store = statetest.NewPg(store)
 	return v, store
 }
 func verificationReadBudget(t *testing.T, v *verificationWorkerFixture) state.ProjectEnvironmentClonePostgresVerificationReadBudget {
 	t.Helper()
 	f, x := v.f, v.f.db.x
-	b, err := v.store.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+	b, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationReadBudgetForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +305,7 @@ func TestPGClonePostgresVerificationReadBudgetWorkerRequiresStoreCapability(t *t
 	v, _ := readBudgetWorkerFixture(t)
 	v.importData(t, false)
 	x := v.f.db.x
-	x.f.srv.store = &verificationWithoutReadBudgetStore{Store: v.store, ProjectEnvironmentClonePostgresVerificationStore: v.store, ProjectEnvironmentClonePostgresVerificationAttemptStore: v.store, ProjectEnvironmentClonePostgresContentsStore: v.store, ProjectEnvironmentClonePostgresImportStore: v.store, ProjectEnvironmentClonePostgresDatabaseSQLPinsStore: v.store}
+	x.f.srv.store = &verificationWithoutReadBudgetStore{Store: statetest.NewPg(v.store), ProjectEnvironmentClonePostgresVerificationStore: statetest.NewPg(v.store), ProjectEnvironmentClonePostgresVerificationAttemptStore: statetest.NewPg(v.store), ProjectEnvironmentClonePostgresContentsStore: statetest.NewPg(v.store), ProjectEnvironmentClonePostgresImportStore: statetest.NewPg(v.store), ProjectEnvironmentClonePostgresDatabaseSQLPinsStore: statetest.NewPg(v.store)}
 	calls := x.p.targetSQLCalls
 	if got, err := runVerificationRetryWorker(t, v); !errors.Is(err, managedpostgres.ErrUnavailable) || !reflect.DeepEqual(got, state.ProjectEnvironmentClonePostgresVerificationAttempt{}) || v.dataReads != 0 || x.p.targetSQLCalls != calls {
 		t.Fatal("missing private budget capability opened SQL", err)

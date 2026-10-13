@@ -16,11 +16,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type cloneConfigurationFenceFailureStore struct {
-	*state.PgStore
-	fault string
+	PgStore *state.PgStore
+	fault   string
 }
 
 func (s *cloneConfigurationFenceFailureStore) AcquireProjectEnvironmentCloneConfigurationFence(ctx context.Context, lease state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneConfigurationFence, error) {
@@ -62,7 +63,7 @@ func TestPGCloneStableCaptureBarriersKeepConfigurationHeldDuringProviderIO(t *te
 		if err != nil || !apidserver.CloneConfigurationFenceMatches((*f.Lease()).Operation, fence) {
 			t.Fatalf("provider dispatched without original configuration hold: %+v %v", fence, err)
 		}
-		if err := store.UpsertAppEnvInScope(ctx, (*f.Lease()).Operation.AccountID, buckets[0].AppID, "production", "CAPTURED", "changed-during-capture"); !errors.Is(err, state.ErrProjectEnvironmentCloneConfigurationFenced) {
+		if err := store.PgStore.UpsertAppEnvInScope(ctx, (*f.Lease()).Operation.AccountID, buckets[0].AppID, "production", "CAPTURED", "changed-during-capture"); !errors.Is(err, state.ErrProjectEnvironmentCloneConfigurationFenced) {
 			t.Fatalf("source edit during remote IO was admitted: %v", err)
 		}
 		return nil
@@ -74,10 +75,10 @@ func TestPGCloneStableCaptureBarriersKeepConfigurationHeldDuringProviderIO(t *te
 		t.Fatalf("stable barrier preparation failed: %+v %v", result, err)
 	}
 	first := (*result.ConfigurationFence())
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), (*f.Lease()), 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), (*f.Lease()), 0); err != nil {
 		t.Fatal(err)
 	}
-	(*f.Lease()), err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	(*f.Lease()), err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestPGCloneStableCaptureBarriersKeepConfigurationHeldDuringProviderIO(t *te
 func TestPGCloneStableCaptureBarriersRecoverLostConfigurationHoldReply(t *testing.T) {
 	f, base, provider, buckets := apidserver.CloneCaptureBarrierFixture(t)
 	store := &cloneConfigurationFenceFailureStore{PgStore: base.PgStore, fault: "acquire_reply"}
-	(*(*f.Srv()).Store()), (*provider.Drained()) = store, true
+	(*(*f.Srv()).Store()), (*provider.Drained()) = statetest.NewPg(store), true
 	var result apidserver.CloneCaptureBarrierObservation
 	var err error
 	(*f.Lease()), result, err = (*f.Srv()).PrepareProjectEnvironmentCloneStableCaptureBarriers(t.Context(), (*f.Lease()))
@@ -102,14 +103,14 @@ func TestPGCloneStableCaptureBarriersRecoverLostConfigurationHoldReply(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.UpsertAppEnvInScope(t.Context(), (*f.Lease()).Operation.AccountID, buckets[0].AppID, "production", "CAPTURED", "changed"); !errors.Is(err, state.ErrProjectEnvironmentCloneConfigurationFenced) {
+	if err := store.PgStore.UpsertAppEnvInScope(t.Context(), (*f.Lease()).Operation.AccountID, buckets[0].AppID, "production", "CAPTURED", "changed"); !errors.Is(err, state.ErrProjectEnvironmentCloneConfigurationFenced) {
 		t.Fatalf("lost reply released source configuration: %v", err)
 	}
 	stale := (*f.Lease())
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), (*f.Lease()), 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), (*f.Lease()), 0); err != nil {
 		t.Fatal(err)
 	}
-	(*f.Lease()), err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	(*f.Lease()), err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestPGCloneStableCaptureBarriersRejectMissingOrChangedConfigurationHold(t *
 		t.Run(fault, func(t *testing.T) {
 			f, base, provider, _ := apidserver.CloneCaptureBarrierFixture(t)
 			store := &cloneConfigurationFenceFailureStore{PgStore: base.PgStore, fault: fault}
-			(*(*f.Srv()).Store()), (*provider.Drained()) = store, true
+			(*(*f.Srv()).Store()), (*provider.Drained()) = statetest.NewPg(store), true
 			var result apidserver.CloneCaptureBarrierObservation
 			var err error
 			(*f.Lease()), result, err = (*f.Srv()).PrepareProjectEnvironmentCloneStableCaptureBarriers(t.Context(), (*f.Lease()))
@@ -138,7 +139,7 @@ func TestPGCloneStableCaptureBarriersRejectMissingOrChangedConfigurationHold(t *
 			if held, err := store.PgStore.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), (*f.Lease())); err != nil || !apidserver.CloneConfigurationFenceMatches((*f.Lease()).Operation, held) {
 				t.Fatalf("failed observation discarded hold: %+v %v", held, err)
 			}
-			fences, err := store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), (*f.Lease()))
+			fences, err := store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), (*f.Lease()))
 			if err != nil || len(fences) != 2 {
 				t.Fatalf("failed configuration observation discarded data holds: %+v %v", fences, err)
 			}
@@ -149,7 +150,7 @@ func TestPGCloneStableCaptureBarriersRejectMissingOrChangedConfigurationHold(t *
 
 func TestPGCloneStableCaptureBarriersRejectConfigurationDriftBeforeProviderIO(t *testing.T) {
 	f, store, provider, buckets := apidserver.CloneCaptureBarrierFixture(t)
-	if err := store.UpsertAppEnvInScope(t.Context(), (*f.Lease()).Operation.AccountID, buckets[0].AppID, "production", "CAPTURED", "changed-before-hold"); err != nil {
+	if err := store.PgStore.UpsertAppEnvInScope(t.Context(), (*f.Lease()).Operation.AccountID, buckets[0].AppID, "production", "CAPTURED", "changed-before-hold"); err != nil {
 		t.Fatal(err)
 	}
 	lease, result, err := (*f.Srv()).PrepareProjectEnvironmentCloneStableCaptureBarriers(t.Context(), (*f.Lease()))
@@ -168,32 +169,32 @@ func TestPGCloneStableCaptureBarriersRejectConfigurationDriftBeforeProviderIO(t 
 func TestPGCloneStableCaptureBarriersAbandonmentRecoversLostConfigurationRelease(t *testing.T) {
 	f, base, provider, buckets := apidserver.CloneCaptureBarrierFixture(t)
 	store := &cloneConfigurationFenceFailureStore{PgStore: base.PgStore}
-	(*(*f.Srv()).Store()), (*provider.Drained()) = store, true
+	(*(*f.Srv()).Store()), (*provider.Drained()) = statetest.NewPg(store), true
 	var err error
 	(*f.Lease()), _, err = (*f.Srv()).PrepareProjectEnvironmentCloneStableCaptureBarriers(t.Context(), (*f.Lease()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	op := (*f.Lease()).Operation
-	(*f.Lease()).Operation, err = store.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, nil, "")
+	(*f.Lease()).Operation, err = store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCompensating, op.Revision, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	store.fault = "abandon_reply"
-	(*f.Lease()), err = (*f.Srv()).ProcessProjectEnvironmentCloneLease(t.Context(), store, (*f.Lease()))
+	(*f.Lease()), err = (*f.Srv()).ProcessProjectEnvironmentCloneLease(t.Context(), statetest.NewPg(store), (*f.Lease()))
 	if !errors.Is(err, objectstorage.ErrUnavailable) {
 		t.Fatalf("lost configuration release reply was ignored: %v", err)
 	}
-	if err := store.UpsertAppEnvInScope(t.Context(), op.AccountID, buckets[0].AppID, "production", "CAPTURED", "edited-after-abandonment"); err != nil {
+	if err := store.PgStore.UpsertAppEnvInScope(t.Context(), op.AccountID, buckets[0].AppID, "production", "CAPTURED", "edited-after-abandonment"); err != nil {
 		t.Fatalf("abandoned configuration remained fenced: %v", err)
 	}
-	if holds, err := store.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), (*f.Lease())); err != nil || len(holds) != 2 {
+	if holds, err := store.PgStore.ProjectEnvironmentCloneObjectWriteFencesForLease(t.Context(), (*f.Lease())); err != nil || len(holds) != 2 {
 		t.Fatalf("configuration release also released data: %+v %v", holds, err)
 	}
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), (*f.Lease()), 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), (*f.Lease()), 0); err != nil {
 		t.Fatal(err)
 	}
-	(*f.Lease()), err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	(*f.Lease()), err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}

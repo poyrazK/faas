@@ -51,7 +51,10 @@ func TestNativeQualificationRestoreHandlersBindRegisteredCallbacksToOriginalTarg
 			t.Fatal(err)
 		}
 	}
-	handlers, err := f.v.nativeQualificationRestoreHandlers(f.ctx, f.owner.Lease)
+	// The live restore path carries the claim made before physical binding.
+	claim := f.target
+	claim.NativeGeneration, claim.NativeLease = "", Lease{}
+	handlers, err := f.v.nativeQualificationRestoreHandlers(nativeQualificationRestoreContext(f.ctx, claim), f.owner.Lease)
 	if err != nil || len(handlers) != len(nativeRestoreChannelPorts()) {
 		t.Fatal("registered platform handlers were not composed for the private target", len(handlers), err)
 	}

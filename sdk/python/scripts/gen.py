@@ -198,7 +198,17 @@ WRAPPER_MODULES = (
     "commit.py",
     "operations_runtime.py",
     "job_operations_runtime.py",
+    "object_storage_runtime.py",
+    "secret_reload_runtime.py",
     "operations.py",
+    "event_consumer_transactions.py",
+    "commit_subscriber_wait.py",
+    "commit_delivery_report.py",
+    "commit_recovery_plan.py",
+    "commit_recovery_apply.py",
+    "commit_recovery_status.py",
+    "_event_consumer_contract.py",
+    "event_consumer_schema.sql",
     "_operation_contract.py",
     "customer_operation_schema.sql",
     "operation_schema.sql",
@@ -349,6 +359,7 @@ def regen(overwrite: bool = True) -> None:
 
         _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
         _patch_generator_bugs(OUT / "faas_sdk")
+        _preserve_routing_replay_guard_precision(OUT / "faas_sdk")
 
         # Preserve the previous inline request model import after naming the schema.
         models = OUT / "faas_sdk" / "models"
@@ -760,7 +771,7 @@ from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
-from .commit import CommitEventRouting, insert_commit_event
+from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
@@ -931,6 +942,7 @@ __all__ = (
     "current_dev_bridge_context",
     "with_dev_bridge_context",
     "insert_commit_event",
+    "ainsert_commit_event",
     "CommitEventRouting",
     "CustomerOperationRequest",
     "customer_operation_request_from_headers",
@@ -1240,6 +1252,35 @@ __all__ += (
     "consume_realtime_consumer_group",
     "consume_realtime_consumer_group_with_credential",
 )
+
+from .event_consumer_transactions import (
+    EventConsumerCommitUnknownError,
+    EventConsumerConflictError,
+    EventConsumerRequest,
+    EventConsumerTransactionResult,
+    awith_event_consumer_transaction,
+    event_consumer_receipt_schema,
+    event_consumer_request_from_headers,
+    new_event_consumer_request,
+    with_event_consumer_transaction,
+)
+
+__all__ += (
+    "EventConsumerCommitUnknownError", "EventConsumerConflictError", "EventConsumerRequest",
+    "EventConsumerTransactionResult", "awith_event_consumer_transaction", "event_consumer_receipt_schema",
+    "event_consumer_request_from_headers", "new_event_consumer_request", "with_event_consumer_transaction",
+)
+from .commit_subscriber_wait import await_commit_subscriber
+__all__ += ("await_commit_subscriber",)
+
+from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+__all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
+from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
+__all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")
+from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recovery
+__all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
+from .commit_recovery_status import adiagnose_commit_recovery_status, CommitRecoveryStatusError, aget_commit_recovery_status, awatch_commit_recovery_status, commit_recovery_status_settled
+__all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")
 '''
 
 
@@ -1410,6 +1451,17 @@ def _canonicalise_to_head(
             file=sys.stderr,
         )
     return reconciled
+
+
+def _preserve_routing_replay_guard_precision(package: Path) -> None:
+    """Keep a receipt guard's RFC3339 text intact, including nanosecond precision."""
+    path = package / "models" / "replay_event_fanout_failure_request.py"
+    text = path.read_text()
+    text = text.replace("import datetime\n", "")
+    text = text.replace("datetime.datetime | Unset", "str | Unset")
+    text = text.replace("self.expected_accepted_at.isoformat()", "self.expected_accepted_at")
+    text = text.replace("datetime.datetime.fromisoformat(_expected_accepted_at)", "_expected_accepted_at")
+    path.write_text(text)
 
 
 def main() -> None:
