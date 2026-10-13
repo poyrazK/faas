@@ -5,7 +5,7 @@
 -- replacement with the same cardinality.
 -- +goose Up
 -- +goose StatementBegin
-CREATE FUNCTION environment_workload_serving_gateway_roster_ready(target_graph uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION environment_workload_serving_gateway_roster_ready(target_graph uuid) RETURNS boolean
 LANGUAGE sql STABLE AS $$
 SELECT EXISTS (
     SELECT 1
