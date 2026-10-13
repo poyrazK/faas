@@ -144,7 +144,7 @@ one `sed` rewrite.
 
 | Symptom | Page? | First action |
 |---|---|---|
-| basebackup timestamp missing or older than 26h | yes (page) | inspect `faas-pg-basebackup-push.service`; check the configured rclone identity and destination |
+| basebackup timestamp missing or older than 26h | warn (ADR-1236; review the warn route daily) | inspect `faas-pg-basebackup-push.service`; check the configured rclone identity and destination |
 | WAL prune timestamp missing or older than 2h | warn | run the dry-run below and inspect `faas-pg-wal-prune.service` |
 | local WAL exceeds 20 GiB | warn | verify off-host reachability and the retained basebackup boundary |
 | `archive_command` line shows old `cp` | warn | the operator has not converged the PostgreSQL role; re-run the control-plane bootstrap target |

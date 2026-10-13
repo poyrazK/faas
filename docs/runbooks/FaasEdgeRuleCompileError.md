@@ -3,13 +3,16 @@
 Source: dashboard `faas-edge-rules-pr-b` panel 4
 (`deploy/grafana/edge-rules.json`) — the stat panel's `gt 0` color
 override paints any non-zero value red on the first increment, so
-this is a fast page. Also surfaces as a Prometheus alert rule in
+this is a fast signal. Also surfaces as Prometheus alert rules in
 `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
 Metric: `gateway_edge_rule_compile_error_total{kind}`.
 Spec: §12 + ADR-091 Amendment 1 (`pkg/gateway/metrics.go::ObserveEdgeRuleCompileError`
 doc-comment: "a rule shipped broken is an actionable correctness
 signal, not a headroom signal").
-Severity: **page**.
+Severity: **page** for access-gating kinds (`jwt`, `ip`, `waf`) via
+`FaasEdgeRuleAuthCompileError`: a dropped access rule is not enforced, so
+its route serves without the check. Other kinds are warn via
+`FaasEdgeRuleCompileError` (ADR-1236).
 
 ## Symptom
 

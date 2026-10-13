@@ -308,3 +308,36 @@ customer cancellation.
 
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
 1 MiB) to retrieve a larger tail when the response is truncated.
+
+## Image runs
+
+`gregale run --image IMAGE [ARG...]` runs one command from an OCI image in a
+fresh microVM, the way `docker run` does (ADR-1161):
+
+```sh
+gregale run --image alpine echo hello
+gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
+gregale run --image my-registry.example/tool:1.4 --entrypoint /bin/sh -- -c 'tool --version'
+```
+
+Arguments after the flags replace the image `CMD`; the image `ENTRYPOINT`
+stays unless `--entrypoint` overrides it, which also drops the image `CMD`.
+The command waits for the run, prints its output, and exits with the
+command's exit code (124 after the deadline, 130 when cancelled). Ctrl-C
+cancels the run. `--detach` prints the run id instead of waiting.
+
+Each image run is a one-task Job run with no retries. Gregale keeps a
+platform-managed runner job per image (named `ir-<hash>`), so the first run
+pulls the image and later runs start from the cached copy. `--pull always`
+pulls a moved tag again. Runner jobs do not appear in `gregale jobs list` and
+do not count against your Job limit; inspect a run with
+`gregale jobs tasks ir-<hash> RUN_ID` and `gregale jobs logs ir-<hash> RUN_ID`,
+or delete a cached image with `gregale jobs rm ir-<hash>`.
+
+Image runs use your plan's Job limits for memory, deadline (by default the
+plan's maximum) and concurrent tasks. Plans cache a limited number of images
+(`api.ImageRunCachedImages`: Hobby 3, Pro 10, Scale 25); starting a run for a
+new image evicts the least recently used cached image that has no queued or
+running work. Free plans do not include Jobs or image runs. Output is the
+task's stored log tail (up to 1 MiB), printed when the task ends; image runs
+have no interactive stdin yet.

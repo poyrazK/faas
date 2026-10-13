@@ -219,7 +219,7 @@ export {
 
 export { decodeExecutionArtifact } from './execution-artifacts.js';
 
-export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationWorkflowConditionComparison, type OperationWorkflowConditionChange, type OperationWorkflowConditionEvidence, type OperationWorkflowRevisionComparison, type OperationWorkflowRevisionChange, type OperationWorkflowRevisionEvidence, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions, type OperationWorkflowOutcomeEntry, type OperationWorkflowOutcomesResponse, type OperationWorkflowOutcomeGroup, type OperationWorkflowOutcomeSummary, type OperationWorkflowOutcomeOptions, type OperationWorkflowOutcomeSummaryOptions, type OperationWorkflowDependency, type OperationWorkflowRelatedInstance, type OperationWorkflowDependencyImpact, type OperationWorkflowDependencyTrace, type OperationWorkflowReadinessSnapshot, type OperationWorkflowReadinessSnapshotEntry, type OperationWorkflowReadinessComparisonRequest, type OperationWorkflowReadinessChangeStatus, type OperationWorkflowReadinessSubscriptionOptions, type OperationWorkflowReadinessSubscriptionRequest, type OperationWorkflowReadinessSubscription, type OperationWorkflowReadinessSubscriptionsResponse, type OperationWorkflowReadinessNotification, type OperationWorkflowReadinessDueReminder, type OperationWorkflowPlaybook, type OperationWorkflowPlaybookGuidance, type OperationWorkflowPlaybookProgressStartRequest, type OperationWorkflowPlaybookEvidence, type OperationWorkflowPlaybookProgressUpdateRequest, type OperationWorkflowPlaybookProgressItem, type OperationWorkflowPlaybookProgressChange, type OperationWorkflowPlaybookProgress, type OperationWorkflowPlaybookReview, type OperationWorkflowPlaybookReviewRequest, type OperationWorkflowPlaybookApplicability, type OperationWorkflowCase, type OperationWorkflowCaseAction, type OperationWorkflowCoordinationTimelineOptions, type OperationWorkflowCoordinationTimelineEvent, type OperationWorkflowCoordinationTimelineSource, type OperationWorkflowCoordinationTimeline, type OperationWorkflowReadinessFollowUpOptions, type OperationWorkflowReadinessFollowUp, type OperationWorkflowReadinessFollowUpsResponse, type OperationWorkflowReadinessInboxResponse, type OperationWorkflowReadinessCoordination, type OperationWorkflowReadinessCoordinationRequest, type OperationWorkflowReadinessCompletionRequest, type OperationWorkflowReadinessCompletion, type OperationWorkflowReadinessCompletionEvidence, type OperationWorkflowReadinessBusinessOutcome, type OperationWorkflowReadinessBusinessOutcomeWatch, type OperationWorkflowReadinessOutcomeEscalationPolicy, type OperationWorkflowReadinessEscalationResponse, type OperationWorkflowReadinessAssignmentChange, type OperationWorkflowReadinessEscalationResponseEvent, type OperationWorkflowReadinessOutcomeEscalationReference, type OperationWorkflowReadinessOutcomeEscalation, type OperationWorkflowReadinessBusinessOutcomeEvent, type OperationWorkflowReadinessVerificationWatch, type OperationWorkflowReadinessVerificationWatchItem, type OperationWorkflowReadinessVerificationChange, type OperationWorkflowReadinessVerificationEvent, type OperationWorkflowReadinessNotificationCheck, type OperationWorkflowReadinessHandoff, type OperationWorkflowReadinessEvidence, type OperationWorkflowReadinessEvidenceChange, type OperationWorkflowReadinessChange, type OperationWorkflowReadinessComparisonResponse, type OperationWorkflowReadinessQueueOptions, type OperationWorkflowReadinessQueueEntry, type OperationWorkflowReadinessQueueResponse, type OperationWorkflowReadinessRequest, type OperationWorkflowRetainedMilestonePath, type OperationWorkflowRetainedMilestonePathResult, type OperationWorkflowPathDecisionResult, type OperationWorkflowRetainedMilestoneGroup, type OperationWorkflowRetainedMilestoneGroupResult, type OperationWorkflowPrerequisiteRecovery, type OperationWorkflowRetainedMilestoneFreshnessRule, type OperationWorkflowRetainedMilestoneFreshness, type OperationWorkflowRetainedMilestoneInvalidationRule, type OperationWorkflowRetainedMilestoneInvalidation, type OperationWorkflowRetainedMilestoneRequirement, type OperationWorkflowRetainedMilestone, type OperationWorkflowTransitionReadiness, type OperationWorkflowReadinessResponse, type OperationWorkflowReadinessOverview, type OperationWorkflowDependencyFinding, type OperationWorkflowDependentInstance, type OperationWorkflowPerformanceGroup, type OperationWorkflowPerformanceInstanceOptions, type OperationWorkflowPerformanceInstance, type OperationWorkflowPerformanceInstancesResponse, type OperationWorkflowStateSLA, type OperationWorkflowPerformanceOptions, type OperationWorkflowPerformanceSummary, type OperationWorkflowDurationDistribution, type OperationWorkflowPerformanceCoverageReason, type OperationWorkflowPerformanceCohort, type OperationWorkflowStatePerformance, type OperationWorkflowBlockerPerformance, type OperationWorkflowVerificationPerformance, type OperationWorkflowBottlenecks, type OperationWorkflowStateDuration, type OperationWorkflowBlockerDuration, type OperationWorkflowVerificationDuration, type OperationWorkflowResolutionVerification, type OperationWorkflowBlockerEscalation, type OperationWorkflowAttentionEntry, type OperationWorkflowAttentionResponse, type OperationWorkflowAttentionOptions, type OperationWorkflowAttentionStats, type OperationWorkflowAttentionGroup, type OperationWorkflowAttentionSummary, type OperationWorkflowAttentionSummaryOptions, type OperationWorkflowBlockerResolution, type OperationWorkflowBlocker, type OperationWorkflowDecision, type OperationWorkflowInstanceSnapshot, type OperationWorkflowInstanceTransition, type OperationWorkflowInstanceStep, type OperationWorkflowInstanceMilestoneRef } from './customer-operations.js';
+export { GregaleOperationClient, OperationHTTPError, type Operation, type OperationClientOptions, type OperationList, type OperationListOptions, type OperationSummary, type OperationSubject, type OperationState, type OperationReceipt, type OperationEvents, type OperationReport, type OperationArtifactReport, type OperationMilestoneReport, type OperationMilestone, type OperationWorkflowState, type OperationWorkflowStateHistoryEntry, type OperationWorkflowConditionComparison, type OperationWorkflowConditionChange, type OperationWorkflowConditionEvidence, type OperationWorkflowRevisionComparison, type OperationWorkflowRevisionChange, type OperationWorkflowRevisionEvidence, type OperationMilestones, type OperationMilestonePageOptions, type OperationBusinessMilestoneOptions, type OperationWorkflowOutcomeEntry, type OperationWorkflowOutcomesResponse, type OperationWorkflowOutcomeGroup, type OperationWorkflowOutcomeSummary, type OperationWorkflowOutcomeOptions, type OperationWorkflowOutcomeSummaryOptions, type OperationWorkflowDependency, type OperationWorkflowRelatedInstance, type OperationWorkflowDependencyImpact, type OperationWorkflowDependencyTrace, type OperationWorkflowReadinessSnapshot, type OperationWorkflowReadinessSnapshotEntry, type OperationWorkflowReadinessComparisonRequest, type OperationWorkflowReadinessChangeStatus, type OperationWorkflowReadinessSubscriptionOptions, type OperationWorkflowReadinessSubscriptionRequest, type OperationWorkflowReadinessSubscription, type OperationWorkflowReadinessSubscriptionsResponse, type OperationWorkflowReadinessNotification, type OperationWorkflowReadinessDueReminder, type OperationWorkflowPlaybookOutcomeDeadlinePolicy, type OperationWorkflowPlaybookOutcomeEscalation, type OperationWorkflowPlaybookDependencyRecovery, type OperationWorkflowPlaybookDependencyState, type OperationWorkflowPlaybookDependencyRegression, type OperationWorkflowPlaybookStepDependency, type OperationWorkflowPlaybookStepReadiness, type OperationWorkflowPlaybookStepAssignmentPolicy, type OperationWorkflowPlaybookStepAssignmentReference, type OperationWorkflowPlaybookStepAssignment, type OperationWorkflowPlaybookOutcomeFollowUp, type OperationWorkflowPlaybookOutcomeGuidance, type OperationWorkflowPlaybookOutcomeAcceptancePolicy, type OperationWorkflowPlaybookCompletionOutcome, type OperationWorkflowPlaybookCompletionReview, type OperationWorkflowPlaybookCompletionReviewEvent, type OperationWorkflowPlaybookBusinessOutcome, type OperationWorkflowPlaybookOutcomeChange, type OperationWorkflowPlaybookEvidenceWatchRequest, type OperationWorkflowPlaybookEvidenceWatch, type OperationWorkflowPlaybookEvidenceChange, type OperationWorkflowPlaybookEvidenceEvent, type OperationWorkflowPlaybookEvidenceRequirement, type OperationWorkflowPlaybookEvidenceCheck, type OperationWorkflowPlaybook, type OperationWorkflowPlaybookGuidance, type OperationWorkflowPlaybookProgressStartRequest, type OperationWorkflowPlaybookEvidence, type OperationWorkflowPlaybookProgressUpdateRequest, type OperationWorkflowPlaybookProgressItem, type OperationWorkflowPlaybookProgressChange, type OperationWorkflowPlaybookProgress, type OperationWorkflowPlaybookReview, type OperationWorkflowPlaybookReviewRequest, type OperationWorkflowPlaybookApplicability, type OperationWorkflowCase, type OperationWorkflowCaseAction, type OperationWorkflowCoordinationTimelineOptions, type OperationWorkflowCoordinationTimelineEvent, type OperationWorkflowCoordinationTimelineSource, type OperationWorkflowCoordinationTimeline, type OperationWorkflowReadinessFollowUpOptions, type OperationWorkflowReadinessFollowUp, type OperationWorkflowReadinessFollowUpsResponse, type OperationWorkflowReadinessInboxResponse, type OperationWorkflowReadinessCoordination, type OperationWorkflowReadinessCoordinationRequest, type OperationWorkflowReadinessCompletionRequest, type OperationWorkflowReadinessCompletion, type OperationWorkflowReadinessCompletionEvidence, type OperationWorkflowReadinessBusinessOutcome, type OperationWorkflowReadinessBusinessOutcomeWatch, type OperationWorkflowReadinessOutcomeEscalationPolicy, type OperationWorkflowReadinessEscalationResponse, type OperationWorkflowReadinessAssignmentChange, type OperationWorkflowReadinessEscalationResponseEvent, type OperationWorkflowReadinessOutcomeEscalationReference, type OperationWorkflowReadinessOutcomeEscalation, type OperationWorkflowReadinessBusinessOutcomeEvent, type OperationWorkflowReadinessVerificationWatch, type OperationWorkflowReadinessVerificationWatchItem, type OperationWorkflowReadinessVerificationChange, type OperationWorkflowReadinessVerificationEvent, type OperationWorkflowReadinessNotificationCheck, type OperationWorkflowReadinessHandoff, type OperationWorkflowReadinessEvidence, type OperationWorkflowReadinessEvidenceChange, type OperationWorkflowReadinessChange, type OperationWorkflowReadinessComparisonResponse, type OperationWorkflowReadinessQueueOptions, type OperationWorkflowReadinessQueueEntry, type OperationWorkflowReadinessQueueResponse, type OperationWorkflowReadinessRequest, type OperationWorkflowRetainedMilestonePath, type OperationWorkflowRetainedMilestonePathResult, type OperationWorkflowPathDecisionResult, type OperationWorkflowRetainedMilestoneGroup, type OperationWorkflowRetainedMilestoneGroupResult, type OperationWorkflowPrerequisiteRecovery, type OperationWorkflowRetainedMilestoneFreshnessRule, type OperationWorkflowRetainedMilestoneFreshness, type OperationWorkflowRetainedMilestoneInvalidationRule, type OperationWorkflowRetainedMilestoneInvalidation, type OperationWorkflowRetainedMilestoneRequirement, type OperationWorkflowRetainedMilestone, type OperationWorkflowTransitionReadiness, type OperationWorkflowReadinessResponse, type OperationWorkflowReadinessOverview, type OperationWorkflowDependencyFinding, type OperationWorkflowDependentInstance, type OperationWorkflowPerformanceGroup, type OperationWorkflowPerformanceInstanceOptions, type OperationWorkflowPerformanceInstance, type OperationWorkflowPerformanceInstancesResponse, type OperationWorkflowStateSLA, type OperationWorkflowPerformanceOptions, type OperationWorkflowPerformanceSummary, type OperationWorkflowDurationDistribution, type OperationWorkflowPerformanceCoverageReason, type OperationWorkflowPerformanceCohort, type OperationWorkflowStatePerformance, type OperationWorkflowBlockerPerformance, type OperationWorkflowVerificationPerformance, type OperationWorkflowBottlenecks, type OperationWorkflowStateDuration, type OperationWorkflowBlockerDuration, type OperationWorkflowVerificationDuration, type OperationWorkflowResolutionVerification, type OperationWorkflowBlockerEscalation, type OperationWorkflowAttentionEntry, type OperationWorkflowAttentionResponse, type OperationWorkflowAttentionOptions, type OperationWorkflowAttentionStats, type OperationWorkflowAttentionGroup, type OperationWorkflowAttentionSummary, type OperationWorkflowAttentionSummaryOptions, type OperationWorkflowBlockerResolution, type OperationWorkflowBlocker, type OperationWorkflowDecision, type OperationWorkflowInstanceSnapshot, type OperationWorkflowInstanceTransition, type OperationWorkflowInstanceStep, type OperationWorkflowInstanceMilestoneRef } from './customer-operations.js';
 export { GregaleOperations, OperationStoppedError, type OperationStopCode, type OperationHandlerScope, type GregaleOperationsOptions, type OperationExecutionContext, type OperationRequestHeaders, type OperationArtifactInput, type OperationArtifactUpload, type PreparedOperationArtifact } from './operations-runtime.js';
 export { GregaleOperationSession, type OperationSessionOptions, type OperationSessionClient, type OperationSessionUpdate } from './operation-session.js';
 export { CustomerOperationAuth, type CustomerOperationAuthOptions, type CustomerOperationAuthProvider } from './operation-auth.js';
@@ -237,6 +237,12 @@ export {
 } from './durable-entity-contract.js';
 
 export { insertCommitEvent, type CommitEvent, type CommitEventRouting, type CommitTransaction } from "./commit.js";
+export { setRealtimeCommitTTL, insertRealtimeCommitEvent, listRealtimeCommitDeliveries, getRealtimeCommitDelivery, retryRealtimeCommitEvent,
+  type RealtimeCommitEvent, type RealtimeCommitDelivery, type RealtimeOutboxReader } from './realtime-transactions.js';
+export { revokeRealtimeChannelAccess, restoreRealtimeChannelAccess, revokeRealtimeSessions,
+  type RealtimePrincipalTarget } from './realtime-access.js';
+export type { ManagedRealtimeAccessRequest } from './generated/models/ManagedRealtimeAccessRequest.js';
+export type { ManagedRealtimeAccessResponse } from './generated/models/ManagedRealtimeAccessResponse.js';
 
 export { operationReceiptSchema, customerOperationReceiptSchema } from "./operation-contract.js";
 export { customerOperationRequestFromHeaders, customerOperationRequestDigest, withCustomerOperationTransaction,
@@ -317,6 +323,9 @@ export type { OperationWorkflowUnmetEffect } from './generated/models/OperationW
 
 export { businessCompensationPayload, type OperationBusinessEffectReference, type OperationBusinessCompensation, type OperationBusinessCompensationPayload } from './customer-operation-compensation.js';
 
+export { installRealtimeChangefeed, removeRealtimeChangefeed } from './realtime-changefeeds.js';
+export type { RealtimeChangefeedConfig } from './realtime-changefeeds.js';
+
 export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
   withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
   type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
@@ -371,9 +380,112 @@ export { listDurableEntityBackups, getDurableEntityBackup, previewDurableEntityR
 export { decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestoreValidation, type DurableEntityRestoreValidationRequest } from './durable-entity-restore-validation.js';
 export { validateDurableEntityRestore, type DurableEntityRestoreValidationOptions } from './durable-entities.js';
 
+export { subscribeRealtimeSSE, RealtimeSSEError } from './realtime-sse.js';
+export type { RealtimeSSEOptions, RealtimeSSEMessage } from './realtime-sse.js';
+
+export type { RealtimeChannelWebhookFilter } from './generated/models/RealtimeChannelWebhookFilter.js';
+
+export { createBrowserRealtimeTicketSocketFactory } from './browser-realtime.js';
+export type { RealtimeTicketRequest } from './generated/models/RealtimeTicketRequest.js';
+export type { RealtimeTicketResponse } from './generated/models/RealtimeTicketResponse.js';
+
+export { consumeRealtimeChannelWithFallback } from './realtime-transport.js';
+export type { RealtimeTransport, RealtimeTransportMessage, RealtimeTransportOptions } from './realtime-transport.js';
+
+export { consumeRealtimeConsumerGroup } from './realtime-consumer-groups.js';
+export type { RealtimeConsumerGroupTarget, RealtimeConsumerGroupWorkerOptions } from './realtime-consumer-groups.js';
+
+export { createRealtimeConsumerGroupWorkerClient } from './realtime-worker-credentials.js';
+export type { RealtimeConsumerGroupWorkerClient, RealtimeConsumerGroupWorkerClientOptions } from './realtime-worker-credentials.js';
+export { consumeRealtimeConsumerGroupWithCredential } from './realtime-consumer-groups.js';
+export type { RealtimeConsumerGroupProcessingOptions } from './realtime-consumer-groups.js';
+
+export { createRealtimePublisherClient } from './realtime-publisher-credentials.js';
+export type { RealtimePublisherClient, RealtimePublisherClientOptions } from './realtime-publisher-credentials.js';
+
+export { drainRealtimeConsumerGroup, drainRealtimeConsumerGroupWithCredential } from './realtime-consumer-groups.js';
+export type { RealtimeConsumerGroupDrainWaitOptions } from './realtime-consumer-groups.js';
+
+export { RealtimeExpiryDiagnostics, type RealtimeMessageExpiry, type RealtimeMessageExpiryObserver, type RealtimeInboxMessageExpiry, type RealtimeInboxMessageExpiryObserver } from './realtime-expiry.js';
 export { durableEntityHandle, DurableEntityResultDecodeError, type DurableEntityHandleScope, type DurableEntityResult } from './durable-entity-handle.js';
 export { decodeDurableEntityCall, DurableEntityTransitionBuilder, type DurableEntityCall, type DurableEntityCallOptions } from './durable-entity-call.js';
 export { decodeDurableEntitySchemaCall, type DurableEntityStateSchema, type DurableEntitySchemaState, type DurableEntitySchemaCall } from './durable-entity-schema.js';
+
+export type { OperationWorkflowPlaybookReviewImpact } from './generated/models/OperationWorkflowPlaybookReviewImpact.js';
+
+export type { OperationWorkflowReadinessImpactSummary, OperationWorkflowReadinessImpactOwner } from './customer-operations.js';
+
+export type { OperationWorkflowReadinessImpactWatchRequest, OperationWorkflowReadinessImpactWatch, OperationWorkflowReadinessImpactEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseRequest, OperationWorkflowReviewResponseLinkRequest, OperationWorkflowReviewResponseLink, OperationWorkflowReviewResponse, OperationWorkflowReviewResponseChange } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseCheckInEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseBlockageEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseHealth, OperationWorkflowReviewResponseSourceHealth } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseDecisionRequest, OperationWorkflowReviewResponseDecision } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseDecisionReview, OperationWorkflowReviewResponseDecisionReviewEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseHandoffAcceptanceRequest, OperationWorkflowReviewResponseHandoffAcceptance } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseHandoffDeclineRequest, OperationWorkflowReviewResponseHandoffDecline, OperationWorkflowReviewResponseHandoffDeclineEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseHandoffReassignmentRequest, OperationWorkflowReviewResponseHandoffReassignment, OperationWorkflowReviewResponseHandoffReassignmentEvent } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseEscalationAcknowledgmentRequest, OperationWorkflowReviewResponseEscalationAcknowledgment } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseEscalationCompletionRequest, OperationWorkflowReviewResponseEscalationCompletion } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseEscalationActionReviewRequest, OperationWorkflowReviewResponseEscalationRevisionRequest, OperationWorkflowReviewResponseEscalationActionReview } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseScheduledReviewCancellationRequest, OperationWorkflowReviewResponseScheduledReviewCancellation } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseScheduledReviewRescheduleRequest, OperationWorkflowReviewResponseScheduledReviewReschedule } from './customer-operations.js';
+
+export type { OperationWorkflowCaseNextAction } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionQueueItem, OperationWorkflowNextActionCase } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestPolicy, OperationWorkflowNextActionDigest } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestExplanation } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestCheck } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionDigestCheckItem } from './customer-operations.js';
+
+export type { OperationWorkflowActionObligation } from './customer-operations.js';
+
+export type { OperationWorkflowObligationEvent } from './customer-operations.js';
+
+export type { OperationWorkflowCaseObligationHistoryItem } from './customer-operations.js';
+
+export type { OperationWorkflowObligationReplacement } from './customer-operations.js';
+
+export type { OperationWorkflowObligationContext } from './customer-operations.js';
+
+export type { OperationWorkflowObligationAssessment } from './customer-operations.js';
+
+export type { OperationWorkflowObligationTransitionTarget } from './customer-operations.js';
+
+export type { OperationWorkflowObligationTargetBinding } from './customer-operations.js';
+
+export type { OperationWorkflowObligationTargetRequest } from './customer-operations.js';
+
+export type { OperationWorkflowObligationFulfillment, OperationWorkflowObligationFulfillmentRequest } from './customer-operations.js';
+
+export type { OperationWorkflowObligationReopening, OperationWorkflowObligationReopeningRequest } from './customer-operations.js';
+
+export type { OperationWorkflowObligationFulfillmentReview, OperationWorkflowObligationReaffirmation, OperationWorkflowObligationReaffirmationRequest } from './customer-operations.js';
+
+export type { OperationWorkflowFulfillmentReviewCoordinationRequest, OperationWorkflowFulfillmentReviewCoordinationChange } from './customer-operations.js';
+
+export type { OperationWorkflowFulfillmentReviewReminder } from './customer-operations.js';
+
+export type { OperationWorkflowFulfillmentReviewEscalation } from './customer-operations.js';
 
 export type { BindingReleasePolicy } from './generated/models/BindingReleasePolicy.js';
 

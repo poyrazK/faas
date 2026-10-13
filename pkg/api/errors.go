@@ -654,6 +654,7 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"

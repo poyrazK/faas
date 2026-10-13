@@ -69,6 +69,7 @@ const (
 	executionCapabilitiesFile     = "execution_capabilities.go"      // ADR-171 — Runs preflight capability DTOs
 	executionArtifactGrantsFile   = "execution_artifact_grants.go"   // ADR-171 — one-time cross-agent artifact capabilities
 	appTasksFile                  = "app_tasks.go"                   // ADR-230 — deployment-attached one-off command DTOs
+	imageRunsFile                 = "image_runs.go"                  // ADR-1161 — docker-run-shaped image run DTOs
 	projectsFile                  = "projects.go"                    // issue #2201 — durable project lifecycle and recovery DTOs
 	devSyncFile                   = "dev_sync.go"                    // developer edit-to-live history
 	privateNetworkFile            = "private_network.go"             // Gregale-owned private network fabric DTOs
@@ -1190,6 +1191,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),
 		filepath.Join(root, "pkg", "api", "workflow_webhooks.go"),
 		filepath.Join(root, "pkg", "api", realtimeFile),
+		filepath.Join(root, "pkg", "api", "realtime_access.go"),
+		filepath.Join(root, "pkg", "api", "realtime_tickets.go"),
+		filepath.Join(root, "pkg", "api", "realtime_release_sdk_models.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push.go"),
 		filepath.Join(root, "pkg", "api", "realtime_push_preferences.go"),
 		filepath.Join(root, "pkg", "api", "realtime_schedules.go"),
@@ -1224,6 +1228,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
+		filepath.Join(root, "pkg", "api", imageRunsFile),
 		filepath.Join(root, "pkg", "api", projectsFile),
 		filepath.Join(root, "pkg", "api", "project_environment_clones.go"), // ADR-590
 		filepath.Join(root, "pkg", "api", "project_environment_queues.go"),

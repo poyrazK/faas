@@ -2806,6 +2806,14 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
+// CreateImageRun starts a one-task run from an OCI image (ADR-1161). A
+// "pulling" status means the image is still being prepared; call again once
+// GetJob reports the runner job's image ready.
+func (c *Client) CreateImageRun(ctx context.Context, req CreateImageRunRequest) (ImageRunResponse, error) {
+	var out ImageRunResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/image-runs", req, &out)
+}
+
 // SubmitExclusiveJobOperation admits a JobRun to an account-scoped policy.
 // Idempotency-Key makes retries safe when the response is lost.
 func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {

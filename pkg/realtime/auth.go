@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -179,6 +180,12 @@ func resumeBearerFromProtocols(protocols []string) (token string, present, inval
 			invalid = true
 			continue
 		}
+		if isTicket(token) {
+			if _, err := decodeBrowserTicket(token); err != nil {
+				invalid = true
+			}
+			continue
+		}
 		parts := strings.Split(token, ".")
 		if len(parts) != 3 {
 			invalid = true
@@ -200,4 +207,12 @@ func resumeBearerFromProtocols(protocols []string) (token string, present, inval
 		}
 	}
 	return token, present, invalid, remaining
+}
+
+func decodeBrowserTicket(token string) ([]byte, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, "grt_"))
+	if err != nil || len(raw) != 32 {
+		return nil, fmt.Errorf("invalid ticket")
+	}
+	return raw, nil
 }

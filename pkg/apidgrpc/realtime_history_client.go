@@ -75,7 +75,13 @@ func (c *RealtimeHistoryClientImpl) ReadChannelHistory(ctx context.Context, endp
 			}
 		}
 		history.Messages = append(history.Messages, state.ManagedRealtimeChannelMessage{
-			EndpointID: endpointID, Channel: channel,
+			ExpiresAt: func() *time.Time {
+				if message.GetExpiresAtUnixNano() == 0 {
+					return nil
+				}
+				expiry := time.Unix(0, message.GetExpiresAtUnixNano()).UTC()
+				return &expiry
+			}(), EndpointID: endpointID, Channel: channel,
 			Metadata: metadata, Sequence: message.GetSequence(), Data: append([]byte(nil), message.GetData()...),
 			Binary: message.GetBinary(), CreatedAt: time.Unix(0, message.GetCreatedAtUnixNano()).UTC(),
 		})
