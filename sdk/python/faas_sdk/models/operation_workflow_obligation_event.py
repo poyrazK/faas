@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
@@ -11,6 +11,10 @@ from ..models.operation_workflow_obligation_event_kind import (
     check_operation_workflow_obligation_event_kind,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
+
 
 T = TypeVar("T", bound="OperationWorkflowObligationEvent")
 
@@ -25,6 +29,11 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    cases: list[OperationWorkflowNextActionCase] | Unset = UNSET
+    """Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude
+    unscoped receipts."""
+    action_kind: str | Unset = UNSET
+    shared_plan: bool | Unset = UNSET
     obligation_id: str | Unset = UNSET
     """Exact obligation identity for mutation-time receipts; older inferred observations may omit it."""
     actor: str | Unset = UNSET
@@ -35,6 +44,17 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        cases: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.cases, Unset):
+            cases = []
+            for cases_item_data in self.cases:
+                cases_item = cases_item_data.to_dict()
+                cases.append(cases_item)
+
+        action_kind = self.action_kind
+
+        shared_plan = self.shared_plan
 
         obligation_id = self.obligation_id
 
@@ -49,6 +69,12 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if cases is not UNSET:
+            field_dict["cases"] = cases
+        if action_kind is not UNSET:
+            field_dict["action_kind"] = action_kind
+        if shared_plan is not UNSET:
+            field_dict["shared_plan"] = shared_plan
         if obligation_id is not UNSET:
             field_dict["obligation_id"] = obligation_id
         if actor is not UNSET:
@@ -58,12 +84,27 @@ class OperationWorkflowObligationEvent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
+
         d = dict(src_dict)
         kind = check_operation_workflow_obligation_event_kind(d.pop("kind"))
 
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _cases = d.pop("cases", UNSET)
+        cases: list[OperationWorkflowNextActionCase] | Unset = UNSET
+        if _cases is not UNSET:
+            cases = []
+            for cases_item_data in _cases:
+                cases_item = OperationWorkflowNextActionCase.from_dict(cases_item_data)
+
+                cases.append(cases_item)
+
+        action_kind = d.pop("action_kind", UNSET)
+
+        shared_plan = d.pop("shared_plan", UNSET)
 
         obligation_id = d.pop("obligation_id", UNSET)
 
@@ -73,6 +114,9 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            cases=cases,
+            action_kind=action_kind,
+            shared_plan=shared_plan,
             obligation_id=obligation_id,
             actor=actor,
         )

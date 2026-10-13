@@ -2,10 +2,17 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OperationWorkflowNextActionCase } from './OperationWorkflowNextActionCase.js';
 /**
  * Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
  */
 export type OperationWorkflowObligationEvent = {
+  /**
+   * Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude unscoped receipts.
+   */
+  cases?: Array<OperationWorkflowNextActionCase>;
+  action_kind?: string;
+  shared_plan?: boolean;
   /**
    * Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
    */

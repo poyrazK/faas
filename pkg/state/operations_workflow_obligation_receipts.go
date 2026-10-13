@@ -17,6 +17,8 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 	if actor == "" {
 		actor = "system:obligation-receipts"
 	}
+	cases := map[string][]api.OperationWorkflowNextActionCase{}
+	kinds := map[string]string{}
 	actions := func(n api.OperationWorkflowReadinessNotification) map[string]api.OperationWorkflowCaseNextAction {
 		result := map[string]api.OperationWorkflowCaseNextAction{}
 		if n.Coordination == nil {
@@ -29,7 +31,14 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 		}
 		for _, item := range page.NextActions {
 			if item.Action.Obligation != nil {
-				result[item.Action.Obligation.ID] = item.Action
+				id := item.Action.Obligation.ID
+				result[id] = item.Action
+				kinds[id] = item.Action.Kind
+				for _, c := range item.Cases {
+					if !slices.Contains(cases[id], c) {
+						cases[id] = append(cases[id], c)
+					}
+				}
 			}
 		}
 		return result
@@ -37,7 +46,7 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 	old, current := actions(before), actions(after)
 	receipts := slices.Clone(before.ObligationReceipts)
 	add := func(id, kind, explanation string) {
-		receipts = append(receipts, api.OperationWorkflowObligationEvent{ObligationID: id, Kind: kind, At: now, Actor: actor, Explanation: explanation})
+		receipts = append(receipts, api.OperationWorkflowObligationEvent{Cases: slices.Clone(cases[id]), ActionKind: kinds[id], SharedPlan: len(cases[id]) > 1, ObligationID: id, Kind: kind, At: now, Actor: actor, Explanation: explanation})
 	}
 	// Stable ordering makes same-transaction publication deterministic.
 	keys := []string{}
@@ -68,7 +77,10 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 					continue
 				}
 				event.ObligationID = id
-				if !slices.Contains(receipts, event) {
+				event.Cases = slices.Clone(cases[id])
+				event.ActionKind = kinds[id]
+				event.SharedPlan = len(cases[id]) > 1
+				if !hasObligationEvent(receipts, event) {
 					receipts = append(receipts, event)
 				}
 			}

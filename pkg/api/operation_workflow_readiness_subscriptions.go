@@ -426,27 +426,32 @@ type OperationWorkflowCaseAction struct {
 	Sequence       int64  `json:"sequence,omitempty"`
 }
 type OperationWorkflowCase struct {
-	NextActions           []OperationWorkflowCaseNextAction     `json:"next_actions"`
-	NextActionCount       int                                   `json:"next_action_count"`
-	NextActionsTruncated  bool                                  `json:"next_actions_truncated"`
-	PlaybookProgress      []OperationWorkflowPlaybookProgress   `json:"playbook_progress"`
-	Guidance              []OperationWorkflowPlaybookGuidance   `json:"guidance"`
-	GuidanceStatus        string                                `json:"guidance_status"`
-	GuidanceTruncated     bool                                  `json:"guidance_truncated"`
-	Status                string                                `json:"status"`
-	Summary               string                                `json:"summary"`
-	Instance              *OperationWorkflowInstanceSnapshot    `json:"instance,omitempty"`
-	FollowUps             []OperationWorkflowReadinessFollowUp  `json:"follow_ups"`
-	FollowUpCount         int                                   `json:"follow_up_count"`
-	OverdueFollowUpCount  int                                   `json:"overdue_follow_up_count"`
-	FollowUpsTruncated    bool                                  `json:"follow_ups_truncated"`
-	Actions               []OperationWorkflowCaseAction         `json:"actions"`
-	ActionsTruncated      bool                                  `json:"actions_truncated"`
-	Timeline              OperationWorkflowCoordinationTimeline `json:"timeline"`
-	EvidenceCheckedAt     time.Time                             `json:"evidence_checked_at"`
-	CoordinationCheckedAt time.Time                             `json:"coordination_checked_at"`
-	EvaluatedAt           time.Time                             `json:"evaluated_at"`
-	Limitations           []string                              `json:"limitations"`
+	ObligationHistory          []OperationWorkflowCaseObligationHistoryItem `json:"obligation_history"`
+	ObligationHistoryCount     int                                          `json:"obligation_history_count"`
+	ObligationHistoryTruncated bool                                         `json:"obligation_history_truncated"`
+	ObligationHistoryLimited   bool                                         `json:"obligation_history_limited"`
+	ObligationHistoryCheckedAt time.Time                                    `json:"obligation_history_checked_at"`
+	NextActions                []OperationWorkflowCaseNextAction            `json:"next_actions"`
+	NextActionCount            int                                          `json:"next_action_count"`
+	NextActionsTruncated       bool                                         `json:"next_actions_truncated"`
+	PlaybookProgress           []OperationWorkflowPlaybookProgress          `json:"playbook_progress"`
+	Guidance                   []OperationWorkflowPlaybookGuidance          `json:"guidance"`
+	GuidanceStatus             string                                       `json:"guidance_status"`
+	GuidanceTruncated          bool                                         `json:"guidance_truncated"`
+	Status                     string                                       `json:"status"`
+	Summary                    string                                       `json:"summary"`
+	Instance                   *OperationWorkflowInstanceSnapshot           `json:"instance,omitempty"`
+	FollowUps                  []OperationWorkflowReadinessFollowUp         `json:"follow_ups"`
+	FollowUpCount              int                                          `json:"follow_up_count"`
+	OverdueFollowUpCount       int                                          `json:"overdue_follow_up_count"`
+	FollowUpsTruncated         bool                                         `json:"follow_ups_truncated"`
+	Actions                    []OperationWorkflowCaseAction                `json:"actions"`
+	ActionsTruncated           bool                                         `json:"actions_truncated"`
+	Timeline                   OperationWorkflowCoordinationTimeline        `json:"timeline"`
+	EvidenceCheckedAt          time.Time                                    `json:"evidence_checked_at"`
+	CoordinationCheckedAt      time.Time                                    `json:"coordination_checked_at"`
+	EvaluatedAt                time.Time                                    `json:"evaluated_at"`
+	Limitations                []string                                     `json:"limitations"`
 }
 
 // Impact summaries describe retained unresolved human reviews, independently of business success.
@@ -921,9 +926,25 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
-	ObligationID string    `json:"obligation_id,omitempty"`
-	Kind         string    `json:"kind"`
-	At           time.Time `json:"at"`
-	Actor        string    `json:"actor,omitempty"`
-	Explanation  string    `json:"explanation"`
+	Cases        []OperationWorkflowNextActionCase `json:"cases,omitempty"`
+	ActionKind   string                            `json:"action_kind,omitempty"`
+	SharedPlan   bool                              `json:"shared_plan,omitempty"`
+	ObligationID string                            `json:"obligation_id,omitempty"`
+	Kind         string                            `json:"kind"`
+	At           time.Time                         `json:"at"`
+	Actor        string                            `json:"actor,omitempty"`
+	Explanation  string                            `json:"explanation"`
+}
+
+type OperationWorkflowCaseObligationHistoryItem struct {
+	ObligationID         string                             `json:"obligation_id"`
+	ActionKind           string                             `json:"action_kind"`
+	SubscriptionID       string                             `json:"subscription_id"`
+	Sequence             int64                              `json:"sequence"`
+	Scope                string                             `json:"scope"`
+	SubscriptionTenantID string                             `json:"subscription_tenant_id,omitempty"`
+	SharedPlan           bool                               `json:"shared_plan"`
+	Events               []OperationWorkflowObligationEvent `json:"events"`
+	EventsTruncated      bool                               `json:"events_truncated"`
+	Current              *OperationWorkflowCaseNextAction   `json:"current,omitempty"`
 }

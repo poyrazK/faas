@@ -443,3 +443,5 @@ type OperationWorkflowNextActionDigestCheckItem = api.OperationWorkflowNextActio
 type OperationWorkflowActionObligation = api.OperationWorkflowActionObligation
 
 type OperationWorkflowObligationEvent = api.OperationWorkflowObligationEvent
+
+type OperationWorkflowCaseObligationHistoryItem = api.OperationWorkflowCaseObligationHistoryItem

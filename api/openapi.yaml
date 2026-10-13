@@ -82513,6 +82513,15 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        cases:
+          type: array
+          description: Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude unscoped receipts.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNextActionCase'
+        action_kind:
+          type: string
+        shared_plan:
+          type: boolean
         obligation_id:
           type: string
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
@@ -82684,10 +82693,47 @@ components:
         shared_plan:
           type: boolean
           description: The originating plan or completion has references to other workflow cases. Case evidence is filtered; the source controls act on the shared record.
+    OperationWorkflowCaseObligationHistoryItem:
+      type: object
+      additionalProperties: false
+      description: Case-scoped receipts grouped by exact source obligation, alongside its current action when still projected. Absence of a current action is not completion. Shared source controls can affect additional cases; foreign case identities are excluded.
+      required: [obligation_id, action_kind, subscription_id, sequence, scope, shared_plan, events, events_truncated]
+      properties:
+        obligation_id:
+          type: string
+        action_kind:
+          type: string
+        subscription_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        scope:
+          type: string
+        subscription_tenant_id:
+          type: string
+          format: uuid
+        shared_plan:
+          type: boolean
+        events:
+          type: array
+          maxItems: 40
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationEvent'
+        events_truncated:
+          type: boolean
+        current:
+          $ref: '#/components/schemas/OperationWorkflowCaseNextAction'
     OperationWorkflowCase:
       type: object
       description: OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
       required:
+      - obligation_history
+      - obligation_history_count
+      - obligation_history_truncated
+      - obligation_history_limited
+      - obligation_history_checked_at
       - next_actions
       - next_action_count
       - next_actions_truncated
@@ -82709,6 +82755,23 @@ components:
       - evaluated_at
       - limitations
       properties:
+        obligation_history:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowCaseObligationHistoryItem'
+        obligation_history_count:
+          type: integer
+          description: Matching obligation groups found in this bounded retained source scan.
+        obligation_history_truncated:
+          type: boolean
+          description: Known receipt pruning or response caps limited this history view.
+        obligation_history_limited:
+          type: boolean
+          description: Deleted sources and older receipts without case attribution are unavailable; missing events never establish completion.
+        obligation_history_checked_at:
+          type: string
+          format: date-time
         next_actions:
           type: array
           maxItems: 100

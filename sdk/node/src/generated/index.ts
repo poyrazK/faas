@@ -1145,6 +1145,7 @@ export type { OperationWorkflowBottlenecks } from './models/OperationWorkflowBot
 export type { OperationWorkflowCase } from './models/OperationWorkflowCase.js';
 export type { OperationWorkflowCaseAction } from './models/OperationWorkflowCaseAction.js';
 export type { OperationWorkflowCaseNextAction } from './models/OperationWorkflowCaseNextAction.js';
+export type { OperationWorkflowCaseObligationHistoryItem } from './models/OperationWorkflowCaseObligationHistoryItem.js';
 export type { OperationWorkflowChangeReason } from './models/OperationWorkflowChangeReason.js';
 export type { OperationWorkflowConditionChange } from './models/OperationWorkflowConditionChange.js';
 export type { OperationWorkflowConditionComparison } from './models/OperationWorkflowConditionComparison.js';

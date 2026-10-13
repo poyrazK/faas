@@ -47,6 +47,9 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 			result.ObligationID = a.Obligation.ID
 		}
 		lifecycle, terminal := workflowObligationReceipts(n, a, digest.EvaluatedAt)
+		for i := range lifecycle {
+			lifecycle[i].Cases = nil
+		}
 		result.Lifecycle = lifecycle
 
 		if completion := n.Coordination.Completion; completion != nil {

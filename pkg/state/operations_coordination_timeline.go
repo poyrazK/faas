@@ -21,7 +21,7 @@ func (s *PgStore) WorkflowCoordinationTimeline(ctx context.Context, account, ten
 	return workflowCoordinationTimeline(ctx, s, account, tenant, opts, operator)
 }
 
-func workflowCoordinationTimeline(ctx context.Context, store readinessSubscriptionBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool) (api.OperationWorkflowCoordinationTimeline, error) {
+func workflowCoordinationTimeline(ctx context.Context, store readinessSubscriptionBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool, collectors ...func(api.OperationWorkflowReadinessSubscription, api.OperationWorkflowReadinessNotification)) (api.OperationWorkflowCoordinationTimeline, error) {
 	out := api.OperationWorkflowCoordinationTimeline{Items: []api.OperationWorkflowCoordinationTimelineEvent{}, Sources: []api.OperationWorkflowCoordinationTimelineSource{}, RetentionLimited: true, Subject: api.OperationSubject{Type: opts.SubjectType, ID: opts.SubjectID}, Workflow: opts.Workflow, InstanceID: opts.InstanceID, Scope: opts.Scope, Limitations: []string{
 		"Inbox events project retained subscription notifications; deleted subscriptions, pruned notifications and unattributed failures are not reconstructed. Durable playbook reviews have separate bounded retention.",
 		"Coordination snapshots retain the latest edit, not every past schedule, owner or note. Assignment histories are bounded and first acknowledgment actors may be unavailable.",
@@ -79,6 +79,9 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 		for _, n := range page.Items {
 			if err = ctx.Err(); err != nil {
 				return out, err
+			}
+			for _, collect := range collectors {
+				collect(subscription, n)
 			}
 			b := readinessNotificationBaseline(n)
 			evidenceTenant := ""

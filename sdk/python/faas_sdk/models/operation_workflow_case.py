@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
     from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
+    from ..models.operation_workflow_case_obligation_history_item import OperationWorkflowCaseObligationHistoryItem
     from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
     from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
     from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
@@ -30,6 +31,15 @@ T = TypeVar("T", bound="OperationWorkflowCase")
 class OperationWorkflowCase:
     """OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow."""
 
+    obligation_history: list[OperationWorkflowCaseObligationHistoryItem]
+    obligation_history_count: int
+    """Matching obligation groups found in this bounded retained source scan."""
+    obligation_history_truncated: bool
+    """Known receipt pruning or response caps limited this history view."""
+    obligation_history_limited: bool
+    """Deleted sources and older receipts without case attribution are unavailable; missing events never establish
+    completion."""
+    obligation_history_checked_at: datetime.datetime
     next_actions: list[OperationWorkflowCaseNextAction]
     """Current obligations and suggestions from retained source records, matched to the exact case before follow-up
     page truncation. Ordered overdue first, then dated work by due time. Historical delivery snapshots do not create
@@ -91,6 +101,19 @@ class OperationWorkflowCase:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        obligation_history = []
+        for obligation_history_item_data in self.obligation_history:
+            obligation_history_item = obligation_history_item_data.to_dict()
+            obligation_history.append(obligation_history_item)
+
+        obligation_history_count = self.obligation_history_count
+
+        obligation_history_truncated = self.obligation_history_truncated
+
+        obligation_history_limited = self.obligation_history_limited
+
+        obligation_history_checked_at = self.obligation_history_checked_at.isoformat()
+
         next_actions = []
         for next_actions_item_data in self.next_actions:
             next_actions_item = next_actions_item_data.to_dict()
@@ -154,6 +177,11 @@ class OperationWorkflowCase:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "obligation_history": obligation_history,
+                "obligation_history_count": obligation_history_count,
+                "obligation_history_truncated": obligation_history_truncated,
+                "obligation_history_limited": obligation_history_limited,
+                "obligation_history_checked_at": obligation_history_checked_at,
                 "next_actions": next_actions,
                 "next_action_count": next_action_count,
                 "next_actions_truncated": next_actions_truncated,
@@ -185,6 +213,7 @@ class OperationWorkflowCase:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_case_action import OperationWorkflowCaseAction
         from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
+        from ..models.operation_workflow_case_obligation_history_item import OperationWorkflowCaseObligationHistoryItem
         from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
         from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
         from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
@@ -192,6 +221,21 @@ class OperationWorkflowCase:
         from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
 
         d = dict(src_dict)
+        obligation_history = []
+        _obligation_history = d.pop("obligation_history")
+        for obligation_history_item_data in _obligation_history:
+            obligation_history_item = OperationWorkflowCaseObligationHistoryItem.from_dict(obligation_history_item_data)
+
+            obligation_history.append(obligation_history_item)
+
+        obligation_history_count = d.pop("obligation_history_count")
+
+        obligation_history_truncated = d.pop("obligation_history_truncated")
+
+        obligation_history_limited = d.pop("obligation_history_limited")
+
+        obligation_history_checked_at = datetime.datetime.fromisoformat(d.pop("obligation_history_checked_at"))
+
         next_actions = []
         _next_actions = d.pop("next_actions")
         for next_actions_item_data in _next_actions:
@@ -265,6 +309,11 @@ class OperationWorkflowCase:
             instance = OperationWorkflowInstanceSnapshot.from_dict(_instance)
 
         operation_workflow_case = cls(
+            obligation_history=obligation_history,
+            obligation_history_count=obligation_history_count,
+            obligation_history_truncated=obligation_history_truncated,
+            obligation_history_limited=obligation_history_limited,
+            obligation_history_checked_at=obligation_history_checked_at,
             next_actions=next_actions,
             next_action_count=next_action_count,
             next_actions_truncated=next_actions_truncated,

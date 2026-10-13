@@ -75,7 +75,7 @@ func workflowObligationReceipts(n api.OperationWorkflowReadinessNotification, ac
 			return
 		}
 		event := api.OperationWorkflowObligationEvent{Kind: kind, At: at, Actor: actor, Explanation: explanation}
-		if !slices.Contains(events, event) {
+		if !hasObligationEvent(events, event) {
 			events = append(events, event)
 		}
 	}
@@ -85,7 +85,7 @@ func workflowObligationReceipts(n api.OperationWorkflowReadinessNotification, ac
 			if event.ObligationID != action.Obligation.ID {
 				continue
 			}
-			if !slices.Contains(events, event) {
+			if !hasObligationEvent(events, event) {
 				events = append(events, event)
 			}
 			switch event.Kind {
@@ -171,4 +171,11 @@ func workflowObligationReceipts(n api.OperationWorkflowReadinessNotification, ac
 		events = events[len(events)-40:]
 	}
 	return events, terminal
+}
+
+func hasObligationEvent(events []api.OperationWorkflowObligationEvent, event api.OperationWorkflowObligationEvent) bool {
+	fingerprint := readinessDigest(event)
+	return slices.ContainsFunc(events, func(existing api.OperationWorkflowObligationEvent) bool {
+		return readinessDigest(existing) == fingerprint
+	})
 }

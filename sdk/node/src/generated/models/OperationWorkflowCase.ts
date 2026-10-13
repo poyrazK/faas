@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowCaseAction } from './OperationWorkflowCaseAction.js';
 import type { OperationWorkflowCaseNextAction } from './OperationWorkflowCaseNextAction.js';
+import type { OperationWorkflowCaseObligationHistoryItem } from './OperationWorkflowCaseObligationHistoryItem.js';
 import type { OperationWorkflowCoordinationTimeline } from './OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
 import type { OperationWorkflowPlaybookGuidance } from './OperationWorkflowPlaybookGuidance.js';
@@ -13,6 +14,20 @@ import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowRead
  * OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
  */
 export type OperationWorkflowCase = {
+  obligation_history: Array<OperationWorkflowCaseObligationHistoryItem>;
+  /**
+   * Matching obligation groups found in this bounded retained source scan.
+   */
+  obligation_history_count: number;
+  /**
+   * Known receipt pruning or response caps limited this history view.
+   */
+  obligation_history_truncated: boolean;
+  /**
+   * Deleted sources and older receipts without case attribution are unavailable; missing events never establish completion.
+   */
+  obligation_history_limited: boolean;
+  obligation_history_checked_at: string;
   /**
    * Current obligations and suggestions from retained source records, matched to the exact case before follow-up page truncation. Ordered overdue first, then dated work by due time. Historical delivery snapshots do not create work.
    */

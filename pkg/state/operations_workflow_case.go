@@ -34,7 +34,12 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 	if operator && opts.TenantID == "" {
 		return out, ErrInvalidArgument
 	}
-	timeline, err := workflowCoordinationTimeline(ctx, store, account, tenant, opts, operator)
+	historyTenant := tenant
+	if operator {
+		historyTenant = opts.TenantID
+	}
+	history := newWorkflowCaseObligationHistory(historyTenant, opts, operator)
+	timeline, err := workflowCoordinationTimeline(ctx, store, account, tenant, opts, operator, history.collect)
 	if err != nil {
 		return out, err
 	}
@@ -67,6 +72,7 @@ func workflowCase(ctx context.Context, store workflowCaseBackend, account, tenan
 	}
 	out.CoordinationCheckedAt = time.Now().UTC().Truncate(time.Microsecond)
 	projectWorkflowCaseNextActions(&out, rows, tenant, opts, operator)
+	history.finish(&out)
 	for _, row := range rows {
 		if err = ctx.Err(); err != nil {
 			return out, err
