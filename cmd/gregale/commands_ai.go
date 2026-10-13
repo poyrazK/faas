@@ -50,6 +50,8 @@ func cmdAI(args []string) int {
 		return cmdAIAlerts(args[1:])
 	case "logs":
 		return cmdAILogs(args[1:])
+	case "replay":
+		return cmdAIReplay(args[1:])
 	}
 	printCommandValidation(osStderr, "unknown ai subcommand %q\n", args[0])
 	sug, _ := suggestSubcommand(args[0], parent)

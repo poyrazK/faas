@@ -15,6 +15,9 @@ type aiCallPlan struct {
 	guard    AIGuardrails
 	// content is what the content policy found and redacted (ADR-997).
 	content *contentScan
+	// path is the escaped provider path, kept with captured content so a
+	// replay can resend the call (ADR-997).
+	path string
 }
 
 // aiCallRejection is a guardrail refusal sent before admission.
@@ -32,7 +35,7 @@ func planAICall(r *http.Request, integration Integration, bindingAppID, path str
 	if integration.AIProvider == "" || r.Method != http.MethodPost {
 		return nil, nil
 	}
-	plan := &aiCallPlan{endpoint: classifyAIEndpoint(integration.AIProvider, path)}
+	plan := &aiCallPlan{endpoint: classifyAIEndpoint(integration.AIProvider, path), path: path}
 	guarded := false
 	if bindingAppID != "" {
 		plan.guard, guarded = integration.BindingAIGuardrails[bindingAppID]

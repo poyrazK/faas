@@ -87,8 +87,11 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
 	observer.applyHeaders(resp.Header)
-	if integration.AIRequestLogEnabled && integration.AIRequestLogContent {
+	if _, replaying := replayPrincipalFromContext(r.Context()); integration.AIRequestLogEnabled && integration.AIRequestLogContent && !replaying {
 		observer.capture = newAIContentCapture(ai, resp.Header.Get("Content-Type"))
+		if plan != nil {
+			observer.capture.content.RequestPath = plan.path
+		}
 	}
 	resp.Body = &observedBody{ReadCloser: resp.Body, observer: observer}
 	if ai != nil && ai.usageInjected && streamingMediaType(resp.Header.Get("Content-Type")) {
@@ -176,7 +179,14 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		return
 	}
 	caller := appID
-	if caller == "" {
+	replay, replaying := replayPrincipalFromContext(ctx)
+	switch {
+	case replaying:
+		caller = AIUsageCallerReplay
+		if replay.outcome != nil {
+			*replay.outcome = replayOutcome{settled: true, outcome: outcome, usage: usage, cost: cost}
+		}
+	case caller == "":
 		caller = AIUsageCallerRuns
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiUsageRecordTimeout)

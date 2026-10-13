@@ -289,6 +289,7 @@ type MemStore struct {
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
 	outboundAIRequestContent    map[string]OutboundAIRequestContent
+	outboundAIReplays           map[string]OutboundAIReplay
 	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte

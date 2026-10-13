@@ -845,6 +845,100 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/replays:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that logged the call.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry whose capture is replayed.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIReplay
+      summary: Replay a captured AI call on other integrations or models.
+      description: >-
+        Requires MFA and deploy-write scope (ADR-997). outboundd resends the captured request to each target without
+        streaming; the calls count against the targets' budgets. At most 100 replays per integration per UTC day.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIReplayRequest' }
+      responses:
+        '202':
+          description: The pending replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIReplay' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The call has no capture that can be resent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: The integration reached its replays for the UTC day.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-replays/{replay}:
+    parameters:
+      - name: replay
+        in: path
+        required: true
+        description: UUID of the replay.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIReplay
+      summary: Read an AI replay and its results.
+      description: Requires MFA and read scope (ADR-997). Replays are kept for 3 days.
+      responses:
+        '200':
+          description: The replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIReplay' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-content-policy:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the customer AI integration.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundAIContentPolicy
+      summary: Replace an AI integration's content guardrails.
+      description: >-
+        Requires MFA and deploy-write scope (ADR-997). An active policy requires an AI provider; with one, request
+        bodies the gateway cannot read are refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutboundAIContentPolicy' }
+      responses:
+        '204': { description: The policy was replaced. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-requests/{request}/content:
     parameters:
       - name: integration
@@ -51501,6 +51595,7 @@ components:
         ai_request_log_content:
           type: boolean
           description: Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days (ADR-996).
+        ai_content_policy: { $ref: '#/components/schemas/OutboundAIContentPolicy' }
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -51595,9 +51690,9 @@ components:
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters]
       properties:
-        caller: { type: string, description: 'App UUID, or "runs" for stateless Runs.' }
+        caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
         requests: { type: integer, format: int64, minimum: 0 }
         error_requests: { type: integer, format: int64, minimum: 0 }
@@ -51607,6 +51702,9 @@ components:
         cache_write_tokens: { type: integer, format: int64, minimum: 0 }
         output_tokens: { type: integer, format: int64, minimum: 0 }
         cost_millicents: { type: integer, format: int64, minimum: 0, description: 'Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an unpriced model.' }
+        images: { type: integer, format: int64, minimum: 0, description: Images billed per image (ADR-997). }
+        audio_seconds: { type: integer, format: int64, minimum: 0, description: Seconds of transcribed audio. }
+        characters: { type: integer, format: int64, minimum: 0, description: Characters of speech input. }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -51784,7 +51882,11 @@ components:
           maximum: 100000000000
     OutboundAIPriceEntry:
       type: object
-      description: Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins), in millicents per million tokens. Absent cached or cache-write prices use the input price.
+      description: >-
+        Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins). Token prices
+        are millicents per million tokens; absent cached, cache-write and input-image prices use the input price and an
+        absent output-image price uses the output price. Media prices (ADR-997) are per image, per minute of input audio
+        and per million input characters, and are zero when absent.
       required: [model_prefix, input_millicents_per_mtok, output_millicents_per_mtok]
       properties:
         model_prefix: { type: string, minLength: 1, maxLength: 128 }
@@ -51792,6 +51894,11 @@ components:
         cached_input_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
         cache_write_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
         output_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        input_image_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        output_image_millicents_per_mtok: { type: integer, format: int64, minimum: 0, maximum: 1000000000 }
+        millicents_per_image: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per image when a call reports no output image tokens. }
+        millicents_per_audio_minute: { type: integer, format: int64, minimum: 0, maximum: 10000000, description: Charged per minute of transcribed audio. }
+        millicents_per_million_characters: { type: integer, format: int64, minimum: 0, maximum: 1000000000, description: Charged per million characters of speech input. }
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -52002,13 +52109,96 @@ components:
         content_type: { type: [string, 'null'], description: The response Content-Type; null for requests. }
     OutboundAIRequestContent:
       type: object
-      description: One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers (ADR-996).
-      required: [request_id, created_at, request, response]
+      description: One logged AI call's captured bodies as the gateway sent them to the provider and read them back; never headers (ADR-996). Personal data and secrets are redacted (ADR-997).
+      required: [request_id, created_at, request_path, request, response]
       properties:
         request_id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
+        request_path: { type: [string, 'null'], description: The provider path of the call; null for captures made before ADR-997. }
         request: { $ref: '#/components/schemas/OutboundAIContentBody' }
         response: { $ref: '#/components/schemas/OutboundAIContentBody' }
+    OutboundAIContentPolicy:
+      type: object
+      description: >-
+        An integration's content guardrails (ADR-997). Each detector is off, redacts its findings before the request
+        reaches the provider, or blocks the request. A request containing a blocked term, compared without case, is
+        blocked. The gateway checks the string values of JSON bodies and the text fields of forms.
+      required: [email, payment_card, iban, secret, blocked_terms]
+      properties:
+        email: { type: string, enum: ['', 'off', redact, block] }
+        payment_card: { type: string, enum: ['', 'off', redact, block] }
+        iban: { type: string, enum: ['', 'off', redact, block] }
+        secret: { type: string, enum: ['', 'off', redact, block], description: 'API keys, tokens and private keys.' }
+        blocked_terms:
+          type: array
+          maxItems: 32
+          items: { type: string, minLength: 1, maxLength: 128 }
+    OutboundAIReplayTarget:
+      type: object
+      description: One integration a captured call is replayed on; a target on another provider than the captured call's needs a model.
+      required: [integration_id]
+      properties:
+        integration_id: { type: string, format: uuid }
+        model: { type: string, minLength: 1, maxLength: 128 }
+    CreateOutboundAIReplayRequest:
+      type: object
+      description: Replay a captured call on up to 5 targets (ADR-997).
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/OutboundAIReplayTarget' }
+    OutboundAIReplaySource:
+      type: object
+      description: The captured call a replay resends.
+      required: [model, status, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, output_text]
+      properties:
+        model: { type: string }
+        status: { type: integer }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        output_text: { type: [string, 'null'], description: Text read from the captured response. }
+    OutboundAIReplayResult:
+      type: object
+      description: One target's replayed call. status is null without a response and outcome null when the call was refused before it reached the provider.
+      required: [integration_id, model, status, outcome, error_code, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, output_text, response]
+      properties:
+        integration_id: { type: string, format: uuid }
+        model: { type: [string, 'null'] }
+        status: { type: [integer, 'null'] }
+        outcome: { type: [string, 'null'], enum: [known, unknown, error, null] }
+        error_code: { type: [string, 'null'], description: Problem code of a refused or failed call. }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        output_text: { type: string, maxLength: 4096, description: 'Up to 4 KiB of the response text, redacted.' }
+        response: { $ref: '#/components/schemas/OutboundAIContentBody' }
+    OutboundAIReplay:
+      type: object
+      description: A replay of one captured call and, once done, its results in target order (ADR-997).
+      required: [id, integration_id, request_id, state, error_code, created_at, finished_at, targets, source, results]
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        state: { type: string, enum: [pending, running, done, failed] }
+        error_code: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIReplayTarget' }
+        source: { $ref: '#/components/schemas/OutboundAIReplaySource' }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIReplayResult' }
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.

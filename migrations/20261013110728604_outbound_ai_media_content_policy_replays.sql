@@ -2,8 +2,10 @@
 -- ADR-997: AI gateway phase 7. Price lists carry media prices (image tokens,
 -- per image, per audio minute, per million characters) and the UTC-day
 -- rollup counts images, audio seconds and characters. Integrations carry a
--- content policy: an action per detector and blocked terms. Additive and
--- replay-safe.
+-- content policy: an action per detector and blocked terms. Captured calls
+-- keep their provider path, and replays resend a captured call to up to
+-- five targets: apid inserts a replay, outboundd claims it and writes the
+-- results. Additive and replay-safe.
 
 -- +goose Up
 -- +goose StatementBegin
@@ -23,6 +25,10 @@ ALTER TABLE outbound_integrations
     ADD COLUMN IF NOT EXISTS ai_content_iban text NOT NULL DEFAULT 'off',
     ADD COLUMN IF NOT EXISTS ai_content_secret text NOT NULL DEFAULT 'off',
     ADD COLUMN IF NOT EXISTS ai_content_blocked_terms text[] NOT NULL DEFAULT '{}';
+-- Replays settle under their own caller.
+ALTER TABLE outbound_ai_usage_daily DROP CONSTRAINT IF EXISTS outbound_ai_usage_daily_caller_chk;
+ALTER TABLE outbound_ai_usage_daily ADD CONSTRAINT outbound_ai_usage_daily_caller_chk
+    CHECK (caller IN ('runs', 'replay') OR caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 
 DO $$
 BEGIN
@@ -53,10 +59,87 @@ BEGIN
                             AND ai_content_secret = 'off' AND cardinality(ai_content_blocked_terms) = 0)));
     END IF;
 END$$;
+
+ALTER TABLE outbound_ai_request_content
+    ADD COLUMN IF NOT EXISTS request_path text;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint
+                   WHERE conname = 'outbound_ai_request_content_path_chk' AND conrelid = 'outbound_ai_request_content'::regclass) THEN
+        ALTER TABLE outbound_ai_request_content ADD CONSTRAINT outbound_ai_request_content_path_chk
+            CHECK (request_path IS NULL OR (length(request_path) BETWEEN 1 AND 2048 AND request_path ~ '^/[!-~]*$'));
+    END IF;
+END$$;
+
+CREATE TABLE IF NOT EXISTS outbound_ai_replays (
+    id                     uuid PRIMARY KEY,
+    account_id             uuid NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+    integration_id         uuid NOT NULL REFERENCES outbound_integrations (id) ON DELETE CASCADE,
+    log_id                 uuid NOT NULL REFERENCES outbound_ai_request_log (id) ON DELETE CASCADE,
+    target_integration_ids uuid[] NOT NULL,
+    target_models          text[] NOT NULL,
+    state                  text NOT NULL DEFAULT 'pending',
+    error_code             text,
+    source_output_text     text,
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    started_at             timestamptz,
+    finished_at            timestamptz,
+    CONSTRAINT outbound_ai_replays_state_chk CHECK (state IN ('pending', 'running', 'done', 'failed')),
+    CONSTRAINT outbound_ai_replays_targets_chk
+        CHECK (cardinality(target_integration_ids) BETWEEN 1 AND 5
+               AND cardinality(target_models) = cardinality(target_integration_ids)),
+    CONSTRAINT outbound_ai_replays_error_chk
+        CHECK (error_code IS NULL OR (length(error_code) BETWEEN 1 AND 64 AND error_code ~ '^[a-z0-9_]+$')),
+    CONSTRAINT outbound_ai_replays_text_chk CHECK (source_output_text IS NULL OR octet_length(source_output_text) <= 4096)
+);
+CREATE INDEX IF NOT EXISTS outbound_ai_replays_daily_idx ON outbound_ai_replays (integration_id, created_at);
+CREATE INDEX IF NOT EXISTS outbound_ai_replays_queue_idx ON outbound_ai_replays (created_at) WHERE state IN ('pending', 'running');
+
+CREATE TABLE IF NOT EXISTS outbound_ai_replay_results (
+    replay_id             uuid NOT NULL REFERENCES outbound_ai_replays (id) ON DELETE CASCADE,
+    position              smallint NOT NULL,
+    target_integration_id uuid NOT NULL,
+    model                 text,
+    status                smallint,
+    outcome               text,
+    error_code            text,
+    input_tokens          bigint NOT NULL DEFAULT 0,
+    output_tokens         bigint NOT NULL DEFAULT 0,
+    cost_millicents       bigint NOT NULL DEFAULT 0,
+    duration_ms           integer NOT NULL DEFAULT 0,
+    ttfb_ms               integer,
+    response_body         bytea NOT NULL,
+    response_truncated    boolean NOT NULL,
+    response_content_type text,
+    output_text           text NOT NULL DEFAULT '',
+    PRIMARY KEY (replay_id, position),
+    CONSTRAINT outbound_ai_replay_results_position_chk CHECK (position BETWEEN 0 AND 4),
+    CONSTRAINT outbound_ai_replay_results_model_chk CHECK (model IS NULL OR (length(model) BETWEEN 1 AND 128 AND model ~ '^[ -~]+$')),
+    CONSTRAINT outbound_ai_replay_results_status_chk CHECK (status IS NULL OR status BETWEEN 100 AND 599),
+    CONSTRAINT outbound_ai_replay_results_outcome_chk CHECK (outcome IS NULL OR outcome IN ('known', 'unknown', 'error')),
+    CONSTRAINT outbound_ai_replay_results_error_chk
+        CHECK (error_code IS NULL OR (length(error_code) BETWEEN 1 AND 64 AND error_code ~ '^[a-z0-9_]+$')),
+    CONSTRAINT outbound_ai_replay_results_values_chk
+        CHECK (input_tokens >= 0 AND output_tokens >= 0 AND cost_millicents >= 0 AND duration_ms >= 0
+               AND (ttfb_ms IS NULL OR ttfb_ms >= 0) AND octet_length(response_body) <= 32768
+               AND octet_length(output_text) <= 4096),
+    CONSTRAINT outbound_ai_replay_results_type_chk
+        CHECK (response_content_type IS NULL
+               OR (length(response_content_type) BETWEEN 1 AND 128 AND response_content_type ~ '^[ -~]+$'))
+);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+DROP TABLE IF EXISTS outbound_ai_replay_results;
+DROP TABLE IF EXISTS outbound_ai_replays;
+ALTER TABLE outbound_ai_request_content
+    DROP CONSTRAINT IF EXISTS outbound_ai_request_content_path_chk,
+    DROP COLUMN IF EXISTS request_path;
+DELETE FROM outbound_ai_usage_daily WHERE caller = 'replay';
+ALTER TABLE outbound_ai_usage_daily DROP CONSTRAINT IF EXISTS outbound_ai_usage_daily_caller_chk;
+ALTER TABLE outbound_ai_usage_daily ADD CONSTRAINT outbound_ai_usage_daily_caller_chk
+    CHECK (caller = 'runs' OR caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 ALTER TABLE outbound_integrations
     DROP CONSTRAINT IF EXISTS outbound_integrations_ai_content_policy_chk,
     DROP COLUMN IF EXISTS ai_content_blocked_terms,

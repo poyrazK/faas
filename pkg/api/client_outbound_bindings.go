@@ -53,6 +53,19 @@ func (c *Client) SetOutboundAIContentPolicy(ctx context.Context, integrationID s
 	return c.do(ctx, "PUT", path, policy, nil)
 }
 
+// CreateOutboundAIReplay replays a captured call on targets (ADR-997).
+func (c *Client) CreateOutboundAIReplay(ctx context.Context, integrationID, requestID string, req CreateOutboundAIReplayRequest) (OutboundAIReplay, error) {
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-requests/" + url.PathEscape(requestID) + "/replays"
+	var out OutboundAIReplay
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+// GetOutboundAIReplay reads a replay and its results.
+func (c *Client) GetOutboundAIReplay(ctx context.Context, replayID string) (OutboundAIReplay, error) {
+	var out OutboundAIReplay
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-replays/"+url.PathEscape(replayID), nil, &out)
+}
+
 // GetOutboundIntegrationAIPrices returns the price list in effect.
 func (c *Client) GetOutboundIntegrationAIPrices(ctx context.Context, integrationID string) (OutboundAIPriceListResponse, error) {
 	var out OutboundAIPriceListResponse

@@ -546,7 +546,7 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost}
 	state.dailyAITokenCount += record.Usage.BudgetTokens()
 	state.bindingAITokenCounts[record.Caller] += record.Usage.BudgetTokens()
-	if record.Caller != AIUsageCallerRuns && record.Usage.BudgetTokens() > 0 {
+	if appCaller(record.Caller) && record.Usage.BudgetTokens() > 0 {
 		minute := state.bindingMinute(record.Caller, utcNow)
 		minute.tokens += record.Usage.BudgetTokens()
 		state.bindingMinutes[record.Caller] = minute
@@ -584,7 +584,7 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 		crossings = append(crossings, userBudgetCrossings(endUser, utcDayStart(utcNow), state.aiLimits.userTokens, state.aiLimits.userCost,
 			totals.InputTokens+totals.OutputTokens, totals.CostMillicents, record.Usage.InputTokens+record.Usage.OutputTokens, record.CostMillicents)...)
 	}
-	if record.Caller != AIUsageCallerRuns {
+	if appCaller(record.Caller) {
 		crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, utcDayStart(utcNow),
 			state.bindingTokenLimits[record.Caller], before.bindingTokens, state.bindingAITokenCounts[record.Caller], ""})
 	}

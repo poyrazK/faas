@@ -81,7 +81,10 @@ type OutboundAIRequestLogEntry struct {
 // OutboundAIRequestContent is one logged call's captured bodies (ADR-996):
 // the start of each as outboundd sent and received it, never headers.
 type OutboundAIRequestContent struct {
-	LogID               string
+	LogID string
+	// RequestPath is the call's escaped provider path; empty for captures
+	// made before ADR-997.
+	RequestPath         string
 	CreatedAt           time.Time
 	RequestBody         []byte
 	RequestTruncated    bool

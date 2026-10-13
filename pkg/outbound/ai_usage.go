@@ -82,6 +82,8 @@ type AIRequestLog struct {
 // request body the gateway streamed without buffering is empty and
 // truncated.
 type AIRequestContent struct {
+	// RequestPath is the escaped provider path of the call (ADR-997).
+	RequestPath         string
 	Request             []byte
 	RequestTruncated    bool
 	Response            []byte
@@ -127,7 +129,7 @@ func (c *aiContentCapture) finish() *AIRequestContent {
 const aiContentTypeMaxBytes = 128
 
 func validateAIRequestContent(content *AIRequestContent) bool {
-	return content == nil || (len(content.Request) <= api.OutboundAIRequestContentMaxBytes &&
+	return content == nil || (len(content.Request) <= api.OutboundAIRequestContentMaxBytes && len(content.RequestPath) <= 2048 &&
 		len(content.Response) <= api.OutboundAIRequestContentMaxBytes && len(content.ResponseContentType) <= aiContentTypeMaxBytes)
 }
 
@@ -157,6 +159,16 @@ func validateAIRequestLog(log *AIRequestLog) error {
 
 // AIUsageCallerRuns aggregates every Run's calls; Runs have no app ID.
 const AIUsageCallerRuns = "runs"
+
+// AIUsageCallerReplay aggregates the calls of replays (ADR-997); they have
+// no app ID either.
+const AIUsageCallerReplay = "replay"
+
+// appCaller reports whether a settled caller is an app ID, which has app
+// budgets, minute counters and alert webhooks.
+func appCaller(caller string) bool {
+	return caller != AIUsageCallerRuns && caller != AIUsageCallerReplay
+}
 
 // aiUsageOverflowModel collects models beyond the per-day distinct cap.
 const aiUsageOverflowModel = "other"

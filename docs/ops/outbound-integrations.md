@@ -877,7 +877,108 @@ base64. `gregale ai logs` marks captured calls in its CONTENT column.
 Captures are kept for 3 days. Turning capture off deletes them within an
 hour, and deleting the integration deletes them at once. They are stored
 unencrypted, like app logs, so do not turn capture on for traffic you may not
-store.
+store. E-mail addresses, payment cards, IBANs and secrets in captures are
+always replaced with `[REDACTED:kind]` (ADR-997).
+
+## AI media metering
+
+See [ADR-997](../adr/997-ai-gateway-media-metering-content-guardrails-replay.md).
+
+Image, transcription and speech calls count toward token and cost budgets
+like chat calls:
+
+- **Images:** OpenAI and Azure `images/generations`, `images/edits` and
+  `images/variations`, and Imagen `predict` on Gemini and Vertex AI.
+  gpt-image models report image tokens. DALL-E and Imagen are billed per
+  image.
+- **Transcription:** `audio/transcriptions` and `audio/translations`, billed
+  per audio second (Whisper) or in tokens (gpt-4o-transcribe).
+- **Speech:** `audio/speech`, billed per input character (tts-1) or settled
+  at its reservation when the model has no character price.
+
+Price lists take media prices next to token prices:
+
+- `input-image` and `output-image` per million image tokens;
+- `image` per image;
+- `audio-minute` per minute of input audio;
+- `characters` per million characters.
+
+For example:
+
+```sh
+gregale ai prices set <id> --price model=dall-e-3,image=0.04 \
+  --price model=whisper-1,audio-minute=0.006 --price model=tts-1,characters=15
+```
+
+The built-in catalog carries these prices for the image, transcription and
+speech models LiteLLM lists. `gregale ai usage` shows images, audio seconds and
+characters in its MEDIA column.
+
+Reservations use the unit a model is priced in:
+
+- **Images:** the requested image count (`n`, or Imagen's `sampleCount`). A
+  token-priced model reserves 8,192 output tokens per image.
+- **Transcription:** the upload's estimated duration at 16 kbit/s.
+- **Speech:** the input characters.
+
+## AI content guardrails
+
+`gregale ai content-policy <id> --email redact --payment-card block --secrets
+block --block-term 'Project Falcon'` (or `PUT .../ai-content-policy`) checks
+every AI request before admission. Each detector can be `off`, `redact` or
+`block`:
+
+| Detector | Finds |
+| --- | --- |
+| `email` | e-mail addresses |
+| `payment_card` | 13 to 19 digit card numbers that pass the Luhn check |
+| `iban` | IBANs with a valid check sum |
+| `secret` | OpenAI, Anthropic, AWS, GitHub, Slack, Google and Stripe keys, JWTs, bearer tokens and PEM private keys |
+
+Blocked terms are matched without case.
+
+The gateway checks the string values of JSON bodies, skipping data URLs and
+long base64 payloads, and the text fields of forms:
+
+- **Redaction:** a redacted finding becomes `[REDACTED:kind]` before the
+  provider sees it. The response carries
+  `X-Gregale-AI-Content-Redactions: email=1`.
+- **Blocking:** a blocked finding or term gets `400
+  outbound_ai_content_blocked`, which names the detector but never echoes the
+  content.
+- **Forms:** a form cannot be rewritten, so a finding to redact in a form
+  blocks it.
+- **Unreadable bodies:** with a policy on, a body the gateway cannot read is
+  refused. That covers bodies over 4 MiB, including large audio uploads, and
+  JSON that does not parse.
+
+Responses are not checked. `outbound_ai_content_findings_total` counts
+findings by detector and action.
+
+## AI replay
+
+`gregale ai replay <id> <request-id> --target <anthropic-id>:claude-sonnet-4-5
+--target <openai-id>:gpt-4o-mini` resends a captured call (`gregale ai logs`
+shows request IDs) to up to five targets. It waits, then prints the original
+call and each target side by side: status, tokens, cost, latency, time to
+first byte and the start of the output. `gregale ai replay show <replay-id>`
+reads a replay again. The API is
+`POST .../ai-requests/{request-id}/replays` and
+`GET /v1/outbound/ai-replays/{replay-id}`.
+
+- **Translation:** captured OpenAI chat completions, Responses and embeddings
+  calls replay on any provider. Other calls replay on integrations of the same
+  provider.
+- **Model:** a target on another provider needs a model.
+- **Streaming:** replays never stream, so time to first byte is the time to
+  the whole response.
+- **Accounting:** replayed calls go through the targets' ordinary path:
+  budgets, guardrails, rate limits and the content policy apply. They appear
+  in usage under the caller `replay` and are never captured.
+- **What is resent:** the redacted capture. A call needs a whole capture, so a
+  truncated request cannot be replayed.
+- **Limits:** at most 100 replays per integration per UTC day
+  (`429 outbound_ai_replay_limit`). Replays are kept for 3 days.
 
 **Dashboard.** `deploy/grafana/ai-gateway.json` charts:
 

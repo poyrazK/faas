@@ -6636,8 +6636,13 @@
     "columns": [
       "cache_write_millicents_per_mtok",
       "cached_input_millicents_per_mtok",
+      "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
+      "millicents_per_audio_minute",
+      "millicents_per_image",
+      "millicents_per_million_characters",
       "model_prefix",
+      "output_image_millicents_per_mtok",
       "output_millicents_per_mtok",
       "price_list_id"
     ],
@@ -6654,12 +6659,53 @@
     "kind": "configuration"
   },
   {
+    "table": "outbound_ai_replay_results",
+    "columns": [
+      "cost_millicents",
+      "duration_ms",
+      "error_code",
+      "input_tokens",
+      "model",
+      "outcome",
+      "output_text",
+      "output_tokens",
+      "position",
+      "replay_id",
+      "response_body",
+      "response_content_type",
+      "response_truncated",
+      "status",
+      "target_integration_id",
+      "ttfb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_replays",
+    "columns": [
+      "account_id",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "integration_id",
+      "log_id",
+      "source_output_text",
+      "started_at",
+      "state",
+      "target_integration_ids",
+      "target_models"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_request_content",
     "columns": [
       "created_at",
       "integration_id",
       "log_id",
       "request_body",
+      "request_path",
       "request_truncated",
       "response_body",
       "response_content_type",
@@ -6715,11 +6761,14 @@
   {
     "table": "outbound_ai_usage_daily",
     "columns": [
+      "audio_seconds",
       "cache_write_tokens",
       "cached_input_tokens",
       "caller",
+      "characters",
       "cost_millicents",
       "error_requests",
+      "images",
       "input_tokens",
       "integration_id",
       "model",
@@ -6824,6 +6873,11 @@
     "table": "outbound_integrations",
     "columns": [
       "account_id",
+      "ai_content_blocked_terms",
+      "ai_content_email",
+      "ai_content_iban",
+      "ai_content_payment_card",
+      "ai_content_secret",
       "ai_daily_cost_limit_millicents",
       "ai_daily_token_limit",
       "ai_monthly_cost_limit_millicents",

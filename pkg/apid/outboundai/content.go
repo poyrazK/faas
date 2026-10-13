@@ -38,7 +38,7 @@ func (s *Service) GetRequestContent(w http.ResponseWriter, r *http.Request, acct
 	default:
 		w.Header().Set("Cache-Control", "no-store")
 		httpkit.WriteJSON(w, http.StatusOK, api.OutboundAIRequestContent{
-			RequestID: content.LogID, CreatedAt: content.CreatedAt,
+			RequestID: content.LogID, CreatedAt: content.CreatedAt, RequestPath: optionalString(content.RequestPath),
 			Request:  contentBody(content.RequestBody, content.RequestTruncated, ""),
 			Response: contentBody(content.ResponseBody, content.ResponseTruncated, content.ResponseContentType),
 		})

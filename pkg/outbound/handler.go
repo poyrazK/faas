@@ -207,17 +207,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_ai_gateway_disabled", "The AI gateway is not enabled on this platform", "")
 		return
 	}
-	workflowIdentity, ok := h.callerWorkflowIdentity(w, r, integration, path)
-	if !ok {
+	// ADR-997: the replay worker calls in process for an account's own
+	// customer AI integrations; nothing else can carry its principal.
+	replay, isReplay := replayPrincipalFromContext(r.Context())
+	if isReplay && !replayAllowed(integration, replay) {
+		writeProblem(w, http.StatusForbidden, "outbound_replay_not_authorized", "The replay cannot use this outbound integration", "")
 		return
 	}
-	executionIdentity, isExecution, ok := h.callerExecutionIdentity(w, r, integration)
-	if !ok {
-		return
+	var workflowIdentity *WorkflowIdentity
+	var executionIdentity ExecutionIdentity
+	isExecution, ok := false, true
+	if !isReplay {
+		if workflowIdentity, ok = h.callerWorkflowIdentity(w, r, integration, path); !ok {
+			return
+		}
+		if executionIdentity, isExecution, ok = h.callerExecutionIdentity(w, r, integration); !ok {
+			return
+		}
 	}
 	appID := ""
 	principalID := ""
-	if isExecution {
+	if isReplay {
+		principalID = "replay:" + replay.replayID
+	} else if isExecution {
 		if h.ExecutionAuthorizer == nil {
 			writeProblem(w, http.StatusServiceUnavailable, "outbound_execution_authorization_unavailable", "Runs outbound authorization is unavailable", "1")
 			return
@@ -247,7 +259,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		principalID = appID
 	}
 	var allowedRoute bool
-	if isExecution {
+	if isExecution || isReplay {
 		allowedRoute = integration.AllowsRequest(r.Method, path)
 	} else {
 		allowedRoute = integration.AllowsAppRequest(appID, r.Method, path)

@@ -231,11 +231,11 @@ func (s *PgStore) GetOutboundAIRequestContent(ctx context.Context, accountID, in
 	content := OutboundAIRequestContent{LogID: logID}
 	err := s.pool.QueryRow(ctx, `
 		SELECT created_at, request_body, request_truncated, response_body, response_truncated,
-		       COALESCE(response_content_type, '')
+		       COALESCE(response_content_type, ''), COALESCE(request_path, '')
 		  FROM outbound_ai_request_content
 		 WHERE integration_id = $1 AND log_id = $2`, mustPgUUID(integrationID), mustPgUUID(logID)).
 		Scan(&content.CreatedAt, &content.RequestBody, &content.RequestTruncated, &content.ResponseBody,
-			&content.ResponseTruncated, &content.ResponseContentType)
+			&content.ResponseTruncated, &content.ResponseContentType, &content.RequestPath)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OutboundAIRequestContent{}, ErrNotFound
 	}

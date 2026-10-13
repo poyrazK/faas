@@ -91,3 +91,45 @@ func TestOutboundAIContentPolicy(t *testing.T) {
 	apidserver.AssertProblem(t, e.Do(t, http.MethodPut, path, api.OutboundAIContentPolicy{Secret: api.OutboundAIContentBlock}, nil),
 		http.StatusBadRequest, api.CodeValidation)
 }
+
+// adr: 997 — a captured call is replayed through apid: the replay is
+// recorded for outboundd and read back with its results.
+func TestOutboundAIReplay(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	source := seedAIIntegration(t, e, "llm", api.OutboundAIProviderOpenAI)
+	claude := seedAIIntegration(t, e, "claude", api.OutboundAIProviderAnthropic)
+	logID, bare := uuid.NewString(), uuid.NewString()
+	at := time.Now().UTC()
+	(*e.Store()).SeedOutboundAIRequestLog(source,
+		state.OutboundAIRequestLogEntry{ID: logID, CreatedAt: at, Caller: "runs", Model: "gpt-4o", Status: 200, Outcome: "known", Attempts: 1,
+			InputTokens: 10, OutputTokens: 2, CostMillicents: 3, DurationMS: 400},
+		state.OutboundAIRequestLogEntry{ID: bare, CreatedAt: at, Caller: "runs", Model: "gpt-4o", Status: 200, Outcome: "known", Attempts: 1})
+	(*e.Store()).SeedOutboundAIRequestContent(source, state.OutboundAIRequestContent{LogID: logID, CreatedAt: at,
+		RequestPath: "/v1/chat/completions", RequestBody: []byte(`{"model":"gpt-4o","messages":[]}`)})
+	path := "/v1/outbound/integrations/" + source + "/ai-requests/" + logID + "/replays"
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPost, path, api.CreateOutboundAIReplayRequest{}, nil), http.StatusBadRequest, api.CodeValidation)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPost, path, api.CreateOutboundAIReplayRequest{
+		Targets: []api.OutboundAIReplayTarget{{IntegrationID: claude}}}, nil), http.StatusBadRequest, api.CodeValidation)
+	apidserver.AssertProblem(t, e.Do(t, http.MethodPost, "/v1/outbound/integrations/"+source+"/ai-requests/"+bare+"/replays",
+		api.CreateOutboundAIReplayRequest{Targets: []api.OutboundAIReplayTarget{{IntegrationID: source}}}, nil),
+		http.StatusConflict, "outbound_ai_replay_unavailable")
+	created := e.Do(t, http.MethodPost, path, api.CreateOutboundAIReplayRequest{Targets: []api.OutboundAIReplayTarget{
+		{IntegrationID: claude, Model: "claude-sonnet-4-5"}, {IntegrationID: source}}}, nil)
+	var replay api.OutboundAIReplay
+	if created.Code != http.StatusAccepted || json.Unmarshal(created.Body.Bytes(), &replay) != nil || replay.State != api.OutboundAIReplayPending ||
+		replay.RequestID != logID || len(replay.Targets) != 2 || replay.Source.Model != "gpt-4o" {
+		t.Fatalf("create = %d %s", created.Code, created.Body.String())
+	}
+	status := 200
+	(*e.Store()).SeedOutboundAIReplayResults(replay.ID, "original text",
+		state.OutboundAIReplayResult{IntegrationID: claude, Model: "claude-sonnet-4-5", Status: &status, Outcome: "known",
+			InputTokens: 12, OutputTokens: 5, CostMillicents: 17, DurationMS: 800, OutputText: "Bonjour",
+			ResponseBody: []byte(`{"ok":true}`), ResponseContentType: "application/json"})
+	got := e.Do(t, http.MethodGet, "/v1/outbound/ai-replays/"+replay.ID, nil, nil)
+	if got.Code != http.StatusOK || json.Unmarshal(got.Body.Bytes(), &replay) != nil || replay.State != api.OutboundAIReplayDone ||
+		len(replay.Results) != 1 || replay.Results[0].OutputText != "Bonjour" || replay.Source.OutputText == nil ||
+		replay.Results[0].Response.Body != `{"ok":true}` || replay.Results[0].Status == nil {
+		t.Fatalf("get = %d %s", got.Code, got.Body.String())
+	}
+	apidserver.AssertProblem(t, e.Do(t, http.MethodGet, "/v1/outbound/ai-replays/"+uuid.NewString(), nil, nil), http.StatusNotFound, api.CodeNotFound)
+}

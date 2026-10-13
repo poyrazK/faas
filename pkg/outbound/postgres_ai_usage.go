@@ -42,8 +42,8 @@ func (b *PostgresBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsag
 	if err != nil {
 		return nil, fmt.Errorf("%w: integration id must be a UUID", ErrInvalidIntegration)
 	}
-	if record.Caller != AIUsageCallerRuns && !validUUID(record.Caller) {
-		return nil, fmt.Errorf("%w: AI usage caller must be an app UUID or %q", ErrInvalidIntegration, AIUsageCallerRuns)
+	if appCaller(record.Caller) && !validUUID(record.Caller) {
+		return nil, fmt.Errorf("%w: AI usage caller must be an app UUID, %q or %q", ErrInvalidIntegration, AIUsageCallerRuns, AIUsageCallerReplay)
 	}
 	tx, err := b.pool.Begin(ctx)
 	if err != nil {
@@ -174,7 +174,7 @@ func settleAIUsageCounters(ctx context.Context, tx pgx.Tx, integrationID uuid.UU
 	}
 	// ADR-990: the app's own binding counter, when the app has a binding row.
 	// Operator attachments and Runs have none, so nothing is updated.
-	if budgetTokens > 0 && record.Caller != AIUsageCallerRuns {
+	if budgetTokens > 0 && appCaller(record.Caller) {
 		appID := uuid.MustParse(record.Caller)
 		var bindingTokens, bindingLimit int64
 		err := tx.QueryRow(ctx, `
@@ -239,7 +239,7 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 		if alert.EndUser != "" {
 			// Runs have no app to notify; the alert is still listed.
 			notify = ""
-			if caller != AIUsageCallerRuns {
+			if appCaller(caller) {
 				notify = caller
 			}
 		}
@@ -336,14 +336,15 @@ func insertAIRequestContent(ctx context.Context, tx pgx.Tx, integrationID, logID
 	}
 	_, err := tx.Exec(ctx, `
 		INSERT INTO outbound_ai_request_content
-		    (log_id, integration_id, request_body, request_truncated, response_body, response_truncated, response_content_type)
-		SELECT $1, $2, $3, $4, $5, $6, NULLIF($7, '')
+		    (log_id, integration_id, request_body, request_truncated, response_body, response_truncated, response_content_type,
+		     request_path)
+		SELECT $1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($9, '')
 		 WHERE (SELECT count(*) FROM (SELECT 1 FROM outbound_ai_request_content
 		                               WHERE integration_id = $2
 		                                 AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
 		                               LIMIT $8) captured) < $8`,
 		logID, integrationID, nonNilBytes(content.Request), content.RequestTruncated, nonNilBytes(content.Response),
-		content.ResponseTruncated, content.ResponseContentType, api.OutboundAIContentCapturesPerDay)
+		content.ResponseTruncated, content.ResponseContentType, api.OutboundAIContentCapturesPerDay, content.RequestPath)
 	return err
 }
 
@@ -374,6 +375,8 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		      OR NOT EXISTS (SELECT 1 FROM outbound_integrations integration
 		                      WHERE integration.id = content.integration_id AND integration.ai_request_log_content)`,
 			api.OutboundAIRequestContentRetentionDays},
+		// ADR-997: replays and their results.
+		{`DELETE FROM outbound_ai_replays WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIReplayRetentionDays},
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-995: end users' alerts follow the per-user rollup retention.
 		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},

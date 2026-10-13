@@ -490,10 +490,13 @@ type OutboundAIContentBody struct {
 // gateway sent them to the provider and read them back, never headers
 // (ADR-996).
 type OutboundAIRequestContent struct {
-	RequestID string                `json:"request_id"`
-	CreatedAt time.Time             `json:"created_at"`
-	Request   OutboundAIContentBody `json:"request"`
-	Response  OutboundAIContentBody `json:"response"`
+	RequestID string    `json:"request_id"`
+	CreatedAt time.Time `json:"created_at"`
+	// RequestPath is the call's provider path; null for captures made
+	// before ADR-997.
+	RequestPath *string               `json:"request_path"`
+	Request     OutboundAIContentBody `json:"request"`
+	Response    OutboundAIContentBody `json:"response"`
 }
 
 // Per-end-user attribution and key affinity headers (ADR-994). An app sets
