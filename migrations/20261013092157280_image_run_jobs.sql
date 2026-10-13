@@ -24,6 +24,9 @@ ALTER TABLE jobs
     ADD COLUMN IF NOT EXISTS image_cmd text[];
 
 ALTER TABLE jobs
+    DROP CONSTRAINT IF EXISTS jobs_image_entrypoint_chk,
+    DROP CONSTRAINT IF EXISTS jobs_image_cmd_chk;
+ALTER TABLE jobs
     ADD CONSTRAINT jobs_image_entrypoint_chk
     CHECK (image_entrypoint IS NULL OR cardinality(image_entrypoint) <= 64),
     ADD CONSTRAINT jobs_image_cmd_chk
