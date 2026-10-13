@@ -54,12 +54,12 @@ func startRestoreReseedServer(log *slog.Logger, uid int) error {
 
 // reseedRestoredWorkloads runs the barrier if it started. The resume hook
 // calls it after the kernel reseed and before acknowledging vmmd.
-func reseedRestoredWorkloads() error {
+func reseedRestoredWorkloads() (restoreReseedStats, error) {
 	b := activeRestoreReseedBarrier.Load()
 	if b == nil {
-		return nil
+		return restoreReseedStats{}, nil
 	}
-	return b.Reseed(RestoreReseedTimeout)
+	return b.ReseedWithStats(RestoreReseedTimeout)
 }
 
 // restoreReseedContractHolds reports whether this guest may advertise the

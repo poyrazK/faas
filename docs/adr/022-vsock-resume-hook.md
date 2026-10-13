@@ -224,3 +224,35 @@ The base layer still ships a small set of `mknod`'d device files
 (`/dev/null`, `/dev/console`, `/dev/tty`) so the kernel can open them at
 very early boot — before `pivotInto` runs. After pivot, devtmpfs takes
 over.
+## Amendment 2026-10-14 · Guest-side timing frame on the ack
+
+**Why.** The host times the resume hook as connect / write / ack wait.
+Production-us (rc.257) measured the ack wait at 135–200 ms for Node and
+Python apps against ~58 ms for Go, with the snapshot memory file fully in
+the page cache and the node idle, so neither disk nor contention explains
+it. The host cannot see which guest step spends that time.
+
+**Change.** A successful ack from a guest that holds the ADR-687 contract
+is now `[ack=0][caps][4-byte BE length][Timings JSON]`. `caps` keeps the
+ADR-687 bit (`0x01`) and adds `resumetimingproto.CapTimings` (`0x02`) to
+announce the frame. `Timings` (`pkg/resumetimingproto`) carries the guest's
+monotonic-clock durations in microseconds: request read, entropy, hwrng,
+clock step, UUID marker, the userspace reseed barrier (with its client
+count and the slowest process's runtime), profiler resume, the
+application's `after_restore` callback, and the guest total.
+
+**Compatibility.** Both directions hold without a version handshake:
+- An older host reads one capability byte and closes; the frame stays
+  unread in a connection it discards.
+- An older guest never sets `0x02`, so a newer host reads nothing more.
+- A guest without the ADR-687 contract still sends the bare one-byte ack.
+- A malformed frame is advisory: vmmd drops the timings, never the restore.
+
+**Where it shows.** Operator-only, like the other restore sub-phases:
+the `resume hook timing` log record gains `guest_*_us` fields (with
+`guest_outside_us`, the host's ack wait minus the guest total: vsock
+transport plus the time before guest-init's handler ran), and
+`vmmd_resume_guest_stage_duration_seconds{stage}` records each stage. The
+customer `wake.restore_breakdown` event is unchanged. Snapshots captured
+before this guest-init shipped do not send the frame until they are
+recaptured.
