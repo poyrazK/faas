@@ -2,7 +2,7 @@ package mcphosting
 
 import (
 	"context"
-	"crypto/elliptic"
+	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -129,5 +129,8 @@ func doctorECKey(x, y string) bool {
 	if err != nil || len(yb) != 32 {
 		return false
 	}
-	return elliptic.P256().IsOnCurve(new(big.Int).SetBytes(xb), new(big.Int).SetBytes(yb))
+	encoded := append([]byte{4}, xb...)
+	encoded = append(encoded, yb...)
+	_, err = ecdh.P256().NewPublicKey(encoded)
+	return err == nil
 }

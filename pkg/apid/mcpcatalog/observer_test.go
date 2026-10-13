@@ -122,7 +122,6 @@ func testManagedCatalogObserver(t *testing.T, store state.Store) {
 	if len(tokens) != 2 || tokens[0] != "FIRST_PRIVATE_TOKEN" || tokens[1] != "ROTATED_PRIVATE_TOKEN" {
 		t.Fatal("secret rotation not read on the next check")
 	}
-	jobs, _ = observers.ListDueMCPCatalogObservers(ctx, 4)
 	// Reconfiguration makes the old lease ineligible even when the old probe succeeded.
 	restart()
 	jobs, _ = observers.ListDueMCPCatalogObservers(ctx, 4)

@@ -112,7 +112,7 @@ func (r *ObserverRunner) checkOAuthCompatibility(ctx context.Context, cfg *api.M
 	var metadata oauthProviderMetadata
 	valid := err == nil
 	if valid {
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		body, e := io.ReadAll(io.LimitReader(response.Body, api.MCPCatalogOAuthMaxResponseBytes+1))
 		valid = e == nil && response.StatusCode == 200 && len(body) <= api.MCPCatalogOAuthMaxResponseBytes && json.Unmarshal(body, &metadata) == nil
 	}

@@ -231,7 +231,7 @@ func (r *ObserverRunner) exchangeOAuthCode(ctx context.Context, cfg *api.MCPCata
 	if err != nil {
 		return data, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(response.Body, api.MCPCatalogOAuthMaxResponseBytes+1))
 	if err != nil || len(body) > api.MCPCatalogOAuthMaxResponseBytes || json.Unmarshal(body, &data) != nil || response.StatusCode != 200 || data.Error != "" || !strings.EqualFold(data.TokenType, "Bearer") || !oauthTokenValue(data.AccessToken) || !oauthTokenValue(data.RefreshToken) || data.ExpiresIn <= api.MCPCatalogOAuthRefreshSkewSeconds || data.ExpiresIn > api.MCPCatalogOAuthMaxExpirySeconds {
 		return data, errors.New("invalid authorization response")

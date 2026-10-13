@@ -109,7 +109,7 @@ func (r *ObserverRunner) revokeToken(ctx context.Context, cfg *api.MCPCatalogObs
 	if err != nil {
 		return errors.New("revocation unavailable")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return errors.New("revocation unavailable")
 	}
