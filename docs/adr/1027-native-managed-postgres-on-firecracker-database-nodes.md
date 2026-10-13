@@ -169,6 +169,41 @@ vmmd's database lifecycle RPCs accept only schedd's certificate and
 `DatabaseSession` only pgproxyd's, so the proxy can reach a database's data
 port but never its control port.
 
+pgproxyd caches verifiers briefly. A re-issued password has a new salt, so
+a stale cached verifier cannot be retried within the handshake; the proxy
+drops the cached entry after any failed login and the next attempt reads
+the current verifier.
+
+### Driver
+
+`pkg/managedpostgres/firecracker` is the `managedpostgres.Provider` for this
+backend (driver name `firecracker`, registered in apid). It reaches schedd
+with apid's client certificate and writes verifiers through `pkg/dbcreds`.
+
+- **Provision** asks schedd for a VM of the class's fixed shape (development
+  1 vCPU/512 MiB, burstable 2 vCPU/1 GiB), then runs an init batch through
+  `DatabaseAdmin`: the `gregale_schema_owner` role, the customer database it
+  owns, and PUBLIC locked out of CONNECT/CREATE/TEMPORARY. Inspect derives
+  the class back from the VM shape.
+- **Credentials** follow ADR-461: one role per binding identity and access
+  level (`gregale_rt_`/`gregale_ro_`/`gregale_mig_` + a hash). The driver
+  generates the password, sets only its verifier inside the VM and stores the
+  same verifier for the proxy; the password exists only in the returned
+  `CredentialMaterial`. Migration roles act as the schema owner; runtime and
+  read-only roles end every batch with an assertion that they cannot create
+  objects (`P0001` fails the batch). Revoke deletes the verifier first, so
+  the proxy refuses the role before the VM is woken to disable it.
+- **Admission** is strict because the service fails a database whose
+  observed spec differs from the requested one: the driver refuses
+  always-on (`scale_to_zero=false`), any restore window, an unbounded volume
+  and other regions with `ErrUnsupported`. `Capabilities` advertises no PITR
+  and no usage meters.
+
+Not yet: Update (resize, scale-to-zero toggle), Restore, usage, and an
+always-on mode. Always-on needs a per-database "never idle-park" flag in
+`database_vms`; until then plans that allow always-on must not route new
+databases here.
+
 ## Phasing
 
 1. Walking skeleton on one internal database node: create, connect through
