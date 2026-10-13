@@ -4887,6 +4887,40 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_cutover_drain_plan_members",
+    "columns": [
+      "blocker_code",
+      "deployment_id",
+      "deployment_scope",
+      "drain_id",
+      "instance_id",
+      "instance_kind",
+      "instance_mode",
+      "migrated_from_node_id",
+      "node_id",
+      "observed_state",
+      "plan_id",
+      "qualification_live",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_drain_plans",
+    "columns": [
+      "app_id",
+      "blocker_code",
+      "created_at",
+      "cutover_id",
+      "fenced_at",
+      "id",
+      "inventory_count",
+      "owner_node_id",
+      "owner_revision"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_cutover_drains",
     "columns": [
       "app_id",

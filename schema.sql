@@ -1628,6 +1628,31 @@ $$;
 
 
 --
+-- Name: current_managed_postgres_drain_plan(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.current_managed_postgres_drain_plan(app uuid) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE authority apps%ROWTYPE; selected uuid;
+BEGIN
+ -- Lock even when no plan is visible yet. A parked/terminal INSERT that was
+ -- admitted before reservation must wait, then observe the committed plan.
+ SELECT * INTO authority FROM apps WHERE id=app FOR SHARE;
+ IF authority.managed_postgres_admission_cutover_id IS NOT NULL
+  AND current_setting('transaction_isolation') <> 'read committed' THEN
+  RAISE EXCEPTION 'drain membership requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ SELECT id INTO selected FROM managed_postgres_cutover_drain_plans
+ WHERE app_id=app AND cutover_id=authority.managed_postgres_admission_cutover_id
+  AND fenced_at=authority.managed_postgres_admission_fenced_at
+  AND owner_node_id=authority.node_id AND owner_revision=authority.scaling_policy_revision;
+ RETURN selected;
+END;
+$$;
+
+
+--
 -- Name: customer_operation_subject_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8993,6 +9018,78 @@ BEGIN
             USING ERRCODE = '23514', CONSTRAINT = 'managed_postgres_database_has_bindings';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_drain_plan_evidence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_drain_plan_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'cutover drain plans are immutable' USING ERRCODE='23514';
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_drain_plan_inventory(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_drain_plan_inventory() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE selected uuid;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  selected := current_managed_postgres_drain_plan(NEW.app_id);
+ ELSIF TG_OP='DELETE' THEN
+  selected := current_managed_postgres_drain_plan(OLD.app_id);
+  IF selected IS NULL THEN RETURN OLD; END IF;
+  IF EXISTS (SELECT 1 FROM managed_postgres_cutover_drain_plan_members m
+   JOIN managed_postgres_cutover_drain_plans p ON p.id=m.plan_id
+   JOIN managed_postgres_cutover_drains d ON d.id=m.drain_id
+   WHERE m.plan_id=selected AND m.instance_id=OLD.id AND d.state='retired'
+    AND d.cutover_id=p.cutover_id AND d.app_id=p.app_id AND d.owner_node_id=p.owner_node_id
+    AND d.owner_revision=p.owner_revision AND d.fenced_at=p.fenced_at
+    AND d.instance_id=OLD.id AND d.deployment_id=OLD.deployment_id AND d.node_id=OLD.node_id AND d.wake_id=OLD.wake_id
+    AND OLD.state='stopped') THEN RETURN OLD; END IF;
+ ELSE
+  -- Ordinary runtime counters and terminal transitions do not change catalog
+  -- membership. Avoid adding an app lock to those hot paths.
+  IF ROW(NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.kind,NEW.mode,NEW.migrated_from_node_id)
+    IS NOT DISTINCT FROM ROW(OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.kind,OLD.mode,OLD.migrated_from_node_id)
+    AND (NEW.state <> 'migrating' OR NEW.state=OLD.state) THEN RETURN NEW; END IF;
+  selected := current_managed_postgres_drain_plan(OLD.app_id);
+  IF selected IS NULL AND NEW.app_id IS DISTINCT FROM OLD.app_id THEN
+   selected := current_managed_postgres_drain_plan(NEW.app_id);
+  END IF;
+ END IF;
+ IF selected IS NOT NULL THEN
+  RAISE EXCEPTION 'cutover drain inventory is fenced' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END;
+$$;
+
+
+--
+-- Name: guard_managed_postgres_drain_plan_inventory_truncate(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_drain_plan_inventory_truncate() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS (SELECT 1 FROM apps a JOIN managed_postgres_cutover_drain_plans p ON p.app_id=a.id
+  AND p.cutover_id=a.managed_postgres_admission_cutover_id AND p.fenced_at=a.managed_postgres_admission_fenced_at
+  AND p.owner_node_id=a.node_id AND p.owner_revision=a.scaling_policy_revision) THEN
+  RAISE EXCEPTION 'cutover drain inventory is fenced' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_admission_fenced';
+ END IF;
+ RETURN NULL;
 END;
 $$;
 
@@ -22685,6 +22782,53 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
 
 
 --
+-- Name: managed_postgres_cutover_drain_plan_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_drain_plan_members (
+    plan_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    deployment_id uuid,
+    node_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    instance_kind text NOT NULL,
+    instance_mode text NOT NULL,
+    observed_state text NOT NULL,
+    deployment_scope text NOT NULL,
+    migrated_from_node_id uuid,
+    qualification_live boolean NOT NULL,
+    drain_id uuid,
+    blocker_code text NOT NULL,
+    CONSTRAINT managed_postgres_cutover_drain_plan_member_observed_state_check CHECK ((observed_state = ANY (ARRAY['pending'::text, 'parked'::text, 'waking'::text, 'cold_booting'::text, 'running'::text, 'draining'::text, 'snapshotting'::text, 'migrating'::text, 'warm'::text, 'stopped'::text, 'failed'::text, 'evicting_account_deleting'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_blocker_code_check CHECK ((blocker_code = ANY (ARRAY[''::text, 'instance_identity_incomplete'::text, 'unsupported_instance_kind'::text, 'migration_lineage_unproven'::text, 'qualification_cleanup_required'::text, 'parked_instance_unproven'::text, 'undispatched_instance_unproven'::text, 'unsupported_instance_state'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_check CHECK (((drain_id IS NULL) = (blocker_code <> ''::text))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_instance_kind_check CHECK ((instance_kind = ANY (ARRAY['wake'::text, 'build'::text, 'job_task'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plan_members_instance_mode_check CHECK ((instance_mode = ANY (ARRAY['normal'::text, 'mirror'::text, 'job'::text, 'worker'::text, 'service'::text])))
+);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_drain_plans (
+    id uuid NOT NULL,
+    cutover_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    owner_node_id uuid NOT NULL,
+    owner_revision bigint NOT NULL,
+    fenced_at timestamp with time zone NOT NULL,
+    inventory_count integer NOT NULL,
+    blocker_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_cutover_drain_plans_blocker_code_check CHECK ((blocker_code = ANY (ARRAY[''::text, 'inventory_empty'::text, 'inventory_limit_exceeded'::text]))),
+    CONSTRAINT managed_postgres_cutover_drain_plans_check CHECK (((blocker_code <> ''::text) OR (inventory_count > 0))),
+    CONSTRAINT managed_postgres_cutover_drain_plans_inventory_count_check CHECK ((inventory_count >= 0)),
+    CONSTRAINT managed_postgres_cutover_drain_plans_owner_revision_check CHECK ((owner_revision > 0))
+);
+
+
+--
 -- Name: managed_postgres_cutover_drains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34329,11 +34473,35 @@ ALTER TABLE ONLY public.managed_postgres_cutover_credentials
 
 
 --
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_cutover_drai_cutover_id_owner_node_id_owne_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plans
+    ADD CONSTRAINT managed_postgres_cutover_drai_cutover_id_owner_node_id_owne_key UNIQUE (cutover_id, owner_node_id, owner_revision, fenced_at);
+
+
+--
 -- Name: managed_postgres_cutover_drains managed_postgres_cutover_drain_identity_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_cutover_drains
     ADD CONSTRAINT managed_postgres_cutover_drain_identity_key UNIQUE (cutover_id, instance_id, node_id, wake_id, owner_node_id, owner_revision, fenced_at);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_cutover_drain_plan_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
+    ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_pkey PRIMARY KEY (plan_id, instance_id);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_cutover_drain_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plans
+    ADD CONSTRAINT managed_postgres_cutover_drain_plans_pkey PRIMARY KEY (id);
 
 
 --
@@ -42121,6 +42289,13 @@ CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_pos
 
 
 --
+-- Name: managed_postgres_cutover_drain_plans_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_drain_plans_app_idx ON public.managed_postgres_cutover_drain_plans USING btree (app_id);
+
+
+--
 -- Name: managed_postgres_cutover_drains_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -47284,6 +47459,48 @@ CREATE TRIGGER managed_postgres_cutover_drain_guard BEFORE UPDATE ON public.mana
 --
 
 CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_database_bindings();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_drain_plan_evidence_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_evidence_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_cutover_drain_plans FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
+
+
+--
+-- Name: instances managed_postgres_drain_plan_inventory_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_inventory_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_inventory();
+
+
+--
+-- Name: instances managed_postgres_drain_plan_inventory_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_inventory_truncate_guard BEFORE TRUNCATE ON public.instances FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_inventory_truncate();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_drain_plan_member_evidence_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_member_evidence_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_cutover_drain_plan_members FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_drain_plan_member_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_member_truncate_guard BEFORE TRUNCATE ON public.managed_postgres_cutover_drain_plan_members FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
+
+
+--
+-- Name: managed_postgres_cutover_drain_plans managed_postgres_drain_plan_truncate_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_drain_plan_truncate_guard BEFORE TRUNCATE ON public.managed_postgres_cutover_drain_plans FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_drain_plan_evidence();
 
 
 --
@@ -53174,6 +53391,22 @@ ALTER TABLE ONLY public.managed_postgres_cutover_credentials
 
 ALTER TABLE ONLY public.managed_postgres_cutover_credentials
     ADD CONSTRAINT managed_postgres_cutover_credentials_source_binding_id_fkey FOREIGN KEY (source_binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_cutover_drain_plan_members_drain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
+    ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_drain_id_fkey FOREIGN KEY (drain_id) REFERENCES public.managed_postgres_cutover_drains(id);
+
+
+--
+-- Name: managed_postgres_cutover_drain_plan_members managed_postgres_cutover_drain_plan_members_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
+    ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.managed_postgres_cutover_drain_plans(id);
 
 
 --

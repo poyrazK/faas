@@ -753,8 +753,30 @@ terminal state before releasing capacity. Lost replies, failed cleanup and
 failed database writes leave work pending for bounded recovery. Missing journal
 records, DB-less/legacy hosts, changed ownership and migrated lineage fail closed.
 These per-instance receipts do not prove all app writers, cached routes or
-external SQL sessions stopped. Fleet membership coverage and customer activation
+external SQL sessions stopped. Complete writer coverage and customer activation
 remain pending, as does physical native KVM qualification for this step.
+
+An explicit internal scheduler request can now capture a durable app-instance
+drain plan across every deployment, scope and mode
+([ADR-1151](adr/1151-managed-postgres-durable-drain-plans.md)). Capture and native
+member reservations commit atomically under the current owner and admission
+fence; the existing bounded recovery worker resumes the same members after
+restart. The atomic inventory limit is 512 members. Empty or oversized catalogs
+queue no partial drain. Parked, undispatched, migrated, private qualification,
+unsupported-kind and incomplete-identity members remain visible blockers.
+While the plan's epoch is current, catalog guards reject late instance insertion,
+incarnation changes and deletion without a matching native receipt. Confirmed
+retirement evidence survives ordinary terminal retention. Completed cancellation
+releases the catalog fence along with the existing admission barrier.
+
+Read-only plan status reports each member and its pending, retired or blocked
+condition. `catalog_retired` requires matching native receipts for the entire
+captured catalog and current ownership/fence authority. It does not prove
+external SQL-session isolation, empty host inventory, route convergence or
+permission to publish target credentials. Prepare/Verify do not create plans;
+there is still no customer activation operation. Production provisioning and
+customer cutover activation remain disabled.
+
 See [ADR-468](adr/468-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;
 concurrent stops wait, failed cleanup blocks reuse, and Destroy can retry the
