@@ -6,6 +6,8 @@ import (
 )
 
 type executionCoverage struct {
+	cases                   map[int64]api.EventExecutionLineageCase
+	retries                 map[string]lineageCaseRetry
 	repair                  lineageRepairProgress
 	reconciliationRequested *time.Time
 	ledgerStarted           time.Time

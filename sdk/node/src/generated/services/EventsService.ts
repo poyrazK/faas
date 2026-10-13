@@ -14,6 +14,8 @@ import type { EventConsumerDeliveryHealth } from '../models/EventConsumerDeliver
 import type { EventConsumerExecutionHealth } from '../models/EventConsumerExecutionHealth.js';
 import type { EventConsumerHealth } from '../models/EventConsumerHealth.js';
 import type { EventDeliveryListResponse } from '../models/EventDeliveryListResponse.js';
+import type { EventExecutionLineageCase } from '../models/EventExecutionLineageCase.js';
+import type { EventExecutionLineageCases } from '../models/EventExecutionLineageCases.js';
 import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
@@ -70,6 +72,7 @@ import type { ReplayEventFanoutFailureRequest } from '../models/ReplayEventFanou
 import type { ReplayEventFanoutFailureResponse } from '../models/ReplayEventFanoutFailureResponse.js';
 import type { ReplayRetryableEventFanoutFailuresRequest } from '../models/ReplayRetryableEventFanoutFailuresRequest.js';
 import type { ReplayRetryableEventFanoutFailuresResponse } from '../models/ReplayRetryableEventFanoutFailuresResponse.js';
+import type { RetryEventExecutionLineageCaseRequest } from '../models/RetryEventExecutionLineageCaseRequest.js';
 import type { SetWorkflowRecoveryPolicyRequest } from '../models/SetWorkflowRecoveryPolicyRequest.js';
 import type { SuppressWorkflowRecoveryAutomaticActionRequest } from '../models/SuppressWorkflowRecoveryAutomaticActionRequest.js';
 import type { WorkflowEventReplayBackfillRequest } from '../models/WorkflowEventReplayBackfillRequest.js';
@@ -1490,6 +1493,102 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         504: `The combined delivery health request exceeded its bounded deadline.`,
+      },
+    });
+  }
+  /**
+   * List retained lineage repair cases.
+   * Requires read scope. Cases cover recorded retained scans, not all historical gaps. No event payloads or handler errors are returned.
+   * @returns EventExecutionLineageCases Retained cases or the saved guarded retry result.
+   * @throws ApiError
+   */
+  public static listEventExecutionLineageCases({
+    slug,
+    subscriptionId,
+    after,
+    limit = 50,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Exclusive outbox ID cursor.
+     */
+    after?: number,
+    /**
+     * Page size; zero selects the server default.
+     */
+    limit?: number,
+  }): CancelablePromise<EventExecutionLineageCases> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid identifier, pagination or retry guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case revision or request identity changed.`,
+        504: `Lineage operation timed out; repeat the same guarded request.`,
+      },
+    });
+  }
+  /**
+   * Recheck one reviewed lineage case with an idempotent guard.
+   * Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
+   * @returns EventExecutionLineageCase Retained cases or the saved guarded retry result.
+   * @throws ApiError
+   */
+  public static retryEventExecutionLineageCase({
+    slug,
+    subscriptionId,
+    outboxId,
+    requestBody,
+  }: {
+    /**
+     * Application slug.
+     */
+    slug: string,
+    /**
+     * Application event subscription identifier.
+     */
+    subscriptionId: string,
+    /**
+     * Retained case outbox identifier.
+     */
+    outboxId: number,
+    requestBody: RetryEventExecutionLineageCaseRequest,
+  }): CancelablePromise<EventExecutionLineageCase> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases/{outboxID}/retry',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+        'outboxID': outboxId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid identifier, pagination or retry guard.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `Case revision or request identity changed.`,
+        504: `Lineage operation timed out; repeat the same guarded request.`,
       },
     });
   }

@@ -726,12 +726,15 @@ type Querier interface {
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
 	EventDeliveryReplayAccount(ctx context.Context, db DBTX, invocationID pgtype.UUID) (EventDeliveryReplayAccountRow, error)
 	EventExecutionLedgerWindow(ctx context.Context, db DBTX, arg EventExecutionLedgerWindowParams) (EventExecutionLedgerWindowRow, error)
+	// Admission roots include settled receipts and materialized backfill recipients.
+	EventExecutionLineageCaseReceipt(ctx context.Context, db DBTX, arg EventExecutionLineageCaseReceiptParams) ([]EventExecutionLineageCaseReceiptRow, error)
 	EventExecutionLineageRepairAmbiguous(ctx context.Context, db DBTX, arg EventExecutionLineageRepairAmbiguousParams) (bool, error)
 	EventExecutionLineageRepairExistingRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairExistingRootParams) (EventExecutionLineageRepairExistingRootRow, error)
 	EventExecutionLineageRepairJobs(ctx context.Context, db DBTX, jobLimit int32) ([]EventExecutionLineageRepairJobsRow, error)
 	// Admission roots include settled receipts and materialized backfill recipients.
 	EventExecutionLineageRepairReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageRepairReceiptsParams) ([]EventExecutionLineageRepairReceiptsRow, error)
 	EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairRootParams) (EventExecutionLineageRepairRootRow, error)
+	EventExecutionLineageRetryResult(ctx context.Context, db DBTX, arg EventExecutionLineageRetryResultParams) (EventExecutionLineageRetryResultRow, error)
 	EventExecutionRecoveryBoundary(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	EventExecutionRecoveryCandidates(ctx context.Context, db DBTX, arg EventExecutionRecoveryCandidatesParams) ([]EventExecutionRecoveryCandidatesRow, error)
 	EventExecutionRecoveryReceipt(ctx context.Context, db DBTX, arg EventExecutionRecoveryReceiptParams) (int64, error)
@@ -1919,6 +1922,7 @@ type Querier interface {
 	// Discovery grants no execution authority. Claim rechecks the full observation
 	// and cohort under source/app/request locks before issuing a new attempt.
 	ListEnvironmentWorkloadQualificationsForDispatch(ctx context.Context, db DBTX, arg ListEnvironmentWorkloadQualificationsForDispatchParams) ([]pgtype.UUID, error)
+	ListEventExecutionLineageCases(ctx context.Context, db DBTX, arg ListEventExecutionLineageCasesParams) ([]EventExecutionLineageCase, error)
 	// EPIC #1278 / Workstream B — durable internal event subscriptions.
 	// A subscription is app-owned but keeps account_id denormalized so scheduler
 	// fan-out can enforce tenant isolation without joining apps.
@@ -2175,6 +2179,8 @@ type Querier interface {
 	// ADR-531: serialize stage producers before app/deployment locks, across
 	// every binding and deployment generation in the environment's workload.
 	LockEnvironmentQueueProducer(ctx context.Context, db DBTX, arg LockEnvironmentQueueProducerParams) (pgtype.UUID, error)
+	LockEventExecutionLineageCase(ctx context.Context, db DBTX, arg LockEventExecutionLineageCaseParams) (EventExecutionLineageCase, error)
+	LockEventExecutionLineageCoverage(ctx context.Context, db DBTX, arg LockEventExecutionLineageCoverageParams) (LockEventExecutionLineageCoverageRow, error)
 	LockEventWorkflowRecipient(ctx context.Context, db DBTX, arg LockEventWorkflowRecipientParams) (LockEventWorkflowRecipientRow, error)
 	LockEventWorkflowTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockEventWorkflowTargetRow, error)
 	LockExclusiveSnapshotInstance(ctx context.Context, db DBTX, instanceID string) (LockExclusiveSnapshotInstanceRow, error)
@@ -2767,6 +2773,8 @@ type Querier interface {
 	// live; expired patches are never served.
 	PruneDevSourcePatches(ctx context.Context, db DBTX, arg PruneDevSourcePatchesParams) (int64, error)
 	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
+	PruneEventExecutionLineageCases(ctx context.Context, db DBTX, arg PruneEventExecutionLineageCasesParams) (int64, error)
+	PruneEventExecutionLineageRetries(ctx context.Context, db DBTX, arg PruneEventExecutionLineageRetriesParams) (int64, error)
 	PruneEventExecutionOutcomes(ctx context.Context, db DBTX, arg PruneEventExecutionOutcomesParams) (int64, error)
 	PruneEventExecutionRoots(ctx context.Context, db DBTX, arg PruneEventExecutionRootsParams) (int64, error)
 	PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error)
@@ -3189,6 +3197,7 @@ type Querier interface {
 	RecordEnvironmentQualificationRestoreReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationRestoreReceiptParams) (EnvironmentQualificationRestoreReceipt, error)
 	RecordEnvironmentQualificationSmokeReceipt(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSmokeReceiptParams) (EnvironmentQualificationSmokeReceipt, error)
 	RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error
+	RecordEventExecutionLineageCase(ctx context.Context, db DBTX, arg RecordEventExecutionLineageCaseParams) (int64, error)
 	RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error)
 	// ---------------------------------------------------------------------------
 	// Issue #246 acceptance item 7 — hard-bounce + complaint suppression list
@@ -3503,6 +3512,7 @@ type Querier interface {
 	SaveCheckedRollback(ctx context.Context, db DBTX, arg SaveCheckedRollbackParams) error
 	SaveEnvironmentGitOpsProgress(ctx context.Context, db DBTX, arg SaveEnvironmentGitOpsProgressParams) (int64, error)
 	SaveEventExecutionLineageRepairProgress(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRepairProgressParams) error
+	SaveEventExecutionLineageRetry(ctx context.Context, db DBTX, arg SaveEventExecutionLineageRetryParams) error
 	SaveExclusiveWorkKey(ctx context.Context, db DBTX, arg SaveExclusiveWorkKeyParams) error
 	SaveExclusiveWorkOperation(ctx context.Context, db DBTX, arg SaveExclusiveWorkOperationParams) error
 	SaveExclusiveWorkPolicy(ctx context.Context, db DBTX, arg SaveExclusiveWorkPolicyParams) (ExclusiveWorkPolicy, error)
@@ -3721,6 +3731,7 @@ type Querier interface {
 	UpdateDeploymentDependencyGate(ctx context.Context, db DBTX, arg UpdateDeploymentDependencyGateParams) error
 	UpdateDeploymentStatus(ctx context.Context, db DBTX, arg UpdateDeploymentStatusParams) error
 	UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX, arg UpdateEnvironmentGitSourceControlParams) (EnvironmentGitSource, error)
+	UpdateEventExecutionLineageCaseRetry(ctx context.Context, db DBTX, arg UpdateEventExecutionLineageCaseRetryParams) (EventExecutionLineageCase, error)
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateInstanceStateIf(ctx context.Context, db DBTX, arg UpdateInstanceStateIfParams) (int64, error)
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error

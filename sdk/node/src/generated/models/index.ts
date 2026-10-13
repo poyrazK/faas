@@ -559,6 +559,8 @@ export type { EventConsumerPendingSample } from './EventConsumerPendingSample.js
 export type { EventConsumerWaitingReasons } from './EventConsumerWaitingReasons.js';
 export type { EventDeliveryListResponse } from './EventDeliveryListResponse.js';
 export type { EventDeliveryResponse } from './EventDeliveryResponse.js';
+export type { EventExecutionLineageCase } from './EventExecutionLineageCase.js';
+export type { EventExecutionLineageCases } from './EventExecutionLineageCases.js';
 export type { EventExecutionReconciliation } from './EventExecutionReconciliation.js';
 export type { EventFanoutAttemptHistoryResponse } from './EventFanoutAttemptHistoryResponse.js';
 export type { EventFanoutAttemptResponse } from './EventFanoutAttemptResponse.js';
@@ -1682,6 +1684,7 @@ export type { RestoreManagedPostgresDatabaseRequest } from './RestoreManagedPost
 export type { ResumeAutomationFailurePauseRequest } from './ResumeAutomationFailurePauseRequest.js';
 export type { ResumeWorkflowRunRequest } from './ResumeWorkflowRunRequest.js';
 export type { RetryDeploymentRequest } from './RetryDeploymentRequest.js';
+export type { RetryEventExecutionLineageCaseRequest } from './RetryEventExecutionLineageCaseRequest.js';
 export type { RetryPolicyDTO } from './RetryPolicyDTO.js';
 export type { RevokeExecutionArtifactGrantResponse } from './RevokeExecutionArtifactGrantResponse.js';
 export type { RevokePlatformTenantSelfConsumersRequest } from './RevokePlatformTenantSelfConsumersRequest.js';

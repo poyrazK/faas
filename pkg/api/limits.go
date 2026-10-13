@@ -10393,3 +10393,6 @@ const OperationWorkflowPlaybookReviewsMax = 32
 const EventExecutionReconciliationBatch = 100
 
 const EventExecutionLineageRepairBatch = 100
+
+const EventExecutionLineageCasesPageDefault = 50
+const EventExecutionLineageCasesPageMax = 200

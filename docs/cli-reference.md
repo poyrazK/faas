@@ -2282,6 +2282,28 @@ Configure bounded routing retries for future events
 | `--jitter` | spread retries (default true) |  |
 | `--yes` | confirm retry policy change |  |
 
+### events subscription-lineage-cases
+
+List retained lineage repair cases
+
+`gregale events subscription-lineage-cases [--limit <N>] [--after <ID>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <ID>` | exclusive outbox cursor |  |
+
+### events subscription-lineage-retry
+
+Retry one reviewed lineage case
+
+`gregale events subscription-lineage-retry [--request-id <UUID>] [--expected-revision <N>] <app> <subscription-id> <outbox-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--request-id <UUID>` | stable request identity |  |
+| `--expected-revision <N>` | reviewed case revision |  |
+
 ### events subscription-execution-reconciliation
 
 Inspect durable execution coverage reconciliation

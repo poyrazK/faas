@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -95,5 +96,39 @@ func (c *Client) GetEventExecutionReconciliation(ctx context.Context, app, id st
 func (c *Client) RequestEventExecutionReconciliation(ctx context.Context, app, id string) (EventExecutionReconciliation, error) {
 	var out EventExecutionReconciliation
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/execution-reconciliation", nil, &out)
+	return out, err
+}
+
+type EventExecutionLineageCase struct {
+	SubscriptionID   string     `json:"subscription_id"`
+	AppID            string     `json:"app_id"`
+	OutboxID         int64      `json:"outbox_id"`
+	AcceptedAt       time.Time  `json:"accepted_at"`
+	RootInvocationID string     `json:"root_invocation_id,omitempty"`
+	RootCreatedAt    *time.Time `json:"root_created_at,omitempty"`
+	Status           string     `json:"status"`
+	Reason           string     `json:"reason"`
+	Revision         int64      `json:"revision"`
+	RetryCount       int64      `json:"retry_count"`
+	RecordedAt       time.Time  `json:"recorded_at"`
+	RetainUntil      time.Time  `json:"retain_until"`
+}
+type EventExecutionLineageCases struct {
+	Cases     []EventExecutionLineageCase `json:"cases"`
+	NextAfter int64                       `json:"next_after,omitempty"`
+}
+type RetryEventExecutionLineageCaseRequest struct {
+	RequestID        string `json:"request_id"`
+	ExpectedRevision int64  `json:"expected_revision"`
+}
+
+func (c *Client) ListEventExecutionLineageCases(ctx context.Context, app, sub string, after int64, limit int) (EventExecutionLineageCases, error) {
+	var out EventExecutionLineageCases
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/cases?after="+strconv.FormatInt(after, 10)+"&limit="+strconv.Itoa(limit), nil, &out)
+	return out, err
+}
+func (c *Client) RetryEventExecutionLineageCase(ctx context.Context, app, sub string, id int64, req RetryEventExecutionLineageCaseRequest) (EventExecutionLineageCase, error) {
+	var out EventExecutionLineageCase
+	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/cases/"+strconv.FormatInt(id, 10)+"/retry", req, &out)
 	return out, err
 }

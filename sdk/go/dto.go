@@ -512,3 +512,7 @@ func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options Eve
 }
 
 type EventExecutionReconciliation = api.EventExecutionReconciliation
+
+type EventExecutionLineageCase = api.EventExecutionLineageCase
+type EventExecutionLineageCases = api.EventExecutionLineageCases
+type RetryEventExecutionLineageCaseRequest = api.RetryEventExecutionLineageCaseRequest

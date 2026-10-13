@@ -33561,6 +33561,110 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases:
+    get:
+      tags: [events]
+      operationId: listEventExecutionLineageCases
+      summary: List retained lineage repair cases.
+      description: Requires read scope. Cases cover recorded retained scans, not all historical gaps. No event payloads or handler errors are returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Application event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          description: Exclusive outbox ID cursor.
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: limit
+          in: query
+          description: Page size; zero selects the server default.
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Retained cases or the saved guarded retry result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCases' }
+        '400':
+          description: Invalid identifier, pagination or retry guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case revision or request identity changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Lineage operation timed out; repeat the same guarded request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases/{outboxID}/retry:
+    post:
+      tags: [events]
+      operationId: retryEventExecutionLineageCase
+      summary: Recheck one reviewed lineage case with an idempotent guard.
+      description: Requires deploy/write scope. Request UUID and expected revision fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Application slug.
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          description: Application event subscription identifier.
+          schema: { type: string, format: uuid }
+        - name: outboxID
+          in: path
+          required: true
+          description: Retained case outbox identifier.
+          schema: { type: integer, format: int64, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RetryEventExecutionLineageCaseRequest' }
+      responses:
+        '200':
+          description: Retained cases or the saved guarded retry result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+        '400':
+          description: Invalid identifier, pagination or retry guard.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Case revision or request identity changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Lineage operation timed out; repeat the same guarded request.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation:
     get:
       tags: [events]
@@ -62361,6 +62465,40 @@ components:
           type: array
           maxItems: 50
           items: { $ref: '#/components/schemas/EventBacklogRecipient' }
+
+    EventExecutionLineageCase:
+      type: object
+      additionalProperties: false
+      required: [subscription_id, app_id, outbox_id, accepted_at, status, reason, revision, retry_count, recorded_at, retain_until]
+      properties:
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        outbox_id: { type: integer, format: int64, minimum: 1 }
+        accepted_at: { type: string, format: date-time }
+        root_invocation_id: { type: string, format: uuid }
+        root_created_at: { type: string, format: date-time }
+        status: { type: string, enum: [unresolved, conflict, repaired, already_associated] }
+        reason: { type: string }
+        revision: { type: integer, format: int64, minimum: 1 }
+        retry_count: { type: integer, format: int64, minimum: 0 }
+        recorded_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventExecutionLineageCases:
+      type: object
+      additionalProperties: false
+      required: [cases]
+      properties:
+        cases:
+          type: array
+          items: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+        next_after: { type: integer, format: int64, minimum: 1 }
+    RetryEventExecutionLineageCaseRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, expected_revision]
+      properties:
+        request_id: { type: string, format: uuid }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
 
     EventExecutionReconciliation:
       type: object

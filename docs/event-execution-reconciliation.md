@@ -59,3 +59,41 @@ outcomes, clear loss markers or establish historical completeness. Mapped active
 roots and their replay descendants record subsequent outcomes through the existing
 ledger transitions. Reconciliation still establishes a new forward-only boundary
 before future SLO windows can qualify.
+
+## Inspect and retry individual cases
+
+```sh
+gregale --json events subscription-lineage-cases APP SUBSCRIPTION_ID --limit 50
+# Continue with the returned next_after value:
+gregale --json events subscription-lineage-cases APP SUBSCRIPTION_ID --after 123
+# Review a case, then choose a new UUID for this deliberate retry:
+gregale --json events subscription-lineage-retry APP SUBSCRIPTION_ID OUTBOX_ID --request-id UUID --expected-revision REVISION
+```
+
+The API uses GET on `execution-reconciliation/cases` and POST on
+`execution-reconciliation/cases/{outboxID}/retry`. Retry bodies contain
+`request_id` and `expected_revision`. GET requires read scope, POST deploy/write
+scope. Go exposes `ListEventExecutionLineageCases` and
+`RetryEventExecutionLineageCase`; Node and Python expose matching generated event
+service operations.
+
+Case reasons distinguish invalid or missing receipts/membership, missing roots,
+incompatible executions, mismatched event content, competing acceptances,
+conflicting lineage and changed root incarnations. Only codes and identifiers are
+returned. Cases describe their last recorded evaluation; they are not current
+execution status, and earlier aggregate-only scans have no individual records.
+Listings cover retained recorded cases and can change between pages.
+
+Reuse the same request UUID **and** expected revision when a retry response is
+lost. The server returns its saved result without re-evaluating or incrementing
+retry counts. A stale revision or UUID reused with another guard returns 409.
+Refresh the case list before deliberately choosing a new request UUID and guard.
+The original receipt acceptance and any known root incarnation stay fenced.
+
+Cases and request results are retained for at least 30 days after evaluation or
+retry, independently of source receipt retention. Expired cases return 404.
+Expired request results can no longer be replayed, but stale revisions prevent
+repeating the old evaluation. A successful retry records lineage only: it never
+reruns a handler, resets the completed scan cursor, backfills historical outcomes
+or changes an established coverage boundary. Scan counters remain cumulative
+first-scan evidence; use case revision and retry count for explicit retries.

@@ -481,6 +481,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
 | 1151 | [Existing consumer execution coverage reconciliation](1151-existing-consumer-execution-reconciliation.md) | accepted | Durable forward-only collection requests; conservative lineage blockers and future-window SLO eligibility |
 | 1152 | [Authoritative legacy event execution lineage repair](1152-authoritative-event-execution-lineage-repair.md) | accepted | Bounded restart-safe receipt scans associate provable roots without reconstructing historical outcomes |
+| 1153 | [Inspectable lineage cases and guarded retries](1153-inspectable-lineage-cases-and-guarded-retries.md) | accepted | Retained reason-coded cases, scoped pagination and revision-fenced idempotent reevaluation |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

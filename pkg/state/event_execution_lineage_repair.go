@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -95,8 +96,11 @@ func (s *PgStore) repairEventExecutionLineage(ctx context.Context, limit int) er
 			if err != nil {
 				return err
 			}
+			if err = recordLineageCaseTx(ctx, q, tx, job, row, outcome); err != nil {
+				return err
+			}
 			p.Scanned++
-			switch outcome {
+			switch lineageOutcomeStatus(outcome) {
 			case "repaired":
 				p.Repaired++
 			case "conflict":
@@ -121,26 +125,32 @@ func (s *PgStore) repairEventExecutionLineage(ctx context.Context, limit int) er
 	}
 	return tx.Commit(ctx)
 }
-func repairEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventExecutionLineageRepairJobsRow, row sqlc.EventExecutionLineageRepairReceiptsRow) (string, error) {
+func repairEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, job sqlc.EventExecutionLineageRepairJobsRow, row sqlc.EventExecutionLineageRepairReceiptsRow, expected ...*time.Time) (string, error) {
 	var envelope eventcontract.Envelope
 	if json.Unmarshal(row.Payload, &envelope) != nil || envelope.ID != row.EventID || envelope.Source != row.Source || envelope.AccountID != row.InvocationAccountID {
-		return "unresolved", nil
+		return "unresolved:invalid_receipt", nil
 	}
 	id := PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, uuidString(job.SubscriptionID))
 	inv, err := q.EventExecutionLineageRepairRoot(ctx, tx, sqlc.EventExecutionLineageRepairRootParams{InvocationID: mustPgUUID(id), AccountID: job.AccountID, AppID: job.AppID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "unresolved", nil
+		return "unresolved:missing_root", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	if inv.ReplayRootInvocationID.Valid || inv.ReplayRootCreatedAt.Valid || timeFromPgtype(inv.CreatedAt).Before(timeFromPgtype(row.AcceptedAt)) || inv.Source != string(InvocationAsyncInvoke) || inv.Method != "POST" || inv.Path != "/" || !sameLineageEventContent(row.Payload, inv.Payload) {
-		return "unresolved", nil
+	if inv.ReplayRootInvocationID.Valid || inv.ReplayRootCreatedAt.Valid || timeFromPgtype(inv.CreatedAt).Before(timeFromPgtype(row.AcceptedAt)) || inv.Source != string(InvocationAsyncInvoke) || inv.Method != "POST" || inv.Path != "/" {
+		return "unresolved:incompatible_execution", nil
+	}
+	if len(expected) > 0 && expected[0] != nil && !timeFromPgtype(inv.CreatedAt).Equal(*expected[0]) {
+		return "unresolved:root_incarnation_changed", nil
+	}
+	if !sameLineageEventContent(row.Payload, inv.Payload) {
+		return "unresolved:event_content_mismatch", nil
 	}
 	prior, err := q.EventExecutionLineageRepairExistingRoot(ctx, tx, sqlc.EventExecutionLineageRepairExistingRootParams{InvocationID: inv.ID, CreatedAt: inv.CreatedAt})
 	if err == nil {
 		if uuidString(prior.SubscriptionID) != uuidString(job.SubscriptionID) || uuidString(prior.AccountID) != uuidString(job.AccountID) || uuidString(prior.AppID) != uuidString(job.AppID) || !timeFromPgtype(prior.AcceptedAt).Equal(timeFromPgtype(row.AcceptedAt)) || prior.OutboxID != row.OutboxID {
-			return "conflict", nil
+			return "conflict:conflicting_lineage", nil
 		}
 		return "already_associated", nil
 	}
@@ -152,14 +162,14 @@ func repairEventExecutionLineageRow(ctx context.Context, q *sqlc.Queries, tx pgx
 		return "", err
 	}
 	if ambiguous {
-		return "conflict", nil
+		return "conflict:competing_receipts", nil
 	}
 	associated, err := q.AssociateEventExecutionRoot(ctx, tx, sqlc.AssociateEventExecutionRootParams{InvocationID: inv.ID, SubscriptionID: job.SubscriptionID, AccountID: job.AccountID, AppID: job.AppID, AcceptedAt: row.AcceptedAt, OutboxID: row.OutboxID, RetentionSeconds: int32(api.EventExecutionLedgerRetention / time.Second)})
 	if err != nil {
 		return "", err
 	}
 	if !associated.Associated {
-		return "conflict", nil
+		return "conflict:association_changed", nil
 	}
 	return "repaired", nil
 }
@@ -206,9 +216,13 @@ func (m *MemStore) repairEventExecutionLineageLocked(account, app, sub string, b
 		receipts = receipts[:budget]
 	}
 	for _, r := range receipts {
+		if item, exists := c.cases[r.ID]; exists && !item.AcceptedAt.Equal(r.CreatedAt) {
+			break
+		}
 		outcome := m.repairEventExecutionLineageRowLocked(account, app, sub, r)
+		m.recordLineageCaseLocked(account, app, sub, r, outcome)
 		p.Scanned++
-		switch outcome {
+		switch lineageOutcomeStatus(outcome) {
 		case "repaired":
 			p.Repaired++
 		case "conflict":
@@ -227,24 +241,33 @@ func (m *MemStore) repairEventExecutionLineageLocked(account, app, sub string, b
 	m.eventExecutionCoverage[sub] = c
 	return len(receipts)
 }
-func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string, receipt *PublishedEventWork) string {
+func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string, receipt *PublishedEventWork, expected ...*time.Time) string {
 	var envelope eventcontract.Envelope
 	if json.Unmarshal(receipt.Payload, &envelope) != nil {
-		return "unresolved"
+		return "unresolved:invalid_receipt"
 	}
 	recipient, ok := lineageRepairRecipient(receipt, app, sub)
 	if !ok || !sameMemUUID(recipient.AccountID, account) {
-		return "unresolved"
+		return "unresolved:incompatible_execution"
 	}
 	id := PublishedEventInvocationID(envelope.AccountID, envelope.Source, envelope.ID, recipient.ID)
 	inv, ok := m.invocations[id]
-	if !ok || !sameMemUUID(inv.AccountID, account) || !sameMemUUID(inv.AppID, app) || inv.ReplayRootInvocationID != "" || inv.ReplayRootCreatedAt != nil || inv.CreatedAt.Before(receipt.CreatedAt) || inv.Source != InvocationAsyncInvoke || inv.Method != "POST" || inv.Path != "/" || !sameLineageEventContent(receipt.Payload, inv.Payload) {
-		return "unresolved"
+	if !ok {
+		return "unresolved:missing_root"
+	}
+	if !sameMemUUID(inv.AccountID, account) || !sameMemUUID(inv.AppID, app) || inv.ReplayRootInvocationID != "" || inv.ReplayRootCreatedAt != nil || inv.CreatedAt.Before(receipt.CreatedAt) || inv.Source != InvocationAsyncInvoke || inv.Method != "POST" || inv.Path != "/" {
+		return "unresolved:incompatible_execution"
+	}
+	if len(expected) > 0 && expected[0] != nil && !inv.CreatedAt.Equal(*expected[0]) {
+		return "unresolved:root_incarnation_changed"
+	}
+	if !sameLineageEventContent(receipt.Payload, inv.Payload) {
+		return "unresolved:event_content_mismatch"
 	}
 	key := ledgerRootKey(inv.ID, inv.CreatedAt)
 	if prior, ok := m.eventExecutionRoots[key]; ok {
 		if !sameMemUUID(prior.subscription, sub) || !sameMemUUID(prior.account, account) || !sameMemUUID(prior.app, app) || !prior.accepted.Equal(receipt.CreatedAt) || prior.outbox != receipt.ID {
-			return "conflict"
+			return "conflict:conflicting_lineage"
 		}
 		return "already_associated"
 	}
@@ -259,12 +282,12 @@ func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string
 		// Any captured competing acceptance is ambiguous, even if it never routed.
 		for _, r := range other.RecipientSnapshot {
 			if sameMemUUID(r.ID, sub) && sameMemUUID(r.AppID, app) {
-				return "conflict"
+				return "conflict:competing_receipts"
 			}
 		}
 		for _, r := range other.routingRecipients {
 			if sameMemUUID(r.Recipient.ID, sub) && sameMemUUID(r.Recipient.AppID, app) {
-				return "conflict"
+				return "conflict:competing_receipts"
 			}
 		}
 	}
@@ -273,4 +296,13 @@ func (m *MemStore) repairEventExecutionLineageRowLocked(account, app, sub string
 	}
 	m.eventExecutionRoots[key] = executionLedgerRoot{key: key, account: canonicalMemUUID(account), app: canonicalMemUUID(app), subscription: canonicalMemUUID(sub), created: inv.CreatedAt, accepted: receipt.CreatedAt, outbox: receipt.ID}
 	return "repaired"
+}
+
+func lineageOutcomeStatus(outcome string) string { return strings.SplitN(outcome, ":", 2)[0] }
+func lineageOutcomeReason(outcome string) string {
+	parts := strings.SplitN(outcome, ":", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return outcome
 }

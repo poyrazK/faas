@@ -385,3 +385,7 @@ export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement
 export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';
 
 export type { EventExecutionReconciliation } from './generated/models/EventExecutionReconciliation.js';
+
+export type { EventExecutionLineageCase } from './generated/models/EventExecutionLineageCase.js';
+export type { EventExecutionLineageCases } from './generated/models/EventExecutionLineageCases.js';
+export type { RetryEventExecutionLineageCaseRequest } from './generated/models/RetryEventExecutionLineageCaseRequest.js';

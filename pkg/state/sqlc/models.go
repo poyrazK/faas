@@ -2833,6 +2833,31 @@ type EventExecutionCoverage struct {
 	LineageRepairProgress     []byte
 }
 
+type EventExecutionLineageCase struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	AcceptedAt       pgtype.Timestamptz
+	RootInvocationID string
+	RootCreatedAt    pgtype.Timestamptz
+	Status           string
+	Reason           string
+	Revision         int64
+	RetryCount       int64
+	RecordedAt       pgtype.Timestamptz
+	RetainUntil      pgtype.Timestamptz
+}
+
+type EventExecutionLineageRetry struct {
+	SubscriptionID   pgtype.UUID
+	OutboxID         int64
+	RequestID        pgtype.UUID
+	ExpectedRevision int64
+	Result           []byte
+	RetainUntil      pgtype.Timestamptz
+}
+
 type EventExecutionOutcome struct {
 	RootInvocationID    pgtype.UUID
 	RootCreatedAt       pgtype.Timestamptz

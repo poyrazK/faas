@@ -38,10 +38,18 @@ func (s *PgStore) PruneEventExecutionLedger(ctx context.Context, now time.Time, 
 	if err != nil {
 		return 0, err
 	}
+	cases, err := q.PruneEventExecutionLineageCases(ctx, tx, sqlc.PruneEventExecutionLineageCasesParams{NowAt: pgtypeFromTime(now), BatchLimit: int32(limit)})
+	if err != nil {
+		return 0, err
+	}
+	retries, err := q.PruneEventExecutionLineageRetries(ctx, tx, sqlc.PruneEventExecutionLineageRetriesParams{NowAt: pgtypeFromTime(now), BatchLimit: int32(limit)})
+	if err != nil {
+		return 0, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return int(n + roots), nil
+	return int(n + roots + cases + retries), nil
 }
 func (m *MemStore) PruneEventExecutionLedger(ctx context.Context, now time.Time, limit int) (int, error) {
 	if err := ctx.Err(); err != nil {
@@ -53,6 +61,7 @@ func (m *MemStore) PruneEventExecutionLedger(ctx context.Context, now time.Time,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	limit = ledgerPruneLimit(limit)
+	casePruned := m.pruneLineageCasesLocked(now, limit)
 	keys := []executionLedgerOutcomeKey{}
 	for k, o := range m.eventExecutionOutcomes {
 		if !o.retainUntil.After(now) {
@@ -101,7 +110,7 @@ func (m *MemStore) PruneEventExecutionLedger(ctx context.Context, now time.Time,
 	for _, k := range roots {
 		delete(m.eventExecutionRoots, k)
 	}
-	return len(keys) + len(roots), nil
+	return len(keys) + len(roots) + casePruned, nil
 }
 func (m *MemStore) eventExecutionRootHeldLocked(root executionLedgerRoot) bool {
 	for _, o := range m.eventExecutionOutcomes {

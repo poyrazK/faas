@@ -1109,6 +1109,9 @@ from .event_delivery_list_response import EventDeliveryListResponse
 from .event_delivery_response import EventDeliveryResponse
 from .event_delivery_response_invocation_source import EventDeliveryResponseInvocationSource
 from .event_delivery_response_state import EventDeliveryResponseState
+from .event_execution_lineage_case import EventExecutionLineageCase
+from .event_execution_lineage_case_status import EventExecutionLineageCaseStatus
+from .event_execution_lineage_cases import EventExecutionLineageCases
 from .event_execution_reconciliation import EventExecutionReconciliation
 from .event_execution_reconciliation_status import EventExecutionReconciliationStatus
 from .event_fanout_attempt_history_response import EventFanoutAttemptHistoryResponse
@@ -3182,6 +3185,7 @@ from .resume_automation_failure_pause_request import ResumeAutomationFailurePaus
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
+from .retry_event_execution_lineage_case_request import RetryEventExecutionLineageCaseRequest
 from .retry_github_check_update_confirm import RetryGithubCheckUpdateConfirm
 from .retry_github_webhook_delivery_confirm import RetryGithubWebhookDeliveryConfirm
 from .retry_policy_dto import RetryPolicyDTO
@@ -5124,6 +5128,9 @@ __all__ = (
     "EventDeliveryResponse",
     "EventDeliveryResponseInvocationSource",
     "EventDeliveryResponseState",
+    "EventExecutionLineageCase",
+    "EventExecutionLineageCases",
+    "EventExecutionLineageCaseStatus",
     "EventExecutionReconciliation",
     "EventExecutionReconciliationStatus",
     "EventFanoutAttemptHistoryResponse",
@@ -7045,6 +7052,7 @@ __all__ = (
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
+    "RetryEventExecutionLineageCaseRequest",
     "RetryGithubCheckUpdateConfirm",
     "RetryGithubWebhookDeliveryConfirm",
     "RetryPolicyDTO",
