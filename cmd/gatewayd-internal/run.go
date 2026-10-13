@@ -3406,6 +3406,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				S3:     deps.archiveS3,
 				Bucket: deps.archiveBucket,
 				Store:  deps.pgStore,
+				Scope:  deps.pgStore,
 				Log:    log,
 				Ops:    nil,
 			},
