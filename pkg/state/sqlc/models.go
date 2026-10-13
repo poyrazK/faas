@@ -4361,6 +4361,34 @@ type ManagedPostgresCutoverDrain struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type ManagedPostgresCutoverDrainPlan struct {
+	ID             pgtype.UUID
+	CutoverID      pgtype.UUID
+	AppID          pgtype.UUID
+	OwnerNodeID    pgtype.UUID
+	OwnerRevision  int64
+	FencedAt       pgtype.Timestamptz
+	InventoryCount int32
+	BlockerCode    string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverDrainPlanMember struct {
+	PlanID             pgtype.UUID
+	InstanceID         pgtype.UUID
+	DeploymentID       pgtype.UUID
+	NodeID             pgtype.UUID
+	WakeID             pgtype.UUID
+	InstanceKind       string
+	InstanceMode       string
+	ObservedState      string
+	DeploymentScope    string
+	MigratedFromNodeID pgtype.UUID
+	QualificationLive  bool
+	DrainID            pgtype.UUID
+	BlockerCode        string
+}
+
 type ManagedPostgresDatabase struct {
 	ID                          pgtype.UUID
 	AccountID                   pgtype.UUID

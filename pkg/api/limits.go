@@ -28,6 +28,10 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
 
+// Capture the entire catalog atomically. An oversized catalog blocks the plan;
+// it must never become a partial inventory that could authorize publication.
+const ManagedPostgresCutoverDrainPlanMembersMax = 512
+
 // MCP task admission defaults are starter-owned namespace limits, not plan
 // quotas. Customer PostgreSQL stores enforce these atomically across replicas.
 const (

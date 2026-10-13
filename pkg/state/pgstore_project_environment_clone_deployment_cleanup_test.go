@@ -39,7 +39,7 @@ func deploymentCleanupFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, stat
 }
 
 func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "foreign_key", "soft", "partition", "stale", "artifact", "sidecar", "runtime_owner", "missing_workload", "other_capture"} {
+	for _, fault := range []string{"none", "write", "foreign_key", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "runtime_owner", "missing_workload", "other_capture"} {
 		t.Run(fault, func(t *testing.T) {
 			s, pool, l, native := deploymentCleanupFixture(t)
 			id := native.Plan.Workloads[0].TargetDeploymentID
@@ -57,6 +57,8 @@ func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_audit(deployment_id,kind,actor) VALUES($1,'deploy.created','retained')", id)
 			case "partition":
 				_, err = pool.Exec(t.Context(), "INSERT INTO log_events(occurred_at,account_id,app_id,deployment_id,source,message) VALUES('2000-01-01',$1,$2,$3,'runtime','retained')", l.Operation.AccountID, native.Plan.Workloads[0].AppID, id)
+			case "drain_plan":
+				_, err = pool.Exec(t.Context(), drainPlanDeploymentBorrowerSQL, id)
 			case "stale":
 				l.Token = uuid.NewString()
 			case "artifact":
@@ -292,7 +294,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "replacement"} {
+	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "replacement"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -310,6 +312,8 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			// Direct writes to a child bypass the parent's INSERT routing. The
 			// writer fence must lock descendants as well as the parent table.
 			_, err = tx.Exec(ctx, "INSERT INTO log_events_default(occurred_at,account_id,app_id,deployment_id,source,message) VALUES('2000-01-01',$1,$2,$3,'runtime','racing')", l.Operation.AccountID, native.Plan.Workloads[0].AppID, id)
+		case "drain_plan":
+			_, err = tx.Exec(ctx, drainPlanDeploymentBorrowerSQL, id)
 		case "replacement":
 			_, err = tx.Exec(ctx, `INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('id',$1::text,'scope',$2::text))).* FROM deployments d WHERE d.id=$3`, id, l.Operation.TargetEnvironment, native.Plan.Workloads[0].SourceDeploymentID)
 		}
