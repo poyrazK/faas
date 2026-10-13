@@ -1,0 +1,29 @@
+version: 1
+suites:
+  http-bandwidth:
+    scenarios:
+      - {scenario: bandwidth-restriction, engine: real-vm, profile: warm}
+scenarios:
+  bandwidth-restriction:
+    project: http-native-bandwidth
+    source: ./native-auth-app
+    timeout: 5m
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          GREGALE_NATIVE_BANDWIDTH: '1'
+          NATIVE_AUTH_CERT_PEM: '${env.GREGALE_NATIVE_AUTH_CERT_PEM}'
+          NATIVE_AUTH_KEY_PEM: '${env.GREGALE_NATIVE_AUTH_KEY_PEM}'
+          NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    cleanup:
+      - [node, ../test/native-bandwidth-acceptance.mjs, cleanup]
+    requests:
+      - name: query-baseline
+        method: GET
+        path: /query
+        expect: {status: 200, json: {'/ready': true, '/bytes': 65536}}
+    command: [node, ../test/native-bandwidth-acceptance.mjs, all]

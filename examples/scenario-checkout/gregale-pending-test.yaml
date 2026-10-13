@@ -1,0 +1,67 @@
+version: 1
+suites:
+  pending-recovery:
+    scenarios:
+      - {scenario: pending-recovery, engine: real-vm, profile: warm}
+scenarios:
+  pending-recovery:
+    project: pending-recovery-example
+    source: ./native-probe
+    timeout: 5m
+    secrets:
+      PROBE_DEPENDENCY_HOST: ${service.payment.host}
+      PROBE_DEPENDENCY_PORT: ${service.payment.port}
+      PROBE_DELAY_MS: "25"
+    services:
+      payment:
+        source: ./native-probe
+        tcp_ports: [6379]
+    steps:
+      - name: probe-baseline
+        requests:
+          - name: probe-baseline-ready
+            method: GET
+            path: /
+            expect: {status: 200, json: {'/ready': true}}
+      - name: recovery-probes
+        requests:
+          - name: healthy-traffic
+            method: GET
+            path: /dependency
+            expect: {status: 200}
+          - name: pending-probe
+            method: GET
+            path: /stalled
+            expect: {status: 200, json: {'/completed': true}}
+        load:
+          duration: 9s
+          streams:
+            - {name: healthy, requests: [healthy-traffic], rate: 5, vus: 2}
+            - {name: pending, requests: [pending-probe], rate: 1, vus: 1}
+          thresholds: {p95: 20s, error_rate: 0, min_samples: 10}
+          chaos_schedule:
+            - name: baseline
+              duration: 2s
+            - name: dependency-outage
+              duration: 2s
+              rules:
+                - to: payment
+                  kind: tcp_timeout
+                  port: 6379
+                  direction: downstream
+                  percent: 100
+                  min_matches: 1
+            - name: recovery
+              duration: 5s
+              recovery:
+                within: 2s
+                sustain: 2s
+                window: 1s
+                max_pending_age: 500ms
+                thresholds: {p95: 1500ms, error_rate: 0, min_samples: 3}
+      - name: dependency-restored
+        checks:
+          - name: dependency-reachable-again
+            method: GET
+            path: /dependency
+            expect: {status: 200, json: {'/dependency': reachable}}

@@ -37,6 +37,7 @@ message RetainedChannelMessage {
   bool binary = 3;
   int64 created_at_unix_nano = 4;
   bytes metadata_json = 5;
+  int64 expires_at_unix_nano = 6;
 }
 
 message ReportChannelRouteRequest {

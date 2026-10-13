@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -262,6 +263,7 @@ type server struct {
 	preflightOnce    sync.Once
 	preflightHandler *preflight.Handler
 	statusMetrics    *statusMetrics
+	devLoopMetrics   *devloop.Metrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -510,6 +512,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
+	}
+	if ops == nil {
+		s.devLoopMetrics = nil
+	} else if s.devLoopMetrics == nil || s.devLoopMetrics.Registry() != ops.Registry() {
+		s.devLoopMetrics = devloop.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
@@ -762,6 +769,11 @@ func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 // admission. Scheduler dispatch remains independently gated.
 func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 	s.appTaskAPIEnabled = enabled
+	return s
+}
+
+func (s *server) WithRealtimeAccessPreviewEnabled(enabled bool) *server {
+	s.realtime.AccessPreviewEnabled = enabled
 	return s
 }
 
@@ -1198,6 +1210,7 @@ func newServerWithDeps(
 	s.operation.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.realtime.Host = realtimeHost{s}
+	s.realtime.AuthLimiter = s.apiAuthLimiter
 	s.realtime.DrainWake = make(chan struct{}, 1)
 	s.appEvents.Host = appEventsHost{s}
 	s.outboundAI.Host = outboundAIHost{s}
@@ -1701,6 +1714,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/compare", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.comparePlatformTenantSelfWorkflowReadiness)))
 	mux.HandleFunc("GET /v1/apps/{slug}/workflow-readiness/timeline", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.accountWorkflowCoordinationTimeline))))
 	mux.HandleFunc("GET /v1/platform-tenant-self/workflow-readiness/timeline", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.customerWorkflowCoordinationTimeline)))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowPlaybookEvidenceWatch))))
+	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/evidence-watch", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowPlaybookEvidenceWatch)))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowPlaybookReview))))
 	mux.HandleFunc("POST /v1/platform-tenant-self/workflow-readiness/playbook-progress/{id}/reviews", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.customerWorkflowPlaybookReview)))
 	mux.HandleFunc("POST /v1/apps/{slug}/workflow-readiness/playbook-progress", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.accountWorkflowPlaybookProgress))))
@@ -2762,6 +2777,9 @@ func (s *server) handler() http.Handler {
 	// (manual DLQ escape hatch — issue #476 acceptance gate 4).
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAppWebhooks))))
 	mux.HandleFunc("POST /v1/apps/{slug}/webhooks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAppWebhook)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}/realtime-channel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManageRealtimeChannelWebhook))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/webhooks/{id}/realtime-channel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManageRealtimeChannelWebhook))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/webhooks/{id}/realtime-channel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManageRealtimeChannelWebhook))))
 	mux.HandleFunc("GET /v1/apps/{slug}/webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppWebhook))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateAppWebhook))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/webhooks/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAppWebhook))))
@@ -2934,6 +2952,68 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.AppendManagedRealtimeRetainedMessage))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ReadManagedRealtimeRetainedMessages))))
 
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeWorkerCredentials))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimeWorkerCredentials))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RotateRealtimeWorkerCredential))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RevokeRealtimeWorkerCredential))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/messages/{sequence}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupDeliveryHistory))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupCircuit))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimeConsumerGroupCircuit))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/priority", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupPriority))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/metrics", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupMetrics))))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/heartbeats", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerHeartbeat))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupHeartbeats))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RealtimeConsumerGroupHeartbeats))))
+	mux.HandleFunc("GET /v1/realtime/workers/groups/{group_id}", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerStatus))
+	mux.HandleFunc("DELETE /v1/realtime/workers/groups/{group_id}", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerDelete))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/claims", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerClaim))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/claims/batch", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerClaimBatch))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/claims/settle/batch", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerBatchSettle))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle/batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RealtimeConsumerGroupBatchSettle))))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/claims/settle", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerSettle))
+	mux.HandleFunc("GET /v1/realtime/workers/groups/{group_id}/dead-letters", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerDeadLetters))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/dead-letters/{sequence}/replay", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerReplay))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/resync", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerResync))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/pause", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerPause))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/drain", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerDrain))
+	mux.HandleFunc("POST /v1/realtime/workers/groups/{group_id}/resume", s.realtime.RealtimeWorkerLimited(s.realtime.RealtimeWorkerResume))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimePublisherCredentials))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimePublisherCredentials))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/rotate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RotateRealtimePublisherCredential))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RevokeRealtimePublisherCredential))))
+	mux.HandleFunc("POST /v1/realtime/publishers/endpoints/{endpoint_id}/channels/{channel}/publish", s.realtime.RealtimePublisherLimited(s.realtime.PublishWithRealtimePublisherCredential))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroups))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RealtimeConsumerGroups))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroup))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RealtimeConsumerGroup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ClaimRealtimeConsumerGroup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ClaimRealtimeConsumerGroupBatch))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.SettleRealtimeConsumerGroup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.PreviewRealtimeConsumerGroupDeadLetters))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.BulkReplayRealtimeConsumerGroupDeadLetters))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeReplayJobs))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RealtimeReplayJobs))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/dry-run", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.CreateRealtimeReplayDryRun))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/{job}/{action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.RealtimeReplayJobs))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ExportRealtimeConsumerGroupDeadLetters))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupDeadLetters))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/{sequence}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ReplayRealtimeConsumerGroupDeadLetter))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resync", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ResetRealtimeConsumerGroup))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupDeadRetention))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimeConsumerGroupDeadRetention))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupRetryPolicy))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimeConsumerGroupRetryPolicy))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupClaimRate))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimeConsumerGroupClaimRate))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.RealtimeConsumerGroupAlert))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.RealtimeConsumerGroupAlert))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/pause", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.PauseRealtimeConsumerGroup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/drain", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.DrainRealtimeConsumerGroup))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.realtime.ResumeRealtimeConsumerGroup))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManagedRealtimeAcknowledgement))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IssueRealtimeTicket))))
+	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ManageRealtimeAccess))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.ManageRealtimeAccess))))
 	// Customer runtime log drains (issue #1398 O4). Each destination is
 	// provider-neutral: HTTP JSON covers compatible intake endpoints, while
 	// OTLP targets a collector or any vendor's OTLP/HTTP endpoint (including
@@ -3841,6 +3921,11 @@ func (s *server) handler() http.Handler {
 	// handlers_oauth_code_callback.go for the full rationale on
 	// why this is a separate route from /oauth/callback.
 	mux.Handle("GET "+oauthCodeCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderOAuthCodeCallback))))
+	mux.Handle("POST /v1/gitlab/connect", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.startGitLabOAuth)))))
+	mux.Handle("GET "+gitLabOAuthCallbackPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.finishGitLabOAuth))))
+	mux.Handle("GET /v1/gitlab/connection", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.getGitLabOAuthConnection))))
+	mux.Handle("DELETE /v1/gitlab/connection", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.deleteGitLabOAuthConnection)))))
+	mux.Handle("POST /v1/gitlab/disconnect", s.dashboardChain(s.sessionAuth(s.fromTrustedOrigin(http.HandlerFunc(s.disconnectGitLabOAuthFromDashboard)))))
 	// /dashboard/install/connect mints the CSRF state cookie and
 	// redirects the dashboard's "Connect GitHub" button to GitHub's
 	// authorize URL. POST so it can't be triggered by an opportunistic
@@ -4861,3 +4946,8 @@ func (s *server) notFound(w http.ResponseWriter, what string) { httpkit.NotFound
 // does the IDOR-safe slug→App lookup with the ownership predicate
 // (app.AccountID == acct.ID) and the 404 "no such app" response on
 // a cross-account or missing row. ADR-046.
+
+func (s *server) WithRealtimeTicketsPreviewEnabled(enabled bool) *server {
+	s.realtime.TicketsPreviewEnabled = enabled
+	return s
+}

@@ -6,6 +6,18 @@
  * Retained principal inbox event with payload and mutation metadata.
  */
 export type ManagedRealtimeInboxMessageResponse = {
+  /**
+   * Delivery deadline passed; payload is suppressed but sequence remains ACKable.
+   */
+  expired?: boolean;
+  /**
+   * Delivery deadline; expires_at remains the retention deadline.
+   */
+  delivery_expires_at?: string;
+  /**
+   * Delivery lifetime; zero disables expiry.
+   */
+  ttl_seconds?: number;
   target_message_id?: string;
   version: number;
   event: string;

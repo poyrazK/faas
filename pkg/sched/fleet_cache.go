@@ -95,7 +95,7 @@ type NodeTelemetry struct {
 	// ADR-361 decision 9 flood drops and ceiling (0 = none).
 	EgressFloodDropsPerMin      *int64
 	EgressFloodDropsLimitPerMin int64
-	// QuietPaused (ADR-957): vmmd holds the instance paused between requests.
+	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
 }
 

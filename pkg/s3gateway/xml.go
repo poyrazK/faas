@@ -102,6 +102,7 @@ type listMultipartUploadsResult struct {
 }
 
 type listedMultipartPart struct {
+	checksumXML
 	PartNumber   int32  `xml:"PartNumber"`
 	LastModified string `xml:"LastModified"`
 	ETag         string `xml:"ETag"`
@@ -109,6 +110,8 @@ type listedMultipartPart struct {
 }
 
 type listMultipartPartsResult struct {
+	ChecksumAlgorithm    string                `xml:"ChecksumAlgorithm,omitempty"`
+	ChecksumType         string                `xml:"ChecksumType,omitempty"`
 	XMLName              xml.Name              `xml:"ListPartsResult"`
 	XMLNS                string                `xml:"xmlns,attr"`
 	Bucket               string                `xml:"Bucket"`
@@ -122,13 +125,15 @@ type listMultipartPartsResult struct {
 }
 
 type completeMultipartResult struct {
-	XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
-	XMLNS    string   `xml:"xmlns,attr"`
-	Location string   `xml:"Location,omitempty"`
-	Bucket   string   `xml:"Bucket"`
-	Key      string   `xml:"Key"`
-	ETag     string   `xml:"ETag,omitempty"`
-	UploadID string   `xml:"UploadId,omitempty"`
+	checksumXML
+	ChecksumType string   `xml:"ChecksumType,omitempty"`
+	XMLName      xml.Name `xml:"CompleteMultipartUploadResult"`
+	XMLNS        string   `xml:"xmlns,attr"`
+	Location     string   `xml:"Location,omitempty"`
+	Bucket       string   `xml:"Bucket"`
+	Key          string   `xml:"Key"`
+	ETag         string   `xml:"ETag,omitempty"`
+	UploadID     string   `xml:"UploadId,omitempty"`
 }
 
 type copyObjectResult struct {

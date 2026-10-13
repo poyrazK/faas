@@ -151,6 +151,3 @@
 969
 971
 972
-
-# Existing collision inherited from merged main at 45a0b575a (2026-10-12).
-981

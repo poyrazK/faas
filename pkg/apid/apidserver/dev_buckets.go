@@ -3,6 +3,7 @@ package apidserver
 import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
@@ -29,6 +30,10 @@ func (s *server) writeDevSession(w http.ResponseWriter, r *http.Request, acct st
 		object.BucketProblem(w, err)
 		return
 	}
+	if err := devloop.SaveWatch(r.Context(), s.store, app.ID, request.Watch); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("store developer watch mode"))
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, status, api.DevSessionResponse{App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: *app.PreviewExpiresAt, Postgres: postgres, Buckets: buckets})
+	writeJSON(w, status, api.DevSessionResponse{App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: *app.PreviewExpiresAt, Postgres: postgres, Buckets: buckets, Watch: request.Watch})
 }

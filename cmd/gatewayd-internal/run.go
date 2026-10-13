@@ -3829,7 +3829,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-977: opt-in wake-ahead along service edges measured by this
 		// gateway. A prediction restores through the same wake path as a
 		// call, with its own trigger and below the fleet residency guard.
-		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics().IncServiceWakeAhead)
+		wakeAheadLearner := gateway.NewWakeAheadLearner(nil, handler.Metrics())
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
 			Enabled:   pgStore.ServiceWakeAheadEnabled,
@@ -3845,11 +3845,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			ResolveChaos: func(ctx context.Context, runID, callerAppID, targetWorkload string) (chaos.Lease, error) {
 				return pgStore.ScenarioTestChaosForCall(ctx, runID, callerAppID, targetWorkload)
 			},
-			ObserveChaosMatch: chaosMatchRecorder.Observe,
-			ObserveTCPAttempt: chaosMatchRecorder.ObserveTCPAttempt,
-			Forward:           deps.nodeCache.Forwarding(),
-			RawForward:        deps.nodeCache.RawForwarding(),
-			ObserveRequest:    handler.RecordServiceRequest,
+			ObserveChaosMatch:     chaosMatchRecorder.Observe,
+			ObserveRequestAttempt: chaosMatchRecorder.ObserveRequestAttempt,
+			ObserveTCPAttempt:     chaosMatchRecorder.ObserveTCPAttempt,
+			Forward:               deps.nodeCache.Forwarding(),
+			RawForward:            deps.nodeCache.RawForwarding(),
+			ObserveRequest:        handler.RecordServiceRequest,
 			// ADR-196: a call to a parked internal service must hold and
 			// wake exactly like a public request does. Without this seam a
 			// scale-to-zero internal service 503s on every cold call, which
