@@ -2367,6 +2367,9 @@ type Querier interface {
 	MarkClaimedTriggerRecordDeadLetter(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordDeadLetterParams) (int64, error)
 	MarkClaimedTriggerRecordRetry(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordRetryParams) (int64, error)
 	MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSucceededParams) (int64, error)
+	// A source that owns its own retries (ADR-1237 realtime groups) redelivers
+	// under a new item identifier, so this delivery's record ends here.
+	MarkClaimedTriggerRecordSuperseded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSupersededParams) (int64, error)
 	MarkDeploymentLive(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error

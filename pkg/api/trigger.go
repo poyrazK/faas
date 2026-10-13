@@ -44,7 +44,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // TriggerKind is the closed-vocabulary discriminator. The set is
@@ -66,7 +70,45 @@ const (
 	TriggerKindRedisStreams TriggerKind = "redis_streams"
 	TriggerKindSQSCompat    TriggerKind = "sqs_compat"
 	TriggerKindQueue        TriggerKind = "queue"
+	// TriggerKindRealtime delivers each message of a bound realtime
+	// consumer group as one invocation (ADR-1237).
+	TriggerKindRealtime TriggerKind = "realtime"
 )
+
+// RealtimeTriggerConfig is the config of a kind=realtime trigger
+// (ADR-1237). The named consumer group must already exist; its ordering,
+// filter, retry and retention settings govern delivery.
+type RealtimeTriggerConfig struct {
+	EndpointID string `json:"endpoint_id"`
+	Channel    string `json:"channel"`
+	Group      string `json:"group"`
+	// MaxConcurrency bounds parallel invocations; 0 means 1. The plan's
+	// MaxConcurrency and QueuePushDispatchSlotsPerNode also cap it.
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
+}
+
+// Validate checks the config's shape. Group and channel naming rules,
+// ownership and the group's lease are checked when apid binds the group.
+func (c RealtimeTriggerConfig) Validate() error {
+	if _, err := uuid.Parse(c.EndpointID); err != nil {
+		return errors.New("realtime config requires endpoint_id to be a UUID")
+	}
+	if c.Channel == "" || len(c.Channel) > 256 {
+		return errors.New("realtime config requires a channel of 1-256 bytes")
+	}
+	if c.Group == "" || len(c.Group) > RealtimeConsumerGroupNameMaxBytes {
+		return fmt.Errorf("realtime config requires a group of 1-%d bytes", RealtimeConsumerGroupNameMaxBytes)
+	}
+	if c.MaxConcurrency < 0 || c.MaxConcurrency > QueuePushDispatchSlotsPerNode {
+		return fmt.Errorf("realtime config max_concurrency must be 0-%d", QueuePushDispatchSlotsPerNode)
+	}
+	return nil
+}
+
+// Concurrency returns the configured lane ceiling before plan caps.
+func (c RealtimeTriggerConfig) Concurrency() int {
+	return max(c.MaxConcurrency, 1)
+}
 
 const (
 	KafkaSASLPasswordMaxBytes = 4 * 1024

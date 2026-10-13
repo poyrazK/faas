@@ -46073,6 +46073,30 @@ func (q *Queries) MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX
 	return result.RowsAffected(), nil
 }
 
+const markClaimedTriggerRecordSuperseded = `-- name: MarkClaimedTriggerRecordSuperseded :execrows
+UPDATE trigger_records
+   SET state = 'superseded', attempts = attempts + 1, last_error = $3,
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now()
+`
+
+type MarkClaimedTriggerRecordSupersededParams struct {
+	ID              pgtype.UUID
+	ClaimGeneration int64
+	LastError       pgtype.Text
+}
+
+// A source that owns its own retries (ADR-1237 realtime groups) redelivers
+// under a new item identifier, so this delivery's record ends here.
+func (q *Queries) MarkClaimedTriggerRecordSuperseded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSupersededParams) (int64, error) {
+	result, err := db.Exec(ctx, markClaimedTriggerRecordSuperseded, arg.ID, arg.ClaimGeneration, arg.LastError)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markDeploymentLive = `-- name: MarkDeploymentLive :exec
 update deployments set status = 'live' where id = $1
 `

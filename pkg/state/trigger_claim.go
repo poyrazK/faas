@@ -208,6 +208,19 @@ func (s *PgStore) RetryClaimedTriggerRecord(ctx context.Context, id string, gene
 	return triggerClaimTransitionError("retry", n, err)
 }
 
+// TriggerClaimSuperseder ends a claimed record whose source redelivers the
+// message under a new identifier and owns the retry decision (ADR-1237).
+type TriggerClaimSuperseder interface {
+	SupersedeClaimedTriggerRecord(context.Context, string, int64, string) error
+}
+
+func (s *PgStore) SupersedeClaimedTriggerRecord(ctx context.Context, id string, generation int64, lastError string) error {
+	n, err := s.triggerQueries().MarkClaimedTriggerRecordSuperseded(ctx, s.pool,
+		sqlc.MarkClaimedTriggerRecordSupersededParams{ID: mustPgUUID(id), ClaimGeneration: generation,
+			LastError: pgtype.Text{String: lastError, Valid: lastError != ""}})
+	return triggerClaimTransitionError("supersede", n, err)
+}
+
 func (s *PgStore) DeadLetterClaimedTriggerRecord(ctx context.Context, id string, generation int64, lastError string) error {
 	n, err := s.triggerQueries().MarkClaimedTriggerRecordDeadLetter(ctx, s.pool,
 		sqlc.MarkClaimedTriggerRecordDeadLetterParams{ID: mustPgUUID(id), ClaimGeneration: generation,
@@ -277,6 +290,22 @@ func (m *MemStore) CompleteClaimedTriggerRecord(_ context.Context, id string, ge
 	r.State = "succeeded"
 	r.ClaimExpiresAt = pgtype.Timestamptz{}
 	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
+	m.records[id] = r
+	return nil
+}
+
+func (m *MemStore) SupersedeClaimedTriggerRecord(_ context.Context, id string, generation int64, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.records[id]
+	if !ok || !memTriggerClaimCurrent(r, generation) {
+		return ErrNotFound
+	}
+	r.State = "superseded"
+	r.Attempts++
+	r.LastError = pgtype.Text{String: lastError, Valid: lastError != ""}
+	r.LastDispatchedAt = pgtypeFromTime(time.Now().UTC())
+	r.ClaimExpiresAt = pgtype.Timestamptz{}
 	m.records[id] = r
 	return nil
 }

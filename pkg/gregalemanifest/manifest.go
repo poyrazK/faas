@@ -96,6 +96,10 @@ const (
 	TriggerKindAMQP TriggerKind = "amqp"
 	// TriggerKindRabbitMQ is an alias for TriggerKindAMQP.
 	TriggerKindRabbitMQ TriggerKind = "rabbitmq"
+	// TriggerKindRealtime — deliver a bound realtime consumer group's
+	// messages as invocations (ADR-1237). Config schema:
+	// api.RealtimeTriggerConfig{EndpointID, Channel, Group, MaxConcurrency}.
+	TriggerKindRealtime TriggerKind = "realtime"
 )
 
 // EventTrigger is a content-based internal event subscription declaration.
@@ -2239,7 +2243,8 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindSQSCompat,
 			TriggerKindQueue,
 			TriggerKindAMQP,
-			TriggerKindRabbitMQ:
+			TriggerKindRabbitMQ,
+			TriggerKindRealtime:
 			// fall through to per-kind validation below
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -2518,7 +2523,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq"
+	return "cron, kafka, nats, redis_streams, sqs_compat, queue, amqp, rabbitmq, realtime"
 }
 
 // validateKindConfig runs the per-kind config check. The cron kind's
@@ -2656,6 +2661,8 @@ func (t Trigger) validateKindConfig(idx int) error {
 			return fmt.Errorf("trigger[%d]: %s config requires non-empty queue", idx, t.Kind)
 		}
 		return nil
+	case TriggerKindRealtime:
+		return t.validateRealtime(idx)
 	}
 	// Unreachable: the outer switch in Validate already rejected
 	// unknown kinds. Returning nil here keeps the linter quiet and

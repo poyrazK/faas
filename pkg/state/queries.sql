@@ -2435,6 +2435,15 @@ UPDATE trigger_records
  WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
    AND claim_expires_at > now();
 
+-- name: MarkClaimedTriggerRecordSuperseded :execrows
+-- A source that owns its own retries (ADR-1237 realtime groups) redelivers
+-- under a new item identifier, so this delivery's record ends here.
+UPDATE trigger_records
+   SET state = 'superseded', attempts = attempts + 1, last_error = $3,
+       last_dispatched_at = now(), claim_expires_at = NULL
+ WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
+   AND claim_expires_at > now();
+
 -- name: MarkClaimedTriggerRecordDeadLetter :execrows
 UPDATE trigger_records
    SET state = 'dead_letter', attempts = attempts + 1, last_error = $3,

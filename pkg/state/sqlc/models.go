@@ -4688,6 +4688,7 @@ type ManagedRealtimeConsumerGroup struct {
 	DeduplicationMetadataKey   string
 	DeduplicationWindowSeconds int32
 	DuplicateMessages          int64
+	TriggerID                  pgtype.UUID
 }
 
 type ManagedRealtimeConsumerGroupAlert struct {

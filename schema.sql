@@ -30774,7 +30774,7 @@ CREATE TABLE public.triggers (
     CONSTRAINT triggers_batch_window_ms_check CHECK (((batch_window_ms >= 10) AND (batch_window_ms <= 600000))),
     CONSTRAINT triggers_broker_poison_strategy_check CHECK ((broker_poison_strategy = ANY (ARRAY['commit'::text, 'seek-to-offset'::text]))),
     CONSTRAINT triggers_check CHECK ((((kind = 'cron'::text) AND (cron_id IS NOT NULL) AND (source IS NULL)) OR ((kind <> 'cron'::text) AND (cron_id IS NULL)))),
-    CONSTRAINT triggers_kind_check CHECK ((kind = ANY (ARRAY['cron'::text, 'kafka'::text, 'nats'::text, 'redis_streams'::text, 'sqs_compat'::text, 'queue'::text]))),
+    CONSTRAINT triggers_kind_check CHECK ((kind = ANY (ARRAY['cron'::text, 'kafka'::text, 'nats'::text, 'redis_streams'::text, 'sqs_compat'::text, 'queue'::text, 'realtime'::text]))),
     CONSTRAINT triggers_max_attempts_check CHECK (((max_attempts >= 1) AND (max_attempts <= 25))),
     CONSTRAINT triggers_payload_max_bytes_check CHECK (((payload_max_bytes >= 1024) AND (payload_max_bytes <= 67108864))),
     CONSTRAINT triggers_queue_binding_projection_check CHECK (((queue_binding_id IS NULL) OR ((kind = 'queue'::text) AND (NOT (source IS DISTINCT FROM 'queue'::text)) AND (NOT ((config ->> 'mode'::text) IS DISTINCT FROM 'queue'::text)) AND (NOT ((config ->> 'queue_binding_id'::text) IS DISTINCT FROM (queue_binding_id)::text))))),
@@ -59751,3 +59751,8 @@ CREATE TABLE managed_realtime_inbox_message_expirations (
  PRIMARY KEY (endpoint_id, channel, sequence),
  FOREIGN KEY (endpoint_id, channel, sequence) REFERENCES managed_realtime_inbox_messages(endpoint_id, channel, sequence) ON DELETE CASCADE
 );
+-- Source: migrations/20261013210513485_realtime_function_triggers.sql
+ALTER TABLE managed_realtime_consumer_groups
+    ADD COLUMN trigger_id uuid REFERENCES triggers(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX managed_realtime_consumer_groups_trigger
+    ON managed_realtime_consumer_groups(trigger_id) WHERE trigger_id IS NOT NULL;

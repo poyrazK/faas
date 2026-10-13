@@ -340,6 +340,11 @@ const QueueBindingMaxConcurrency = 10000
 // one binding can run, so a binding allowed thousands of concurrent records
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
+
+// RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
+// realtime trigger may bind (ADR-1237): one GatewaySynthDispatchTimeout
+// invocation plus wake and queueing margin.
+const RealtimeTriggerMinLeaseSeconds = 120
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 
@@ -8204,6 +8209,7 @@ var externalTriggerKinds = []TriggerKind{
 	TriggerKindRedisStreams,
 	TriggerKindSQSCompat,
 	TriggerKindQueue,
+	TriggerKindRealtime,
 }
 
 // AllowedTriggerKinds returns the non-cron event sources the plan may
@@ -8212,7 +8218,7 @@ func (p Plan) AllowedTriggerKinds() []TriggerKind {
 	var kinds []TriggerKind
 	switch p {
 	case PlanHobby:
-		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue}
+		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime}
 	case PlanPro, PlanScale:
 		kinds = externalTriggerKinds
 	}
