@@ -305,6 +305,13 @@ bundles contain regular file bytes only—there is no symlink, device, or host
 path representation. Source and input are encrypted before durable admission
 and are never returned by reads.
 
+A Run's deadline (`timeout_ms`, default 5 s) counts from admission and covers
+queueing, VM start, and your code. The plan maximum is 1 minute on Hobby,
+5 minutes on Pro, and 15 minutes on Scale
+([ADR-996](adr/996-longer-run-deadlines.md)). Free has no Runs.
+`gregale run --wait` waits up to 20 minutes by default; `--wait-timeout`
+changes that. When the client stops waiting, the Run keeps going.
+
 ## Managed outbound integrations
 
 A Run may name already-bound managed integrations in the optional
