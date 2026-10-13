@@ -1204,6 +1204,7 @@ export type { OperationWorkflowNextActionDigestExplanation } from './models/Oper
 export type { OperationWorkflowNextActionDigestPolicy } from './models/OperationWorkflowNextActionDigestPolicy.js';
 export type { OperationWorkflowNextActionQueueItem } from './models/OperationWorkflowNextActionQueueItem.js';
 export type { OperationWorkflowObligationEvent } from './models/OperationWorkflowObligationEvent.js';
+export type { OperationWorkflowObligationReplacement } from './models/OperationWorkflowObligationReplacement.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';

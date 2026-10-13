@@ -47,10 +47,7 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 			result.ObligationID = a.Obligation.ID
 		}
 		lifecycle, terminal := workflowObligationReceipts(n, a, digest.EvaluatedAt)
-		for i := range lifecycle {
-			lifecycle[i].Cases = nil
-		}
-		result.Lifecycle = lifecycle
+		result.Lifecycle = scopedDigestObligationLifecycle(lifecycle, saved, tenant, selectedTenant, source.Subscription.TenantID, operator)
 
 		if completion := n.Coordination.Completion; completion != nil {
 			result.Status = "no_longer_outstanding"
@@ -101,4 +98,41 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 		return nil, err
 	}
 	return out, nil
+}
+
+// Shared-source edges are visible only when their saved coverage includes a delivered case.
+func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEvent, saved api.OperationWorkflowNextActionQueueItem, tenant, selectedTenant, sourceTenant string, operator bool) []api.OperationWorkflowObligationEvent {
+	out := []api.OperationWorkflowObligationEvent{}
+	for _, event := range events {
+		visible := event.Replacement == nil
+		if !visible {
+			for _, covered := range event.Cases {
+				for _, delivered := range saved.Cases {
+					if covered.Subject != delivered.Subject || covered.Workflow != delivered.Workflow || covered.InstanceID != delivered.InstanceID {
+						continue
+					}
+					if operator {
+						actual, expected := covered.PlatformTenantID, delivered.PlatformTenantID
+						if actual == "" {
+							actual = sourceTenant
+						}
+						if expected == "" {
+							expected = selectedTenant
+						}
+						if actual == "" || expected == "" || !sameOperationHistoryIdentity(actual, expected) {
+							continue
+						}
+					} else if covered.PlatformTenantID != "" && !sameOperationHistoryIdentity(covered.PlatformTenantID, tenant) {
+						continue
+					}
+					visible = true
+				}
+			}
+		}
+		if visible {
+			event.Cases = nil
+			out = append(out, event)
+		}
+	}
+	return out
 }

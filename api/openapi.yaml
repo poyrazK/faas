@@ -82507,12 +82507,33 @@ components:
         started_at:
           type: string
           format: date-time
+    OperationWorkflowObligationReplacement:
+      type: object
+      additionalProperties: false
+      description: Same-source obligation succession recorded atomically with a source change. Links require overlapping saved case coverage and removed/new cycles or explicit transition references; a retained terminal same-kind predecessor may link a later cycle. Generic new-cycle reasons describe succession rather than business causation. Reinstated known identities, unrelated cases and missing history are not linked. These edges do not prove fulfillment.
+      required: [predecessor_id, successor_id, predecessor_kind, successor_kind, reason, reason_kind]
+      properties:
+        predecessor_id:
+          type: string
+        successor_id:
+          type: string
+        predecessor_kind:
+          type: string
+        successor_kind:
+          type: string
+        reason:
+          type: string
+        reason_kind:
+          type: string
+          enum: [recorded_decision, recorded_reassignment, revised_commitment, new_cycle]
     OperationWorkflowObligationEvent:
       type: object
       additionalProperties: false
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        replacement:
+          $ref: '#/components/schemas/OperationWorkflowObligationReplacement'
         cases:
           type: array
           description: Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude unscoped receipts.
@@ -82527,7 +82548,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by]
         at:
           type: string
           format: date-time

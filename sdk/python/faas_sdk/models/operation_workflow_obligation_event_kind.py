@@ -9,6 +9,8 @@ OperationWorkflowObligationEventKind = Literal[
     "declined",
     "observed_assignment",
     "reassigned",
+    "replaced_by",
+    "replaces",
     "rescheduled",
     "superseded",
 ]
@@ -22,6 +24,8 @@ OPERATION_WORKFLOW_OBLIGATION_EVENT_KIND_VALUES: set[OperationWorkflowObligation
     "declined",
     "observed_assignment",
     "reassigned",
+    "replaced_by",
+    "replaces",
     "rescheduled",
     "superseded",
 }

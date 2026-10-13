@@ -956,3 +956,5 @@ export type OperationWorkflowActionObligation = import('./generated/models/Opera
 export type OperationWorkflowObligationEvent = import('./generated/models/OperationWorkflowObligationEvent.js').OperationWorkflowObligationEvent;
 
 export type OperationWorkflowCaseObligationHistoryItem = import('./generated/models/OperationWorkflowCaseObligationHistoryItem.js').OperationWorkflowCaseObligationHistoryItem;
+
+export type OperationWorkflowObligationReplacement = import('./generated/models/OperationWorkflowObligationReplacement.js').OperationWorkflowObligationReplacement;

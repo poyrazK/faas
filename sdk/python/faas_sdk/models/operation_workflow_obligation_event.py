@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
+    from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
 
 
 T = TypeVar("T", bound="OperationWorkflowObligationEvent")
@@ -29,6 +30,12 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    replacement: OperationWorkflowObligationReplacement | Unset = UNSET
+    """Same-source obligation succession recorded atomically with a source change. Links require overlapping saved
+    case coverage and removed/new cycles or explicit transition references; a retained terminal same-kind
+    predecessor may link a later cycle. Generic new-cycle reasons describe succession rather than business
+    causation. Reinstated known identities, unrelated cases and missing history are not linked. These edges do not
+    prove fulfillment."""
     cases: list[OperationWorkflowNextActionCase] | Unset = UNSET
     """Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude
     unscoped receipts."""
@@ -44,6 +51,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        replacement: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.replacement, Unset):
+            replacement = self.replacement.to_dict()
 
         cases: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.cases, Unset):
@@ -69,6 +80,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if replacement is not UNSET:
+            field_dict["replacement"] = replacement
         if cases is not UNSET:
             field_dict["cases"] = cases
         if action_kind is not UNSET:
@@ -85,6 +98,7 @@ class OperationWorkflowObligationEvent:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
+        from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
 
         d = dict(src_dict)
         kind = check_operation_workflow_obligation_event_kind(d.pop("kind"))
@@ -92,6 +106,13 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _replacement = d.pop("replacement", UNSET)
+        replacement: OperationWorkflowObligationReplacement | Unset
+        if isinstance(_replacement, Unset):
+            replacement = UNSET
+        else:
+            replacement = OperationWorkflowObligationReplacement.from_dict(_replacement)
 
         _cases = d.pop("cases", UNSET)
         cases: list[OperationWorkflowNextActionCase] | Unset = UNSET
@@ -114,6 +135,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            replacement=replacement,
             cases=cases,
             action_kind=action_kind,
             shared_plan=shared_plan,

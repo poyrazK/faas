@@ -926,14 +926,15 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
-	Cases        []OperationWorkflowNextActionCase `json:"cases,omitempty"`
-	ActionKind   string                            `json:"action_kind,omitempty"`
-	SharedPlan   bool                              `json:"shared_plan,omitempty"`
-	ObligationID string                            `json:"obligation_id,omitempty"`
-	Kind         string                            `json:"kind"`
-	At           time.Time                         `json:"at"`
-	Actor        string                            `json:"actor,omitempty"`
-	Explanation  string                            `json:"explanation"`
+	Replacement  *OperationWorkflowObligationReplacement `json:"replacement,omitempty"`
+	Cases        []OperationWorkflowNextActionCase       `json:"cases,omitempty"`
+	ActionKind   string                                  `json:"action_kind,omitempty"`
+	SharedPlan   bool                                    `json:"shared_plan,omitempty"`
+	ObligationID string                                  `json:"obligation_id,omitempty"`
+	Kind         string                                  `json:"kind"`
+	At           time.Time                               `json:"at"`
+	Actor        string                                  `json:"actor,omitempty"`
+	Explanation  string                                  `json:"explanation"`
 }
 
 type OperationWorkflowCaseObligationHistoryItem struct {
@@ -947,4 +948,13 @@ type OperationWorkflowCaseObligationHistoryItem struct {
 	Events               []OperationWorkflowObligationEvent `json:"events"`
 	EventsTruncated      bool                               `json:"events_truncated"`
 	Current              *OperationWorkflowCaseNextAction   `json:"current,omitempty"`
+}
+
+type OperationWorkflowObligationReplacement struct {
+	PredecessorID   string `json:"predecessor_id"`
+	SuccessorID     string `json:"successor_id"`
+	PredecessorKind string `json:"predecessor_kind"`
+	SuccessorKind   string `json:"successor_kind"`
+	Reason          string `json:"reason"`
+	ReasonKind      string `json:"reason_kind"`
 }
