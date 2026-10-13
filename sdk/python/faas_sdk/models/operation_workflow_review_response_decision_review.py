@@ -47,8 +47,8 @@ class OperationWorkflowReviewResponseDecisionReview:
     business completion. Sampling stops on response resolution."""
     escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgment | Unset = UNSET
     """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
-    Notification acknowledgment alone does not create this record. Only the system overdue delivery marker may
-    change."""
+    Notification acknowledgment alone does not create this record. The system overdue marker and explicit human
+    completion may be appended without changing commitment fields."""
     acceptance_escalation_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at
     the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current

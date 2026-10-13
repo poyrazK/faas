@@ -51,8 +51,10 @@ class OperationWorkflowReadinessCoordinationRequest:
     review_coordination: OperationWorkflowFulfillmentReviewCoordinationRequest | Unset = UNSET
     """Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review
     fingerprint fence stale edits. Preserve source status, owner, note and deadline; do not combine with other
-    actions. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original fulfillment
-    remains intact."""
+    actions. Configure an optional escalation team/grace period; reassignment after an overdue reminder cancels
+    escalation for that deadline, including reverted routing. Removing the deadline disables escalation when policy
+    fields are omitted. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original
+    fulfillment remains intact."""
     reaffirmation: OperationWorkflowObligationReaffirmationRequest | Unset = UNSET
     """Explicitly reaffirm a flagged latest fulfillment without reopening work. Preserve source status, owner, note
     and deadline and do not combine with other actions. Source revision, binding, fulfillment time and review
