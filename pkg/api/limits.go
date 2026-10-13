@@ -10450,3 +10450,11 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Change timeline bounds (ADR-751). Each source is read with the event cap so
+// one busy source cannot starve the others before the newest-first merge.
+const (
+	ChangeTimelineDefaultWindow = 24 * time.Hour
+	ChangeTimelineMaxWindow     = 7 * 24 * time.Hour
+	ChangeTimelineMaxEvents     = 200
+)

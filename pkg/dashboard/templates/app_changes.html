@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .55rem; border-bottom: 1px solid #8884; vertical-align: top; }
+    .scroll { overflow-x: auto; } .muted { color: var(--muted); } .card { border: 1px solid #8886; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .ranges { display: flex; gap: .75rem; } .ranges strong { text-decoration: underline; }
+    .chart { margin: .25rem 0 .75rem; } .chart svg { width: 100%; height: auto; display: block; }
+    .chart-label { font-size: .85rem; color: var(--muted); } time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .warn { padding: .6rem; background: #d4900022; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a>{{with .Data}}<a href="/dashboard/apps/{{.AppSlug}}">{{.AppSlug}}</a>{{end}}</nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>What changed</h1>
+{{with .Data}}
+{{if not .Enabled}}
+  <p>The change timeline is not enabled for this deployment.</p>
+{{else}}
+  <p class="ranges" aria-label="Time window">{{$current := .Range}}{{range .Ranges}}{{if eq . $current}}<strong>{{.}}</strong>{{else}}<a href="/dashboard/apps/{{$.Data.AppSlug}}/changes?range={{.}}">{{.}}</a>{{end}}{{end}}</p>
+  <section class="card">
+    {{if .MetricsNote}}<p class="muted">{{.MetricsNote}}</p>{{else}}
+    <div class="chart-label">Error rate</div><div class="chart">{{.ErrorRateSVG}}</div>
+    <div class="chart-label">p95 latency</div><div class="chart">{{.P95SVG}}</div>
+    {{end}}
+    <div class="chart-label">Changes (hover a marker for details)</div><div class="chart">{{.MarkersSVG}}</div>
+  </section>
+  {{with .Timeline}}
+  {{range .UnavailableSources}}<p class="warn" role="status">{{.}} changes could not be read; some may be missing below.</p>{{end}}
+  {{if .Events}}
+  <div class="scroll"><table><thead><tr><th>When</th><th>Source</th><th>Change</th></tr></thead><tbody>
+  {{range .Events}}<tr><td><time datetime="{{.At.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.Format "Jan 2 15:04 MST"}}</time></td><td>{{.Source}}</td><td>{{.Summary}}</td></tr>{{end}}
+  </tbody></table></div>
+  {{if .Truncated}}<p class="muted">Showing the newest {{len .Events}} changes in this window.</p>{{end}}
+  {{else}}<p class="muted">No recorded changes in this window.</p>{{end}}
+  {{end}}
+  <p class="muted">Also available as <code>gregale app {{.AppSlug}} changes</code> and <code>GET /v1/apps/{{.AppSlug}}/changes</code>.</p>
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

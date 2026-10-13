@@ -68,6 +68,7 @@ type server struct {
 	object                                 object.Service  // ADR-977; Host wired in newServer
 	devBridgeEnabled                       bool
 	serviceMapEnabled                      bool // ADR-750 (FAAS_SERVICE_MAP_ENABLED=1)
+	changeTimelineEnabled                  bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
 	devBridgeURL                           string
 	devBridgeObserver                      *devbridge.Observer
 	operation                              operation.Service // ADR-977; Host wired in newServer
@@ -1776,6 +1777,8 @@ func (s *server) handler() http.Handler {
 	// data.
 	mux.HandleFunc("GET /v1/apps/{slug}/health", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppHealth)))
 	mux.HandleFunc("GET /v1/apps/{slug}/health/history", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppHealthHistory)))
+	// ADR-751 — app change timeline; same read-only chain as health above.
+	mux.HandleFunc("GET /v1/apps/{slug}/changes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppChangeTimeline)))
 	mux.HandleFunc("GET /v1/apps/{slug}/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppMetrics)))
 	// Security policy observations are available on every plan where the
 	// optional pre-auth guard can be configured, including Free.
@@ -3785,6 +3788,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/dev-bridges", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
 	mux.Handle("GET /dashboard/dev-bridges/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
 	mux.Handle("GET /dashboard/service-map", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderServiceMapDashboard))))
+	mux.Handle("GET /dashboard/apps/{slug}/changes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppChangesDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes

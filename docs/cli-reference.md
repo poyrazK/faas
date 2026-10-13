@@ -3063,6 +3063,24 @@ Examples:
 gregale app my-api health --wait --timeout 2m
 ```
 
+### app changes
+
+List recorded changes and health transitions, newest first (ADR-751)
+
+`gregale app <slug> changes [--since <RFC3339>] [--until <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <RFC3339>` | window start, RFC3339 (default: 24h before until) |  |
+| `--until <RFC3339>` | window end, RFC3339 (default: now) |  |
+
+Examples:
+
+```sh
+gregale app my-api changes
+gregale app my-api changes --since 2026-10-08T12:00:00Z --json
+```
+
 ### app scale
 
 Preview, save, apply or update app resource and runtime settings

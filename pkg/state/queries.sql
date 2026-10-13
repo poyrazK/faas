@@ -19983,3 +19983,27 @@ ON CONFLICT DO NOTHING;
 -- name: ListAlertRuleChannels :many
 SELECT c.* FROM alert_rule_channels b JOIN notification_channels c ON c.id = b.channel_id
 WHERE b.rule_id = sqlc.arg(rule_id)::uuid ORDER BY c.name;
+-- name: ListAppDeploymentAuditBetween :many
+-- ADR-751 change timeline: one app's deployment_audit rows in [since, until).
+SELECT da.id, da.deployment_id::text AS deployment_id, da.kind, da.at
+FROM deployment_audit da
+JOIN deployments d ON d.id = da.deployment_id
+JOIN apps a ON a.id = d.app_id
+WHERE a.id = sqlc.arg(app_id)::text::uuid
+  AND a.account_id = sqlc.arg(account_id)::text::uuid
+  AND da.at >= sqlc.arg(since)::timestamptz
+  AND da.at < sqlc.arg(until)::timestamptz
+ORDER BY da.at DESC, da.id DESC
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: ListAppEdgeRuleChangesBetween :many
+-- ADR-751 change timeline: one app's edge-rule mutations in [since, until).
+SELECT e.id, e.rule_id::text AS rule_id, e.operation, e.created_at
+FROM edge_rule_change_log e
+JOIN apps a ON a.id = e.app_id
+WHERE a.id = sqlc.arg(app_id)::text::uuid
+  AND a.account_id = sqlc.arg(account_id)::text::uuid
+  AND e.created_at >= sqlc.arg(since)::timestamptz
+  AND e.created_at < sqlc.arg(until)::timestamptz
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT sqlc.arg(row_limit)::int;

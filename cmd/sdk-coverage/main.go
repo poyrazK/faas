@@ -302,6 +302,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/entities/session-grants":           "MintDurableEntitySessionGrant",
 	"DELETE /v1/apps/{slug}/entities/session-grants/{grant}": "RevokeDurableEntitySessionGrant",
 
+	// ADR-751: the change timeline reads as one noun, not "apps slug changes".
+	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
 	// Profiling routes use domain-specific SDK names and hyphenated segments.
 	"GET /v1/apps/{slug}/profiles":                            "GetAppProfiles",
 	"POST /v1/apps/{slug}/profiles/compare":                   "CompareAppProfiles",

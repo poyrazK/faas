@@ -41,6 +41,17 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
     },
     {
+      "id": "change-timeline",
+      "name": "Change timeline",
+      "category": "observability",
+      "description": "See an app's deploys, rollouts, rollbacks, configuration changes, incidents, and health transitions on one timeline, without forwarding events anywhere.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/751-app-change-timeline",
+      "operator_flag": "FAAS_CHANGE_TIMELINE_ENABLED",
+      "acceptance_test": "cmd/apid/handlers_change_timeline_test.go::TestGetChangeTimeline_MergesSources"
+    },
+    {
       "id": "circuit-breaking",
       "name": "Circuit breaking",
       "category": "edge",
