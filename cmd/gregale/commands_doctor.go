@@ -23,7 +23,7 @@
 //
 //   1. port-bind         warns on likely fixed source ports; live verification
 //                        still requires a deployed listener probe
-//   2. loopback-bind     scans for app.listen("127.0.0.1"...) patterns
+//   2. loopback-bind     scans for listeners bound to 127.0.0.1/localhost/::1
 //   3. arch              detects target/host arch mismatch
 //   4. env-required      scans source for env-var references; flags undeclared
 //   5. runtime-oom       reads latest metered RAM; flags if approaching cap
@@ -232,6 +232,9 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep.Checks = append(rep.Checks, doctorCheckArch(path))
 	rep.Checks = append(rep.Checks, doctorCheckEnvRequired(path))
 	rep.Checks = append(rep.Checks, doctorCheckStatelessOnly(path))
+	if check, present := doctorCheckDurableEntities(path); present {
+		rep.Checks = append(rep.Checks, check)
+	}
 	// The remaining checks need the server (listener probe, metered
 	// RAM reading, build dry-run, and cold-boot probe). Preserve their
 	// names in the stable JSON shape, but report them as skipped: an
@@ -272,14 +275,21 @@ func doctorCheckPortBind(path string) doctorCheck {
 	}
 }
 
-// loopbackBindRegex matches `app.listen(..., '127.0.0.1')` (Express)
-// and `bind('127.0.0.1', ...)` (Python socket) patterns. The match
-// allows an optional port argument between the open-paren and the
-// IP literal so `app.listen(8080, '127.0.0.1')` and
-// `app.listen('127.0.0.1', 8080)` both trip. Wider matches would
-// catch string literals in comments; we anchor on the call-site
-// shape (`listen(...)` with the IP literal as one of the args).
-var loopbackBindRegex = regexp.MustCompile(`(?:app\.listen|bind)\s*\([^)]*?['"]127\.0\.0\.1['"]`)
+// loopbackBindRegex matches a listener call whose host argument is a
+// loopback literal: `<any>.listen(..., '127.0.0.1')` (Express, Node's
+// http.Server, Fastify's `{host: ...}`), `bind('127.0.0.1', ...)` (Python
+// socket), `.run(host='127.0.0.1')` (Flask, uvicorn), and Go's
+// `ListenAndServe("localhost:8080")` / `net.Listen("tcp", "127.0.0.1:0")`.
+// The match allows other arguments between the open-paren and the host so
+// `app.listen(8080, '127.0.0.1')` and `app.listen('127.0.0.1', 8080)` both
+// trip. Wider matches would catch string literals in comments; we anchor on
+// the call-site shape with the host as an exact string literal. Hunt #9:
+// matching only the `app` receiver and 127.0.0.1 passed Node's own
+// `server.listen(port, '127.0.0.1')` example and every 'localhost' bind.
+var loopbackBindRegex = regexp.MustCompile(
+	`(?:\.listen|bind)\s*\([^)]*?['"](?:127\.0\.0\.1|localhost|::1)['"]` +
+		`|\.run\s*\([^)]*?\bhost\s*=\s*['"](?:127\.0\.0\.1|localhost|::1)['"]` +
+		`|\b(?:ListenAndServe(?:TLS)?|Listen)\s*\([^)]*?"(?:127\.0\.0\.1|localhost|\[::1\]):`)
 
 // doctorCheckLoopbackBind scans the source tree for listeners
 // bound to 127.0.0.1. The per-VM bridge forwards to 10.0.0.2,

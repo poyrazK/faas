@@ -24,14 +24,14 @@ func (s *Service) Inspect(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "durable_entities_unavailable", "Durable entities unavailable", "this app is not enabled for the durable entity preview"))
 		return
 	}
-	request, err := durableEntityInspectionQuery(r.URL.RawQuery)
+	request, err := InspectionQuery(r.URL.RawQuery)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("inspection requires namespace and key and accepts only one value per supported selector"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
-	id, _, problem := s.resolveDurableEntityIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID}, true)
+	id, _, problem := s.ResolveIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID}, true)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -42,7 +42,7 @@ func (s *Service) Inspect(w http.ResponseWriter, r *http.Request, acct state.Acc
 		return
 	}
 	if err != nil {
-		writeDurableEntityProblem(w, err)
+		WriteProblem(w, err)
 		return
 	}
 	out := durableEntityInspectionDTO(id, inspection)
@@ -50,7 +50,7 @@ func (s *Service) Inspect(w http.ResponseWriter, r *http.Request, acct state.Acc
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
 
-func durableEntityInspectionQuery(raw string) (api.DurableEntityInspectRequest, error) {
+func InspectionQuery(raw string) (api.DurableEntityInspectRequest, error) {
 	query, err := url.ParseQuery(raw)
 	if err != nil {
 		return api.DurableEntityInspectRequest{}, durableentity.ErrInvalid

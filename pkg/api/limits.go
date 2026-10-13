@@ -750,6 +750,15 @@ const (
 	OutboundAIBudgetAlertsPageMax               = 100
 	OutboundAIBudgetAlertWarnPercent            = 80
 	OutboundAIBudgetAlertFullPercent            = 100
+	// Per-end-user attribution (ADR-994): the distinct X-Gregale-AI-User
+	// values rolled up per integration and UTC day (later ones aggregate
+	// under "~other" and only integration and app budgets limit them), how
+	// long those rollups stay, the page size of their listing and the
+	// longest end-user or session ID.
+	OutboundAIUsersPerDay            = 10_000
+	OutboundAIUserUsageRetentionDays = 31
+	OutboundAIUserUsagePageMax       = 1_000
+	OutboundAIUserIDMaxBytes         = 64
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -1426,7 +1435,9 @@ type Limits struct {
 	// (RequestBudgetAppDefault for Apps, RequestBudgetDefault for
 	// Functions) and RequestBudgetMax in the limits.go const block. Per-route
 	// overrides via edge-rule kind=budget take precedence at
-	// request time.
+	// request time. RequestBudgetMaxMs is the plan's ceiling for every
+	// budget source (request_timeout_s, edge rules, the override header);
+	// it may not exceed RequestBudgetPlanMax (ADR-1150).
 	RequestBudgetMs    int // 0 → type-aware default; non-zero plan override
 	RequestBudgetMaxMs int // 0 → RequestBudgetMax; non-zero must be ≥ RequestBudgetMs
 
@@ -2868,6 +2879,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:             100,
 		VCPU:                           2,
 		IdleTimeoutS:                   60,
+		RequestBudgetMaxMs:             30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays:          30,
 		IncludedGBHours:                5,
 		PriceMillicents:                0,
@@ -3260,6 +3272,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:    100,
 		VCPU:                  2,
 		IdleTimeoutS:          60,
+		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       50,
 		PriceMillicents:       900_000, // €9.00
@@ -3679,6 +3692,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:    250,
 		VCPU:                  2,
 		IdleTimeoutS:          300,
+		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       250,
 		PriceMillicents:       2_900_000, // €29.00
@@ -4060,6 +4074,7 @@ var planLimits = map[Plan]Limits{
 		SourceTarballMaxMB:    250,
 		VCPU:                  4,
 		IdleTimeoutS:          600,
+		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       1500,
 		PriceMillicents:       9_900_000, // €99.00
@@ -8721,7 +8736,7 @@ const (
 	// gatewayd-internal independently bounds upload, wake, burst expansion,
 	// per-VM capacity wait, and guest execution. The edge must permit their
 	// worst-case serial composition or it silently becomes the policy owner.
-	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetMax
+	CustomerRequestEnvelopeTimeout = RequestUploadTimeoutMax + 3*GatewayWakeAdmissionPaidMaxWait + RequestBudgetPlanMax
 
 	// RequestBudgetDefault is the per-request wall-clock budget the
 	// gateway uses for Functions when no edge-rule kind=budget matches.
@@ -8734,11 +8749,16 @@ const (
 	// RequestBudgetMs override. Apps are ordinary HTTP services and need
 	// a less surprising default than the short Function invocation budget.
 	RequestBudgetAppDefault = 30 * time.Second
-	// RequestBudgetMax is the absolute upper bound on any per-request
-	// budget. Defends against a misconfiguration that would re-pin a
-	// 300 s stdlib WriteTimeout as the request budget. Per-plan max
-	// lives on Limits.RequestBudgetMaxMs; 0 falls back here.
+	// RequestBudgetMax is the default per-plan ceiling on a request budget,
+	// used when a plan sets no RequestBudgetMaxMs, and apid's own maximum.
+	// Defends against a misconfiguration that would re-pin a 300 s stdlib
+	// WriteTimeout as the request budget.
 	RequestBudgetMax = 30 * time.Second
+	// RequestBudgetPlanMax is the largest request budget any plan may allow
+	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
+	// it, edge-rule and route-requirement budgets are validated against it,
+	// and the public edge's envelope timeout includes it.
+	RequestBudgetPlanMax = 15 * time.Minute
 	// RequestBudgetApidDefault is the apid-side default budget.
 	// apid serves dashboards + admin + sync-invoke long-polls that
 	// are already capped at 910 s upstream (fwdStream) so 5 s is
@@ -8818,8 +8838,8 @@ func (l Limits) RequestBudget() time.Duration {
 	if d <= 0 {
 		d = RequestBudgetDefault
 	}
-	if d > RequestBudgetMax {
-		d = RequestBudgetMax
+	if d > RequestBudgetPlanMax {
+		d = RequestBudgetPlanMax
 	}
 	return d
 }
@@ -8842,8 +8862,8 @@ func (l Limits) RequestBudgetForType(appType string) time.Duration {
 			d = RequestBudgetDefault
 		}
 	}
-	if d > RequestBudgetMax {
-		d = RequestBudgetMax
+	if d > RequestBudgetPlanMax {
+		d = RequestBudgetPlanMax
 	}
 	if max := l.RequestBudgetMaxDuration(); max > 0 && d > max {
 		d = max
@@ -8854,7 +8874,7 @@ func (l Limits) RequestBudgetForType(appType string) time.Duration {
 // RequestBudgetMaxDuration returns the absolute upper bound for any
 // per-request budget on this plan. 0 falls back to
 // RequestBudgetMax. Per-plan override clamps to [RequestBudget(),
-// 5 * RequestBudgetMax] so a customer with a 5 s plan default
+// RequestBudgetPlanMax] so a customer with a 5 s plan default
 // cannot accidentally configure a 100 ms max (which would force the
 // default down to 100 ms).
 //
@@ -8863,6 +8883,9 @@ func (l Limits) RequestBudgetMaxDuration() time.Duration {
 	d := time.Duration(l.RequestBudgetMaxMs) * time.Millisecond
 	if d <= 0 {
 		d = RequestBudgetMax
+	}
+	if d > RequestBudgetPlanMax {
+		d = RequestBudgetPlanMax
 	}
 	if d < l.RequestBudget() {
 		d = l.RequestBudget()

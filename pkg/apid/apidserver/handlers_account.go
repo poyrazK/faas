@@ -534,7 +534,17 @@ func (j *accountExportJSON) close() error {
 	return err
 }
 
-func prepareAccountExport(ctx context.Context, s *server, acct state.Account, includeSecrets bool) (*os.File, int64, error) {
+func prepareAccountExport(ctx context.Context, s *server, acct state.Account, includeSecrets bool) (spoolOut *os.File, size int64, err error) {
+	// Both callers answer a failure with a generic 503; without this line a
+	// failed GDPR export left no trace of why (production-us hunt #9, H9-136:
+	// `gregale account export` failed after ~5 s on every attempt, silently).
+	started := time.Now()
+	defer func() {
+		if err != nil && s.log != nil {
+			s.log.Warn("apid: account export assembly failed",
+				"account_id", acct.ID, "elapsed_ms", time.Since(started).Milliseconds(), "err", err)
+		}
+	}()
 	spool, err := os.CreateTemp("", "gregale-account-export-*.json")
 	if err != nil {
 		return nil, 0, err

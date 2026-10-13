@@ -6,11 +6,13 @@ import type { CreateOutboundAIRouteRequest } from '../models/CreateOutboundAIRou
 import type { CreateOutboundCredentialKeyRequest } from '../models/CreateOutboundCredentialKeyRequest.js';
 import type { CreateOutboundIntegrationRequest } from '../models/CreateOutboundIntegrationRequest.js';
 import type { OutboundAIBudgetAlertList } from '../models/OutboundAIBudgetAlertList.js';
+import type { OutboundAIPriceCatalogResponse } from '../models/OutboundAIPriceCatalogResponse.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
 import type { OutboundAIRequestLogList } from '../models/OutboundAIRequestLogList.js';
 import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
+import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
 import type { OutboundAppBindingList } from '../models/OutboundAppBindingList.js';
 import type { OutboundBindingProbePolicy } from '../models/OutboundBindingProbePolicy.js';
@@ -1163,6 +1165,141 @@ export class OutboundService {
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
+      },
+    });
+  }
+  /**
+   * Read one UTC day of AI gateway usage by end user.
+   * Requires MFA and read scope (ADR-994). End users are the X-Gregale-AI-User values apps send; rows are kept for 31 days and listed by cost, then tokens.
+   * @returns OutboundAIUserUsageResponse Per-end-user AI usage for the selected day.
+   * @throws ApiError
+   */
+  public static getOutboundIntegrationAiUserUsage({
+    integration,
+    date,
+    endUser,
+    limit,
+  }: {
+    /**
+     * UUID of the integration whose per-end-user AI usage is being read.
+     */
+    integration: string,
+    /**
+     * UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+     */
+    date?: string,
+    /**
+     * Read only this end user's row ("~other" reads the overflow row).
+     */
+    endUser?: string,
+    /**
+     * Rows to return, 1 to 1000; defaults to 1000.
+     */
+    limit?: number,
+  }): CancelablePromise<OutboundAIUserUsageResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage/users',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'date': date,
+        'end_user': endUser,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Export per-end-user AI gateway usage for a range of UTC days.
+   * Requires MFA and read scope (ADR-995). Streams every per-end-user row of the days from through to, ordered by day and end user. CSV columns are usage_date, end_user, requests, error_requests, input_tokens, output_tokens, tokens and cost_millicents; NDJSON lines carry the same fields.
+   * @returns binary Per-end-user usage rows.
+   * @throws ApiError
+   */
+  public static exportOutboundIntegrationAiUserUsage({
+    integration,
+    from,
+    to,
+    format = 'ndjson',
+  }: {
+    /**
+     * UUID of the integration whose per-end-user AI usage is exported.
+     */
+    integration: string,
+    /**
+     * First UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+     */
+    from?: string,
+    /**
+     * Last UTC day as YYYY-MM-DD, not before from; defaults to today.
+     */
+    to?: string,
+    /**
+     * NDJSON lines (the default) or CSV rows with a header.
+     */
+    format?: 'ndjson' | 'csv',
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      responseType: 'blob',
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage/users/export',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'from': from,
+        'to': to,
+        'format': format,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read the built-in AI price catalog of one provider.
+   * Requires MFA and read scope (ADR-994). The catalog prices the models an integration's own price list does not name. Prices are list prices converted to EUR at usd_per_eur and rounded up.
+   * @returns OutboundAIPriceCatalogResponse The provider's catalog, or the one entry that prices the model.
+   * @throws ApiError
+   */
+  public static getOutboundAiPriceCatalog({
+    provider,
+    model,
+  }: {
+    /**
+     * AI provider whose catalog is listed.
+     */
+    provider: 'openai' | 'anthropic' | 'gemini' | 'azure_openai' | 'bedrock' | 'vertex',
+    /**
+     * Return only the catalog entry that would price this model.
+     */
+    model?: string,
+  }): CancelablePromise<OutboundAIPriceCatalogResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-price-catalog',
+      query: {
+        'provider': provider,
+        'model': model,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
       },
     });
   }

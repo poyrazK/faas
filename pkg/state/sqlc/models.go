@@ -5862,6 +5862,7 @@ type OutboundAdmissionLease struct {
 	BindingAppID             pgtype.UUID
 	AiReservedTokens         int64
 	AiReservedCostMillicents int64
+	AiEndUser                pgtype.Text
 }
 
 type OutboundAdmissionState struct {
@@ -5897,6 +5898,7 @@ type OutboundAiBudgetAlert struct {
 	LimitValue       int64
 	UsedValue        int64
 	CrossedAt        pgtype.Timestamptz
+	EndUser          pgtype.Text
 }
 
 type OutboundAiPriceEntry struct {
@@ -5932,6 +5934,7 @@ type OutboundAiRequestLog struct {
 	DurationMs        int32
 	TtfbMs            pgtype.Int4
 	Attempts          int16
+	EndUser           pgtype.Text
 }
 
 type OutboundAiRoute struct {
@@ -5964,6 +5967,18 @@ type OutboundAiUsageDaily struct {
 	OutputTokens         int64
 	UpdatedAt            pgtype.Timestamptz
 	CostMillicents       int64
+}
+
+type OutboundAiUserUsageDaily struct {
+	IntegrationID  pgtype.UUID
+	UsageDate      pgtype.Date
+	EndUser        string
+	Requests       int64
+	ErrorRequests  int64
+	InputTokens    int64
+	OutputTokens   int64
+	CostMillicents int64
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type OutboundAppBinding struct {
@@ -6022,6 +6037,8 @@ type OutboundIntegration struct {
 	AiDailyCostLimitMillicents     pgtype.Int8
 	AiMonthlyCostLimitMillicents   pgtype.Int8
 	AiRequestLogEnabled            bool
+	AiUserDailyTokenLimit          pgtype.Int8
+	AiUserDailyCostLimitMillicents pgtype.Int8
 }
 
 type OutboundIntegrationApp struct {

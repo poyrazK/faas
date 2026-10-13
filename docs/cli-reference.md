@@ -14,7 +14,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`bucket`](#bucket) | Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle rules, receipts and capacity |
 | [`bindings`](#bindings) | Inspect app bindings, verification, runtime freshness, and rotation progress |
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
-| [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs |
+| [`ai`](#ai) | AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs |
 | [`alerts`](#alerts) | Per-app alert rules (alerts list\|add\|info\|update\|rm\|rotate-secret\|preset\|actions --app &lt;slug&gt;) |
 | [`audit-events`](#audit-events) | Audit-log query (audit-events list\|get &lt;id&gt;) |
 | [`commit`](#commit) | Manage transactional PostgreSQL outbox sources (internal) |
@@ -63,6 +63,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`runs`](#runs) | Inspect or cancel isolated disposable runs |
 | [`invocations`](#invocations) | Per-account invocation ledger (invocations list\|get\|wait &lt;id&gt;) |
 | [`issues`](#issues) | Group failures and track ownership and release-aware resolution |
+| [`entities`](#entities) | Observe durable entity state and recovery metadata |
 | [`customer-operations`](#customer-operations) | Inspect customer work, verify downloads and reconcile outcomes |
 | [`operations`](#operations) | Coordinate named work with leases, explicit contention policy, and fenced ownership |
 | [`debug`](#debug) | Inspect production requests and regressions |
@@ -819,6 +820,22 @@ Manage object encryption, Object Lock, copy sources, tags, versioning, lifecycle
 
 `gregale bucket [<subcommand>]`
 
+### bucket list
+
+List an app&#39;s object-storage buckets and their IDs
+
+`gregale bucket list <app>`
+
+### bucket delete
+
+Delete an empty bucket (including retained versions)
+
+`gregale bucket delete [--yes] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
 ### bucket uploads
 
 Inspect owned multipart upload sessions and parts
@@ -1415,7 +1432,7 @@ Show feature maturity and plan availability
 
 ## ai
 
-AI gateway: providers, hard token and cost caps, per-app guardrails, prices, usage, routes, key pools, alerts and request logs
+AI gateway: providers, hard token and cost caps, per-app and per-end-user limits, guardrails, prices and the built-in catalog, usage, routes, key pools, alerts and request logs
 
 `gregale ai [<subcommand>]`
 
@@ -1426,6 +1443,10 @@ gregale ai policy <integration-id> --provider anthropic --daily-tokens 2000000 -
 gregale ai guardrails <integration-id> --app my-api --rpm 60 --models 'gpt-4o-mini,o3*' --max-output-tokens 2048
 gregale ai prices set <integration-id> --price model=gpt-4o-mini,input=0.15,cached=0.075,output=0.60
 gregale ai usage <integration-id> --date 2026-10-11
+gregale ai policy <integration-id> --user-daily-tokens 200000 --user-daily-cost 2
+gregale ai users <integration-id> --limit 20
+gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv
+gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
@@ -1435,7 +1456,7 @@ gregale ai logs <integration-id> --limit 20
 
 Set the AI provider and token or cost limits (unchanged flags keep their values)
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <EUR>] [--monthly-cost <EUR>] [--request-log <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <EUR>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1444,6 +1465,8 @@ Set the AI provider and token or cost limits (unchanged flags keep their values)
 | `--daily-cost <EUR>` | UTC-day cost limit in EUR, or none |  |
 | `--monthly-cost <EUR>` | calendar-month cost limit in EUR, or none |  |
 | `--request-log <on|off>` | log per-call metadata for 7 days | one of `on` · `off` |
+| `--user-daily-tokens <N>` | each end user&#39;s UTC-day token limit (X-Gregale-AI-User), or none |  |
+| `--user-daily-cost <EUR>` | each end user&#39;s UTC-day cost limit in EUR, or none |  |
 
 ### ai app-limit
 
@@ -1480,6 +1503,16 @@ Show the price list, or replace it with: prices set &lt;integration-id&gt; --pri
 |---|---|---|
 | `--price <SPEC>` | model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears) |  |
 
+### ai catalog
+
+Show the built-in prices that apply to models missing from a price list
+
+`gregale ai catalog [--model <NAME>] <provider>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--model <NAME>` | show only the entry that prices this model |  |
+
 ### ai usage
 
 Show one UTC day of token usage and cost by caller and model
@@ -1489,6 +1522,21 @@ Show one UTC day of token usage and cost by caller and model
 | Flag | Meaning | |
 |---|---|---|
 | `--date <YYYY-MM-DD>` | UTC day within the last 90 days |  |
+
+### ai users
+
+Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first, or export a day range
+
+`gregale ai users [--date <YYYY-MM-DD>] [--user <ID>] [--limit <N>] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--format <csv|ndjson>] [export] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--date <YYYY-MM-DD>` | UTC day within the last 31 days |  |
+| `--user <ID>` | show only this end user |  |
+| `--limit <N>` | end users to show, 1 to 1000 |  |
+| `--from <YYYY-MM-DD>` | export: first UTC day within the last 31 days (default today) |  |
+| `--to <YYYY-MM-DD>` | export: last UTC day (default today) |  |
+| `--format <csv|ndjson>` | export format | one of `csv` · `ndjson` |
 
 ### ai routes
 
@@ -5963,7 +6011,7 @@ Deploy an app, function, or project
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--runtime <RUNTIME>` | function runtime | one of `node22` · `python312` · `go124` · `go124-alpine` · `node24` · `python313` · `binary` |
 | `--handler <HANDLER>` | function handler |  |
@@ -8822,7 +8870,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` |
+| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `slack-bot` · `rest-api-postgres` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `durable-entity-node` |
 | `--path <DIR>` | target directory | required |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy |  |
@@ -9212,6 +9260,52 @@ Revoke an ingest credential
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
+
+
+## entities
+
+Observe durable entity state and recovery metadata
+
+`gregale entities [<subcommand>]`
+
+Examples:
+
+```sh
+gregale entities inspect --app my-app --namespace counters --key customer:123
+gregale entities watch --app my-app --namespace sessions --key run:1 --timeout 5m --json
+```
+
+### entities inspect
+
+Read metadata and recovery diagnostics without invoking an entity
+
+`gregale entities inspect --app <SLUG> --namespace <NAME> --key <KEY> [--environment <ENV>] [--tenant <UUID>] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--namespace <NAME>` | exact entity namespace | required |
+| `--key <KEY>` | exact entity key | required |
+| `--environment <ENV>` | exact environment; omitted uses API default |  |
+| `--tenant <UUID>` | owned platform tenant |  |
+| `--timeout <DURATION>` | observation deadline, default 5m, maximum 1h |  |
+| `--interval <DURATION>` | watch poll interval, default 5s, range 1s to 1m |  |
+
+### entities watch
+
+Poll metadata for a bounded window, emitting changes only
+
+`gregale entities watch --app <SLUG> --namespace <NAME> --key <KEY> [--environment <ENV>] [--tenant <UUID>] [--timeout <DURATION>] [--interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | owned application | required |
+| `--namespace <NAME>` | exact entity namespace | required |
+| `--key <KEY>` | exact entity key | required |
+| `--environment <ENV>` | exact environment; omitted uses API default |  |
+| `--tenant <UUID>` | owned platform tenant |  |
+| `--timeout <DURATION>` | observation deadline, default 5m, maximum 1h |  |
+| `--interval <DURATION>` | watch poll interval, default 5s, range 1s to 1m |  |
 
 
 ## customer-operations
