@@ -1,4 +1,4 @@
-# ADR-987: Longer Run deadlines for general compute
+# ADR-996: Longer Run deadlines for general compute
 
 - **Status:** accepted
 - **Date:** 2026-10-11

@@ -27,7 +27,8 @@ class ExecutionLimitRequest:
     """Caller-selected execution resource limits; zero selects the plan default."""
 
     timeout_ms: int | Unset = UNSET
-    """Zero uses the plan default."""
+    """Admission-to-result deadline. Zero uses the plan default (5 s); plan maxima are 60 s (Hobby), 300 s (Pro)
+    and 900 s (Scale)."""
     memory_mb: ExecutionLimitRequestMemoryMb | Unset = UNSET
     cpu_millicores: ExecutionLimitRequestCpuMillicores | Unset = UNSET
     ephemeral_disk_mb: ExecutionLimitRequestEphemeralDiskMb | Unset = UNSET

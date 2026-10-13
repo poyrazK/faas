@@ -7,7 +7,7 @@
  */
 export type ExecutionLimitRequest = {
   /**
-   * Zero uses the plan default.
+   * Admission-to-result deadline. Zero uses the plan default (5 s); plan maxima are 60 s (Hobby), 300 s (Pro) and 900 s (Scale).
    */
   timeout_ms?: number;
   memory_mb?: 0 | 128 | 256 | 512 | 1024;
