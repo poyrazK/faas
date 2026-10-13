@@ -4930,6 +4930,90 @@ Review or cancel one admitted recovery generation
 | `--reason <TEXT>` | operator reason | required |
 | `--yes` | confirm exact generation cancellation | required |
 
+### automations failures
+
+List captured initial workflow failures
+
+`gregale automations failures --app <SLUG> [--name <NAME>] [--after <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | workflow filter |  |
+| `--after <CURSOR>` | next page cursor |  |
+| `--limit <N>` | page size (at most 100) |  |
+
+### automations recovery-retry-evidence
+
+Diagnose or repair verified automatic retry evidence
+
+`gregale automations recovery-retry-evidence --app <SLUG> --review <UUID> --action <UUID> [--parent] [--repair] [--request-id <UUID>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | automatic retry review | required |
+| `--action <UUID>` | automatic retry action | required |
+| `--parent` | inspect or repair pending retry parent evidence |  |
+| `--repair` | save a verified terminal outcome |  |
+| `--request-id <UUID>` | stable repair request identifier |  |
+| `--reason <TEXT>` | operator repair reason |  |
+
+### automations failure-recovery-evidence
+
+Diagnose or repair verified initial recovery evidence
+
+`gregale automations failure-recovery-evidence --app <SLUG> --review <UUID> [--repair] [--request-id <UUID>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | initial recovery review | required |
+| `--repair` | save a verified terminal outcome |  |
+| `--request-id <UUID>` | stable repair request identifier |  |
+| `--reason <TEXT>` | operator repair reason |  |
+
+### automations failure-recovery-reviews
+
+List retained durable first recovery reviews
+
+`gregale automations failure-recovery-reviews --app <SLUG> [--after <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--after <UUID>` | next page cursor |  |
+| `--limit <N>` | page size |  |
+
+### automations failure-recovery-review
+
+Prepare, inspect, submit or cancel a durable first recovery review
+
+`gregale automations failure-recovery-review --app <SLUG> [--failure <UUID>] [--expected-policy-version <N>] [--review <UUID>] [--decision <DECISION>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--failure <UUID>` | captured initial failure |  |
+| `--expected-policy-version <N>` | saved policy version |  |
+| `--review <UUID>` | durable review |  |
+| `--decision <DECISION>` | submit or cancel |  |
+| `--reason <TEXT>` | operator reason |  |
+
+### automations failure-recovery-plan
+
+Preview an initial failure and save a reviewed first recovery plan
+
+`gregale automations failure-recovery-plan --app <SLUG> --failure <UUID> [--policy <PATH>] [--plan-out <PATH>] [--key <KEY>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--failure <UUID>` | captured initial failure | required |
+| `--policy <PATH>` | candidate policy dry run |  |
+| `--plan-out <PATH>` | new reviewed recovery plan |  |
+| `--key <KEY>` | stable recovery key |  |
+
 ### automations recovery-retry-plan
 
 Review saved workflow recovery failures and save an explicit retry plan

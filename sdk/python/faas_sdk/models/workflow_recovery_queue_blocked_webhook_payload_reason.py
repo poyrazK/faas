@@ -1,9 +1,15 @@
 from typing import Literal
 
-WorkflowRecoveryQueueBlockedWebhookPayloadReason = Literal["evidence_unknown"]
+WorkflowRecoveryQueueBlockedWebhookPayloadReason = Literal[
+    "blocker_cleared", "evidence_unknown", "execution_quota", "job_paused", "terminal_outcome_not_saved"
+]
 
 WORKFLOW_RECOVERY_QUEUE_BLOCKED_WEBHOOK_PAYLOAD_REASON_VALUES: set[WorkflowRecoveryQueueBlockedWebhookPayloadReason] = {
+    "blocker_cleared",
     "evidence_unknown",
+    "execution_quota",
+    "job_paused",
+    "terminal_outcome_not_saved",
 }
 
 

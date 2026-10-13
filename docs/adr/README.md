@@ -728,6 +728,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1025: Policy-independent workflow failure evidence](1025-policy-independent-workflow-failure-evidence.md)
 
 - [ADR-1026: Later eligibility observations for workflow failures](1026-workflow-failure-eligibility-observer.md)
+- [ADR-1027: Reviewed first recovery from captured workflow failures](1027-reviewed-initial-workflow-recovery.md)
 
 ## Events and delivery
 
@@ -851,3 +852,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1028: Initial-failure policy dry run](1028-initial-failure-policy-dry-run.md)
+- [ADR-1029: Durable first-recovery reviews](1029-durable-initial-recovery-reviews.md)

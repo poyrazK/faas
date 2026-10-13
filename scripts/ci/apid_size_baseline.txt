@@ -1,3 +1,7 @@
+# ADR-1036: two parent evidence route registrations; logic remains in appevents.
+# ADR-1035: two retry evidence route registrations; feature logic remains in appevents.
 # Non-test Go lines in pkg/apid/apidserver (scripts/ci/check_apid_size.sh, ADR-977).
+# ADR-1034: two evidence diagnosis/repair route registrations; all feature logic lives in appevents.
 # Raise only with a reason in the PR; lower whenever code moves to pkg/apid/<domain>.
-154856
+# ADR-1027/1029: six route registrations on current main (155957 lines); feature logic remains in appevents.
+155969
