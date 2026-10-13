@@ -15,6 +15,7 @@ import (
 )
 
 type EventExecutionLineageRetryJobsStore interface {
+	ListEventExecutionLineageRetryJobs(context.Context, string, string, string, string, string, int) (api.EventExecutionLineageRetryJobs, error)
 	PreviewEventExecutionLineageRetries(context.Context, string, string, string, string, int64, int) (api.EventExecutionLineageCases, error)
 	CreateEventExecutionLineageRetryJob(context.Context, string, string, string, api.CreateEventExecutionLineageRetryJobRequest) (api.EventExecutionLineageRetryJob, error)
 	GetEventExecutionLineageRetryJob(context.Context, string, string, string, string) (api.EventExecutionLineageRetryJob, error)

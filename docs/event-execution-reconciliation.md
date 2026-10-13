@@ -175,6 +175,45 @@ acceptance and known root incarnation remain fenced. Bulk retries record lineage
 only and preserve scan counters, history-loss markers and established coverage
 boundaries. They never rerun handlers or recreate missing historical evidence.
 
+## Find retained bulk retry jobs
+
+List jobs when their request UUID is unknown or another operator submitted them:
+
+```sh
+gregale --json events subscription-lineage-retry-jobs APP SUB --limit 50
+gregale --json events subscription-lineage-retry-jobs APP SUB --status pending --limit 50
+# Continue with the returned next_after, keeping the same status filter:
+gregale --json events subscription-lineage-retry-jobs APP SUB --status pending --after CURSOR
+```
+
+The API uses GET `execution-reconciliation/retry-jobs` with optional `status`,
+`limit` and `after`. Read scope and MFA apply. Status accepts `pending`, `completed`
+or `cancelled`; omit it for all retained jobs. The default limit is 50 (zero also
+selects 50), maximum 200. The response contains `jobs` and, when another page was
+observed, `next_after`. An existing subscription with no retained jobs returns
+`jobs: []`, including before execution coverage exists. Unknown or inaccessible subscription
+targets return 404. Existing retained delivery-control identities remain accessible
+after removal of the subscription declaration. Expired jobs are unavailable even before physical pruning.
+
+Summaries include request/subscription/app identities, selected and processed
+counts, original creation/update timestamps and expiry. They omit case selections
+and results. Processed counts evaluated/skipped items, not items cancelled without
+evaluation; a completed job is not proof that every case was repaired. Use the
+existing individual GET command with a discovered UUID to review the full job.
+For cancellation, obtain the original `created_at` from that review.
+
+Jobs are ordered newest first by creation timestamp, then descending request UUID
+for ties. Pass the returned cursor unchanged; it remains usable if its boundary
+job expires. Pagination is live: progress/status can change, expiry removes jobs,
+and new jobs or jobs entering a filtered state above the cursor require a fresh
+listing. A late-committed creation may also appear above a passed cursor. Listing
+does not extend retention, reserve jobs or provide historical audit completeness.
+
+Go exposes `ListEventExecutionLineageRetryJobs`; Node exposes
+`EventsService.listEventExecutionLineageRetryJobs`; Python exposes
+`faas_sdk.api.events.list_event_execution_lineage_retry_jobs` with sync and async
+operations. Apply the listing-index migration before enabling this API at scale.
+
 ## Cancel a bulk retry job
 
 Read the retained job and copy its original `created_at`, then cancel with that

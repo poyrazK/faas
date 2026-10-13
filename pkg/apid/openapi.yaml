@@ -33885,6 +33885,51 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs:
+    get:
+      tags: [events]
+      operationId: listEventExecutionLineageRetryJobs
+      summary: List retained bulk lineage retry job summaries.
+      description: Requires read scope. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Continue with next_after and the same status filter. Jobs created or changing into a filtered status above the cursor can require a fresh listing. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: subscriptionID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          description: Omit for all retained states.
+          schema: { type: string, enum: [pending, completed, cancelled] }
+        - name: after
+          in: query
+          description: Continuation cursor returned by next_after; pass unchanged with the same status filter.
+          schema: { type: string, maxLength: 128 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 200, default: 50, description: Zero selects the default page size. }
+      responses:
+        '200':
+          description: Retained job summaries; an existing subscription with no jobs returns an empty array.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventExecutionLineageRetryJobs' }
+        '400':
+          description: Invalid identifier, status filter or pagination.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '504':
+          description: Listing timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [events]
       operationId: createEventExecutionLineageRetryJob
@@ -63018,6 +63063,30 @@ components:
         status: { type: string, enum: [pending, cancelled, changed, unavailable, unresolved, conflict, repaired, already_associated] }
         reason: { type: string }
         result: { $ref: '#/components/schemas/EventExecutionLineageCase' }
+    EventExecutionLineageRetryJobSummary:
+      type: object
+      additionalProperties: false
+      required: [request_id, subscription_id, app_id, status, selected, processed, created_at, updated_at, retain_until]
+      properties:
+        request_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, completed, cancelled] }
+        selected: { type: integer, minimum: 1, maximum: 200 }
+        processed: { type: integer, minimum: 0, maximum: 200, description: Cases evaluated or skipped; cancelled items are not counted. }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        retain_until: { type: string, format: date-time }
+    EventExecutionLineageRetryJobs:
+      type: object
+      additionalProperties: false
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobSummary' }
+        next_after: { type: string, maxLength: 128, description: Continuation cursor; omitted when no further page was observed. }
     EventExecutionLineageRetryJob:
       type: object
       additionalProperties: false

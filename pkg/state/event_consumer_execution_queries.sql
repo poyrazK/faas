@@ -339,3 +339,14 @@ SELECT EXISTS(SELECT 1 FROM event_execution_roots WHERE root_invocation_id=sqlc.
 INSERT INTO event_execution_lineage_cases(diagnostic_id,subscription_id,outbox_id,account_id,app_id,accepted_at,root_invocation_id,root_created_at,status,reason,recorded_at,retain_until)
 VALUES(sqlc.arg(diagnostic_id)::uuid,sqlc.arg(subscription_id)::uuid,sqlc.arg(outbox_id)::bigint,sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(accepted_at)::timestamptz,sqlc.arg(root_invocation_id)::text,sqlc.narg(root_created_at)::timestamptz,sqlc.arg(status)::text,sqlc.arg(reason)::text,clock_timestamp(),clock_timestamp()+make_interval(secs=>sqlc.arg(retention_seconds)::integer))
 ON CONFLICT(subscription_id,outbox_id) DO NOTHING;
+
+-- name: ListEventExecutionLineageRetryJobs :many
+SELECT request_id,subscription_id,app_id,state,
+ jsonb_array_length(snapshot->'items')::integer AS selected,
+ (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until
+FROM event_execution_lineage_retry_jobs
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until>statement_timestamp()
+ AND (sqlc.arg(status)::text='' OR state=sqlc.arg(status)::text)
+ AND (NOT sqlc.arg(has_after)::boolean OR (created_at,request_id)<(sqlc.arg(after_created_at)::timestamptz,sqlc.arg(after_request_id)::uuid))
+ORDER BY created_at DESC,request_id DESC LIMIT sqlc.arg(page_limit)::integer;

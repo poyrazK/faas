@@ -1121,6 +1121,9 @@ from .event_execution_lineage_retry_job import EventExecutionLineageRetryJob
 from .event_execution_lineage_retry_job_item import EventExecutionLineageRetryJobItem
 from .event_execution_lineage_retry_job_item_status import EventExecutionLineageRetryJobItemStatus
 from .event_execution_lineage_retry_job_status import EventExecutionLineageRetryJobStatus
+from .event_execution_lineage_retry_job_summary import EventExecutionLineageRetryJobSummary
+from .event_execution_lineage_retry_job_summary_status import EventExecutionLineageRetryJobSummaryStatus
+from .event_execution_lineage_retry_jobs import EventExecutionLineageRetryJobs
 from .event_execution_lineage_retry_selection import EventExecutionLineageRetrySelection
 from .event_execution_reconciliation import EventExecutionReconciliation
 from .event_execution_reconciliation_status import EventExecutionReconciliationStatus
@@ -1683,6 +1686,7 @@ from .list_durable_entity_registry_response_200 import ListDurableEntityRegistry
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
+from .list_event_execution_lineage_retry_jobs_status import ListEventExecutionLineageRetryJobsStatus
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
@@ -5150,7 +5154,10 @@ __all__ = (
     "EventExecutionLineageRetryJob",
     "EventExecutionLineageRetryJobItem",
     "EventExecutionLineageRetryJobItemStatus",
+    "EventExecutionLineageRetryJobs",
     "EventExecutionLineageRetryJobStatus",
+    "EventExecutionLineageRetryJobSummary",
+    "EventExecutionLineageRetryJobSummaryStatus",
     "EventExecutionLineageRetrySelection",
     "EventExecutionReconciliation",
     "EventExecutionReconciliationStatus",
@@ -5695,6 +5702,7 @@ __all__ = (
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
     "ListEventDeliveriesState",
+    "ListEventExecutionLineageRetryJobsStatus",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",

@@ -56943,3 +56943,5 @@ CREATE TABLE IF NOT EXISTS event_execution_lineage_retry_jobs (
 );
 CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_pending_idx ON event_execution_lineage_retry_jobs(updated_at,subscription_id,request_id) WHERE state='pending';
 CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_expiry_idx ON event_execution_lineage_retry_jobs(retain_until);
+
+CREATE INDEX event_execution_lineage_retry_jobs_listing_idx ON public.event_execution_lineage_retry_jobs USING btree (subscription_id, created_at DESC, request_id DESC);

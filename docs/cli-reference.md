@@ -2354,6 +2354,18 @@ Save a guarded preview as a reviewable retry request
 | `--after <ID>` | exclusive outbox cursor |  |
 | `--reason <CODE>` | exact case reason filter |  |
 
+### events subscription-lineage-retry-jobs
+
+List retained bulk lineage retry job summaries
+
+`gregale events subscription-lineage-retry-jobs [--status <STATE>] [--limit <N>] [--after <CURSOR>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATE>` | pending, completed or cancelled (default all) |  |
+| `--limit <N>` | page size (default 50, maximum 200) |  |
+| `--after <CURSOR>` | continuation cursor from the previous page |  |
+
 ### events subscription-lineage-retry-job-create
 
 Submit a reviewed fixed lineage retry selection

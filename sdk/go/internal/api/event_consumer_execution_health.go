@@ -191,6 +191,29 @@ func (c *Client) CancelEventExecutionLineageRetryJob(ctx context.Context, app, s
 	return out, err
 }
 
+// EventExecutionLineageRetryJobSummary omits case selections and individual results.
+type EventExecutionLineageRetryJobSummary struct {
+	RequestID      string    `json:"request_id"`
+	SubscriptionID string    `json:"subscription_id"`
+	AppID          string    `json:"app_id"`
+	Status         string    `json:"status"`
+	Selected       int       `json:"selected"`
+	Processed      int       `json:"processed"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	RetainUntil    time.Time `json:"retain_until"`
+}
+type EventExecutionLineageRetryJobs struct {
+	Jobs      []EventExecutionLineageRetryJobSummary `json:"jobs"`
+	NextAfter string                                 `json:"next_after,omitempty"`
+}
+
+func (c *Client) ListEventExecutionLineageRetryJobs(ctx context.Context, app, sub, status, after string, limit int) (EventExecutionLineageRetryJobs, error) {
+	var out EventExecutionLineageRetryJobs
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs?status="+url.QueryEscape(status)+"&after="+url.QueryEscape(after)+"&limit="+strconv.Itoa(limit), nil, &out)
+	return out, err
+}
+
 // EventExecutionLineageCaseBackfill reports the latest bounded diagnostic scan.
 type EventExecutionLineageCaseBackfill struct {
 	RequestID         string     `json:"request_id,omitempty"`

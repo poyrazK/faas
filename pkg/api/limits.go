@@ -10405,3 +10405,8 @@ const EventExecutionLineageRetryReasonMaxBytes = 128
 
 // Diagnostic lineage case backfills share a global bounded receipt budget per sweep.
 const EventExecutionLineageCaseBackfillBatch = 100
+
+// Retained bulk lineage retry job discovery is bounded independently of case selections.
+const EventExecutionLineageRetryJobsPageDefault = 50
+const EventExecutionLineageRetryJobsPageMax = 200
+const EventExecutionLineageRetryJobsCursorMaxBytes = 128

@@ -486,6 +486,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1155 | [Cancellable bulk lineage retries](1155-cancellable-bulk-lineage-retries.md) | accepted | Job-lock cancellation, original-creation guards and preserved per-case results |
 | 1156 | [Retained lineage diagnostic backfill](1156-retained-lineage-diagnostic-backfill.md) | accepted | Bounded insert-only diagnostic scans, independent durable cursors and guarded rescan requests |
 | 1157 | [Lineage diagnostic scan controls](1157-lineage-diagnostic-scan-controls.md) | accepted | Coverage-lock pause, resume and cancellation with original-incarnation guards and preserved progress |
+| 1158 | [Retained lineage retry job discovery](1158-retained-lineage-retry-job-discovery.md) | accepted | Scoped live pagination, status-filtered summaries and retained job identity discovery |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

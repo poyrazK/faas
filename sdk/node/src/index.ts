@@ -401,3 +401,6 @@ export type { EventExecutionLineageCaseBackfill } from './generated/models/Event
 export type { RequestEventExecutionLineageCaseBackfillRequest } from './generated/models/RequestEventExecutionLineageCaseBackfillRequest.js';
 
 export type { ControlEventExecutionLineageCaseBackfillRequest } from './generated/models/ControlEventExecutionLineageCaseBackfillRequest.js';
+
+export type { EventExecutionLineageRetryJobSummary } from './generated/models/EventExecutionLineageRetryJobSummary.js';
+export type { EventExecutionLineageRetryJobs } from './generated/models/EventExecutionLineageRetryJobs.js';

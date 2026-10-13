@@ -1153,6 +1153,80 @@ func (q *Queries) ListEventExecutionLineageCases(ctx context.Context, db DBTX, a
 	return items, nil
 }
 
+const listEventExecutionLineageRetryJobs = `-- name: ListEventExecutionLineageRetryJobs :many
+SELECT request_id,subscription_id,app_id,state,
+ jsonb_array_length(snapshot->'items')::integer AS selected,
+ (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until
+FROM event_execution_lineage_retry_jobs
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND retain_until>statement_timestamp()
+ AND ($4::text='' OR state=$4::text)
+ AND (NOT $5::boolean OR (created_at,request_id)<($6::timestamptz,$7::uuid))
+ORDER BY created_at DESC,request_id DESC LIMIT $8::integer
+`
+
+type ListEventExecutionLineageRetryJobsParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	Status         string
+	HasAfter       bool
+	AfterCreatedAt pgtype.Timestamptz
+	AfterRequestID pgtype.UUID
+	PageLimit      int32
+}
+
+type ListEventExecutionLineageRetryJobsRow struct {
+	RequestID      pgtype.UUID
+	SubscriptionID pgtype.UUID
+	AppID          pgtype.UUID
+	State          string
+	Selected       int32
+	Processed      int32
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+}
+
+func (q *Queries) ListEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryJobsParams) ([]ListEventExecutionLineageRetryJobsRow, error) {
+	rows, err := db.Query(ctx, listEventExecutionLineageRetryJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.Status,
+		arg.HasAfter,
+		arg.AfterCreatedAt,
+		arg.AfterRequestID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventExecutionLineageRetryJobsRow{}
+	for rows.Next() {
+		var i ListEventExecutionLineageRetryJobsRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.SubscriptionID,
+			&i.AppID,
+			&i.State,
+			&i.Selected,
+			&i.Processed,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetainUntil,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockEventExecutionLineageCase = `-- name: LockEventExecutionLineageCase :one
 SELECT subscription_id, outbox_id, account_id, app_id, diagnostic_id, accepted_at, root_invocation_id, root_created_at, status, reason, revision, retry_count, recorded_at, retain_until FROM event_execution_lineage_cases WHERE account_id=$1::uuid AND app_id=$2::uuid AND subscription_id=$3::uuid AND outbox_id=$4::bigint AND retain_until>clock_timestamp() FOR UPDATE
 `

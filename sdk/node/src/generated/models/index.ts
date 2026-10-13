@@ -567,6 +567,8 @@ export type { EventExecutionLineageCaseBackfill } from './EventExecutionLineageC
 export type { EventExecutionLineageCases } from './EventExecutionLineageCases.js';
 export type { EventExecutionLineageRetryJob } from './EventExecutionLineageRetryJob.js';
 export type { EventExecutionLineageRetryJobItem } from './EventExecutionLineageRetryJobItem.js';
+export type { EventExecutionLineageRetryJobSummary } from './EventExecutionLineageRetryJobSummary.js';
+export type { EventExecutionLineageRetryJobs } from './EventExecutionLineageRetryJobs.js';
 export type { EventExecutionLineageRetrySelection } from './EventExecutionLineageRetrySelection.js';
 export type { EventExecutionReconciliation } from './EventExecutionReconciliation.js';
 export type { EventFanoutAttemptHistoryResponse } from './EventFanoutAttemptHistoryResponse.js';

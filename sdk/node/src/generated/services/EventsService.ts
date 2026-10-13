@@ -21,6 +21,7 @@ import type { EventExecutionLineageCase } from '../models/EventExecutionLineageC
 import type { EventExecutionLineageCaseBackfill } from '../models/EventExecutionLineageCaseBackfill.js';
 import type { EventExecutionLineageCases } from '../models/EventExecutionLineageCases.js';
 import type { EventExecutionLineageRetryJob } from '../models/EventExecutionLineageRetryJob.js';
+import type { EventExecutionLineageRetryJobs } from '../models/EventExecutionLineageRetryJobs.js';
 import type { EventExecutionReconciliation } from '../models/EventExecutionReconciliation.js';
 import type { EventFanoutAttemptHistoryResponse } from '../models/EventFanoutAttemptHistoryResponse.js';
 import type { EventReceiptAttemptHistoryResponse } from '../models/EventReceiptAttemptHistoryResponse.js';
@@ -1772,6 +1773,52 @@ export class EventsService {
         404: `code: not_found`,
         409: `Case guard changed or retained request identity reused with another selection.`,
         504: `Operation timed out; repeat submission with the same request identity and selection.`,
+      },
+    });
+  }
+  /**
+   * List retained bulk lineage retry job summaries.
+   * Requires read scope. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Continue with next_after and the same status filter. Jobs created or changing into a filtered status above the cursor can require a fresh listing. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
+   * @returns EventExecutionLineageRetryJobs Retained job summaries; an existing subscription with no jobs returns an empty array.
+   * @throws ApiError
+   */
+  public static listEventExecutionLineageRetryJobs({
+    slug,
+    subscriptionId,
+    status,
+    after,
+    limit = 50,
+  }: {
+    slug: string,
+    subscriptionId: string,
+    /**
+     * Omit for all retained states.
+     */
+    status?: 'pending' | 'completed' | 'cancelled',
+    /**
+     * Continuation cursor returned by next_after; pass unchanged with the same status filter.
+     */
+    after?: string,
+    limit?: number,
+  }): CancelablePromise<EventExecutionLineageRetryJobs> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs',
+      path: {
+        'slug': slug,
+        'subscriptionID': subscriptionId,
+      },
+      query: {
+        'status': status,
+        'after': after,
+        'limit': limit,
+      },
+      errors: {
+        400: `Invalid identifier, status filter or pagination.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        504: `Listing timed out.`,
       },
     });
   }
