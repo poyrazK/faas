@@ -4000,6 +4000,19 @@ type IssueSplitRule struct {
 	UpdatedAt                    pgtype.Timestamptz
 }
 
+type IssueTrackerLink struct {
+	ID                 pgtype.UUID
+	IssueID            pgtype.UUID
+	Provider           string
+	ExternalKey        string
+	Url                string
+	Title              string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
+	UpdatedByAccountID pgtype.UUID
+}
+
 type Job struct {
 	ID                                pgtype.UUID
 	AccountID                         pgtype.UUID

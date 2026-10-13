@@ -22089,7 +22089,7 @@ CREATE TABLE public.issue_activity (
     actor_account_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text]))),
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text, 'tracker_linked'::text, 'tracker_link_updated'::text, 'tracker_unlinked'::text]))),
     CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
 );
 
@@ -58217,3 +58217,18 @@ CREATE TABLE public.app_issue_saved_views (
 );
 
 CREATE INDEX app_issues_team_inbox_idx ON public.app_issues(app_id,assignee_team_id,last_seen_at DESC,id DESC) WHERE assignee_team_id IS NOT NULL;
+
+CREATE TABLE public.issue_tracker_links (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ issue_id uuid NOT NULL REFERENCES public.app_issues(id) ON DELETE CASCADE,
+ provider text NOT NULL CHECK(provider IN ('github','linear')),
+ external_key text NOT NULL CHECK(octet_length(external_key) BETWEEN 1 AND 256),
+ url text NOT NULL CHECK(octet_length(url) BETWEEN 1 AND 512),
+ title text NOT NULL DEFAULT '' CHECK(octet_length(title)<=256),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ created_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ updated_by_account_id uuid REFERENCES public.accounts(id) ON DELETE SET NULL,
+ UNIQUE(issue_id,provider,external_key)
+);
+CREATE INDEX issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id,created_at DESC,id DESC);

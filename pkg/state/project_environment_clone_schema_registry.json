@@ -10493,5 +10493,21 @@
       "account_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "issue_tracker_links",
+    "columns": [
+      "id",
+      "issue_id",
+      "provider",
+      "external_key",
+      "url",
+      "title",
+      "created_at",
+      "updated_at",
+      "created_by_account_id",
+      "updated_by_account_id"
+    ],
+    "kind": "operational"
   }
 ]

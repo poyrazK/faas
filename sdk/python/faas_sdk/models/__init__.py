@@ -1643,6 +1643,8 @@ from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
 from .issue_symbolication_result import IssueSymbolicationResult
 from .issue_team import IssueTeam
+from .issue_tracker_link import IssueTrackerLink
+from .issue_tracker_link_provider import IssueTrackerLinkProvider
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
@@ -1723,6 +1725,7 @@ from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
 from .list_issue_saved_views_response import ListIssueSavedViewsResponse
 from .list_issue_teams_response import ListIssueTeamsResponse
+from .list_issue_tracker_links_response import ListIssueTrackerLinksResponse
 from .list_issues_response import ListIssuesResponse
 from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
@@ -3125,6 +3128,7 @@ from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_issue_saved_view_request import PutIssueSavedViewRequest
 from .put_issue_team_request import PutIssueTeamRequest
+from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
@@ -5697,6 +5701,8 @@ __all__ = (
     "IssueState",
     "IssueSymbolicationResult",
     "IssueTeam",
+    "IssueTrackerLink",
+    "IssueTrackerLinkProvider",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
@@ -5775,6 +5781,7 @@ __all__ = (
     "ListIssuesResponse",
     "ListIssuesSort",
     "ListIssueTeamsResponse",
+    "ListIssueTrackerLinksResponse",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
@@ -7043,6 +7050,7 @@ __all__ = (
     "PutDataUpstreamRequestKind",
     "PutIssueSavedViewRequest",
     "PutIssueTeamRequest",
+    "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",

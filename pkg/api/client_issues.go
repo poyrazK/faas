@@ -223,3 +223,20 @@ func (c *Client) ListIssuesForTeam(ctx context.Context, slug, key, cursor string
 	}
 	return c.ListIssuesWithOptions(ctx, slug, IssueListOptions{Team: team.ID, State: "open", Cursor: cursor})
 }
+
+func issueTrackerLinksPath(slug, id string) string {
+	return issueAppPath(slug) + "/issues/" + url.PathEscape(id) + "/tracker-links"
+}
+func (c *Client) ListIssueTrackerLinks(ctx context.Context, slug, id, cursor string) (ListIssueTrackerLinksResponse, error) {
+	var out ListIssueTrackerLinksResponse
+	err := c.do(ctx, "GET", issueTrackerLinksPath(slug, id)+"?"+url.Values{"cursor": {cursor}}.Encode(), nil, &out)
+	return out, err
+}
+func (c *Client) PutIssueTrackerLink(ctx context.Context, slug, id string, in PutIssueTrackerLinkRequest) (IssueTrackerLink, error) {
+	var out IssueTrackerLink
+	err := c.do(ctx, "POST", issueTrackerLinksPath(slug, id), in, &out)
+	return out, err
+}
+func (c *Client) DeleteIssueTrackerLink(ctx context.Context, slug, id, link string) error {
+	return c.do(ctx, "DELETE", issueTrackerLinksPath(slug, id)+"/"+url.PathEscape(link), nil, nil)
+}

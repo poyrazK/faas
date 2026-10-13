@@ -13621,6 +13621,86 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: listIssueTrackerLinks
+      summary: List GitHub and Linear references across this canonical issue group.
+      description: Links remain attached to original issue identities through merges and splits. Returns at most 50 references per page; cursors are bound to the app and canonical issue.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: References and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueTrackerLinksResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: putIssueTrackerLink
+      summary: Attach an existing tracker issue or update its display title.
+      description: Requires deploy-write and session MFA. Canonicalizes public GitHub issue and Linear URLs; ignores tracking queries, fragments and Linear title slugs. An existing group reference is reused. New references are capped at 20 per canonical group; existing references survive merges above that limit. Records actor activity. No provider request, ticket creation, access verification or status synchronization occurs.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutIssueTrackerLinkRequest' }
+      responses:
+        '200':
+          description: Canonical reference and creation/update metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerLink' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Tracker-reference quota reached. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: link_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [apps]
+      operationId: deleteIssueTrackerLink
+      summary: Remove a tracker reference from this issue group.
+      description: Requires deploy-write and session MFA. Records unlink activity; the provider ticket is unchanged.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Reference removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues/bulk-actions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82094,6 +82174,34 @@ components:
       additionalProperties: false
       properties:
         minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
+
+    PutIssueTrackerLinkRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string, format: uri, maxLength: 512, description: Public GitHub issue or Linear issue HTTPS URL; maximum 512 UTF-8 bytes. }
+        title: { type: string, maxLength: 256, description: Optional display title; maximum 256 UTF-8 bytes without control characters. }
+    IssueTrackerLink:
+      type: object
+      required: [id, original_issue_id, provider, external_key, url, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        original_issue_id: { type: string, format: uuid, description: Original identity owning this reference; retained through merge and split. }
+        provider: { type: string, enum: [github, linear] }
+        external_key: { type: string }
+        url: { type: string, format: uri }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        title: { type: string }
+        created_by_account_id: { type: string, format: uuid }
+        updated_by_account_id: { type: string, format: uuid }
+    ListIssueTrackerLinksResponse:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/IssueTrackerLink' } }
+        next_cursor: { type: string }
 
     IssueTeam:
       type: object

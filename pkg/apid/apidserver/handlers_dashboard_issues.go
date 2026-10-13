@@ -24,6 +24,7 @@ const dashboardIssueAction = "issue_action"
 const dashboardIssueCookie = "faas_csrf_issue_action"
 
 type dashboardIssuesData struct {
+	TrackerLinks         *dashboard.IssueTrackerLinksView
 	Teams                []api.IssueTeam
 	TeamFilter           string
 	SavedViews           *dashboard.IssueSavedViewsView
@@ -139,6 +140,9 @@ func (s *server) renderAppIssues(w http.ResponseWriter, r *http.Request, log *sl
 		}
 	}
 	if !populateIssueDashboardList(w, r, app, st, &data) || !populateIssueDashboardDetail(w, r, app, acct, st, &data) {
+		return
+	}
+	if !s.populateDashboardTrackerLinks(w, r, app, &data) {
 		return
 	}
 	if !s.populateDashboardSavedViews(w, r, app, &data) {

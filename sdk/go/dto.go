@@ -546,3 +546,7 @@ type ListIssueSavedViewsResponse = api.ListIssueSavedViewsResponse
 type IssueTeam = api.IssueTeam
 type PutIssueTeamRequest = api.PutIssueTeamRequest
 type ListIssueTeamsResponse = api.ListIssueTeamsResponse
+
+type PutIssueTrackerLinkRequest = api.PutIssueTrackerLinkRequest
+type IssueTrackerLink = api.IssueTrackerLink
+type ListIssueTrackerLinksResponse = api.ListIssueTrackerLinksResponse

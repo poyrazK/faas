@@ -912,3 +912,19 @@ restarts, and preserves Gregale retry/replay behavior. Slack has no incoming
 webhook idempotency key, so uncertain provider/database acknowledgements can
 still cause duplicates. GitHub/Linear synchronization and crash-free session
 instrumentation remain separate gaps.
+
+## GitHub and Linear tracker links
+
+Issue detail pages can link an existing GitHub or Linear issue, update its optional title, or remove the reference. Gregale stores the destination and actor history; it does not contact the provider, create a ticket, or synchronize status.
+
+```sh
+gregale issues links save --app my-api --issue ISSUE_UUID --url https://github.com/owner/repo/issues/42 --title 'Fix checkout'
+gregale issues links list --app my-api --issue ISSUE_UUID
+gregale issues links delete --app my-api --issue ISSUE_UUID --link LINK_UUID
+```
+
+The API exposes `GET|POST /v1/apps/{slug}/issues/{issue_id}/tracker-links` and `DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}`. POST accepts `url` and optional `title`, returning the stored reference. Go, Node and Python clients provide `ListIssueTrackerLinks`, `PutIssueTrackerLink` and `DeleteIssueTrackerLink` (using each language's naming conventions). GET accepts `cursor` and returns `items` with an optional `next_cursor`.
+
+Only public `https://github.com/OWNER/REPO/issues/NUMBER` and `https://linear.app/WORKSPACE/issue/TEAM-NUMBER[/title-slug]` URL forms are supported. Query strings, fragments, GitHub issue number leading zeroes and Linear title slugs are removed during normalization. Private enterprise hosts and GitHub pull request URLs are unsupported. Titles are limited to 256 bytes and URLs to 512 bytes. Saving the same provider identity in a group updates its title without adding a duplicate; identical retries preserve its update time and do not add activity.
+
+A group can acquire 20 references directly. Merges preserve all existing references, even above that cap, and lists paginate at 50. Each reference retains `original_issue_id`: merged groups show their members' references, and splitting restores the original membership. Separately linked references to the same external issue remain independently removable after a merge. New links through an alias belong to its current canonical group. Tracker metadata is excluded from workload clones. Reads require app access; writes require deploy-write and session MFA, with CSRF protection on dashboard forms.

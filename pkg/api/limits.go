@@ -10451,3 +10451,11 @@ const (
 	IssueTeamsMax       = 20
 	IssueTeamMembersMax = 50
 )
+
+// Explicit tracker references on a canonical Issues group. Existing merged
+// references are retained even if merging exceeds the new-reference quota.
+const (
+	IssueTrackerLinksMax          = 20
+	IssueTrackerLinkURLMaxBytes   = 512
+	IssueTrackerLinkTitleMaxBytes = 256
+)

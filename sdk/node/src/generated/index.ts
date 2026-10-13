@@ -813,6 +813,7 @@ export type { IssueSplitRuleUndoRequest } from './models/IssueSplitRuleUndoReque
 export type { IssueSplitRuleUpdate } from './models/IssueSplitRuleUpdate.js';
 export type { IssueSymbolicationResult } from './models/IssueSymbolicationResult.js';
 export type { IssueTeam } from './models/IssueTeam.js';
+export type { IssueTrackerLink } from './models/IssueTrackerLink.js';
 export type { JobArtifactDownloadResponse } from './models/JobArtifactDownloadResponse.js';
 export type { JobDeletedResponse } from './models/JobDeletedResponse.js';
 export type { JobFinishedWebhookPayload } from './models/JobFinishedWebhookPayload.js';
@@ -849,6 +850,7 @@ export type { ListIssueIngestTokensResponse } from './models/ListIssueIngestToke
 export type { ListIssueSavedViewsResponse } from './models/ListIssueSavedViewsResponse.js';
 export type { ListIssuesResponse } from './models/ListIssuesResponse.js';
 export type { ListIssueTeamsResponse } from './models/ListIssueTeamsResponse.js';
+export type { ListIssueTrackerLinksResponse } from './models/ListIssueTrackerLinksResponse.js';
 export type { ListJobRunsResponse } from './models/ListJobRunsResponse.js';
 export type { ListJobsResponse } from './models/ListJobsResponse.js';
 export type { ListJobTaskAttemptsResponse } from './models/ListJobTaskAttemptsResponse.js';
@@ -1647,6 +1649,7 @@ export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutIssueSavedViewRequest } from './models/PutIssueSavedViewRequest.js';
 export type { PutIssueTeamRequest } from './models/PutIssueTeamRequest.js';
+export type { PutIssueTrackerLinkRequest } from './models/PutIssueTrackerLinkRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
 export type { PutOutboundAIPricesRequest } from './models/PutOutboundAIPricesRequest.js';

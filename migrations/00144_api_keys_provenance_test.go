@@ -1,3 +1,5 @@
+//go:build !no_pg
+
 package migrations_test
 
 import (
@@ -31,12 +33,10 @@ import (
 // it (per migration-slot-renumber-at-pr-creation).
 func TestMigrations_00144_APIKeysProvenance(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t) // t.Skip-friendly on missing DATABASE_URL
+	pool := pgtest.OpenMigrated(t)
 
-	// Run the migration set against a fresh per-test schema so
-	// this test is independent of any other test that may have
-	// invoked MigrateUp against a different schema in the same
-	// DATABASE_URL (the pgtest default is one schema per test).
+	// Use a private migrated database: the complete migration set includes
+	// public-qualified objects. A separate database preserves test isolation.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
@@ -45,15 +45,8 @@ func TestMigrations_00144_APIKeysProvenance(t *testing.T) {
 	//    platform-neutral way; the older pg_catalog views also
 	//    work but column-name filtering is the same shape.
 	//
-	//    table_schema is current_schema(), NOT 'public', because
-	//    pgtest.Open isolates each test into its own per-test
-	//    schema (search_path=<schema>,public). The earlier
-	//    hard-coded 'public' WHERE clause (PR #653 initial cut)
-	//    failed CI because the per-test schema holds the api_keys
-	//    table, not public — pin via current_schema() so the
-	//    same query shape works against any pgtest.Open caller,
-	//    including meterd_quota_e2e_test.go which reuses the
-	//    pattern at migrations/info-schema-scoping-pattern.
+	//    Keep the schema lookup relative to the pool, including when the
+	//    test uses a private migrated database.
 	rows, err := pool.Query(ctx, `
 		SELECT column_name, data_type, is_nullable
 		  FROM information_schema.columns

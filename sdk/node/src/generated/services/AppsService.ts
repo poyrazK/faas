@@ -69,11 +69,13 @@ import type { IssueSplitRule } from '../models/IssueSplitRule.js';
 import type { IssueSplitRuleUndoRequest } from '../models/IssueSplitRuleUndoRequest.js';
 import type { IssueSplitRuleUpdate } from '../models/IssueSplitRuleUpdate.js';
 import type { IssueTeam } from '../models/IssueTeam.js';
+import type { IssueTrackerLink } from '../models/IssueTrackerLink.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
 import type { ListIssueIngestTokensResponse } from '../models/ListIssueIngestTokensResponse.js';
 import type { ListIssueSavedViewsResponse } from '../models/ListIssueSavedViewsResponse.js';
 import type { ListIssuesResponse } from '../models/ListIssuesResponse.js';
 import type { ListIssueTeamsResponse } from '../models/ListIssueTeamsResponse.js';
+import type { ListIssueTrackerLinksResponse } from '../models/ListIssueTrackerLinksResponse.js';
 import type { ListProfileDeploymentChecksResponse } from '../models/ListProfileDeploymentChecksResponse.js';
 import type { ListProfileInvestigationsResponse } from '../models/ListProfileInvestigationsResponse.js';
 import type { ListProfilePeriodicMonitorsResponse } from '../models/ListProfilePeriodicMonitorsResponse.js';
@@ -92,6 +94,7 @@ import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
 import type { PutIssueSavedViewRequest } from '../models/PutIssueSavedViewRequest.js';
 import type { PutIssueTeamRequest } from '../models/PutIssueTeamRequest.js';
+import type { PutIssueTrackerLinkRequest } from '../models/PutIssueTrackerLinkRequest.js';
 import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
@@ -2808,6 +2811,127 @@ export class AppsService {
         'baseline': baseline,
         'candidate': candidate,
         'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List GitHub and Linear references across this canonical issue group.
+   * Links remain attached to original issue identities through merges and splits. Returns at most 50 references per page; cursors are bound to the app and canonical issue.
+   * @returns ListIssueTrackerLinksResponse References and an optional continuation cursor.
+   * @throws ApiError
+   */
+  public static listIssueTrackerLinks({
+    slug,
+    issueId,
+    cursor,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    issueId: string,
+    cursor?: string,
+  }): CancelablePromise<ListIssueTrackerLinksResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      query: {
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Attach an existing tracker issue or update its display title.
+   * Requires deploy-write and session MFA. Canonicalizes public GitHub issue and Linear URLs; ignores tracking queries, fragments and Linear title slugs. An existing group reference is reused. New references are capped at 20 per canonical group; existing references survive merges above that limit. Records actor activity. No provider request, ticket creation, access verification or status synchronization occurs.
+   * @returns IssueTrackerLink Canonical reference and creation/update metadata.
+   * @throws ApiError
+   */
+  public static putIssueTrackerLink({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    issueId: string,
+    requestBody: PutIssueTrackerLinkRequest,
+  }): CancelablePromise<IssueTrackerLink> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Tracker-reference quota reached.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a tracker reference from this issue group.
+   * Requires deploy-write and session MFA. Records unlink activity; the provider ticket is unchanged.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteIssueTrackerLink({
+    slug,
+    issueId,
+    linkId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    issueId: string,
+    linkId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+        'link_id': linkId,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

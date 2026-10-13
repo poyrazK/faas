@@ -3977,6 +3977,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/saved-views", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSavedViewHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerLinkHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/teams", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTeamHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/bulk-actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueBulkActionHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
