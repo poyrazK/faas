@@ -53,7 +53,15 @@ func standardSnapshotQuery(g runtimeadmission.SnapshotGrant) sqlc.GetApplication
 	return sqlc.GetApplicationStandardSnapshotCaptureParams{Token: mustPgUUID(g.Token), AccountID: mustPgUUID(b.AccountID), AppID: mustPgUUID(b.AppID), DeploymentID: mustPgUUID(b.DeploymentID)}
 }
 
+// A busy runtime fence replays the whole issuance; the grant token keeps a
+// replay idempotent.
 func (s *PgStore) IssueApplicationStandardSnapshotCapture(ctx context.Context, expectedState string, req ApplicationStandardSnapshotCaptureRequest) (runtimeadmission.SnapshotGrant, error) {
+	return retryRuntimeAdmissionBusy(ctx, func() (runtimeadmission.SnapshotGrant, error) {
+		return s.issueApplicationStandardSnapshotCaptureOnce(ctx, expectedState, req)
+	})
+}
+
+func (s *PgStore) issueApplicationStandardSnapshotCaptureOnce(ctx context.Context, expectedState string, req ApplicationStandardSnapshotCaptureRequest) (runtimeadmission.SnapshotGrant, error) {
 	if err := req.validate(expectedState); err != nil {
 		return runtimeadmission.SnapshotGrant{}, err
 	}

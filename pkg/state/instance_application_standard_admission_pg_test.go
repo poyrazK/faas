@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
@@ -163,5 +165,44 @@ func TestPgInstanceApplicationStandardCaptureFencesConcurrentArtifactWrite(t *te
 	}
 	if _, err := s.PublishInstanceRuntime(ctx, id, string(StateColdBooting), "stale", "10.100.0.8", 20008); !errors.Is(err, ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("changed artifact published: %v", err)
+	}
+}
+
+// The admission guard takes its per-app fence without waiting, so a peer
+// instance transition of the same app makes a wake's insert report busy. The
+// store replays the rolled-back insert instead of failing the wake.
+func TestPgInstanceAdmissionReplaysBusyRuntimeFence(t *testing.T) {
+	s, pool := runtimeCapturePGStore(t)
+	ctx := t.Context()
+	f := newRuntimeCaptureFixture(t, s, false)
+	holdFence := func() pgx.Tx {
+		t.Helper()
+		peer, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := peer.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.' || $1::text, 0))`, f.app.ID); err != nil {
+			t.Fatal(err)
+		}
+		return peer
+	}
+
+	peer := holdFence()
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		time.Sleep(3 * api.ApplicationStandardRuntimeLockRetry)
+		_ = peer.Rollback(context.Background())
+	}()
+	_, err := s.CreateInstance(ctx, f.app.ID, f.dep.ID, string(StateColdBooting), 128, f.nodeID, uuid.NewString())
+	<-released
+	if err != nil {
+		t.Fatalf("admission behind a short peer transition: %v", err)
+	}
+
+	peer = holdFence()
+	defer func() { _ = peer.Rollback(context.Background()) }()
+	if _, err := s.CreateInstance(ctx, f.app.ID, f.dep.ID, string(StateColdBooting), 128, f.nodeID, uuid.NewString()); !errors.Is(err, ErrApplicationStandardRuntimeBusy) {
+		t.Fatalf("admission behind a held fence = %v, want busy after the replay budget", err)
 	}
 }

@@ -45,7 +45,14 @@ func decodeStandardPromotion(row sqlc.GetInstanceApplicationStandardPromotionRow
 	return p, nil
 }
 
+// The parent read takes the same non-waiting runtime fences as admission.
 func (s *PgStore) GetInstanceApplicationStandardWarmParent(ctx context.Context, id string) (runtimeadmission.Receipt, error) {
+	return retryRuntimeAdmissionBusy(ctx, func() (runtimeadmission.Receipt, error) {
+		return s.getInstanceApplicationStandardWarmParentOnce(ctx, id)
+	})
+}
+
+func (s *PgStore) getInstanceApplicationStandardWarmParentOnce(ctx context.Context, id string) (runtimeadmission.Receipt, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return runtimeadmission.Receipt{}, err
@@ -58,7 +65,15 @@ func (s *PgStore) GetInstanceApplicationStandardWarmParent(ctx context.Context, 
 	return input.Parent, tx.Commit(ctx)
 }
 
+// A busy runtime fence replays the whole issuance; the grant token keeps a
+// replay idempotent.
 func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context, p runtimeadmission.Promotion) (runtimeadmission.Promotion, error) {
+	return retryRuntimeAdmissionBusy(ctx, func() (runtimeadmission.Promotion, error) {
+		return s.issueInstanceApplicationStandardPromotionOnce(ctx, p)
+	})
+}
+
+func (s *PgStore) issueInstanceApplicationStandardPromotionOnce(ctx context.Context, p runtimeadmission.Promotion) (runtimeadmission.Promotion, error) {
 	if p.Validate(time.Now()) != nil {
 		return runtimeadmission.Promotion{}, ErrInvalidArgument
 	}

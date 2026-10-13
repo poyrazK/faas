@@ -2,16 +2,48 @@ package state
 
 import (
 	"context"
+	"errors"
+
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // The original environment, app, deployment, instance and retained pins stay
 // locked through the runtime/state CAS. Deletion cannot slip between the
-// ownership check and publishing a paused or routable instance.
+// ownership check and publishing a paused or routable instance. A busy
+// application-standard fence replays the whole transaction: the VM has
+// already booted, and discarding it for a millisecond collision wastes it.
 func (s *PgStore) PublishOwnedInstanceRuntime(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
 	if err := validateRuntimeInstancePublication(p); err != nil {
 		return Instance{}, err
 	}
+	return retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
+		return s.publishOwnedInstanceRuntimeOnce(ctx, p)
+	})
+}
+
+// RuntimePublicationOutcomeUnknown reports whether a failed publication may
+// still have committed. A refusal from the database or the store rolled the
+// whole transaction back, so only a deadline or transport failure can hide a
+// commit whose acknowledgment was lost.
+func RuntimePublicationOutcomeUnknown(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return false
+	}
+	for _, refused := range []error{ErrConflict, ErrNotFound, ErrInvalidArgument, ErrApplicationStandardRuntimeStale,
+		ErrApplicationStandardsPending, ErrApplicationStandardRuntimeBusy} {
+		if errors.Is(err, refused) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p RuntimeInstancePublication) (Instance, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, err

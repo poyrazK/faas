@@ -58,7 +58,15 @@ func decodeStandardNativeBoot(row sqlc.GetInstanceApplicationStandardBootRow) (i
 	return boot, nil
 }
 
+// A busy runtime fence replays the whole issuance; the grant token keeps a
+// replay idempotent.
 func (s *PgStore) IssueInstanceApplicationStandardBoot(ctx context.Context, expectedState string, binding runtimeadmission.Binding) (runtimeadmission.Binding, error) {
+	return retryRuntimeAdmissionBusy(ctx, func() (runtimeadmission.Binding, error) {
+		return s.issueInstanceApplicationStandardBootOnce(ctx, expectedState, binding)
+	})
+}
+
+func (s *PgStore) issueInstanceApplicationStandardBootOnce(ctx context.Context, expectedState string, binding runtimeadmission.Binding) (runtimeadmission.Binding, error) {
 	if expectedState != string(StateWaking) && expectedState != string(StateColdBooting) {
 		return runtimeadmission.Binding{}, ErrInvalidArgument
 	}
