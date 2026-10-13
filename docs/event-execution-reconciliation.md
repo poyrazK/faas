@@ -255,6 +255,62 @@ original timestamp from the reviewed job. Without that guard a fresh invocation
 can observe a replacement UUID after physical expiry/pruning. Timeout or Ctrl-C
 stops monitoring only; it never submits retries, cancels jobs or changes retention.
 
+## Export remaining cases from a finished job
+
+Read the source job, review its outcomes and copy its original `created_at`, then
+prepare another request with current guards:
+
+```sh
+gregale --json events subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at ORIGINAL_CREATED_AT --file next-retry.json
+# Select particular recorded outcomes, including unevaluated cancelled items:
+gregale events subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at ORIGINAL_CREATED_AT --outcomes unresolved,changed,cancelled --file next-retry.json
+```
+
+The source must be completed or cancelled. `--expected-created-at` is required
+and fences its original incarnation on both the initial read and the final read
+before writing. Pending, expired, missing, inaccessible or replaced source jobs
+produce no file. Export only uses existing read APIs; it does not evaluate cases,
+submit another job or change either job's retention.
+
+`--outcomes` selects recorded source-item states, defaulting to
+`unresolved,conflict,changed,unavailable`. `cancelled` is also allowed explicitly;
+`pending`, `repaired` and `already_associated` are rejected. Whitespace and
+repeated selections are normalized. Filtering concerns the original result;
+a selected unresolved case can now be conflicting, or already repaired elsewhere.
+
+For each selected item, seek a one-row current case page at its original outbox
+ID. Include only a current unresolved/conflicting case with the same original
+receipt acceptance and diagnostic incarnation. Copy its latest revision,
+acceptance timestamp and diagnostic ID into the new request. Report skipped items
+with original outcome and reason: `unavailable` (no retained case),
+`no_longer_retryable` (now repaired/already-associated), `acceptance_changed` or
+`diagnostic_changed`. A recreated diagnostic is deliberately excluded; review it
+through the regular preview/export workflow. Legacy cases without diagnostic IDs
+retain their existing acceptance/revision contract and cannot independently prove
+that a diagnostic-free case was not recreated.
+
+The JSON summary contains source UUID/creation time, destination file/new UUID,
+app/subscription, selected count, selected source-outcome counts, current reason
+counts and skipped items. The request file contains only the API submission body.
+Cases appear once in ascending outbox order. If none remain retryable, print the
+summary and exit 1 without creating a file or request UUID. Read failures,
+malformed responses, timeout or Ctrl-C during the read phase abort before writing
+a request. File write failures remove the incomplete destination.
+Read errors retain normal CLI exit codes; Ctrl-C returns 130.
+
+The export is bounded by the source job's maximum 200 items. It performs two job
+reads and at most one case read per selected item; it never walks all subscription
+cases. `--timeout` defaults to 2 minutes and must be positive; individual reads
+also use the existing control timeout. Reads are live observations, not an atomic
+snapshot or reservation. Guards can change after export and submission will still
+reject stale guards. Source expiry can race with completion of the final read.
+
+A successful export uses a fresh request UUID and writes a new owner-only file,
+refusing existing destinations. Review the file and summary, then submit through
+`subscription-lineage-retry-job-create` with the same APP and SUB. Preserve this
+file and UUID for retries after a lost submission response; another export is a
+new deliberate request identity.
+
 ## Cancel a bulk retry job
 
 Read the retained job and copy its original `created_at`, then cancel with that

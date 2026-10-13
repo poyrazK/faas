@@ -2386,6 +2386,19 @@ Cancel unprocessed lineage retries
 |---|---|---|
 | `--expected-created-at <TIMESTAMP>` | original RFC3339 creation timestamp from the reviewed job |  |
 
+### events subscription-lineage-retry-job-export
+
+Export current guards for remaining cases from a finished job
+
+`gregale events subscription-lineage-retry-job-export [--file <PATH>] [--expected-created-at <TIMESTAMP>] [--outcomes <STATES>] [--timeout <DURATION>] <app> <subscription-id> <source-request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new JSON request file (never overwrite) |  |
+| `--expected-created-at <TIMESTAMP>` | required reviewed source creation timestamp |  |
+| `--outcomes <STATES>` | original outcomes (default unresolved,conflict,changed,unavailable; cancelled also allowed) |  |
+| `--timeout <DURATION>` | maximum export duration (default 2m) |  |
+
 ### events subscription-lineage-retry-job-watch
 
 Watch a retained bulk retry job and summarize outcomes
