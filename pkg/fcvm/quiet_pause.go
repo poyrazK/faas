@@ -71,9 +71,12 @@ type quietPauser interface {
 	PauseVM(ctx context.Context, l Lease) error
 }
 
-// quietState is one instance's pause state.
+// quietState is one live incarnation's pause state. schedd reuses an
+// instance id when it wakes the instance again, so the state remembers the
+// *Instance it describes and is discarded when the id comes back as a new VM.
 type quietState struct {
-	mu sync.Mutex
+	inst *Instance
+	mu   sync.Mutex
 	// paused is set before the Firecracker pause call so a request that
 	// races the pause waits on mu instead of reaching a guest that is
 	// about to stop.
@@ -83,8 +86,9 @@ type quietState struct {
 	epoch atomic.Uint64
 	// since is when the current pause took effect. Guarded by mu.
 	since time.Time
-	// seenAt is when the pause pass first saw the instance; an instance
-	// that never received a request is idle from here.
+	// seenAt is when the pause pass first saw this incarnation. Idleness is
+	// never measured from before it: the activity tracker keys on the
+	// instance id, so its last request may belong to an earlier VM.
 	seenAt time.Time
 }
 
@@ -121,6 +125,7 @@ func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
 
 type quietCandidate struct {
 	id    string
+	inst  *Instance
 	after time.Duration
 }
 
@@ -150,11 +155,11 @@ func (m *Manager) RunQuietPause(ctx context.Context) {
 func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 	m.mu.Lock()
 	candidates := make([]quietCandidate, 0, len(m.live))
-	live := make(map[string]struct{}, len(m.live))
+	live := make(map[string]*Instance, len(m.live))
 	for id, inst := range m.live {
-		live[id] = struct{}{}
+		live[id] = inst
 		if m.quietEligibleLocked(id, inst) {
-			candidates = append(candidates, quietCandidate{id: id, after: inst.QuietPauseAfter})
+			candidates = append(candidates, quietCandidate{id: id, inst: inst, after: inst.QuietPauseAfter})
 		}
 	}
 	m.mu.Unlock()
@@ -166,7 +171,7 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 	paused := 0
 	m.quietMu.Lock()
 	for id, st := range m.quietStates {
-		if _, ok := live[id]; !ok {
+		if live[id] != st.inst {
 			delete(m.quietStates, id)
 			continue
 		}
@@ -178,45 +183,57 @@ func (m *Manager) quietPausePass(ctx context.Context, now time.Time) {
 	m.quietMetrics.setPaused(paused)
 }
 
-// quietStateFor returns an instance's pause state, creating it.
-func (m *Manager) quietStateFor(id string, now time.Time) *quietState {
+// quietStateFor returns the pause state of this incarnation of id, starting
+// a fresh one when the id belongs to a new VM.
+func (m *Manager) quietStateFor(id string, inst *Instance, now time.Time) *quietState {
 	m.quietMu.Lock()
 	defer m.quietMu.Unlock()
 	if m.quietStates == nil {
 		m.quietStates = make(map[string]*quietState)
 	}
 	st := m.quietStates[id]
-	if st == nil {
-		st = &quietState{seenAt: now}
+	if st == nil || st.inst != inst {
+		st = &quietState{inst: inst, seenAt: now}
 		m.quietStates[id] = st
 	}
 	return st
 }
 
-// quietStateIfAny returns an instance's pause state, or nil.
+// quietStateIfAny returns the pause state of the live incarnation of id, or
+// nil. State left by an earlier VM with the same id does not count.
 func (m *Manager) quietStateIfAny(id string) *quietState {
 	m.quietMu.Lock()
-	defer m.quietMu.Unlock()
-	return m.quietStates[id]
+	st := m.quietStates[id]
+	m.quietMu.Unlock()
+	if st == nil {
+		return nil
+	}
+	m.mu.Lock()
+	current := m.live[id] == st.inst
+	m.mu.Unlock()
+	if !current {
+		return nil
+	}
+	return st
 }
 
-// quietIdle reports whether the instance has had nothing in flight for at
-// least after: since its last request ended or, if it never had one, since
-// the pause pass first saw it.
+// quietIdle reports whether this incarnation has had nothing in flight for
+// at least after: since its last request ended, and since the pause pass
+// first saw it.
 func (m *Manager) quietIdle(id string, st *quietState, after time.Duration, now time.Time) bool {
 	inflight, since, seen := m.quietActivity.Quiet(id)
 	if inflight > 0 {
 		return false
 	}
 	ref := st.seenAt
-	if seen && !since.IsZero() {
+	if seen && since.After(ref) {
 		ref = since
 	}
 	return now.Sub(ref) >= after
 }
 
 func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.Time) {
-	st := m.quietStateFor(c.id, now)
+	st := m.quietStateFor(c.id, c.inst, now)
 	if st.paused.Load() || !m.quietIdle(c.id, st, c.after, now) {
 		return
 	}
@@ -230,7 +247,7 @@ func (m *Manager) quietPauseOne(ctx context.Context, c quietCandidate, now time.
 	st.paused.Store(true)
 	m.mu.Lock()
 	inst := m.live[c.id]
-	eligible := m.quietEligibleLocked(c.id, inst)
+	eligible := inst == c.inst && m.quietEligibleLocked(c.id, inst)
 	var lease Lease
 	if eligible {
 		lease = inst.Lease
@@ -277,8 +294,9 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 		lease = inst.Lease
 	}
 	m.mu.Unlock()
-	if inst == nil {
-		// Gone: teardown owns the process now.
+	if inst == nil || inst != st.inst {
+		// Gone, or replaced by a new VM that was never paused: teardown owns
+		// the old process.
 		st.paused.Store(false)
 		return nil
 	}

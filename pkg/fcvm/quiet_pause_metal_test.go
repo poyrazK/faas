@@ -88,9 +88,6 @@ func TestMetalQuietPause(t *testing.T) {
 		t.Fatalf("wake fell back to %s; the test needs a restored guest", inst.Method)
 	}
 	url := "http://" + inst.Lease.HostIP.String() + ":8080/"
-	if _, err := firstByte(url, 5*time.Second); err != nil {
-		t.Fatalf("restored guest does not serve: %v", err)
-	}
 	// request is what vmmd's forward RPCs do around one forwarded request.
 	client := &http.Client{Timeout: 2 * time.Second}
 	request := func() (resume, total time.Duration, err error) {
@@ -107,6 +104,21 @@ func TestMetalQuietPause(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 		return resume, time.Since(started), nil
+	}
+	// serve waits for a freshly woken guest to answer through the forward
+	// path, as the first request after a wake does.
+	serve := func(within time.Duration) error {
+		deadline := time.Now().Add(within)
+		for {
+			_, _, err := request()
+			if err == nil || time.Now().After(deadline) {
+				return err
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if err := serve(5 * time.Second); err != nil {
+		t.Fatalf("restored guest does not serve: %v", err)
 	}
 
 	// Phase 1: pause/resume cycles.
@@ -169,6 +181,9 @@ func TestMetalQuietPause(t *testing.T) {
 	if _, err := firstByte(url, time.Second); err != nil {
 		t.Fatalf("guest stopped serving during an open stream: %v", err)
 	}
+	if paused, _ := m.QuietPauseState(id); paused {
+		t.Fatal("instance paused while a stream was open")
+	}
 	tracker.End(id)
 	waitQuietPaused(t, m, id, true, 2*time.Second)
 
@@ -182,7 +197,7 @@ func TestMetalQuietPause(t *testing.T) {
 		t.Fatalf("wake after parking a quiet-paused guest: %v", err)
 	}
 	url = "http://" + inst.Lease.HostIP.String() + ":8080/"
-	if _, err := firstByte(url, 5*time.Second); err != nil {
+	if err := serve(5 * time.Second); err != nil {
 		t.Fatalf("guest restored from a quiet-paused snapshot does not serve: %v", err)
 	}
 	waitQuietPaused(t, m, id, true, 2*time.Second)

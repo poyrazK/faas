@@ -71,6 +71,8 @@ func quietWake(instance string) WakeRequest {
 	return w
 }
 
+// newQuietManager wakes instance "q" with quiet pause on, as if the pause
+// pass first saw it an hour ago.
 func newQuietManager(t *testing.T, v *pausingVMM, act QuietActivity) *Manager {
 	t.Helper()
 	m := newTestManager(&fakeRunner{}, v).WithQuietPause(QuietPauseConfig{Activity: act})
@@ -78,7 +80,16 @@ func newQuietManager(t *testing.T, v *pausingVMM, act QuietActivity) *Manager {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), "q") })
+	seenQuiet(m, "q", time.Now().Add(-time.Hour))
 	return m
+}
+
+// seenQuiet records when the pause pass first saw the live incarnation of id.
+func seenQuiet(m *Manager, id string, at time.Time) *quietState {
+	m.mu.Lock()
+	inst := m.live[id]
+	m.mu.Unlock()
+	return m.quietStateFor(id, inst, at)
 }
 
 func TestQuietPauseAfterFor(t *testing.T) {
@@ -128,8 +139,6 @@ func TestQuietPausePass(t *testing.T) {
 			act := newFakeQuietActivity()
 			v := &pausingVMM{fakeVMM: &fakeVMM{}}
 			m := newQuietManager(t, v, act)
-			// The first pass records when it first saw the instance.
-			m.quietStateFor("q", now.Add(-time.Hour))
 			if tc.since > 0 || tc.inflight > 0 {
 				act.set("q", tc.inflight, now.Add(-tc.since))
 			}
@@ -157,6 +166,9 @@ func TestQuietPauseWaitsForFirstSighting(t *testing.T) {
 	act := newFakeQuietActivity()
 	v := &pausingVMM{fakeVMM: &fakeVMM{}}
 	m := newQuietManager(t, v, act)
+	m.quietMu.Lock()
+	m.quietStates = nil
+	m.quietMu.Unlock()
 	now := time.Now()
 	m.quietPausePass(t.Context(), now) // first sighting, no request yet
 	m.quietPausePass(t.Context(), now.Add(time.Second))
@@ -271,7 +283,7 @@ func TestQuietPauseBacksOffForRequestBeforeFinalCheck(t *testing.T) {
 	m := newQuietManager(t, v, act)
 	now := time.Now()
 	act.set("q", 0, now.Add(-time.Minute))
-	st := m.quietStateFor("q", now.Add(-time.Hour))
+	st := seenQuiet(m, "q", now.Add(-time.Hour))
 	// The pass reads activity, then takes st.mu. Hold st.mu so the request
 	// lands between the two.
 	st.mu.Lock()
@@ -343,5 +355,41 @@ func TestQuietPauseDisabledWithoutActivity(t *testing.T) {
 	m.RunQuietPause(ctx) // returns at once without WithQuietPause
 	if v.pauses() != 0 {
 		t.Fatalf("paused %d times with quiet pause off", v.pauses())
+	}
+}
+
+// schedd wakes a parked instance again under the same id. The new VM must not
+// inherit the old one's pause state, nor be measured idle from the old VM's
+// last request.
+func TestQuietStateResetsForNewIncarnation(t *testing.T) {
+	act := newFakeQuietActivity()
+	v := &pausingVMM{fakeVMM: &fakeVMM{}}
+	m := newQuietManager(t, v, act)
+	act.set("q", 0, time.Now().Add(-time.Minute))
+	m.quietPausePass(t.Context(), time.Now())
+	if paused, _ := m.QuietPauseState("q"); !paused {
+		t.Fatal("first incarnation was not paused")
+	}
+	if err := m.Destroy(t.Context(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Wake(t.Context(), quietWake("q")); err != nil {
+		t.Fatal(err)
+	}
+	if paused, _ := m.QuietPauseState("q"); paused {
+		t.Fatal("new incarnation reported the old one's pause")
+	}
+	if err := m.QuietResume(t.Context(), "q"); err != nil || v.resumes() != 0 {
+		t.Fatalf("QuietResume resumed a VM that was never paused: err=%v resumes=%d", err, v.resumes())
+	}
+	now := time.Now()
+	m.quietPausePass(t.Context(), now) // first sighting of the new VM
+	m.quietPausePass(t.Context(), now.Add(time.Second))
+	if v.pauses() != 1 {
+		t.Fatalf("new incarnation paused within its first delay: pauses=%d", v.pauses())
+	}
+	m.quietPausePass(t.Context(), now.Add(2*time.Second))
+	if v.pauses() != 2 {
+		t.Fatalf("new incarnation not paused after its delay: pauses=%d", v.pauses())
 	}
 }
