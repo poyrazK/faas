@@ -100,7 +100,7 @@ func CheckInstanceApplicationStandardAdmission(ctx context.Context, store Instan
 			return fmt.Errorf("%w: %s", ErrApplicationStandardRuntimeStale, field)
 		}
 		if !reflect.DeepEqual(want, got) {
-			if field == "account_plan" && !capture.Managed && !standardEnrollmentRequiresNative(enrollment) {
+			if field == "account_plan" && !capture.Managed && !ApplicationStandardEnrollmentRequiresNative(enrollment) {
 				allowed, err := unmanagedStandardResidentPlanChange(ctx, store, id)
 				if err != nil {
 					return fmt.Errorf("read unmanaged residency: %w", err)

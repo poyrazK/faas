@@ -3,6 +3,7 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"time"
@@ -25,6 +26,10 @@ func (e *Engine) capturedStandardRuntime(ctx context.Context, appID, instanceID 
 	if err != nil {
 		return state.InstanceApplicationStandardAdmission{}, err
 	}
+	return e.capturedStandardRuntimeForApp(ctx, app, instanceID)
+}
+
+func (e *Engine) capturedStandardRuntimeForApp(ctx context.Context, app state.App, instanceID string) (state.InstanceApplicationStandardAdmission, error) {
 	if app.OrgID == "" {
 		return state.InstanceApplicationStandardAdmission{}, nil
 	}
@@ -32,7 +37,27 @@ func (e *Engine) capturedStandardRuntime(ctx context.Context, appID, instanceID 
 	if !ok {
 		return state.InstanceApplicationStandardAdmission{}, runtimeadmission.ErrUnavailable
 	}
-	return reader.GetInstanceApplicationStandardAdmission(ctx, instanceID)
+	capture, err := reader.GetInstanceApplicationStandardAdmission(ctx, instanceID)
+	if !errors.Is(err, state.ErrNotFound) {
+		return capture, err
+	}
+	// An instance created before runtime capture existed never receives a
+	// fabricated one. Like the instance guard, let it continue unmanaged only
+	// while its application requires no native admission.
+	enrollments, ok := e.store.(interface {
+		GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error)
+	})
+	if !ok {
+		return state.InstanceApplicationStandardAdmission{}, runtimeadmission.ErrUnavailable
+	}
+	enrollment, err := enrollments.GetApplicationStandardEnrollment(ctx, app.OrgID, app.ID)
+	if err != nil {
+		return state.InstanceApplicationStandardAdmission{}, err
+	}
+	if state.ApplicationStandardEnrollmentRequiresNative(enrollment) {
+		return state.InstanceApplicationStandardAdmission{}, state.ErrApplicationStandardRuntimeStale
+	}
+	return state.InstanceApplicationStandardAdmission{InstanceID: instanceID, AppID: app.ID}, nil
 }
 
 func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanceID, expectedState string, spec AppSpec, snap *SnapshotRef, paused bool) (*WakeOutcome, error) {

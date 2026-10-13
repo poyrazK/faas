@@ -16,8 +16,10 @@ type standardNativePromotionVMM interface {
 	PromoteAdmittedRuntime(context.Context, string, *vmmdpb.PromoteAdmittedRuntimeRequest) (runtimeadmission.Receipt, error)
 }
 
-func (e *Engine) resumeWarmWithStandards(ctx context.Context, warm state.Instance, imageHealthcheck bool) (*runtimeadmission.Receipt, error) {
-	capture, err := e.capturedStandardRuntime(ctx, warm.AppID, warm.ID)
+// app is the caller's current read of warm's application; the promotion
+// guard rechecks ownership and inputs when the receipt publishes.
+func (e *Engine) resumeWarmWithStandards(ctx context.Context, app state.App, warm state.Instance, imageHealthcheck bool) (*runtimeadmission.Receipt, error) {
+	capture, err := e.capturedStandardRuntimeForApp(ctx, app, warm.ID)
 	if err != nil {
 		return nil, applicationStandardRuntimeProblem(err)
 	}

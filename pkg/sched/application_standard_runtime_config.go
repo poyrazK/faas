@@ -23,10 +23,11 @@ func (e *Engine) publishOwnedRuntimeWithStandards(ctx context.Context, out *Wake
 func (e *Engine) publishOwnedWarmWithStandards(ctx context.Context, receipt *runtimeadmission.Receipt, p state.RuntimeInstancePublication) (state.Instance, error) {
 	p.PromotionReceipt = receipt
 	fresh, err := e.store.PublishOwnedInstanceRuntime(ctx, p)
-	if err == nil || receipt == nil {
+	if receipt == nil || !state.RuntimePublicationOutcomeUnknown(err) {
 		return fresh, err
 	}
 	// Retry the exact retained receipt after a lost commit acknowledgment.
+	// A definitive refusal (lost CAS, stale inputs) would only repeat itself.
 	retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ApplicationStandardRuntimeCleanupTimeout)
 	defer cancel()
 	return e.store.PublishOwnedInstanceRuntime(retryCtx, p)

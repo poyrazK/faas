@@ -223,7 +223,7 @@ func TestMemApplicationStandardRetainedNativeReenrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, err := m.GetApplicationStandardEnrollment(t.Context(), app.OrgID, app.ID)
-	if err != nil || after.State != "pending" || after.DesiredRevision != before.DesiredRevision+1 || after.PersistedRevision != before.PersistedRevision || after.EffectiveHash != before.EffectiveHash || !standardEnrollmentRequiresNative(after) || ApplicationStandardEnrollmentPermitsRuntime(app, after) {
+	if err != nil || after.State != "pending" || after.DesiredRevision != before.DesiredRevision+1 || after.PersistedRevision != before.PersistedRevision || after.EffectiveHash != before.EffectiveHash || !ApplicationStandardEnrollmentRequiresNative(after) || ApplicationStandardEnrollmentPermitsRuntime(app, after) {
 		t.Fatalf("scope change erased native history or permitted stale inputs: %+v %v", after, err)
 	}
 }

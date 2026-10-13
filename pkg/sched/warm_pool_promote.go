@@ -116,13 +116,14 @@ func (e *Engine) promoteWarmInstanceLocked(ctx context.Context, app state.App, a
 
 		resumeStartedAt := time.Now()
 		resumeCtx, cancel := context.WithTimeout(ctx, e.budgetForWake(bootInput{haveSnap: true, snapKey: "warm_pool"}))
-		receipt, resumeErr := e.resumeWarmWithStandards(resumeCtx, warm, imageHealthcheckRequiredFromDep(dep))
+		receipt, resumeErr := e.resumeWarmWithStandards(resumeCtx, app, warm, imageHealthcheckRequiredFromDep(dep))
 		cancel()
 		if resumeErr != nil {
 			if errors.Is(resumeErr, state.ErrConflict) {
 				// A saved attempt or state transition belongs to another caller.
-				// Leave its lease intact; a subsequent request can retry routing.
-				return WakeResult{}, false, resumeErr
+				// Leave its lease intact and try the next candidate; without one
+				// the ordinary wake path remains the fallback for this request.
+				continue
 			}
 			if e.discardWarmPromotion(ctx, warm, "resume_failed") {
 				warmCount--

@@ -188,3 +188,37 @@ func TestApplicationStandardNativeSnapshotAndWarmRestore(t *testing.T) {
 		})
 	}
 }
+
+// Instances created before runtime capture existed have no capture row.
+type missingRuntimeCaptureStore struct {
+	*state.MemStore
+}
+
+func (*missingRuntimeCaptureStore) GetInstanceApplicationStandardAdmission(context.Context, string) (state.InstanceApplicationStandardAdmission, error) {
+	return state.InstanceApplicationStandardAdmission{}, state.ErrNotFound
+}
+
+// Like the instance guard, a capture-less legacy instance continues unmanaged
+// while its application requires no native admission, and is stale afterward.
+func TestApplicationStandardLegacyInstanceWithoutCapture(t *testing.T) {
+	t.Run("unmanaged", func(t *testing.T) {
+		s := state.NewMemStore()
+		o := standardAdmissionOwner(t, s)
+		app, err := s.CreateApp(t.Context(), state.App{AccountID: o.Account.ID, OrgID: o.PersonalOrg.ID, Slug: "legacy-unmanaged", RAMMB: 128, MaxConcurrency: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := newEngine(t, &missingRuntimeCaptureStore{MemStore: s}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+		capture, err := e.capturedStandardRuntimeForApp(t.Context(), app, uuid.NewString())
+		if err != nil || capture.Managed {
+			t.Fatalf("legacy unmanaged instance refused: %+v %v", capture, err)
+		}
+	})
+	t.Run("managed", func(t *testing.T) {
+		s, app, _ := newStandardCaptureService(t)
+		e := newEngine(t, &missingRuntimeCaptureStore{MemStore: s}, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+		if _, err := e.capturedStandardRuntimeForApp(t.Context(), app, uuid.NewString()); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+			t.Fatalf("legacy instance of a managed app = %v, want stale", err)
+		}
+	})
+}

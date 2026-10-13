@@ -74,7 +74,7 @@ func TestPgApplicationStandardRetainedNativeReenrollment(t *testing.T) {
 	}
 	app.ProjectID = project.ID
 	after, err := s.GetApplicationStandardEnrollment(t.Context(), app.OrgID, app.ID)
-	if err != nil || after.State != "pending" || after.DesiredRevision != before.DesiredRevision+1 || after.PersistedRevision != before.PersistedRevision || after.EffectiveHash != before.EffectiveHash || !standardEnrollmentRequiresNative(after) || ApplicationStandardEnrollmentPermitsRuntime(app, after) {
+	if err != nil || after.State != "pending" || after.DesiredRevision != before.DesiredRevision+1 || after.PersistedRevision != before.PersistedRevision || after.EffectiveHash != before.EffectiveHash || !ApplicationStandardEnrollmentRequiresNative(after) || ApplicationStandardEnrollmentPermitsRuntime(app, after) {
 		t.Fatalf("scope change erased native history or permitted stale inputs: %+v %v", after, err)
 	}
 	_, err = pool.Exec(t.Context(), `UPDATE app_application_standards SET persisted_revision=0 WHERE app_id=$1`, app.ID)

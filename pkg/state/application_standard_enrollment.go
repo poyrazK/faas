@@ -62,7 +62,7 @@ func applicationStandardEnrollmentPermitsRuntimeAt(app App, enrollment Applicati
 	}
 	switch enrollment.State {
 	case "unmanaged":
-		return enrollment.PersistedRevision == 0 && !standardEnrollmentRequiresNative(enrollment)
+		return enrollment.PersistedRevision == 0 && !ApplicationStandardEnrollmentRequiresNative(enrollment)
 	case "persisted", "observed":
 		return enrollment.PersistedRevision == enrollment.DesiredRevision && enrollment.EffectiveHash != ""
 	default:
@@ -72,7 +72,7 @@ func applicationStandardEnrollmentPermitsRuntimeAt(app App, enrollment Applicati
 
 // Installing any explicit standard projection, including its reviewed removal,
 // retains native admission. Empty current requirements do not erase that history.
-func standardEnrollmentRequiresNative(e ApplicationStandardEnrollment) bool {
+func ApplicationStandardEnrollmentRequiresNative(e ApplicationStandardEnrollment) bool {
 	return e.PersistedRevision > 0 || len(e.Adoptions) > 0 || len(e.MaterializedFields) > 0
 }
 

@@ -23,9 +23,14 @@ type standardNativePromotionTestVMM struct {
 type lostPromotionPublicationAckStore struct {
 	*state.MemStore
 	publications int
+	refuse       error // returned, without committing, by every promotion publication
 }
 
 func (s *lostPromotionPublicationAckStore) PublishOwnedInstanceRuntime(ctx context.Context, p state.RuntimeInstancePublication) (state.Instance, error) {
+	if s.refuse != nil && p.PromotionReceipt != nil {
+		s.publications++
+		return state.Instance{}, s.refuse
+	}
 	actual, err := s.MemStore.PublishOwnedInstanceRuntime(ctx, p)
 	if err != nil || p.PromotionReceipt == nil {
 		return actual, err
@@ -114,5 +119,28 @@ func TestApplicationStandardNativeWarmPromotionRequiresDurableFreshGrant(t *test
 				t.Fatal("resume fabricated policy observation")
 			}
 		})
+	}
+}
+
+// Only a lost acknowledgment is replayed. A definitive refusal rolled the
+// publication back, and replaying it only repeats the refusal on the wake path.
+func TestApplicationStandardNativeWarmPromotionDoesNotReplayRefusal(t *testing.T) {
+	s, app, dep := newStandardCaptureService(t)
+	target := 1
+	if _, err := s.UpdateApp(t.Context(), app.ID, state.UpdateAppParams{SetWarmPoolSize: true, WarmPoolSize: &target}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateSnapshot(t.Context(), state.Snapshot{DeploymentID: dep.ID, Tier: state.SnapshotTierInit, FCVersion: "1.10.0", MemBytes: int64(app.RAMMB) << 20, StorageKey: state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "native-promotion-refusal")}); err != nil {
+		t.Fatal(err)
+	}
+	v := &standardNativePromotionTestVMM{standardNativeTestVMM: newStandardNativeTestVMM(t, s, &fakeVMM{}, standardNativeTestNodeID(t, s))}
+	store := &lostPromotionPublicationAckStore{MemStore: s, refuse: state.ErrApplicationStandardRuntimeStale}
+	e := newEngine(t, store, v, &fakeNotifier{}, "1.10.0")
+	if err := e.ReconcileWarmPool(t.Context(), app.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.Wake(t.Context(), app.ID, dep.ID, "", TriggerGateway)
+	if v.promotions != 1 || store.publications != 1 {
+		t.Fatalf("refused promotion publication replayed: resumes=%d publications=%d", v.promotions, store.publications)
 	}
 }
