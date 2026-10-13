@@ -1154,6 +1154,7 @@ export type { OperationSubmissionLookupResponse } from './models/OperationSubmis
 export type { OperationSubmissionScope } from './models/OperationSubmissionScope.js';
 export type { OperationSummary } from './models/OperationSummary.js';
 export type { OperationTenantIdentity } from './models/OperationTenantIdentity.js';
+export type { OperationWebhookBindingResponse } from './models/OperationWebhookBindingResponse.js';
 export type { OperationWorkflowActionPreviewRequest } from './models/OperationWorkflowActionPreviewRequest.js';
 export type { OperationWorkflowActionPreviewResponse } from './models/OperationWorkflowActionPreviewResponse.js';
 export type { OperationWorkflowActiveConditionGroup } from './models/OperationWorkflowActiveConditionGroup.js';
@@ -1639,6 +1640,7 @@ export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenc
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
+export type { PutOperationWebhookBindingRequest } from './models/PutOperationWebhookBindingRequest.js';
 export type { PutOutboundAIPolicyRequest } from './models/PutOutboundAIPolicyRequest.js';
 export type { PutOutboundAIPricesRequest } from './models/PutOutboundAIPricesRequest.js';
 export type { PutOutboundAIRouteTargetsRequest } from './models/PutOutboundAIRouteTargetsRequest.js';

@@ -2237,6 +2237,7 @@ from .operation_submission_scope import OperationSubmissionScope
 from .operation_summary import OperationSummary
 from .operation_summary_state import OperationSummaryState
 from .operation_tenant_identity import OperationTenantIdentity
+from .operation_webhook_binding_response import OperationWebhookBindingResponse
 from .operation_workflow_action_preview_request import OperationWorkflowActionPreviewRequest
 from .operation_workflow_action_preview_response import OperationWorkflowActionPreviewResponse
 from .operation_workflow_action_preview_response_reason import OperationWorkflowActionPreviewResponseReason
@@ -3118,6 +3119,7 @@ from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -6249,6 +6251,7 @@ __all__ = (
     "OperationSummary",
     "OperationSummaryState",
     "OperationTenantIdentity",
+    "OperationWebhookBindingResponse",
     "OperationWorkflowActionPreviewRequest",
     "OperationWorkflowActionPreviewResponse",
     "OperationWorkflowActionPreviewResponseReason",
@@ -7036,6 +7039,7 @@ __all__ = (
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutJobRegistryCredentialRequest",
+    "PutOperationWebhookBindingRequest",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
