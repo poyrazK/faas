@@ -110,6 +110,29 @@ func TestQueueLeaseHonorsMaxConcurrency(t *testing.T) {
 	}
 }
 
+func TestQueueLeaseStopsAtResponseBudget(t *testing.T) {
+	f := newQueueLeaseFixture(t, api.PlanScale, "pull", 100)
+	big := json.RawMessage(`"` + strings.Repeat("a", api.QueueLeaseMaxResponseBytes/3) + `"`)
+	huge := json.RawMessage(`"` + strings.Repeat("b", api.QueueLeaseMaxResponseBytes+1) + `"`)
+	for i, payload := range []json.RawMessage{big, big, big, huge} {
+		if _, err := f.store.EnqueueInvocation(context.Background(), Invocation{AccountID: f.account.ID, AppID: f.app.ID,
+			Source: InvocationQueue, QueueName: "jobs", QueueBindingID: f.binding.ID, DueAt: time.Now().Add(time.Duration(i-10) * time.Millisecond),
+			Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(f.lease(t, 100, 30, "")); got != 2 {
+		t.Fatalf("first lease took %d messages, want the 2 that fit %d bytes", got, api.QueueLeaseMaxResponseBytes)
+	}
+	if got := len(f.lease(t, 100, 30, "")); got != 1 {
+		t.Fatalf("second lease took %d messages, want the third alone", got)
+	}
+	// A message larger than the budget still leases on its own.
+	if got := len(f.lease(t, 100, 30, "")); got != 1 {
+		t.Fatalf("oversized message: leased %d, want 1", got)
+	}
+}
+
 func TestQueueLeaseNackRetriesThenDeadLetters(t *testing.T) {
 	// Hobby allows three queue attempts.
 	f := newQueueLeaseFixture(t, api.PlanHobby, "pull", 5)

@@ -14,9 +14,12 @@ import (
 
 // QueueLeaseRequest is the body for POST /v1/apps/{slug}/queues/{queue}/leases.
 // Zero values select one message and the default visibility timeout.
+// WaitSeconds (at most QueueLeaseMaxWaitSeconds) holds a call that finds no
+// ready message until one arrives or the wait ends; zero returns at once.
 type QueueLeaseRequest struct {
 	MaxMessages              int `json:"max_messages,omitempty"`
 	VisibilityTimeoutSeconds int `json:"visibility_timeout_seconds,omitempty"`
+	WaitSeconds              int `json:"wait_seconds,omitempty"`
 }
 
 // QueueLeaseMessage is one leased message. Receipt is opaque and acts only

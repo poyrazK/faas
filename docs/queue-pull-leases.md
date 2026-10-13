@@ -19,13 +19,45 @@ curl -X POST "$GREGALE_API/v1/apps/my-worker/queue-bindings" \
 the app's workers. Pair the binding with a `queue_depth` scaling target to
 scale the worker pool on the backlog.
 
-## Consume
+## Consume with the SDK
+
+The SDK consumers lease with `wait_seconds`, run your handler, ack on success
+and nack (retry under the binding's policy) when it throws. While a handler
+runs they extend its lease at half the visibility timeout, and on SIGTERM they
+stop leasing and let in-flight messages finish within the app's stop grace
+period. Inside a Gregale VM they authenticate with a workload-identity token,
+so the image needs no API key.
+
+```js
+import { consumeQueue } from '@gregale/sdk-node/queues/runtime';
+
+consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message, { signal }) => {
+  await resize(message.payload, { signal }); // signal aborts if the lease is lost
+});
+```
+
+```python
+import asyncio
+from faas_sdk.queue_consumer import consume_queue
+
+async def handle(message):
+    await resize(message.payload)  # message.lease_lost is set if the lease is lost
+
+asyncio.run(consume_queue(app="my-worker", queue="jobs", handler=handle, concurrency=4))
+```
+
+Outside Gregale, pass `apiKey` / `api_key` (a key with `queues:consume`).
+`concurrency` is per process; the binding's `max_concurrency` still caps the
+whole app.
+
+## Consume over HTTP
 
 ```bash
 # Lease up to 10 messages, hidden from other consumers for 60 seconds.
+# wait_seconds holds the call until a message arrives (at most 20 s).
 curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"max_messages":10,"visibility_timeout_seconds":60}'
+  -d '{"max_messages":10,"visibility_timeout_seconds":60,"wait_seconds":20}'
 
 # Done: complete them.
 curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases:ack" \
@@ -41,7 +73,9 @@ curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/jobs/leases:extend" \
   -H "Authorization: Bearer $TOKEN" -d '{"receipts":["<receipt>"],"visibility_timeout_seconds":300}'
 ```
 
-An empty `messages` list means nothing is ready; poll again with back-off.
+With `wait_seconds`, a call that finds nothing waits for a message and returns
+it as soon as one is sent, so a worker can lease in a loop without sleeping.
+An empty `messages` list means nothing arrived during the wait; lease again.
 Each message is delivered at least once. A lease that is not acked, nacked or
 extended before its visibility timeout returns to the queue and is redelivered
 with a new attempt; the old receipt then reports `lease_expired`, so make
@@ -60,7 +94,9 @@ separately in `succeeded` and `failed`.
 
 ## Limits
 
-A call leases at most 10 messages and takes at most 100 receipts. The default
-visibility timeout is 30 seconds; the maximum is the plan's async invocation
-deadline. Leasing works on production queues; stage environment queues use
-their own delivery path.
+A call leases at most 100 messages and takes at most 100 receipts. It also
+stops adding messages once their payloads and headers would pass 8 MiB, but
+always returns at least one ready message. A call waits at most 20 seconds.
+The default visibility timeout is 30 seconds; the maximum is the plan's async
+invocation deadline. Leasing works on production queues; stage environment
+queues use their own delivery path.

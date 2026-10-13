@@ -87,6 +87,17 @@ func queueLeaseLimits(account Account, req QueueLeaseRequest) (int, int, error) 
 	return messages, visibility, nil
 }
 
+// queueLeaseFits reports whether one more message stays within the lease
+// response budget. The first message always fits: a single message is
+// already bounded by the plan's per-message size.
+func queueLeaseFits(leased, usedBytes int, inv Invocation) bool {
+	return leased == 0 || usedBytes+queueLeaseBytes(inv) <= api.QueueLeaseMaxResponseBytes
+}
+
+func queueLeaseBytes(inv Invocation) int {
+	return len(inv.Payload) + len(inv.Headers)
+}
+
 // newQueueLeaseReceipt returns the receipt handed to the consumer and the
 // digest the store keeps.
 func newQueueLeaseReceipt(invocationID string) (string, string, error) {

@@ -1,10 +1,12 @@
 package apidserver
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
@@ -21,6 +23,10 @@ func (h queueLeasesHost) Store() state.Store { return h.s.store }
 
 func (h queueLeasesHost) WorkloadVerifier() *workloadidentity.Verifier {
 	return h.s.flagsWorkloadVerifier
+}
+
+func (h queueLeasesHost) Subscribe(ctx context.Context, channels []string) (<-chan db.Notification, func(), error) {
+	return h.s.notif.Subscribe(ctx, channels)
 }
 
 // queueLeaseRoute authenticates a lease call. A JWT-shaped bearer is a

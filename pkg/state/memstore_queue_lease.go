@@ -72,6 +72,7 @@ func (m *MemStore) LeaseQueueMessages(_ context.Context, req QueueLeaseRequest) 
 	messages = min(messages, binding.MaxConcurrency-active)
 	limits := api.MustLimitsFor(account.Plan)
 	leases := []QueueLease{}
+	usedBytes := 0
 	for _, inv := range ready {
 		if len(leases) >= messages {
 			break
@@ -82,6 +83,10 @@ func (m *MemStore) LeaseQueueMessages(_ context.Context, req QueueLeaseRequest) 
 			m.invocations[inv.ID] = inv
 			continue
 		}
+		if !queueLeaseFits(len(leases), usedBytes, inv) {
+			break
+		}
+		usedBytes += queueLeaseBytes(inv)
 		receipt, digest, err := newQueueLeaseReceipt(inv.ID)
 		if err != nil {
 			return nil, err

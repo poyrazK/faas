@@ -55,16 +55,22 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 	}
 	instance := pgtype.Text{String: req.InstanceID, Valid: req.InstanceID != ""}
 	leases := make([]QueueLease, 0, messages)
+	usedBytes := 0
 	for _, id := range ids {
 		if len(leases) == messages {
 			break
 		}
-		lease, ok, err := leaseQueueCandidateTx(ctx, tx, q, app, id, visibility, instance, limits)
+		fits := func(inv Invocation) bool { return queueLeaseFits(len(leases), usedBytes, inv) }
+		lease, ok, err := leaseQueueCandidateTx(ctx, tx, q, app, id, visibility, instance, limits, fits)
+		if errors.Is(err, errQueueLeaseFull) {
+			break
+		}
 		if err != nil {
 			return nil, err
 		}
 		if ok {
 			leases = append(leases, lease)
+			usedBytes += queueLeaseBytes(lease.Invocation)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -73,10 +79,15 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 	return leases, nil
 }
 
+// errQueueLeaseFull stops a lease whose next message would pass the response
+// budget; the message stays pending for the next call.
+var errQueueLeaseFull = errors.New("state: queue lease response budget reached")
+
 // leaseQueueCandidateTx leases one candidate, or dead-letters it when earlier
 // leases already spent its attempt budget. A row another caller changed is
 // skipped.
-func leaseQueueCandidateTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app, id pgtype.UUID, visibility int, instance pgtype.Text, limits api.Limits) (QueueLease, bool, error) {
+func leaseQueueCandidateTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app, id pgtype.UUID, visibility int, instance pgtype.Text,
+	limits api.Limits, fits func(Invocation) bool) (QueueLease, bool, error) {
 	row, err := q.LockQueueLeaseInvocation(ctx, tx, id)
 	if err != nil {
 		return QueueLease{}, false, mapErr(err)
@@ -91,6 +102,9 @@ func leaseQueueCandidateTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app,
 	if environmentQueueDeliveryAttemptsExhausted(inv, limits) {
 		_, err := q.QueueLeaseExhaustInvocation(ctx, tx, sqlc.QueueLeaseExhaustInvocationParams{ID: id, AppID: app, Attempt: row.Attempts})
 		return QueueLease{}, false, err
+	}
+	if !fits(inv) {
+		return QueueLease{}, false, errQueueLeaseFull
 	}
 	row, err = q.QueueLeaseClaimInvocation(ctx, tx, sqlc.QueueLeaseClaimInvocationParams{
 		LeaseSeconds: int32(visibility), InstanceID: instance, ID: id, AppID: app})

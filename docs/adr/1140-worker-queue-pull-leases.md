@@ -22,8 +22,19 @@
      (default `api.QueueLeaseDefaultVisibilitySeconds`, at most the plan's
      async deadline) and returns each message's id, payload, headers,
      attempt and an opaque receipt. `…/leases:ack`, `…/leases:nack` and
-     `…/leases:extend` take receipts. An empty queue returns an empty list;
-     clients poll with back-off.
+     `…/leases:extend` take receipts. One call stops adding messages once
+     their payloads and headers would pass `api.QueueLeaseMaxResponseBytes`
+     (8 MiB) and always returns at least one ready message; the budget is
+     checked on the locked row before it is claimed, so nothing is leased
+     that is not returned.
+  1a. *Long-poll.* `wait_seconds` (at most `api.QueueLeaseMaxWaitSeconds`,
+     20) holds a call that finds nothing until a message is ready. The call
+     subscribes to `invocation_due` through apid's notify hub, which shares
+     one LISTEN connection per daemon, so a waiting consumer holds no
+     Postgres connection of its own. A notification for the app's queue
+     wakes it at once; a 2-second recheck covers delayed messages that
+     become due (no notification fires) and wake-ups the hub drops. Zero
+     returns at once with an empty list.
   2. *Receipts and fencing.* A receipt is the message id plus a random
      token; only the token's SHA-256 is stored, in a new
      `invocation_queue_lease_receipts` table. A receipt acts only while it
@@ -54,6 +65,14 @@
      with a message that points to pull leases. `gregale queue setup`
      creates pull bindings for worker and job apps. Existing push bindings of
      that shape can still be switched to pull or removed.
+  8. *SDK consumers.* `@gregale/sdk-node/queues/runtime` (`consumeQueue`)
+     and `faas_sdk.queue_consumer` (`consume_queue`) run the loop: long-poll
+     lease up to the free concurrency, handler, ack or nack with the error,
+     lease extension at half the visibility timeout (the handler's signal /
+     `lease_lost` fires when an extension reports the lease gone, and the
+     message is then left to its redelivery), and a graceful stop on SIGTERM
+     that finishes and settles in-flight messages. They take a workload token
+     for `gregale:queues` from the guest's loopback endpoint, or an API key.
 - **Consequences:** Worker pools become usable with Gregale queues: they
   scale on queue depth and drain it through leases, with at-least-once
   delivery, visibility timeouts, per-message ack/nack and the binding's retry
@@ -65,14 +84,21 @@
   production rows from `production_invocation_work`, which treats any
   receipt as stage ownership. Delivering into the guest through guest-init
   would add a second transport and couple queue semantics to the VM agent.
-  Long-polling leases can follow later on the same notification channel the
-  receive endpoint uses; polling with back-off is enough for the first
-  version.
+  Long-polling through `db.WaitForNotification`, as `/queues/receive`
+  does, holds a dedicated Postgres connection per waiting call; a pool of
+  long-polling workers would pin as many connections, the failure ADR-190's
+  notify hub exists to prevent. Client-side polling with back-off trades
+  latency for load and pushes the loop into every consumer.
 - **Validation:** Store tests cover lease, ack, nack to retry and to dead
   letter, extend, expiry and redelivery with a stale receipt, the
-  `max_concurrency` cap and binding-mode checks. API tests cover both
-  authentication paths and the rejected push + worker/job combination. A
-  scheduler test covers lease-holding workers surviving scale-in.
+  `max_concurrency` cap, the response byte budget and binding-mode checks.
+  API tests cover both authentication paths and the rejected push +
+  worker/job combination; `pkg/apid/queueleases` tests cover a wait woken
+  by a notification, the recheck without notifications, an empty wait and
+  the wait/batch bounds. A scheduler test covers lease-holding workers
+  surviving scale-in. Node and Python SDK tests cover ack and nack, the
+  cached workload token, the concurrency cap, extension and lease loss,
+  graceful stop and option validation.
 - **Rollback:** Reverting removes the endpoints; pull-bound messages would
   again wait without a consumer. The receipts table is additive and can be
   dropped once no leases remain.

@@ -82570,11 +82570,12 @@ components:
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
 
     QueueLeaseRequest:
-      description: "ADR-1140 pull lease. Zero values lease one message for the default visibility timeout (30s)."
+      description: "ADR-1140 pull lease. Zero values lease one message for the default visibility timeout (30s) and return at once."
       type: object
       properties:
-        max_messages: { type: integer, minimum: 0, maximum: 10 }
+        max_messages: { type: integer, minimum: 0, maximum: 100, description: "A lease also stops once its payloads and headers would pass 8 MiB; it always returns at least one ready message." }
         visibility_timeout_seconds: { type: integer, minimum: 0, description: "At most the plan's async invocation deadline." }
+        wait_seconds: { type: integer, minimum: 0, maximum: 20, description: "When no message is ready, hold the call until one arrives or this many seconds pass, then return an empty list." }
 
     QueueLeaseMessage:
       type: object
