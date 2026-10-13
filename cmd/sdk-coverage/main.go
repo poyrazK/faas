@@ -318,6 +318,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/profiles/canary-checks/{deployment}": "ListProfileCanaryChecks",
 	"GET /v1/apps/{slug}/profiles/periodic-monitors":          "ListProfilePeriodicMonitors",
 	"GET /v1/deployments/{id}/canary/profile-gate":            "GetProfileCanaryGate",
+	// ADR-750: the hyphenated path segment has no derivable Go identifier.
+	"GET /v1/service-map": "GetServiceMap",
 	// ADR-566: financial preview routes use financial-domain client names.
 	"GET /v1/billing/costs":                                                    "GetFinancialCosts",
 	"GET /v1/billing/forecast":                                                 "GetFinancialForecast",
