@@ -2,7 +2,13 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventExecutionLineageRetryJobHealthSample } from './EventExecutionLineageRetryJobHealthSample.js';
 export type EventExecutionLineageRetryJobSummary = {
+  /**
+   * Last known committed evaluation or skip; absent for unevaluated or legacy jobs.
+   */
+  last_progress_at?: string;
+  attention?: EventExecutionLineageRetryJobHealthSample;
   request_id: string;
   subscription_id: string;
   app_id: string;

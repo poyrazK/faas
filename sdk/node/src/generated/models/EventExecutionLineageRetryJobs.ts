@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EventExecutionLineageRetryJobAttentionPage } from './EventExecutionLineageRetryJobAttentionPage.js';
 import type { EventExecutionLineageRetryJobSummary } from './EventExecutionLineageRetryJobSummary.js';
 export type EventExecutionLineageRetryJobs = {
+  attention?: EventExecutionLineageRetryJobAttentionPage;
   jobs: Array<EventExecutionLineageRetryJobSummary>;
   /**
    * Continuation cursor; omitted when no further page was observed.

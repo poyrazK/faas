@@ -297,24 +297,69 @@ func (c *Client) ListEventExecutionLineageRetryJobControls(ctx context.Context, 
 
 // EventExecutionLineageRetryJobSummary omits case selections and individual results.
 type EventExecutionLineageRetryJobSummary struct {
-	RequestID      string    `json:"request_id"`
-	SubscriptionID string    `json:"subscription_id"`
-	AppID          string    `json:"app_id"`
-	Status         string    `json:"status"`
-	Selected       int       `json:"selected"`
-	Processed      int       `json:"processed"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	RetainUntil    time.Time `json:"retain_until"`
+	LastProgressAt *time.Time                                 `json:"last_progress_at,omitempty"`
+	Attention      *EventExecutionLineageRetryJobHealthSample `json:"attention,omitempty"`
+	RequestID      string                                     `json:"request_id"`
+	SubscriptionID string                                     `json:"subscription_id"`
+	AppID          string                                     `json:"app_id"`
+	Status         string                                     `json:"status"`
+	Selected       int                                        `json:"selected"`
+	Processed      int                                        `json:"processed"`
+	CreatedAt      time.Time                                  `json:"created_at"`
+	UpdatedAt      time.Time                                  `json:"updated_at"`
+	RetainUntil    time.Time                                  `json:"retain_until"`
 }
 type EventExecutionLineageRetryJobs struct {
-	Jobs      []EventExecutionLineageRetryJobSummary `json:"jobs"`
-	NextAfter string                                 `json:"next_after,omitempty"`
+	Attention *EventExecutionLineageRetryJobAttentionPage `json:"attention,omitempty"`
+	Jobs      []EventExecutionLineageRetryJobSummary      `json:"jobs"`
+	NextAfter string                                      `json:"next_after,omitempty"`
 }
 
-func (c *Client) ListEventExecutionLineageRetryJobs(ctx context.Context, app, sub, status, after string, limit int) (EventExecutionLineageRetryJobs, error) {
+type EventExecutionLineageRetryJobAttentionOptions struct {
+	Attention string `json:"attention,omitempty"`
+}
+
+func (o EventExecutionLineageRetryJobAttentionOptions) Validate(status string) error {
+	switch o.Attention {
+	case "", "any", "stalled", "retention_risk":
+	default:
+		return fmt.Errorf("attention must be any, stalled or retention_risk")
+	}
+	if o.Attention != "" && status != "" && status != "pending" && status != "paused" {
+		return fmt.Errorf("attention requires pending or paused status")
+	}
+	return nil
+}
+
+type EventExecutionLineageRetryJobAttentionPage struct {
+	Coverage                 string    `json:"coverage"`
+	Filter                   string    `json:"filter"`
+	ObservedAt               time.Time `json:"observed_at"`
+	HasMore                  bool      `json:"has_more"`
+	InactivityWarningSeconds int64     `json:"inactivity_warning_seconds"`
+	RetentionWarningSeconds  int64     `json:"retention_warning_seconds"`
+}
+
+func (c *Client) ListEventExecutionLineageRetryJobs(ctx context.Context, app, sub, status, after string, limit int, options ...EventExecutionLineageRetryJobAttentionOptions) (EventExecutionLineageRetryJobs, error) {
 	var out EventExecutionLineageRetryJobs
-	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs?status="+url.QueryEscape(status)+"&after="+url.QueryEscape(after)+"&limit="+strconv.Itoa(limit), nil, &out)
+	if len(options) > 1 {
+		return out, fmt.Errorf("supply at most one attention option")
+	}
+	var option EventExecutionLineageRetryJobAttentionOptions
+	if len(options) == 1 {
+		option = options[0]
+	}
+	if err := option.Validate(status); err != nil {
+		return out, err
+	}
+	query := url.Values{"status": {status}, "after": {after}, "limit": {strconv.Itoa(limit)}}
+	if option.Attention != "" {
+		query.Set("attention", option.Attention)
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(sub)+"/execution-reconciliation/retry-jobs?"+query.Encode(), nil, &out)
+	if err == nil && option.Attention != "" && (out.Attention == nil || out.Attention.Coverage != "live_matching_retry_jobs_page" || out.Attention.Filter != option.Attention || out.Attention.ObservedAt.IsZero() || out.Attention.HasMore != (out.NextAfter != "")) {
+		return out, fmt.Errorf("server did not return compatible attention-page metadata")
+	}
 	return out, err
 }
 

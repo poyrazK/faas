@@ -33889,7 +33889,7 @@ paths:
       tags: [events]
       operationId: listEventExecutionLineageRetryJobs
       summary: List retained bulk lineage retry job summaries.
-      description: Requires read scope. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Continue with next_after and the same status filter. Jobs created or changing into a filtered status above the cursor can require a fresh listing. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
+      description: Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Optional attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs, before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more plus per-job progress/retention diagnostics and the original creation guard. This list is not capped by the health sample or 500-job health scan. Continue with next_after and the same status and attention filters. Jobs created or changing into a filtered status or warning above the cursor can require restarting from the first page. No frozen snapshot or complete backlog count is claimed. Status completed/cancelled with attention is invalid. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -33911,6 +33911,10 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 0, maximum: 200, default: 50, description: Zero selects the default page size. }
+        - name: attention
+          in: query
+          description: Optional warning filter; applies only to active pending/paused jobs. Empty means ordinary retained listing.
+          schema: { type: string, enum: ['', any, stalled, retention_risk] }
       responses:
         '200':
           description: Retained job summaries; an existing subscription with no jobs returns an empty array.
@@ -63313,6 +63317,8 @@ components:
       additionalProperties: false
       required: [request_id, subscription_id, app_id, status, selected, processed, created_at, updated_at, retain_until]
       properties:
+        last_progress_at: { type: string, format: date-time, description: Last known committed evaluation or skip; absent for unevaluated or legacy jobs. }
+        attention: { $ref: "#/components/schemas/EventExecutionLineageRetryJobHealthSample" }
         request_id: { type: string, format: uuid }
         subscription_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
@@ -63322,11 +63328,29 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         retain_until: { type: string, format: date-time }
+    EventExecutionLineageRetryJobAttentionOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        attention: { type: string, enum: ['', any, stalled, retention_risk] }
+    EventExecutionLineageRetryJobAttentionPage:
+      type: object
+      additionalProperties: false
+      description: Current matching-page observations; no total count or frozen membership is promised.
+      required: [coverage, filter, observed_at, has_more, inactivity_warning_seconds, retention_warning_seconds]
+      properties:
+        coverage: { type: string, enum: [live_matching_retry_jobs_page] }
+        filter: { type: string, enum: [any, stalled, retention_risk] }
+        observed_at: { type: string, format: date-time }
+        has_more: { type: boolean, description: Another matching row was observed after this page; consistent with next_after. }
+        inactivity_warning_seconds: { type: integer, format: int64, minimum: 0 }
+        retention_warning_seconds: { type: integer, format: int64, minimum: 0 }
     EventExecutionLineageRetryJobs:
       type: object
       additionalProperties: false
       required: [jobs]
       properties:
+        attention: { $ref: "#/components/schemas/EventExecutionLineageRetryJobAttentionPage" }
         jobs:
           type: array
           maxItems: 200

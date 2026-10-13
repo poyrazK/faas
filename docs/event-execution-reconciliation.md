@@ -971,3 +971,57 @@ selection and requires a matching checkpoint or a new one. Older CLI/Go SDK
 versions cannot resume checkpoints using the new metric names. Alerts are local
 output/callbacks; no external messages or automatic recovery actions are sent.
 No API/schema migration or registry update is needed.
+
+## Investigate every matching retry job after an alert
+
+Use the retained job listing with an attention filter to go beyond the health
+endpoint's ten samples and 500-job diagnostic observation bound:
+
+```sh
+gregale --json events subscription-lineage-retry-jobs APP SUB --attention any --limit 50
+# Continue with the returned next_after and identical filters:
+gregale --json events subscription-lineage-retry-jobs APP SUB --attention any --limit 50 --after NEXT_AFTER
+# Focus on pending inactivity or deliberately paused work approaching expiry:
+gregale events subscription-lineage-retry-jobs APP SUB --attention stalled --status pending
+gregale events subscription-lineage-retry-jobs APP SUB --attention retention_risk --status paused
+```
+
+The existing GET `execution-reconciliation/retry-jobs` accepts optional
+`attention=any|stalled|retention_risk`. Any is the union of both warning types.
+Attention includes only retained pending/paused jobs created by the observation
+time. Stalled means pending with at least 15 minutes of inactivity; paused jobs
+never match it. Retention risk means an active job is within 24 hours of its
+original expiry. Status combines with attention; completed/cancelled plus
+attention returns 400. Read scope and MFA apply; no recovery action is performed.
+
+Filtering happens before the page limit. Pages preserve the existing newest
+creation-time/UUID ordering and exclusive keyset cursor, with default 50 and
+maximum 200 rows. They can inspect matching jobs beyond the diagnostic scan cap.
+An attention response has page metadata `coverage: live_matching_retry_jobs_page`,
+`filter`, `observed_at`, `has_more` and warning durations. `has_more` agrees with
+`next_after` and means another matching row was observed after this page. No total
+count or completeness claim for the whole backlog is supplied.
+
+Each listed job retains its original `created_at` guard and now includes optional
+`last_progress_at`. Attention requests also include per-job `attention` metadata:
+remaining cases, inactivity and known/unknown progress ages, warning flags and
+retention time. This uses the same evaluator as consumer health. Older evaluated
+jobs keep unknown progress; controls are not mistaken for progress. Summary and
+attention data contain no case selections/results, payloads or command receipts.
+Review a job and use its existing guarded controls deliberately; the listing does
+not reserve it or extend retention.
+
+Pages are live observations. Jobs can progress, pause/resume, expire or enter a
+warning between requests. Keep status and attention filters unchanged across
+pages. New or newly matching jobs above the cursor require restarting from the
+first page; an empty final page is not proof of future health. The PostgreSQL read
+keeps target ownership and page rows in one read-only snapshot; separate pages do
+not share that snapshot.
+
+Go accepts an optional `EventExecutionLineageRetryJobAttentionOptions` argument;
+existing calls without it keep ordinary listing behavior. Node and Python expose
+the optional attention query parameter and metadata models. CLI/Go reject an
+attention response missing compatible page metadata, so older servers cannot
+silently return an ordinary unfiltered list. Other clients should check metadata
+when talking to mixed API versions. No new route, migration or registry entry is
+needed.

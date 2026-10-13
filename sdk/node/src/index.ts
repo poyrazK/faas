@@ -409,6 +409,8 @@ export type { ControlEventExecutionLineageRetryJobRequest } from './generated/mo
 
 export type { EventExecutionLineageRetryJobControlReceipt } from './generated/models/EventExecutionLineageRetryJobControlReceipt.js';
 export type { EventExecutionLineageRetryJobControls } from './generated/models/EventExecutionLineageRetryJobControls.js';
+export type { EventExecutionLineageRetryJobAttentionOptions } from './generated/models/EventExecutionLineageRetryJobAttentionOptions.js';
+export type { EventExecutionLineageRetryJobAttentionPage } from './generated/models/EventExecutionLineageRetryJobAttentionPage.js';
 export type { EventExecutionLineageRetryJobHealth } from './generated/models/EventExecutionLineageRetryJobHealth.js';
 export type { EventExecutionLineageRetryJobHealthSample } from './generated/models/EventExecutionLineageRetryJobHealthSample.js';
 export type { EventExecutionLineageRetryJobControlFilters } from './generated/models/EventExecutionLineageRetryJobControlFilters.js';

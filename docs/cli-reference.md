@@ -2359,10 +2359,11 @@ Save a guarded preview as a reviewable retry request
 
 List retained bulk lineage retry job summaries
 
-`gregale events subscription-lineage-retry-jobs [--status <STATE>] [--limit <N>] [--after <CURSOR>] <app> <subscription-id>`
+`gregale events subscription-lineage-retry-jobs [--attention <WARNING>] [--status <STATE>] [--limit <N>] [--after <CURSOR>] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--attention <WARNING>` | any, stalled or retention_risk (active jobs only) |  |
 | `--status <STATE>` | pending, paused, completed or cancelled (default all) |  |
 | `--limit <N>` | page size (default 50, maximum 200) |  |
 | `--after <CURSOR>` | continuation cursor from the previous page |  |

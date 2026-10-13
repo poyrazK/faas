@@ -1780,7 +1780,7 @@ export class EventsService {
   }
   /**
    * List retained bulk lineage retry job summaries.
-   * Requires read scope. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Continue with next_after and the same status filter. Jobs created or changing into a filtered status above the cursor can require a fresh listing. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
+   * Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and progress are current observations; pagination is not a frozen snapshot. Optional attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs, before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more plus per-job progress/retention diagnostics and the original creation guard. This list is not capped by the health sample or 500-job health scan. Continue with next_after and the same status and attention filters. Jobs created or changing into a filtered status or warning above the cursor can require restarting from the first page. No frozen snapshot or complete backlog count is claimed. Status completed/cancelled with attention is invalid. Summaries omit case selections and results; GET an individual job for details or its original creation guard before cancellation.
    * @returns EventExecutionLineageRetryJobs Retained job summaries; an existing subscription with no jobs returns an empty array.
    * @throws ApiError
    */
@@ -1790,6 +1790,7 @@ export class EventsService {
     status,
     after,
     limit = 50,
+    attention,
   }: {
     slug: string,
     subscriptionId: string,
@@ -1802,6 +1803,10 @@ export class EventsService {
      */
     after?: string,
     limit?: number,
+    /**
+     * Optional warning filter; applies only to active pending/paused jobs. Empty means ordinary retained listing.
+     */
+    attention?: '' | 'any' | 'stalled' | 'retention_risk',
   }): CancelablePromise<EventExecutionLineageRetryJobs> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1814,6 +1819,7 @@ export class EventsService {
         'status': status,
         'after': after,
         'limit': limit,
+        'attention': attention,
       },
       errors: {
         400: `Invalid identifier, status filter or pagination.`,

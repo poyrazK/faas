@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.event_execution_lineage_retry_job_attention_page import EventExecutionLineageRetryJobAttentionPage
     from ..models.event_execution_lineage_retry_job_summary import EventExecutionLineageRetryJobSummary
 
 
@@ -17,6 +18,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobs")
 @_attrs_define
 class EventExecutionLineageRetryJobs:
     jobs: list[EventExecutionLineageRetryJobSummary]
+    attention: EventExecutionLineageRetryJobAttentionPage | Unset = UNSET
+    """Current matching-page observations; no total count or frozen membership is promised."""
     next_after: str | Unset = UNSET
     """Continuation cursor; omitted when no further page was observed."""
 
@@ -25,6 +28,10 @@ class EventExecutionLineageRetryJobs:
         for jobs_item_data in self.jobs:
             jobs_item = jobs_item_data.to_dict()
             jobs.append(jobs_item)
+
+        attention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.attention, Unset):
+            attention = self.attention.to_dict()
 
         next_after = self.next_after
 
@@ -35,6 +42,8 @@ class EventExecutionLineageRetryJobs:
                 "jobs": jobs,
             }
         )
+        if attention is not UNSET:
+            field_dict["attention"] = attention
         if next_after is not UNSET:
             field_dict["next_after"] = next_after
 
@@ -42,6 +51,7 @@ class EventExecutionLineageRetryJobs:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.event_execution_lineage_retry_job_attention_page import EventExecutionLineageRetryJobAttentionPage
         from ..models.event_execution_lineage_retry_job_summary import EventExecutionLineageRetryJobSummary
 
         d = dict(src_dict)
@@ -52,10 +62,18 @@ class EventExecutionLineageRetryJobs:
 
             jobs.append(jobs_item)
 
+        _attention = d.pop("attention", UNSET)
+        attention: EventExecutionLineageRetryJobAttentionPage | Unset
+        if isinstance(_attention, Unset):
+            attention = UNSET
+        else:
+            attention = EventExecutionLineageRetryJobAttentionPage.from_dict(_attention)
+
         next_after = d.pop("next_after", UNSET)
 
         event_execution_lineage_retry_jobs = cls(
             jobs=jobs,
+            attention=attention,
             next_after=next_after,
         )
 

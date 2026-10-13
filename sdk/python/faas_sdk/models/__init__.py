@@ -1119,6 +1119,15 @@ from .event_execution_lineage_case_backfill_status import EventExecutionLineageC
 from .event_execution_lineage_case_status import EventExecutionLineageCaseStatus
 from .event_execution_lineage_cases import EventExecutionLineageCases
 from .event_execution_lineage_retry_job import EventExecutionLineageRetryJob
+from .event_execution_lineage_retry_job_attention_options import EventExecutionLineageRetryJobAttentionOptions
+from .event_execution_lineage_retry_job_attention_options_attention import (
+    EventExecutionLineageRetryJobAttentionOptionsAttention,
+)
+from .event_execution_lineage_retry_job_attention_page import EventExecutionLineageRetryJobAttentionPage
+from .event_execution_lineage_retry_job_attention_page_coverage import (
+    EventExecutionLineageRetryJobAttentionPageCoverage,
+)
+from .event_execution_lineage_retry_job_attention_page_filter import EventExecutionLineageRetryJobAttentionPageFilter
 from .event_execution_lineage_retry_job_control_filters import EventExecutionLineageRetryJobControlFilters
 from .event_execution_lineage_retry_job_control_filters_action import EventExecutionLineageRetryJobControlFiltersAction
 from .event_execution_lineage_retry_job_control_filters_credential_type import (
@@ -1712,6 +1721,7 @@ from .list_event_execution_lineage_retry_job_controls_action import ListEventExe
 from .list_event_execution_lineage_retry_job_controls_credential_type import (
     ListEventExecutionLineageRetryJobControlsCredentialType,
 )
+from .list_event_execution_lineage_retry_jobs_attention import ListEventExecutionLineageRetryJobsAttention
 from .list_event_execution_lineage_retry_jobs_status import ListEventExecutionLineageRetryJobsStatus
 from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
@@ -5179,6 +5189,11 @@ __all__ = (
     "EventExecutionLineageCases",
     "EventExecutionLineageCaseStatus",
     "EventExecutionLineageRetryJob",
+    "EventExecutionLineageRetryJobAttentionOptions",
+    "EventExecutionLineageRetryJobAttentionOptionsAttention",
+    "EventExecutionLineageRetryJobAttentionPage",
+    "EventExecutionLineageRetryJobAttentionPageCoverage",
+    "EventExecutionLineageRetryJobAttentionPageFilter",
     "EventExecutionLineageRetryJobControlFilters",
     "EventExecutionLineageRetryJobControlFiltersAction",
     "EventExecutionLineageRetryJobControlFiltersCredentialType",
@@ -5744,6 +5759,7 @@ __all__ = (
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
     "ListEventExecutionLineageRetryJobControlsCredentialType",
+    "ListEventExecutionLineageRetryJobsAttention",
     "ListEventExecutionLineageRetryJobsStatus",
     "ListEventRecoveriesMode",
     "ListEventRecoveriesState",

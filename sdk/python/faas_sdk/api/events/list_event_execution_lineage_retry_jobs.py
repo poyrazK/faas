@@ -8,6 +8,9 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.event_execution_lineage_retry_jobs import EventExecutionLineageRetryJobs
+from ...models.list_event_execution_lineage_retry_jobs_attention import (
+    ListEventExecutionLineageRetryJobsAttention,
+)
 from ...models.list_event_execution_lineage_retry_jobs_status import (
     ListEventExecutionLineageRetryJobsStatus,
 )
@@ -22,6 +25,7 @@ def _get_kwargs(
     status: ListEventExecutionLineageRetryJobsStatus | Unset = UNSET,
     after: str | Unset = UNSET,
     limit: int | Unset = 50,
+    attention: ListEventExecutionLineageRetryJobsAttention | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -35,6 +39,12 @@ def _get_kwargs(
     params["after"] = after
 
     params["limit"] = limit
+
+    json_attention: str | Unset = UNSET
+    if not isinstance(attention, Unset):
+        json_attention = attention
+
+    params["attention"] = json_attention
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -108,15 +118,22 @@ def sync_detailed(
     status: ListEventExecutionLineageRetryJobsStatus | Unset = UNSET,
     after: str | Unset = UNSET,
     limit: int | Unset = 50,
+    attention: ListEventExecutionLineageRetryJobsAttention | Unset = UNSET,
 ) -> Response[EventExecutionLineageRetryJobs | Problem]:
     """List retained bulk lineage retry job summaries.
 
-     Requires read scope. Returns live retained jobs newest first by original creation time, with request
-    UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and
-    progress are current observations; pagination is not a frozen snapshot. Continue with next_after and
-    the same status filter. Jobs created or changing into a filtered status above the cursor can require
-    a fresh listing. Summaries omit case selections and results; GET an individual job for details or
-    its original creation guard before cancellation.
+     Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with
+    request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status
+    and progress are current observations; pagination is not a frozen snapshot. Optional
+    attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs,
+    before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk
+    uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more
+    plus per-job progress/retention diagnostics and the original creation guard. This list is not capped
+    by the health sample or 500-job health scan. Continue with next_after and the same status and
+    attention filters. Jobs created or changing into a filtered status or warning above the cursor can
+    require restarting from the first page. No frozen snapshot or complete backlog count is claimed.
+    Status completed/cancelled with attention is invalid. Summaries omit case selections and results;
+    GET an individual job for details or its original creation guard before cancellation.
 
     Args:
         slug (str):
@@ -124,6 +141,7 @@ def sync_detailed(
         status (ListEventExecutionLineageRetryJobsStatus | Unset):
         after (str | Unset):
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        attention (ListEventExecutionLineageRetryJobsAttention | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,6 +157,7 @@ def sync_detailed(
         status=status,
         after=after,
         limit=limit,
+        attention=attention,
     )
 
     response = client.get_httpx_client().request(
@@ -156,15 +175,22 @@ def sync(
     status: ListEventExecutionLineageRetryJobsStatus | Unset = UNSET,
     after: str | Unset = UNSET,
     limit: int | Unset = 50,
+    attention: ListEventExecutionLineageRetryJobsAttention | Unset = UNSET,
 ) -> EventExecutionLineageRetryJobs | Problem | None:
     """List retained bulk lineage retry job summaries.
 
-     Requires read scope. Returns live retained jobs newest first by original creation time, with request
-    UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and
-    progress are current observations; pagination is not a frozen snapshot. Continue with next_after and
-    the same status filter. Jobs created or changing into a filtered status above the cursor can require
-    a fresh listing. Summaries omit case selections and results; GET an individual job for details or
-    its original creation guard before cancellation.
+     Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with
+    request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status
+    and progress are current observations; pagination is not a frozen snapshot. Optional
+    attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs,
+    before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk
+    uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more
+    plus per-job progress/retention diagnostics and the original creation guard. This list is not capped
+    by the health sample or 500-job health scan. Continue with next_after and the same status and
+    attention filters. Jobs created or changing into a filtered status or warning above the cursor can
+    require restarting from the first page. No frozen snapshot or complete backlog count is claimed.
+    Status completed/cancelled with attention is invalid. Summaries omit case selections and results;
+    GET an individual job for details or its original creation guard before cancellation.
 
     Args:
         slug (str):
@@ -172,6 +198,7 @@ def sync(
         status (ListEventExecutionLineageRetryJobsStatus | Unset):
         after (str | Unset):
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        attention (ListEventExecutionLineageRetryJobsAttention | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -188,6 +215,7 @@ def sync(
         status=status,
         after=after,
         limit=limit,
+        attention=attention,
     ).parsed
 
 
@@ -199,15 +227,22 @@ async def asyncio_detailed(
     status: ListEventExecutionLineageRetryJobsStatus | Unset = UNSET,
     after: str | Unset = UNSET,
     limit: int | Unset = 50,
+    attention: ListEventExecutionLineageRetryJobsAttention | Unset = UNSET,
 ) -> Response[EventExecutionLineageRetryJobs | Problem]:
     """List retained bulk lineage retry job summaries.
 
-     Requires read scope. Returns live retained jobs newest first by original creation time, with request
-    UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and
-    progress are current observations; pagination is not a frozen snapshot. Continue with next_after and
-    the same status filter. Jobs created or changing into a filtered status above the cursor can require
-    a fresh listing. Summaries omit case selections and results; GET an individual job for details or
-    its original creation guard before cancellation.
+     Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with
+    request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status
+    and progress are current observations; pagination is not a frozen snapshot. Optional
+    attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs,
+    before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk
+    uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more
+    plus per-job progress/retention diagnostics and the original creation guard. This list is not capped
+    by the health sample or 500-job health scan. Continue with next_after and the same status and
+    attention filters. Jobs created or changing into a filtered status or warning above the cursor can
+    require restarting from the first page. No frozen snapshot or complete backlog count is claimed.
+    Status completed/cancelled with attention is invalid. Summaries omit case selections and results;
+    GET an individual job for details or its original creation guard before cancellation.
 
     Args:
         slug (str):
@@ -215,6 +250,7 @@ async def asyncio_detailed(
         status (ListEventExecutionLineageRetryJobsStatus | Unset):
         after (str | Unset):
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        attention (ListEventExecutionLineageRetryJobsAttention | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,6 +266,7 @@ async def asyncio_detailed(
         status=status,
         after=after,
         limit=limit,
+        attention=attention,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -245,15 +282,22 @@ async def asyncio(
     status: ListEventExecutionLineageRetryJobsStatus | Unset = UNSET,
     after: str | Unset = UNSET,
     limit: int | Unset = 50,
+    attention: ListEventExecutionLineageRetryJobsAttention | Unset = UNSET,
 ) -> EventExecutionLineageRetryJobs | Problem | None:
     """List retained bulk lineage retry job summaries.
 
-     Requires read scope. Returns live retained jobs newest first by original creation time, with request
-    UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status and
-    progress are current observations; pagination is not a frozen snapshot. Continue with next_after and
-    the same status filter. Jobs created or changing into a filtered status above the cursor can require
-    a fresh listing. Summaries omit case selections and results; GET an individual job for details or
-    its original creation guard before cancellation.
+     Requires read scope and MFA. Returns live retained jobs newest first by original creation time, with
+    request UUID as a descending tie-breaker. Expired jobs are excluded before physical cleanup. Status
+    and progress are current observations; pagination is not a frozen snapshot. Optional
+    attention=any|stalled|retention_risk restricts the list to matching retained pending/paused jobs,
+    before pagination. Any matches either warning. Stalled uses 15 minutes of inactivity; retention risk
+    uses a 24-hour deadline. Attention responses include observation time, page coverage and has_more
+    plus per-job progress/retention diagnostics and the original creation guard. This list is not capped
+    by the health sample or 500-job health scan. Continue with next_after and the same status and
+    attention filters. Jobs created or changing into a filtered status or warning above the cursor can
+    require restarting from the first page. No frozen snapshot or complete backlog count is claimed.
+    Status completed/cancelled with attention is invalid. Summaries omit case selections and results;
+    GET an individual job for details or its original creation guard before cancellation.
 
     Args:
         slug (str):
@@ -261,6 +305,7 @@ async def asyncio(
         status (ListEventExecutionLineageRetryJobsStatus | Unset):
         after (str | Unset):
         limit (int | Unset): Zero selects the default page size. Default: 50.
+        attention (ListEventExecutionLineageRetryJobsAttention | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -278,5 +323,6 @@ async def asyncio(
             status=status,
             after=after,
             limit=limit,
+            attention=attention,
         )
     ).parsed

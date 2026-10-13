@@ -59,39 +59,57 @@ func lineageRetryJobsResult(jobs []api.EventExecutionLineageRetryJobSummary, lim
 	return out
 }
 
-func (s *PgStore) ListEventExecutionLineageRetryJobs(ctx context.Context, account, app, sub, status, after string, limit int) (api.EventExecutionLineageRetryJobs, error) {
+func (s *PgStore) ListEventExecutionLineageRetryJobs(ctx context.Context, account, app, sub, status, after string, limit int, options ...api.EventExecutionLineageRetryJobAttentionOptions) (api.EventExecutionLineageRetryJobs, error) {
 	out := api.EventExecutionLineageRetryJobs{Jobs: []api.EventExecutionLineageRetryJobSummary{}}
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
+		return out, err
+	}
+	attention, err := lineageRetryJobAttentionOption(status, options)
+	if err != nil {
 		return out, err
 	}
 	page, err := lineageRetryJobsPagination(status, after, limit)
 	if err != nil {
 		return out, err
 	}
+	now := time.Now().UTC()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	_, err = q.EventConsumerExecutionTarget(ctx, s.pool, sqlc.EventConsumerExecutionTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)})
+	_, err = q.EventConsumerExecutionTarget(ctx, tx, sqlc.EventConsumerExecutionTargetParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, ErrNotFound
 	}
 	if err != nil {
 		return out, err
 	}
-	rows, err := q.ListEventExecutionLineageRetryJobs(ctx, s.pool, sqlc.ListEventExecutionLineageRetryJobsParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), Status: status, HasAfter: after != "", AfterCreatedAt: NewPgtypeTime(page.createdAt), AfterRequestID: mustPgUUID(page.requestID), PageLimit: int32(page.limit + 1)})
+	rows, err := q.ListEventExecutionLineageRetryJobs(ctx, tx, sqlc.ListEventExecutionLineageRetryJobsParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), SubscriptionID: mustPgUUID(sub), Status: status, HasAfter: after != "", AfterCreatedAt: NewPgtypeTime(page.createdAt), AfterRequestID: mustPgUUID(page.requestID), PageLimit: int32(page.limit + 1), AttentionFilter: attention, NowAt: pgtypeFromTime(now), StalledBefore: pgtypeFromTime(now.Add(-api.EventExecutionLineageRetryInactivityWarning)), RetentionBefore: pgtypeFromTime(now.Add(api.EventExecutionLineageRetryRetentionWarning))})
 	if err != nil {
 		return out, err
 	}
 	for _, row := range rows {
-		out.Jobs = append(out.Jobs, api.EventExecutionLineageRetryJobSummary{RequestID: uuidString(row.RequestID), SubscriptionID: uuidString(row.SubscriptionID), AppID: uuidString(row.AppID), Status: row.State, Selected: int(row.Selected), Processed: int(row.Processed), CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), RetainUntil: timeFromPgtype(row.RetainUntil)})
+		out.Jobs = append(out.Jobs, api.EventExecutionLineageRetryJobSummary{RequestID: uuidString(row.RequestID), SubscriptionID: uuidString(row.SubscriptionID), AppID: uuidString(row.AppID), Status: row.State, Selected: int(row.Selected), Processed: int(row.Processed), CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), RetainUntil: timeFromPgtype(row.RetainUntil), LastProgressAt: timestamptzToTimePtr(row.LastProgressAt)})
 	}
-	return lineageRetryJobsResult(out.Jobs, page.limit), nil
+	result, err := lineageRetryJobAttentionResult(out.Jobs, page.limit, attention, now)
+	if err != nil {
+		return out, err
+	}
+	return result, tx.Commit(ctx)
 }
 
-func (m *MemStore) ListEventExecutionLineageRetryJobs(ctx context.Context, account, app, sub, status, after string, limit int) (api.EventExecutionLineageRetryJobs, error) {
+func (m *MemStore) ListEventExecutionLineageRetryJobs(ctx context.Context, account, app, sub, status, after string, limit int, options ...api.EventExecutionLineageRetryJobAttentionOptions) (api.EventExecutionLineageRetryJobs, error) {
 	out := api.EventExecutionLineageRetryJobs{Jobs: []api.EventExecutionLineageRetryJobSummary{}}
 	if err := ctx.Err(); err != nil {
 		return out, err
 	}
 	if err := validSubscriptionControlIDs(account, app, sub); err != nil {
+		return out, err
+	}
+	attention, err := lineageRetryJobAttentionOption(status, options)
+	if err != nil {
 		return out, err
 	}
 	page, err := lineageRetryJobsPagination(status, after, limit)
@@ -105,13 +123,13 @@ func (m *MemStore) ListEventExecutionLineageRetryJobs(ctx context.Context, accou
 	}
 	now := time.Now()
 	for _, job := range m.eventExecutionCoverage[canonicalMemUUID(sub)].jobs {
-		if !job.RetainUntil.After(now) || (status != "" && status != job.Status) {
+		if !job.RetainUntil.After(now) || (status != "" && status != job.Status) || !lineageRetryJobMatchesAttention(job.Status, job.CreatedAt, job.UpdatedAt, job.RetainUntil, attention, now) {
 			continue
 		}
 		if after != "" && (job.CreatedAt.After(page.createdAt) || (job.CreatedAt.Equal(page.createdAt) && job.RequestID >= page.requestID)) {
 			continue
 		}
-		out.Jobs = append(out.Jobs, api.EventExecutionLineageRetryJobSummary{RequestID: job.RequestID, SubscriptionID: job.SubscriptionID, AppID: job.AppID, Status: job.Status, Selected: len(job.Items), Processed: job.Processed, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt, RetainUntil: job.RetainUntil})
+		out.Jobs = append(out.Jobs, api.EventExecutionLineageRetryJobSummary{RequestID: job.RequestID, SubscriptionID: job.SubscriptionID, AppID: job.AppID, Status: job.Status, Selected: len(job.Items), Processed: job.Processed, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt, RetainUntil: job.RetainUntil, LastProgressAt: copyLineageProgressTime(job.LastProgressAt)})
 	}
 	sort.Slice(out.Jobs, func(i, j int) bool {
 		if out.Jobs[i].CreatedAt.Equal(out.Jobs[j].CreatedAt) {
@@ -119,5 +137,9 @@ func (m *MemStore) ListEventExecutionLineageRetryJobs(ctx context.Context, accou
 		}
 		return out.Jobs[i].CreatedAt.After(out.Jobs[j].CreatedAt)
 	})
-	return lineageRetryJobsResult(out.Jobs, page.limit), nil
+	result, err := lineageRetryJobAttentionResult(out.Jobs, page.limit, attention, now)
+	if err != nil {
+		return out, err
+	}
+	return result, nil
 }

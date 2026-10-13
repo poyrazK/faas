@@ -29,7 +29,7 @@ func (s *Service) ListEventExecutionLineageRetryJobs(w http.ResponseWriter, r *h
 			return
 		}
 	}
-	out, err := store.ListEventExecutionLineageRetryJobs(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.URL.Query().Get("status"), r.URL.Query().Get("after"), limit)
+	out, err := store.ListEventExecutionLineageRetryJobs(ctx, acct.ID, app, r.PathValue("subscriptionID"), r.URL.Query().Get("status"), r.URL.Query().Get("after"), limit, api.EventExecutionLineageRetryJobAttentionOptions{Attention: r.URL.Query().Get("attention")})
 	if !writeLineageRetryJobListingError(w, err) {
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
@@ -38,11 +38,11 @@ func (s *Service) ListEventExecutionLineageRetryJobs(w http.ResponseWriter, r *h
 func writeLineageRetryJobListingError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, state.ErrInvalidArgument):
-		api.WriteProblem(w, api.ErrValidation("invalid subscription, job status filter or pagination"))
+		api.WriteProblem(w, api.ErrValidation("invalid subscription, job status/attention filter or pagination"))
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "no accessible event subscription")
 	case errors.Is(err, context.DeadlineExceeded):
-		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Lineage job listing timed out", "repeat the listing with the same cursor and status filter"))
+		api.WriteProblem(w, api.NewProblem(504, api.CodeInternal, "Lineage job listing timed out", "repeat the listing with the same cursor, status and attention filters"))
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("event execution lineage job listing"))
 	default:

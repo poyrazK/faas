@@ -343,11 +343,15 @@ ON CONFLICT(subscription_id,outbox_id) DO NOTHING;
 -- name: ListEventExecutionLineageRetryJobs :many
 SELECT request_id,subscription_id,app_id,state,
  jsonb_array_length(snapshot->'items')::integer AS selected,
- (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until
+ (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until,
+ (snapshot->>'last_progress_at')::timestamptz AS last_progress_at
 FROM event_execution_lineage_retry_jobs
 WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
- AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until>statement_timestamp()
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND retain_until>sqlc.arg(now_at)::timestamptz
  AND (sqlc.arg(status)::text='' OR state=sqlc.arg(status)::text)
+ AND (sqlc.arg(attention_filter)::text='' OR (state IN ('pending','paused') AND created_at<=sqlc.arg(now_at)::timestamptz AND (
+  (sqlc.arg(attention_filter)::text IN ('any','stalled') AND state='pending' AND updated_at<=sqlc.arg(stalled_before)::timestamptz)
+  OR (sqlc.arg(attention_filter)::text IN ('any','retention_risk') AND retain_until<=sqlc.arg(retention_before)::timestamptz))))
  AND (NOT sqlc.arg(has_after)::boolean OR (created_at,request_id)<(sqlc.arg(after_created_at)::timestamptz,sqlc.arg(after_request_id)::uuid))
 ORDER BY created_at DESC,request_id DESC LIMIT sqlc.arg(page_limit)::integer;
 

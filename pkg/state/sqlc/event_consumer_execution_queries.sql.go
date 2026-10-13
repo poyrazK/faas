@@ -1346,24 +1346,32 @@ func (q *Queries) ListEventExecutionLineageRetryControlReceipts(ctx context.Cont
 const listEventExecutionLineageRetryJobs = `-- name: ListEventExecutionLineageRetryJobs :many
 SELECT request_id,subscription_id,app_id,state,
  jsonb_array_length(snapshot->'items')::integer AS selected,
- (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until
+ (snapshot->>'processed')::integer AS processed,created_at,updated_at,retain_until,
+ (snapshot->>'last_progress_at')::timestamptz AS last_progress_at
 FROM event_execution_lineage_retry_jobs
 WHERE account_id=$1::uuid AND app_id=$2::uuid
- AND subscription_id=$3::uuid AND retain_until>statement_timestamp()
- AND ($4::text='' OR state=$4::text)
- AND (NOT $5::boolean OR (created_at,request_id)<($6::timestamptz,$7::uuid))
-ORDER BY created_at DESC,request_id DESC LIMIT $8::integer
+ AND subscription_id=$3::uuid AND retain_until>$4::timestamptz
+ AND ($5::text='' OR state=$5::text)
+ AND ($6::text='' OR (state IN ('pending','paused') AND created_at<=$4::timestamptz AND (
+  ($6::text IN ('any','stalled') AND state='pending' AND updated_at<=$7::timestamptz)
+  OR ($6::text IN ('any','retention_risk') AND retain_until<=$8::timestamptz))))
+ AND (NOT $9::boolean OR (created_at,request_id)<($10::timestamptz,$11::uuid))
+ORDER BY created_at DESC,request_id DESC LIMIT $12::integer
 `
 
 type ListEventExecutionLineageRetryJobsParams struct {
-	AccountID      pgtype.UUID
-	AppID          pgtype.UUID
-	SubscriptionID pgtype.UUID
-	Status         string
-	HasAfter       bool
-	AfterCreatedAt pgtype.Timestamptz
-	AfterRequestID pgtype.UUID
-	PageLimit      int32
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	SubscriptionID  pgtype.UUID
+	NowAt           pgtype.Timestamptz
+	Status          string
+	AttentionFilter string
+	StalledBefore   pgtype.Timestamptz
+	RetentionBefore pgtype.Timestamptz
+	HasAfter        bool
+	AfterCreatedAt  pgtype.Timestamptz
+	AfterRequestID  pgtype.UUID
+	PageLimit       int32
 }
 
 type ListEventExecutionLineageRetryJobsRow struct {
@@ -1376,6 +1384,7 @@ type ListEventExecutionLineageRetryJobsRow struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	RetainUntil    pgtype.Timestamptz
+	LastProgressAt pgtype.Timestamptz
 }
 
 func (q *Queries) ListEventExecutionLineageRetryJobs(ctx context.Context, db DBTX, arg ListEventExecutionLineageRetryJobsParams) ([]ListEventExecutionLineageRetryJobsRow, error) {
@@ -1383,7 +1392,11 @@ func (q *Queries) ListEventExecutionLineageRetryJobs(ctx context.Context, db DBT
 		arg.AccountID,
 		arg.AppID,
 		arg.SubscriptionID,
+		arg.NowAt,
 		arg.Status,
+		arg.AttentionFilter,
+		arg.StalledBefore,
+		arg.RetentionBefore,
 		arg.HasAfter,
 		arg.AfterCreatedAt,
 		arg.AfterRequestID,
@@ -1406,6 +1419,7 @@ func (q *Queries) ListEventExecutionLineageRetryJobs(ctx context.Context, db DBT
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RetainUntil,
+			&i.LastProgressAt,
 		); err != nil {
 			return nil, err
 		}
