@@ -3300,6 +3300,21 @@
     "kind": "operational"
   },
   {
+    "table": "event_execution_lineage_retry_jobs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "request_id",
+      "retain_until",
+      "snapshot",
+      "state",
+      "subscription_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_execution_outcomes",
     "columns": [
       "account_id",
