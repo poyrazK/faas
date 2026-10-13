@@ -14,6 +14,8 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+    from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
+    from ..models.operation_workflow_obligation_reaffirmation import OperationWorkflowObligationReaffirmation
     from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
     from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
     from ..models.operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
@@ -46,6 +48,9 @@ class OperationWorkflowReadinessCoordination:
     updated_by: str
     """OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter application
     evidence."""
+    fulfillment_reviews: list[OperationWorkflowObligationFulfillmentReview] | Unset = UNSET
+    reaffirmations: list[OperationWorkflowObligationReaffirmation] | Unset = UNSET
+    """Immutable human reaffirmations with fresh application evidence; capacity exhaustion rejects further writes."""
     reopenings: list[OperationWorkflowObligationReopening] | Unset = UNSET
     """Retained immutable human reopening receipts. Capacity exhaustion rejects further reopening without pruning
     prior decisions."""
@@ -78,6 +83,20 @@ class OperationWorkflowReadinessCoordination:
         updated_at = self.updated_at.isoformat()
 
         updated_by = self.updated_by
+
+        fulfillment_reviews: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.fulfillment_reviews, Unset):
+            fulfillment_reviews = []
+            for fulfillment_reviews_item_data in self.fulfillment_reviews:
+                fulfillment_reviews_item = fulfillment_reviews_item_data.to_dict()
+                fulfillment_reviews.append(fulfillment_reviews_item)
+
+        reaffirmations: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.reaffirmations, Unset):
+            reaffirmations = []
+            for reaffirmations_item_data in self.reaffirmations:
+                reaffirmations_item = reaffirmations_item_data.to_dict()
+                reaffirmations.append(reaffirmations_item)
 
         reopenings: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.reopenings, Unset):
@@ -126,6 +145,10 @@ class OperationWorkflowReadinessCoordination:
                 "updated_by": updated_by,
             }
         )
+        if fulfillment_reviews is not UNSET:
+            field_dict["fulfillment_reviews"] = fulfillment_reviews
+        if reaffirmations is not UNSET:
+            field_dict["reaffirmations"] = reaffirmations
         if reopenings is not UNSET:
             field_dict["reopenings"] = reopenings
         if fulfillments is not UNSET:
@@ -146,6 +169,10 @@ class OperationWorkflowReadinessCoordination:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+        from ..models.operation_workflow_obligation_fulfillment_review import (
+            OperationWorkflowObligationFulfillmentReview,
+        )
+        from ..models.operation_workflow_obligation_reaffirmation import OperationWorkflowObligationReaffirmation
         from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
         from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
         from ..models.operation_workflow_readiness_completion import OperationWorkflowReadinessCompletion
@@ -162,6 +189,26 @@ class OperationWorkflowReadinessCoordination:
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
         updated_by = d.pop("updated_by")
+
+        _fulfillment_reviews = d.pop("fulfillment_reviews", UNSET)
+        fulfillment_reviews: list[OperationWorkflowObligationFulfillmentReview] | Unset = UNSET
+        if _fulfillment_reviews is not UNSET:
+            fulfillment_reviews = []
+            for fulfillment_reviews_item_data in _fulfillment_reviews:
+                fulfillment_reviews_item = OperationWorkflowObligationFulfillmentReview.from_dict(
+                    fulfillment_reviews_item_data
+                )
+
+                fulfillment_reviews.append(fulfillment_reviews_item)
+
+        _reaffirmations = d.pop("reaffirmations", UNSET)
+        reaffirmations: list[OperationWorkflowObligationReaffirmation] | Unset = UNSET
+        if _reaffirmations is not UNSET:
+            reaffirmations = []
+            for reaffirmations_item_data in _reaffirmations:
+                reaffirmations_item = OperationWorkflowObligationReaffirmation.from_dict(reaffirmations_item_data)
+
+                reaffirmations.append(reaffirmations_item)
 
         _reopenings = d.pop("reopenings", UNSET)
         reopenings: list[OperationWorkflowObligationReopening] | Unset = UNSET
@@ -220,6 +267,8 @@ class OperationWorkflowReadinessCoordination:
             note=note,
             updated_at=updated_at,
             updated_by=updated_by,
+            fulfillment_reviews=fulfillment_reviews,
+            reaffirmations=reaffirmations,
             reopenings=reopenings,
             fulfillments=fulfillments,
             target_bindings=target_bindings,

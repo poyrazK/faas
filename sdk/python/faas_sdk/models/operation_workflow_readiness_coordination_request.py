@@ -14,6 +14,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_obligation_fulfillment_request import OperationWorkflowObligationFulfillmentRequest
+    from ..models.operation_workflow_obligation_reaffirmation_request import (
+        OperationWorkflowObligationReaffirmationRequest,
+    )
     from ..models.operation_workflow_obligation_reopening_request import OperationWorkflowObligationReopeningRequest
     from ..models.operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
     from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
@@ -42,6 +45,12 @@ class OperationWorkflowReadinessCoordinationRequest:
     note: str
     """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
     evidence."""
+    reaffirmation: OperationWorkflowObligationReaffirmationRequest | Unset = UNSET
+    """Explicitly reaffirm a flagged latest fulfillment without reopening work. Preserve source status, owner, note
+    and deadline and do not combine with other actions. Source revision, binding, fulfillment time and review
+    fingerprint fence stale decisions. Evidence must be a full application state report for the exact case under the
+    fresh current contract and be published after review was required; current retained evidence is rechecked
+    independently before commit."""
     reopening: OperationWorkflowObligationReopeningRequest | Unset = UNSET
     """Explicitly reopen the latest fulfillment for an exact bound case and current source cycle, with a reason.
     Preserve source status, owner, note and deadline; cannot combine with other action edits. Retired sources,
@@ -78,6 +87,10 @@ class OperationWorkflowReadinessCoordinationRequest:
 
         note = self.note
 
+        reaffirmation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reaffirmation, Unset):
+            reaffirmation = self.reaffirmation.to_dict()
+
         reopening: dict[str, Any] | Unset = UNSET
         if not isinstance(self.reopening, Unset):
             reopening = self.reopening.to_dict()
@@ -112,6 +125,8 @@ class OperationWorkflowReadinessCoordinationRequest:
                 "note": note,
             }
         )
+        if reaffirmation is not UNSET:
+            field_dict["reaffirmation"] = reaffirmation
         if reopening is not UNSET:
             field_dict["reopening"] = reopening
         if fulfillment is not UNSET:
@@ -132,6 +147,9 @@ class OperationWorkflowReadinessCoordinationRequest:
         from ..models.operation_workflow_obligation_fulfillment_request import (
             OperationWorkflowObligationFulfillmentRequest,
         )
+        from ..models.operation_workflow_obligation_reaffirmation_request import (
+            OperationWorkflowObligationReaffirmationRequest,
+        )
         from ..models.operation_workflow_obligation_reopening_request import OperationWorkflowObligationReopeningRequest
         from ..models.operation_workflow_obligation_target_request import OperationWorkflowObligationTargetRequest
         from ..models.operation_workflow_readiness_completion_request import OperationWorkflowReadinessCompletionRequest
@@ -145,6 +163,13 @@ class OperationWorkflowReadinessCoordinationRequest:
         owner = d.pop("owner")
 
         note = d.pop("note")
+
+        _reaffirmation = d.pop("reaffirmation", UNSET)
+        reaffirmation: OperationWorkflowObligationReaffirmationRequest | Unset
+        if isinstance(_reaffirmation, Unset):
+            reaffirmation = UNSET
+        else:
+            reaffirmation = OperationWorkflowObligationReaffirmationRequest.from_dict(_reaffirmation)
 
         _reopening = d.pop("reopening", UNSET)
         reopening: OperationWorkflowObligationReopeningRequest | Unset
@@ -193,6 +218,7 @@ class OperationWorkflowReadinessCoordinationRequest:
             status=status,
             owner=owner,
             note=note,
+            reaffirmation=reaffirmation,
             reopening=reopening,
             fulfillment=fulfillment,
             target_binding=target_binding,

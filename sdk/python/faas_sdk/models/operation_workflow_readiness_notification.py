@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
     from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
     from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
+    from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
     from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
     from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
     from ..models.operation_workflow_playbook_completion_review_event import (
@@ -75,6 +76,11 @@ class OperationWorkflowReadinessNotification:
     explanation: str
     """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
     explanation."""
+    fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
+    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
+    Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
+    owner notices."""
     obligation_reopening: OperationWorkflowObligationReopening | Unset = UNSET
     """Immutable human decision to restore one current-source case/cycle to work, retaining the original
     fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate
@@ -177,6 +183,10 @@ class OperationWorkflowReadinessNotification:
         created_at = self.created_at.isoformat()
 
         explanation = self.explanation
+
+        fulfillment_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review, Unset):
+            fulfillment_review = self.fulfillment_review.to_dict()
 
         obligation_reopening: dict[str, Any] | Unset = UNSET
         if not isinstance(self.obligation_reopening, Unset):
@@ -302,6 +312,8 @@ class OperationWorkflowReadinessNotification:
                 "explanation": explanation,
             }
         )
+        if fulfillment_review is not UNSET:
+            field_dict["fulfillment_review"] = fulfillment_review
         if obligation_reopening is not UNSET:
             field_dict["obligation_reopening"] = obligation_reopening
         if target_assessment is not UNSET:
@@ -366,6 +378,9 @@ class OperationWorkflowReadinessNotification:
         from ..models.operation_workflow_next_action_digest import OperationWorkflowNextActionDigest
         from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
         from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
+        from ..models.operation_workflow_obligation_fulfillment_review import (
+            OperationWorkflowObligationFulfillmentReview,
+        )
         from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
         from ..models.operation_workflow_playbook_completion_review import OperationWorkflowPlaybookCompletionReview
         from ..models.operation_workflow_playbook_completion_review_event import (
@@ -421,6 +436,13 @@ class OperationWorkflowReadinessNotification:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         explanation = d.pop("explanation")
+
+        _fulfillment_review = d.pop("fulfillment_review", UNSET)
+        fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset
+        if isinstance(_fulfillment_review, Unset):
+            fulfillment_review = UNSET
+        else:
+            fulfillment_review = OperationWorkflowObligationFulfillmentReview.from_dict(_fulfillment_review)
 
         _obligation_reopening = d.pop("obligation_reopening", UNSET)
         obligation_reopening: OperationWorkflowObligationReopening | Unset
@@ -623,6 +645,7 @@ class OperationWorkflowReadinessNotification:
             kind=kind,
             created_at=created_at,
             explanation=explanation,
+            fulfillment_review=fulfillment_review,
             obligation_reopening=obligation_reopening,
             target_assessment=target_assessment,
             obligation_receipts=obligation_receipts,

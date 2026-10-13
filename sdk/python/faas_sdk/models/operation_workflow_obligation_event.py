@@ -15,6 +15,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+    from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
+    from ..models.operation_workflow_obligation_reaffirmation import OperationWorkflowObligationReaffirmation
     from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
     from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
     from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
@@ -33,6 +35,15 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
+    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
+    Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
+    owner notices."""
+    reaffirmation: OperationWorkflowObligationReaffirmation | Unset = UNSET
+    """Immutable human review receipt with a fresh retained application state report. Original fulfillment and
+    evidence remain intact; subsequent monitoring uses this proof as its basis. Does not authorize application
+    execution or establish current business success. Each retained exact-case lookup scans at most 1000 reports."""
     reopening: OperationWorkflowObligationReopening | Unset = UNSET
     """Immutable human decision to restore one current-source case/cycle to work, retaining the original
     fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate
@@ -65,6 +76,14 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        fulfillment_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review, Unset):
+            fulfillment_review = self.fulfillment_review.to_dict()
+
+        reaffirmation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.reaffirmation, Unset):
+            reaffirmation = self.reaffirmation.to_dict()
 
         reopening: dict[str, Any] | Unset = UNSET
         if not isinstance(self.reopening, Unset):
@@ -106,6 +125,10 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if fulfillment_review is not UNSET:
+            field_dict["fulfillment_review"] = fulfillment_review
+        if reaffirmation is not UNSET:
+            field_dict["reaffirmation"] = reaffirmation
         if reopening is not UNSET:
             field_dict["reopening"] = reopening
         if fulfillment is not UNSET:
@@ -131,6 +154,10 @@ class OperationWorkflowObligationEvent:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
+        from ..models.operation_workflow_obligation_fulfillment_review import (
+            OperationWorkflowObligationFulfillmentReview,
+        )
+        from ..models.operation_workflow_obligation_reaffirmation import OperationWorkflowObligationReaffirmation
         from ..models.operation_workflow_obligation_reopening import OperationWorkflowObligationReopening
         from ..models.operation_workflow_obligation_replacement import OperationWorkflowObligationReplacement
         from ..models.operation_workflow_obligation_target_binding import OperationWorkflowObligationTargetBinding
@@ -141,6 +168,20 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _fulfillment_review = d.pop("fulfillment_review", UNSET)
+        fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset
+        if isinstance(_fulfillment_review, Unset):
+            fulfillment_review = UNSET
+        else:
+            fulfillment_review = OperationWorkflowObligationFulfillmentReview.from_dict(_fulfillment_review)
+
+        _reaffirmation = d.pop("reaffirmation", UNSET)
+        reaffirmation: OperationWorkflowObligationReaffirmation | Unset
+        if isinstance(_reaffirmation, Unset):
+            reaffirmation = UNSET
+        else:
+            reaffirmation = OperationWorkflowObligationReaffirmation.from_dict(_reaffirmation)
 
         _reopening = d.pop("reopening", UNSET)
         reopening: OperationWorkflowObligationReopening | Unset
@@ -191,6 +232,8 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            fulfillment_review=fulfillment_review,
+            reaffirmation=reaffirmation,
             reopening=reopening,
             fulfillment=fulfillment,
             target_binding=target_binding,

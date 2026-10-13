@@ -22,6 +22,7 @@ type OperationWorkflowReadinessSubscriptionWorkerStore interface {
 	EvaluateDueWorkflowReadinessSubscriptions(context.Context) (int, error)
 }
 type readinessSubscriptionRecord struct {
+	FulfillmentReviewCursor     string                                              `json:"fulfillment_review_cursor,omitempty"`
 	ReopeningKnown              map[string]bool                                     `json:"reopening_known,omitempty"`
 	ReopeningCursor             int64                                               `json:"reopening_cursor,omitempty"`
 	TargetObservations          map[string]string                                   `json:"target_observations,omitempty"`
@@ -406,7 +407,11 @@ func evaluateDueReadinessSubscriptions(ctx context.Context, store readinessSubsc
 		reopeningUpdates, reopeningErr := evaluateObligationReopenings(check, store, &record)
 		watchUpdates = append(watchUpdates, reopeningUpdates...)
 		cancel()
-		if reopeningErr != nil || targetErr != nil || digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
+		check, cancel = context.WithTimeout(ctx, api.OperationWorkflowReadinessSubscriptionEvaluationTimeout)
+		fulfillmentUpdates, fulfillmentErr := evaluateFulfillmentReviews(check, store, &record)
+		watchUpdates = append(watchUpdates, fulfillmentUpdates...)
+		cancel()
+		if fulfillmentErr != nil || reopeningErr != nil || targetErr != nil || digestErr != nil || scheduledErr != nil || watchErr != nil || outcomeErr != nil || playbookErr != nil || impactErr != nil || blockageErr != nil {
 			record.Subscription.Status = "retrying"
 		}
 		record.NextEvaluation = time.Now().UTC().Add(api.OperationWorkflowReadinessSubscriptionPollInterval)

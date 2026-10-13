@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
     from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
+    from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
 
 
 T = TypeVar("T", bound="OperationWorkflowCaseObligationHistoryItem")
@@ -32,6 +33,11 @@ class OperationWorkflowCaseObligationHistoryItem:
     shared_plan: bool
     events: list[OperationWorkflowObligationEvent]
     events_truncated: bool
+    fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
+    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
+    Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
+    owner notices."""
     subscription_tenant_id: UUID | Unset = UNSET
     current: OperationWorkflowCaseNextAction | Unset = UNSET
     """One current coordination obligation or suggestion for an exact workflow case, including the responsible
@@ -58,6 +64,10 @@ class OperationWorkflowCaseObligationHistoryItem:
 
         events_truncated = self.events_truncated
 
+        fulfillment_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review, Unset):
+            fulfillment_review = self.fulfillment_review.to_dict()
+
         subscription_tenant_id: str | Unset = UNSET
         if not isinstance(self.subscription_tenant_id, Unset):
             subscription_tenant_id = str(self.subscription_tenant_id)
@@ -80,6 +90,8 @@ class OperationWorkflowCaseObligationHistoryItem:
                 "events_truncated": events_truncated,
             }
         )
+        if fulfillment_review is not UNSET:
+            field_dict["fulfillment_review"] = fulfillment_review
         if subscription_tenant_id is not UNSET:
             field_dict["subscription_tenant_id"] = subscription_tenant_id
         if current is not UNSET:
@@ -91,6 +103,9 @@ class OperationWorkflowCaseObligationHistoryItem:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_case_next_action import OperationWorkflowCaseNextAction
         from ..models.operation_workflow_obligation_event import OperationWorkflowObligationEvent
+        from ..models.operation_workflow_obligation_fulfillment_review import (
+            OperationWorkflowObligationFulfillmentReview,
+        )
 
         d = dict(src_dict)
         obligation_id = d.pop("obligation_id")
@@ -113,6 +128,13 @@ class OperationWorkflowCaseObligationHistoryItem:
             events.append(events_item)
 
         events_truncated = d.pop("events_truncated")
+
+        _fulfillment_review = d.pop("fulfillment_review", UNSET)
+        fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset
+        if isinstance(_fulfillment_review, Unset):
+            fulfillment_review = UNSET
+        else:
+            fulfillment_review = OperationWorkflowObligationFulfillmentReview.from_dict(_fulfillment_review)
 
         _subscription_tenant_id = d.pop("subscription_tenant_id", UNSET)
         subscription_tenant_id: UUID | Unset
@@ -137,6 +159,7 @@ class OperationWorkflowCaseObligationHistoryItem:
             shared_plan=shared_plan,
             events=events,
             events_truncated=events_truncated,
+            fulfillment_review=fulfillment_review,
             subscription_tenant_id=subscription_tenant_id,
             current=current,
         )

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowObligationFulfillmentRequest } from './OperationWorkflowObligationFulfillmentRequest.js';
+import type { OperationWorkflowObligationReaffirmationRequest } from './OperationWorkflowObligationReaffirmationRequest.js';
 import type { OperationWorkflowObligationReopeningRequest } from './OperationWorkflowObligationReopeningRequest.js';
 import type { OperationWorkflowObligationTargetRequest } from './OperationWorkflowObligationTargetRequest.js';
 import type { OperationWorkflowReadinessCompletionRequest } from './OperationWorkflowReadinessCompletionRequest.js';
@@ -11,6 +12,7 @@ import type { OperationWorkflowReviewResponseRequest } from './OperationWorkflow
  * OperationWorkflowReadinessCoordinationRequest. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordinationRequest = {
+  reaffirmation?: OperationWorkflowObligationReaffirmationRequest;
   reopening?: OperationWorkflowObligationReopeningRequest;
   fulfillment?: OperationWorkflowObligationFulfillmentRequest;
   target_binding?: OperationWorkflowObligationTargetRequest;

@@ -10,7 +10,7 @@ import (
 
 // Capture only transitions in the locked source, never reconstruct an audit from old snapshots.
 func captureObligationReceipts(id, scope string, before, after api.OperationWorkflowReadinessNotification, actor string) api.OperationWorkflowReadinessNotification {
-	if after.NextActionDigest != nil || after.TargetAssessment != nil || after.ObligationReopening != nil {
+	if after.NextActionDigest != nil || after.TargetAssessment != nil || after.ObligationReopening != nil || after.FulfillmentReview != nil {
 		return after
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -147,6 +147,22 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 		event := reopeningEvent(reopening)
 		event.SharedPlan = len(cases[reopening.Binding.ObligationID]) > 1
 		receipts = append(receipts, event)
+	}
+	if after.Coordination != nil {
+		for _, review := range after.Coordination.FulfillmentReviews {
+			previous := fulfillmentReviewFor(before.Coordination, review.Binding, review.FulfilledAt)
+			if review.ReviewRequired && (previous == nil || previous.Fingerprint != review.Fingerprint) {
+				receipts = append(receipts, fulfillmentReviewEvent(review, "fulfillment_review_required", review.CheckedAt, actor))
+			}
+		}
+		for _, r := range after.Coordination.Reaffirmations {
+			if before.Coordination != nil && slices.ContainsFunc(before.Coordination.Reaffirmations, func(previous api.OperationWorkflowObligationReaffirmation) bool {
+				return readinessDigest(previous) == readinessDigest(r)
+			}) {
+				continue
+			}
+			receipts = append(receipts, reaffirmationEvent(r))
+		}
 	}
 	receipts = captureObligationTargetReceipts(before, after, old, current, cases, actor, now, receipts)
 	receipts = linkObligationSuccessors(before, after, old, current, cases, actor, now, receipts)

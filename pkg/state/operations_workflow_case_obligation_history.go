@@ -59,6 +59,17 @@ func (h *workflowCaseObligationHistory) collect(subscription api.OperationWorkfl
 			value.Binding.Case.PlatformTenantID = ""
 			event.Reopening = &value
 		}
+		if !h.operator && event.FulfillmentReview != nil {
+			value := *event.FulfillmentReview
+			value.Binding.Case.PlatformTenantID = ""
+			event.FulfillmentReview = &value
+		}
+		if !h.operator && event.Reaffirmation != nil {
+			value := *event.Reaffirmation
+			value.Binding.Case.PlatformTenantID = ""
+			value.Evidence.PlatformTenantID = ""
+			event.Reaffirmation = &value
+		}
 		shared := event.SharedPlan || len(event.Cases) > 1
 		event.Cases = selected
 		group := groups[event.ObligationID]
@@ -76,6 +87,24 @@ func (h *workflowCaseObligationHistory) collect(subscription api.OperationWorkfl
 		h.truncated = true
 	}
 	for _, group := range groups {
+		if n.Coordination != nil {
+			for _, review := range n.Coordination.FulfillmentReviews {
+				c := review.Binding.Case
+				actual := c.PlatformTenantID
+				if actual == "" {
+					actual = subscription.TenantID
+				}
+				if review.Binding.ObligationID != group.ObligationID || c.Subject.Type != h.opts.SubjectType || c.Subject.ID != h.opts.SubjectID || c.Workflow != h.opts.Workflow || c.InstanceID != h.opts.InstanceID || h.operator && !sameOperationHistoryIdentity(actual, h.tenant) || !h.operator && actual != "" && !sameOperationHistoryIdentity(actual, h.tenant) || activeFulfillment(n.Coordination, review.Binding, review.FulfilledAt) == nil {
+					continue
+				}
+				value := review
+				if !h.operator {
+					value.Binding.Case.PlatformTenantID = ""
+				}
+				group.FulfillmentReview = &value
+			}
+		}
+
 		slices.SortStableFunc(group.Events, func(a, b api.OperationWorkflowObligationEvent) int {
 			if order := a.At.Compare(b.At); order != 0 {
 				return order

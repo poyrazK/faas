@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { OperationWorkflowNextActionCase } from './OperationWorkflowNextActionCase.js';
 import type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
+import type { OperationWorkflowObligationFulfillmentReview } from './OperationWorkflowObligationFulfillmentReview.js';
+import type { OperationWorkflowObligationReaffirmation } from './OperationWorkflowObligationReaffirmation.js';
 import type { OperationWorkflowObligationReopening } from './OperationWorkflowObligationReopening.js';
 import type { OperationWorkflowObligationReplacement } from './OperationWorkflowObligationReplacement.js';
 import type { OperationWorkflowObligationTargetBinding } from './OperationWorkflowObligationTargetBinding.js';
@@ -11,6 +13,8 @@ import type { OperationWorkflowObligationTargetBinding } from './OperationWorkfl
  * Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
  */
 export type OperationWorkflowObligationEvent = {
+  fulfillment_review?: OperationWorkflowObligationFulfillmentReview;
+  reaffirmation?: OperationWorkflowObligationReaffirmation;
   reopening?: OperationWorkflowObligationReopening;
   fulfillment?: OperationWorkflowObligationFulfillment;
   target_binding?: OperationWorkflowObligationTargetBinding;
@@ -25,7 +29,7 @@ export type OperationWorkflowObligationEvent = {
    * Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
    */
   obligation_id?: string;
-  kind: 'observed_assignment' | 'accepted' | 'declined' | 'reassigned' | 'completed' | 'canceled' | 'rescheduled' | 'assigned' | 'changed' | 'superseded' | 'replaces' | 'replaced_by' | 'target_bound' | 'target_cleared' | 'fulfilled' | 'reopened';
+  kind: 'observed_assignment' | 'accepted' | 'declined' | 'reassigned' | 'completed' | 'canceled' | 'rescheduled' | 'assigned' | 'changed' | 'superseded' | 'replaces' | 'replaced_by' | 'target_bound' | 'target_cleared' | 'fulfilled' | 'reopened' | 'fulfillment_review_required' | 'fulfillment_reaffirmed';
   at: string;
   actor?: string;
   explanation: string;

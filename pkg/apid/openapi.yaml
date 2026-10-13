@@ -79365,6 +79365,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        fulfillment_review:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
         obligation_reopening:
           $ref: '#/components/schemas/OperationWorkflowObligationReopening'
         target_assessment:
@@ -79448,6 +79450,7 @@ components:
           enum:
           - review_response_handoff_reassigned
           - review_response_handoff_declined
+          - fulfillment_review_required
           - obligation_reopened
           - obligation_target_changed
           - next_action_digest
@@ -79543,6 +79546,8 @@ components:
         checks; omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        reaffirmation:
+          $ref: '#/components/schemas/OperationWorkflowObligationReaffirmationRequest'
         reopening:
           $ref: '#/components/schemas/OperationWorkflowObligationReopeningRequest'
         fulfillment:
@@ -79595,6 +79600,17 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        fulfillment_reviews:
+          type: array
+          maxItems: 128
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
+        reaffirmations:
+          type: array
+          maxItems: 128
+          description: Immutable human reaffirmations with fresh application evidence; capacity exhaustion rejects further writes.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationReaffirmation'
         reopenings:
           type: array
           maxItems: 128
@@ -82562,6 +82578,10 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        fulfillment_review:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
+        reaffirmation:
+          $ref: '#/components/schemas/OperationWorkflowObligationReaffirmation'
         reopening:
           $ref: '#/components/schemas/OperationWorkflowObligationReopening'
         fulfillment:
@@ -82584,7 +82604,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed]
         at:
           type: string
           format: date-time
@@ -82756,6 +82776,8 @@ components:
       description: Case-scoped receipts grouped by exact source obligation, alongside its current action when still projected. Absence of a current action is not completion. Shared source controls can affect additional cases; foreign case identities are excluded.
       required: [obligation_id, action_kind, subscription_id, sequence, scope, shared_plan, events, events_truncated]
       properties:
+        fulfillment_review:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
         obligation_id:
           type: string
         action_kind:
@@ -82946,6 +82968,129 @@ components:
           type: string
           format: date-time
         reopened_by:
+          type: string
+    OperationWorkflowObligationFulfillmentReview:
+      type: object
+      additionalProperties: false
+      description: Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof. Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation. Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress owner notices.
+      required: [action_kind, binding, fulfilled_at, basis_at, source_sequence, owner, review_required, reasons, current_reasons, checked_at, fingerprint, current_contract_version, current_state_revision]
+      properties:
+        action_kind:
+          type: string
+          enum: [response_check_in, coordinator_completion, follow_up]
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        fulfilled_at:
+          type: string
+          format: date-time
+        basis_at:
+          type: string
+          format: date-time
+          description: Original fulfillment or latest explicit reaffirmation time; old observations cannot overwrite a newer basis.
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        owner:
+          type: string
+        review_required:
+          type: boolean
+        reasons:
+          type: array
+          maxItems: 8
+          description: Latched reasons requiring explicit review, retained even after current evidence recovers. Possible reasons are supporting_report_unavailable, current_evidence_unavailable, contract_changed, resolution_invalidated and verification_unavailable.
+          items:
+            type: string
+        current_reasons:
+          type: array
+          maxItems: 8
+          description: Current observed issues; empty does not automatically clear a latched review flag.
+          items:
+            type: string
+        required_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        fingerprint:
+          type: string
+          description: Semantic comparison identity; timestamps and ordinary reporting revisions do not create new notices.
+        current_contract_version:
+          type: integer
+          minimum: 0
+        current_state_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        current_operation_id:
+          type: string
+          format: uuid
+        current_report_id:
+          type: string
+    OperationWorkflowObligationReaffirmationRequest:
+      type: object
+      additionalProperties: false
+      description: Explicitly reaffirm a flagged latest fulfillment without reopening work. Preserve source status, owner, note and deadline and do not combine with other actions. Source revision, binding, fulfillment time and review fingerprint fence stale decisions. Evidence must be a full application state report for the exact case under the fresh current contract and be published after review was required; current retained evidence is rechecked independently before commit.
+      required: [binding, fulfilled_at, review_fingerprint, reason, evidence_operation_id, evidence_report_id]
+      properties:
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        fulfilled_at:
+          type: string
+          format: date-time
+        review_fingerprint:
+          type: string
+          minLength: 1
+          maxLength: 128
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        evidence_operation_id:
+          type: string
+          format: uuid
+        evidence_report_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    OperationWorkflowObligationReaffirmation:
+      type: object
+      additionalProperties: false
+      description: Immutable human review receipt with a fresh retained application state report. Original fulfillment and evidence remain intact; subsequent monitoring uses this proof as its basis. Does not authorize application execution or establish current business success. Each retained exact-case lookup scans at most 1000 reports.
+      required: [action_kind, binding, fulfilled_at, review_fingerprint, reason, source_sequence, owner, evidence, evidence_checked_at, reaffirmed_at, reaffirmed_by]
+      properties:
+        action_kind:
+          type: string
+          enum: [response_check_in, coordinator_completion, follow_up]
+        binding:
+          $ref: '#/components/schemas/OperationWorkflowObligationTargetBinding'
+        fulfilled_at:
+          type: string
+          format: date-time
+        review_fingerprint:
+          type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        source_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        owner:
+          type: string
+        evidence:
+          $ref: '#/components/schemas/OperationWorkflowStateHistoryEntry'
+        evidence_checked_at:
+          type: string
+          format: date-time
+        reaffirmed_at:
+          type: string
+          format: date-time
+        reaffirmed_by:
           type: string
     OperationWorkflowObligationAssessment:
       type: object

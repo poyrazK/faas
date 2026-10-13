@@ -26,7 +26,7 @@ func prepareObligationReopening(ctx context.Context, store readinessSubscription
 	if input == nil {
 		return nil, nil
 	}
-	if req.Fulfillment != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.FulfilledAt.IsZero() || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 {
+	if req.Fulfillment != nil || req.Reaffirmation != nil || req.TargetBinding != nil || req.Completion != nil || req.ReviewResponse != nil || input.FulfilledAt.IsZero() || input.Reason == "" || len(input.Reason) > 2048 || strings.TrimSpace(input.Reason) != input.Reason || !utf8.ValidString(input.Reason) || strings.IndexFunc(input.Reason, unicode.IsControl) >= 0 {
 		return nil, ErrInvalidArgument
 	}
 	if !operator && input.Binding.Case.PlatformTenantID != "" || operator && input.Binding.Case.PlatformTenantID == "" {

@@ -1208,6 +1208,9 @@ export type { OperationWorkflowObligationContext } from './models/OperationWorkf
 export type { OperationWorkflowObligationEvent } from './models/OperationWorkflowObligationEvent.js';
 export type { OperationWorkflowObligationFulfillment } from './models/OperationWorkflowObligationFulfillment.js';
 export type { OperationWorkflowObligationFulfillmentRequest } from './models/OperationWorkflowObligationFulfillmentRequest.js';
+export type { OperationWorkflowObligationFulfillmentReview } from './models/OperationWorkflowObligationFulfillmentReview.js';
+export type { OperationWorkflowObligationReaffirmation } from './models/OperationWorkflowObligationReaffirmation.js';
+export type { OperationWorkflowObligationReaffirmationRequest } from './models/OperationWorkflowObligationReaffirmationRequest.js';
 export type { OperationWorkflowObligationReopening } from './models/OperationWorkflowObligationReopening.js';
 export type { OperationWorkflowObligationReopeningRequest } from './models/OperationWorkflowObligationReopeningRequest.js';
 export type { OperationWorkflowObligationReplacement } from './models/OperationWorkflowObligationReplacement.js';

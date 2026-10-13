@@ -59,8 +59,12 @@ func updateReadinessNotification(ctx context.Context, store readinessSubscriptio
 	if err != nil {
 		return out, err
 	}
+	prepared.PreparedReaffirmation, err = prepareObligationReaffirmation(ctx, store, account, tenant, app, scope, id, sequence, req, operator)
+	if err != nil {
+		return out, err
+	}
 	prepared.TargetSubscriptionID, prepared.TargetScope = id, scope
-	if req.TargetBinding != nil || req.Fulfillment != nil || req.Reopening != nil {
+	if req.TargetBinding != nil || req.Fulfillment != nil || req.Reopening != nil || req.Reaffirmation != nil {
 		source, e := store.readReadinessInbox(ctx, account, tenant, app, scope, id, sequence-1, 1, operator)
 		if e != nil {
 			return out, e
@@ -359,6 +363,8 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		c.TargetBindings = slices.Clone(n.Coordination.TargetBindings)
 		c.Fulfillments = slices.Clone(n.Coordination.Fulfillments)
 		c.Reopenings = slices.Clone(n.Coordination.Reopenings)
+		c.FulfillmentReviews = slices.Clone(n.Coordination.FulfillmentReviews)
+		c.Reaffirmations = slices.Clone(n.Coordination.Reaffirmations)
 		c.Completion = n.Coordination.Completion
 	}
 	if req.PreparedCompletion != nil {
@@ -412,7 +418,11 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	if err != nil {
 		return n, err
 	}
-	return applyObligationReopening(n, req, actor, now)
+	n, err = applyObligationReopening(n, req, actor, now)
+	if err != nil {
+		return n, err
+	}
+	return applyObligationReaffirmation(n, req, actor, now)
 }
 func checkReadinessNotification(ctx context.Context, store readinessSubscriptionBackend, account, tenant, app, scope, id string, sequence int64, operator bool) (out api.OperationWorkflowReadinessNotificationCheck, err error) {
 	defer func() {

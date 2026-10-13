@@ -3,6 +3,7 @@ from typing import Literal
 OperationWorkflowReadinessNotificationKind = Literal[
     "business_impact_changed",
     "escalation_response_overdue",
+    "fulfillment_review_required",
     "newly_blocked",
     "newly_ready",
     "next_action_digest",
@@ -39,6 +40,7 @@ OperationWorkflowReadinessNotificationKind = Literal[
 OPERATION_WORKFLOW_READINESS_NOTIFICATION_KIND_VALUES: set[OperationWorkflowReadinessNotificationKind] = {
     "business_impact_changed",
     "escalation_response_overdue",
+    "fulfillment_review_required",
     "newly_blocked",
     "newly_ready",
     "next_action_digest",

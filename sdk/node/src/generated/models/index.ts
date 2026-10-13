@@ -1202,6 +1202,9 @@ export type { OperationWorkflowObligationContext } from './OperationWorkflowObli
 export type { OperationWorkflowObligationEvent } from './OperationWorkflowObligationEvent.js';
 export type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
 export type { OperationWorkflowObligationFulfillmentRequest } from './OperationWorkflowObligationFulfillmentRequest.js';
+export type { OperationWorkflowObligationFulfillmentReview } from './OperationWorkflowObligationFulfillmentReview.js';
+export type { OperationWorkflowObligationReaffirmation } from './OperationWorkflowObligationReaffirmation.js';
+export type { OperationWorkflowObligationReaffirmationRequest } from './OperationWorkflowObligationReaffirmationRequest.js';
 export type { OperationWorkflowObligationReopening } from './OperationWorkflowObligationReopening.js';
 export type { OperationWorkflowObligationReopeningRequest } from './OperationWorkflowObligationReopeningRequest.js';
 export type { OperationWorkflowObligationReplacement } from './OperationWorkflowObligationReplacement.js';
