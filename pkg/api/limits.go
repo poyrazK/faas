@@ -10418,3 +10418,9 @@ const EventExecutionLineageRetryControlPageMax = 200
 
 // Local control-history artifacts contain bounded receipt metadata, not event payloads.
 const EventExecutionLineageRetryControlExportMaxBytes = 256 * 1024
+
+// Retry-job health is bounded separately from retained execution roots and windows.
+const EventExecutionLineageRetryHealthJobsMax = 500
+const EventExecutionLineageRetryHealthSampleMax = 10
+const EventExecutionLineageRetryInactivityWarning = 15 * time.Minute
+const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour

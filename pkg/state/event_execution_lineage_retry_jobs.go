@@ -70,6 +70,10 @@ func newLineageRetryJob(app, sub string, req api.CreateEventExecutionLineageRetr
 	return job
 }
 func cloneLineageRetryJob(job api.EventExecutionLineageRetryJob) api.EventExecutionLineageRetryJob {
+	if job.LastProgressAt != nil {
+		at := *job.LastProgressAt
+		job.LastProgressAt = &at
+	}
 	if job.ControlReceipt != nil {
 		receipt := *job.ControlReceipt
 		job.ControlReceipt = &receipt
@@ -244,6 +248,8 @@ func finishLineageRetryJobItem(job *api.EventExecutionLineageRetryJob, result ap
 	}
 	job.Processed++
 	job.UpdatedAt = time.Now().UTC()
+	at := job.UpdatedAt
+	job.LastProgressAt = &at
 	if job.Processed == len(job.Items) {
 		job.Status = "completed"
 	}

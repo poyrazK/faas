@@ -1136,6 +1136,10 @@ from .event_execution_lineage_retry_job_control_receipt_result_status import (
     EventExecutionLineageRetryJobControlReceiptResultStatus,
 )
 from .event_execution_lineage_retry_job_controls import EventExecutionLineageRetryJobControls
+from .event_execution_lineage_retry_job_health import EventExecutionLineageRetryJobHealth
+from .event_execution_lineage_retry_job_health_coverage import EventExecutionLineageRetryJobHealthCoverage
+from .event_execution_lineage_retry_job_health_sample import EventExecutionLineageRetryJobHealthSample
+from .event_execution_lineage_retry_job_health_sample_status import EventExecutionLineageRetryJobHealthSampleStatus
 from .event_execution_lineage_retry_job_item import EventExecutionLineageRetryJobItem
 from .event_execution_lineage_retry_job_item_status import EventExecutionLineageRetryJobItemStatus
 from .event_execution_lineage_retry_job_status import EventExecutionLineageRetryJobStatus
@@ -5184,6 +5188,10 @@ __all__ = (
     "EventExecutionLineageRetryJobControlReceiptCredentialType",
     "EventExecutionLineageRetryJobControlReceiptResultStatus",
     "EventExecutionLineageRetryJobControls",
+    "EventExecutionLineageRetryJobHealth",
+    "EventExecutionLineageRetryJobHealthCoverage",
+    "EventExecutionLineageRetryJobHealthSample",
+    "EventExecutionLineageRetryJobHealthSampleStatus",
     "EventExecutionLineageRetryJobItem",
     "EventExecutionLineageRetryJobItemStatus",
     "EventExecutionLineageRetryJobs",

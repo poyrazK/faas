@@ -2531,7 +2531,7 @@ Request a forward-only execution coverage boundary
 
 ### events subscription-execution-health
 
-Inspect retained consumer executions and handler outcomes
+Inspect executions, handler outcomes, and active retry-job health
 
 `gregale events subscription-execution-health [--window <5m|15m|1h|6h|24h>] <app> <subscription-id>`
 
@@ -2553,7 +2553,7 @@ Inspect, replay, or acknowledge a local delivery health alert queue
 
 ### events subscription-delivery-health
 
-Inspect routing, retained executions, and oldest pending blockers
+Inspect routing, executions, retry jobs, and pending blockers
 
 `gregale events subscription-delivery-health [--window <WINDOW>] [--watch] [--alerts-json] [--interval <DURATION>] [--timeout <DURATION>] [--max-age <DURATION>] [--oldest-pending-threshold <DURATION>] [--retrying-threshold <N>] [--dead-letters-threshold <N>] [--pause-threshold <DURATION>] [--circuit-threshold <DURATION>] [--capacity-threshold <DURATION>] [--waiting-reason-count <REASON=N>] [--waiting-reason-duration <REASON=DURATION>] [--checkpoint <PATH>] [--resume] [--ack-inbox <PATH>] [--slo-routing-latency <DURATION>] [--slo-completion-latency <DURATION>] [--slo-retry-rate <N>] [--slo-dead-letter-rate <N>] [--slo-routing-failure-budget <PERCENT>] [--slo-min-samples <N>] [--slo-sustain <DURATION>] <app> <subscription-id>`
 

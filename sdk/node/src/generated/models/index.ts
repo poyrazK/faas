@@ -570,6 +570,8 @@ export type { EventExecutionLineageRetryJob } from './EventExecutionLineageRetry
 export type { EventExecutionLineageRetryJobControlFilters } from './EventExecutionLineageRetryJobControlFilters.js';
 export type { EventExecutionLineageRetryJobControlReceipt } from './EventExecutionLineageRetryJobControlReceipt.js';
 export type { EventExecutionLineageRetryJobControls } from './EventExecutionLineageRetryJobControls.js';
+export type { EventExecutionLineageRetryJobHealth } from './EventExecutionLineageRetryJobHealth.js';
+export type { EventExecutionLineageRetryJobHealthSample } from './EventExecutionLineageRetryJobHealthSample.js';
 export type { EventExecutionLineageRetryJobItem } from './EventExecutionLineageRetryJobItem.js';
 export type { EventExecutionLineageRetryJobSummary } from './EventExecutionLineageRetryJobSummary.js';
 export type { EventExecutionLineageRetryJobs } from './EventExecutionLineageRetryJobs.js';

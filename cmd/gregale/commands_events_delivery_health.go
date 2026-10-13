@@ -52,6 +52,7 @@ func cmdEventsSubscriptionDeliveryHealth(args []string) int {
 
 func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	r, e, sample := out.Routing, out.Execution, out.PendingSample
+	printLineageRetryJobHealth(e.LineageRetryJobs)
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | pending routing %d | processing routing %d | oldest pending %.0fs\n", oneLine(r.SubscriptionID), r.PendingRecipients, r.ProcessingRecipients, r.OldestAgeSeconds)
 	_, _ = fmt.Fprintf(osStdout, "Execution history %s (%s) | collection start %v | evidence lost %v\n", oneLine(e.HistoryStatus), oneLine(e.HistoryReason), e.CoverageStartedAt, e.CoverageLostAt)
 	_, _ = fmt.Fprintf(osStdout, "Window evidence %s (%s) | scope %s | collection start %v | lost through %v | retain until %v\n", oneLine(e.WindowHistoryStatus), oneLine(e.WindowHistoryReason), oneLine(e.WindowCoverage), e.WindowCoverageStartedAt, e.WindowCoverageLostThroughAt, e.WindowEvidenceRetainUntil)

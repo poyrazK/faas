@@ -56961,3 +56961,6 @@ CREATE TABLE event_execution_lineage_retry_control_receipts (
  UNIQUE(subscription_id,job_request_id,sequence),
  FOREIGN KEY(subscription_id,job_request_id) REFERENCES event_execution_lineage_retry_jobs(subscription_id,request_id) ON DELETE CASCADE
 );
+CREATE INDEX event_execution_lineage_retry_jobs_health_idx
+ ON event_execution_lineage_retry_jobs(subscription_id,retain_until,updated_at,request_id)
+ WHERE state IN ('pending','paused');

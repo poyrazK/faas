@@ -33,6 +33,9 @@ class EventExecutionLineageRetryJob:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     retain_until: datetime.datetime
+    last_progress_at: datetime.datetime | Unset = UNSET
+    """Last committed evaluation or skip recorded by upgraded workers. Absent before the first evaluation or for
+    older snapshots; controls do not change it."""
     control_receipt: EventExecutionLineageRetryJobControlReceipt | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +60,10 @@ class EventExecutionLineageRetryJob:
 
         retain_until = self.retain_until.isoformat()
 
+        last_progress_at: str | Unset = UNSET
+        if not isinstance(self.last_progress_at, Unset):
+            last_progress_at = self.last_progress_at.isoformat()
+
         control_receipt: dict[str, Any] | Unset = UNSET
         if not isinstance(self.control_receipt, Unset):
             control_receipt = self.control_receipt.to_dict()
@@ -76,6 +83,8 @@ class EventExecutionLineageRetryJob:
                 "retain_until": retain_until,
             }
         )
+        if last_progress_at is not UNSET:
+            field_dict["last_progress_at"] = last_progress_at
         if control_receipt is not UNSET:
             field_dict["control_receipt"] = control_receipt
 
@@ -112,6 +121,13 @@ class EventExecutionLineageRetryJob:
 
         retain_until = datetime.datetime.fromisoformat(d.pop("retain_until"))
 
+        _last_progress_at = d.pop("last_progress_at", UNSET)
+        last_progress_at: datetime.datetime | Unset
+        if isinstance(_last_progress_at, Unset):
+            last_progress_at = UNSET
+        else:
+            last_progress_at = datetime.datetime.fromisoformat(_last_progress_at)
+
         _control_receipt = d.pop("control_receipt", UNSET)
         control_receipt: EventExecutionLineageRetryJobControlReceipt | Unset
         if isinstance(_control_receipt, Unset):
@@ -129,6 +145,7 @@ class EventExecutionLineageRetryJob:
             created_at=created_at,
             updated_at=updated_at,
             retain_until=retain_until,
+            last_progress_at=last_progress_at,
             control_receipt=control_receipt,
         )
 

@@ -374,3 +374,14 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
  AND (sqlc.arg(actor_id_filter)::text='' OR result->>'actor_id'=sqlc.arg(actor_id_filter)::text)
  AND (sqlc.arg(credential_type_filter)::text='' OR result->>'credential_type'=sqlc.arg(credential_type_filter)::text)
 ORDER BY sequence LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventExecutionLineageRetryHealthJobs :many
+SELECT request_id,state,created_at,updated_at,retain_until,
+ (snapshot->>'processed')::integer AS processed,
+ jsonb_array_length(snapshot->'items')::integer AS selected,
+ (snapshot->>'last_progress_at')::timestamptz AS last_progress_at
+FROM event_execution_lineage_retry_jobs
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+ AND subscription_id=sqlc.arg(subscription_id)::uuid AND state IN ('pending','paused')
+ AND created_at<=sqlc.arg(now_at)::timestamptz AND retain_until>sqlc.arg(now_at)::timestamptz
+ORDER BY retain_until,updated_at,request_id LIMIT sqlc.arg(job_limit)::integer;

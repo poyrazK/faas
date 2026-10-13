@@ -6,6 +6,10 @@ import type { EventExecutionLineageRetryJobControlReceipt } from './EventExecuti
 import type { EventExecutionLineageRetryJobItem } from './EventExecutionLineageRetryJobItem.js';
 export type EventExecutionLineageRetryJob = {
   /**
+   * Last committed evaluation or skip recorded by upgraded workers. Absent before the first evaluation or for older snapshots; controls do not change it.
+   */
+  last_progress_at?: string;
+  /**
    * Immutable command outcome accompanying a UUID-keyed control response; outer job fields are current observations.
    */
   control_receipt?: EventExecutionLineageRetryJobControlReceipt;

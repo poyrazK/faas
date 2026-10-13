@@ -931,6 +931,72 @@ func (q *Queries) EventExecutionLineageRetryControlSequence(ctx context.Context,
 	return column_1, err
 }
 
+const eventExecutionLineageRetryHealthJobs = `-- name: EventExecutionLineageRetryHealthJobs :many
+SELECT request_id,state,created_at,updated_at,retain_until,
+ (snapshot->>'processed')::integer AS processed,
+ jsonb_array_length(snapshot->'items')::integer AS selected,
+ (snapshot->>'last_progress_at')::timestamptz AS last_progress_at
+FROM event_execution_lineage_retry_jobs
+WHERE account_id=$1::uuid AND app_id=$2::uuid
+ AND subscription_id=$3::uuid AND state IN ('pending','paused')
+ AND created_at<=$4::timestamptz AND retain_until>$4::timestamptz
+ORDER BY retain_until,updated_at,request_id LIMIT $5::integer
+`
+
+type EventExecutionLineageRetryHealthJobsParams struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	NowAt          pgtype.Timestamptz
+	JobLimit       int32
+}
+
+type EventExecutionLineageRetryHealthJobsRow struct {
+	RequestID      pgtype.UUID
+	State          string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
+	Processed      int32
+	Selected       int32
+	LastProgressAt pgtype.Timestamptz
+}
+
+func (q *Queries) EventExecutionLineageRetryHealthJobs(ctx context.Context, db DBTX, arg EventExecutionLineageRetryHealthJobsParams) ([]EventExecutionLineageRetryHealthJobsRow, error) {
+	rows, err := db.Query(ctx, eventExecutionLineageRetryHealthJobs,
+		arg.AccountID,
+		arg.AppID,
+		arg.SubscriptionID,
+		arg.NowAt,
+		arg.JobLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EventExecutionLineageRetryHealthJobsRow{}
+	for rows.Next() {
+		var i EventExecutionLineageRetryHealthJobsRow
+		if err := rows.Scan(
+			&i.RequestID,
+			&i.State,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetainUntil,
+			&i.Processed,
+			&i.Selected,
+			&i.LastProgressAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventExecutionLineageRetryJobIdentity = `-- name: EventExecutionLineageRetryJobIdentity :one
 SELECT subscription_id, request_id, account_id, app_id, state, snapshot, created_at, updated_at, retain_until FROM event_execution_lineage_retry_jobs WHERE account_id=$1::uuid AND app_id=$2::uuid
  AND subscription_id=$3::uuid AND request_id=$4::uuid

@@ -13,47 +13,48 @@ import (
 
 // Execution counts describe retained invocations, including handler replays.
 type EventConsumerExecutionHealth struct {
-	WindowCoverage                 string     `json:"window_coverage,omitempty"`
-	WindowHistoryComplete          bool       `json:"window_history_complete"`
-	WindowHistoryStatus            string     `json:"window_history_status,omitempty"`
-	WindowHistoryReason            string     `json:"window_history_reason,omitempty"`
-	WindowCoverageStartedAt        *time.Time `json:"window_coverage_started_at,omitempty"`
-	WindowCoverageLostThroughAt    *time.Time `json:"window_coverage_lost_through_at,omitempty"`
-	WindowEvidenceRetainUntil      *time.Time `json:"window_evidence_retain_until,omitempty"`
-	WindowEvidenceRetentionSeconds int64      `json:"window_evidence_retention_seconds,omitempty"`
-	CoverageStartedAt              *time.Time `json:"coverage_started_at,omitempty"`
-	CoverageLostAt                 *time.Time `json:"coverage_lost_at,omitempty"`
-	HistoryStatus                  string     `json:"history_status"`
-	HistoryReason                  string     `json:"history_reason"`
-	LatestSuccessfulCompletionAt   *time.Time `json:"latest_successful_completion_at,omitempty"`
-	SubscriptionID                 string     `json:"subscription_id"`
-	AppID                          string     `json:"app_id"`
-	ObservedAt                     time.Time  `json:"observed_at"`
-	WindowStart                    time.Time  `json:"window_start"`
-	Coverage                       string     `json:"coverage"`
-	HistoryComplete                bool       `json:"history_complete"`
-	Truncated                      bool       `json:"truncated"`
-	RetainedRoots                  int64      `json:"retained_roots"`
-	MissingRoots                   int64      `json:"missing_roots"`
-	Executions                     int64      `json:"executions"`
-	Queued                         int64      `json:"queued"`
-	Running                        int64      `json:"running"`
-	Retrying                       int64      `json:"retrying"`
-	Succeeded                      int64      `json:"succeeded"`
-	Failed                         int64      `json:"failed"`
-	Expired                        int64      `json:"expired"`
-	DeadLettered                   int64      `json:"dead_lettered"`
-	Cancelled                      int64      `json:"cancelled"`
-	Superseded                     int64      `json:"superseded"`
-	Unknown                        int64      `json:"unknown"`
-	SuccessfulAttempts             int64      `json:"successful_attempts"`
-	FailedAttempts                 int64      `json:"failed_attempts"`
-	UnknownAttempts                int64      `json:"unknown_attempts"`
-	HandlerFailurePct              float64    `json:"handler_failure_pct"`
-	WindowCompletions              int64      `json:"window_completions"`
-	WindowDeadLetters              int64      `json:"window_dead_letters"`
-	DeadLetterRatePerSecond        float64    `json:"dead_letter_rate_per_second"`
-	CompletionLatencyP95Seconds    float64    `json:"completion_latency_p95_seconds"`
+	LineageRetryJobs               *EventExecutionLineageRetryJobHealth `json:"lineage_retry_jobs,omitempty"`
+	WindowCoverage                 string                               `json:"window_coverage,omitempty"`
+	WindowHistoryComplete          bool                                 `json:"window_history_complete"`
+	WindowHistoryStatus            string                               `json:"window_history_status,omitempty"`
+	WindowHistoryReason            string                               `json:"window_history_reason,omitempty"`
+	WindowCoverageStartedAt        *time.Time                           `json:"window_coverage_started_at,omitempty"`
+	WindowCoverageLostThroughAt    *time.Time                           `json:"window_coverage_lost_through_at,omitempty"`
+	WindowEvidenceRetainUntil      *time.Time                           `json:"window_evidence_retain_until,omitempty"`
+	WindowEvidenceRetentionSeconds int64                                `json:"window_evidence_retention_seconds,omitempty"`
+	CoverageStartedAt              *time.Time                           `json:"coverage_started_at,omitempty"`
+	CoverageLostAt                 *time.Time                           `json:"coverage_lost_at,omitempty"`
+	HistoryStatus                  string                               `json:"history_status"`
+	HistoryReason                  string                               `json:"history_reason"`
+	LatestSuccessfulCompletionAt   *time.Time                           `json:"latest_successful_completion_at,omitempty"`
+	SubscriptionID                 string                               `json:"subscription_id"`
+	AppID                          string                               `json:"app_id"`
+	ObservedAt                     time.Time                            `json:"observed_at"`
+	WindowStart                    time.Time                            `json:"window_start"`
+	Coverage                       string                               `json:"coverage"`
+	HistoryComplete                bool                                 `json:"history_complete"`
+	Truncated                      bool                                 `json:"truncated"`
+	RetainedRoots                  int64                                `json:"retained_roots"`
+	MissingRoots                   int64                                `json:"missing_roots"`
+	Executions                     int64                                `json:"executions"`
+	Queued                         int64                                `json:"queued"`
+	Running                        int64                                `json:"running"`
+	Retrying                       int64                                `json:"retrying"`
+	Succeeded                      int64                                `json:"succeeded"`
+	Failed                         int64                                `json:"failed"`
+	Expired                        int64                                `json:"expired"`
+	DeadLettered                   int64                                `json:"dead_lettered"`
+	Cancelled                      int64                                `json:"cancelled"`
+	Superseded                     int64                                `json:"superseded"`
+	Unknown                        int64                                `json:"unknown"`
+	SuccessfulAttempts             int64                                `json:"successful_attempts"`
+	FailedAttempts                 int64                                `json:"failed_attempts"`
+	UnknownAttempts                int64                                `json:"unknown_attempts"`
+	HandlerFailurePct              float64                              `json:"handler_failure_pct"`
+	WindowCompletions              int64                                `json:"window_completions"`
+	WindowDeadLetters              int64                                `json:"window_dead_letters"`
+	DeadLetterRatePerSecond        float64                              `json:"dead_letter_rate_per_second"`
+	CompletionLatencyP95Seconds    float64                              `json:"completion_latency_p95_seconds"`
 }
 
 func (c *Client) GetEventConsumerExecutionHealth(ctx context.Context, app, id, window string) (EventConsumerExecutionHealth, error) {
@@ -156,6 +157,7 @@ type EventExecutionLineageRetryJobItem struct {
 	Result    *EventExecutionLineageCase          `json:"result,omitempty"`
 }
 type EventExecutionLineageRetryJob struct {
+	LastProgressAt *time.Time                                   `json:"last_progress_at,omitempty"`
 	ControlReceipt *EventExecutionLineageRetryJobControlReceipt `json:"control_receipt,omitempty"`
 	RequestID      string                                       `json:"request_id"`
 	SubscriptionID string                                       `json:"subscription_id"`
@@ -369,4 +371,42 @@ func (c *Client) ResumeEventExecutionLineageCaseBackfill(ctx context.Context, ap
 }
 func (c *Client) CancelEventExecutionLineageCaseBackfill(ctx context.Context, app, sub, id string, req ControlEventExecutionLineageCaseBackfillRequest) (EventExecutionLineageCaseBackfill, error) {
 	return c.controlEventExecutionLineageCaseBackfill(ctx, app, sub, id, "cancel", req)
+}
+
+// EventExecutionLineageRetryJobHealth observes retained pending/paused jobs independently of the execution window.
+type EventExecutionLineageRetryJobHealth struct {
+	Coverage                 string                                      `json:"coverage"`
+	CountsComplete           bool                                        `json:"counts_complete"`
+	JobLimit                 int                                         `json:"job_limit"`
+	InactivityWarningSeconds int64                                       `json:"inactivity_warning_seconds"`
+	RetentionWarningSeconds  int64                                       `json:"retention_warning_seconds"`
+	ObservedJobs             int64                                       `json:"observed_jobs"`
+	PendingJobs              int64                                       `json:"pending_jobs"`
+	PausedJobs               int64                                       `json:"paused_jobs"`
+	RemainingCases           int64                                       `json:"remaining_cases"`
+	PendingRemainingCases    int64                                       `json:"pending_remaining_cases"`
+	PausedRemainingCases     int64                                       `json:"paused_remaining_cases"`
+	StalledPendingJobs       int64                                       `json:"stalled_pending_jobs"`
+	RetentionRiskJobs        int64                                       `json:"retention_risk_jobs"`
+	UnknownProgressJobs      int64                                       `json:"unknown_progress_jobs"`
+	OldestPendingActivityAt  *time.Time                                  `json:"oldest_pending_activity_at,omitempty"`
+	NextRetainUntil          *time.Time                                  `json:"next_retain_until,omitempty"`
+	Jobs                     []EventExecutionLineageRetryJobHealthSample `json:"jobs"`
+}
+type EventExecutionLineageRetryJobHealthSample struct {
+	RequestID            string     `json:"request_id"`
+	Status               string     `json:"status"`
+	Processed            int        `json:"processed"`
+	Selected             int        `json:"selected"`
+	Remaining            int        `json:"remaining"`
+	CreatedAt            time.Time  `json:"created_at"`
+	LastActivityAt       time.Time  `json:"last_activity_at"`
+	InactivityAgeSeconds float64    `json:"inactivity_age_seconds"`
+	LastProgressAt       *time.Time `json:"last_progress_at,omitempty"`
+	ProgressAgeSeconds   *float64   `json:"progress_age_seconds,omitempty"`
+	ProgressKnown        bool       `json:"progress_known"`
+	StalledPending       bool       `json:"stalled_pending"`
+	RetentionRisk        bool       `json:"retention_risk"`
+	RetainUntil          time.Time  `json:"retain_until"`
+	RetentionSeconds     float64    `json:"retention_seconds"`
 }

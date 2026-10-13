@@ -63337,6 +63337,7 @@ components:
       additionalProperties: false
       required: [request_id, subscription_id, app_id, status, processed, items, created_at, updated_at, retain_until]
       properties:
+        last_progress_at: { type: string, format: date-time, description: Last committed evaluation or skip recorded by upgraded workers. Absent before the first evaluation or for older snapshots; controls do not change it. }
         control_receipt:
           description: Immutable command outcome accompanying a UUID-keyed control response; outer job fields are current observations.
           allOf: [{ $ref: '#/components/schemas/EventExecutionLineageRetryJobControlReceipt' }]
@@ -63406,12 +63407,59 @@ components:
           type: boolean
           description: A retained app invocation lacks authoritative ledger lineage; unrelated app invocations can conservatively block reconciliation.
 
+    EventExecutionLineageRetryJobHealth:
+      type: object
+      additionalProperties: false
+      description: Bounded retained pending and paused lineage retry jobs at observed_at. Independent of the execution window and handler outcome completeness. Earliest retention deadlines are observed first. When counts_complete is false counts are lower bounds and oldest/next timestamps describe only observed jobs. Stalled pending is an advisory inactivity warning; pause/resume activity can reset inactivity without changing last progress. Legacy evaluated jobs without a progress timestamp report unknown progress. No handler payloads or case selections are included.
+      required: [coverage, counts_complete, job_limit, inactivity_warning_seconds, retention_warning_seconds, observed_jobs, pending_jobs, paused_jobs, remaining_cases, pending_remaining_cases, paused_remaining_cases, stalled_pending_jobs, retention_risk_jobs, unknown_progress_jobs, jobs]
+      properties:
+        coverage: { type: string, enum: [bounded_retained_active_lineage_retry_jobs] }
+        counts_complete: { type: boolean }
+        job_limit: { type: integer, minimum: 1, maximum: 500 }
+        inactivity_warning_seconds: { type: integer, format: int64, minimum: 0 }
+        retention_warning_seconds: { type: integer, format: int64, minimum: 0 }
+        observed_jobs: { type: integer, format: int64, minimum: 0 }
+        pending_jobs: { type: integer, format: int64, minimum: 0 }
+        paused_jobs: { type: integer, format: int64, minimum: 0 }
+        remaining_cases: { type: integer, format: int64, minimum: 0 }
+        pending_remaining_cases: { type: integer, format: int64, minimum: 0 }
+        paused_remaining_cases: { type: integer, format: int64, minimum: 0 }
+        stalled_pending_jobs: { type: integer, format: int64, minimum: 0 }
+        retention_risk_jobs: { type: integer, format: int64, minimum: 0 }
+        unknown_progress_jobs: { type: integer, format: int64, minimum: 0 }
+        oldest_pending_activity_at: { type: string, format: date-time }
+        next_retain_until: { type: string, format: date-time }
+        jobs:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/EventExecutionLineageRetryJobHealthSample' }
+    EventExecutionLineageRetryJobHealthSample:
+      type: object
+      additionalProperties: false
+      required: [request_id, status, processed, selected, remaining, created_at, last_activity_at, inactivity_age_seconds, progress_known, stalled_pending, retention_risk, retain_until, retention_seconds]
+      properties:
+        request_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, paused] }
+        processed: { type: integer, minimum: 0, maximum: 200 }
+        selected: { type: integer, minimum: 1, maximum: 200 }
+        remaining: { type: integer, minimum: 1, maximum: 200 }
+        created_at: { type: string, format: date-time, description: Original job incarnation guard for operator controls. }
+        last_activity_at: { type: string, format: date-time, description: Authoritative job update timestamp; includes progress and state changes. }
+        inactivity_age_seconds: { type: number, minimum: 0 }
+        last_progress_at: { type: string, format: date-time, description: Last committed case evaluation or skip; absent for unevaluated or legacy jobs. }
+        progress_age_seconds: { type: number, minimum: 0, description: Age since known last progress or creation before the first evaluation. Absent for legacy evaluated jobs without progress evidence. }
+        progress_known: { type: boolean }
+        stalled_pending: { type: boolean, description: Pending with no job activity for at least 15 minutes; paused jobs never match. Advisory and not proof of scheduler failure. }
+        retention_risk: { type: boolean, description: Active job expires within 24 hours; includes deliberately paused work. }
+        retain_until: { type: string, format: date-time }
+        retention_seconds: { type: number, minimum: 0 }
     EventConsumerExecutionHealth:
       type: object
       additionalProperties: false
       description: 'Current retained execution states for admitted application event deliveries and retained handler replays. Attempts and successful completion latency use an immutable, per-subscription outcome ledger with 30-day retention. Window evidence survives source deletion and is independent of retained execution-state truncation. Counts are bounded observations, include backfills, and are not unique event counts. Version filtering and routing failures are excluded. History completeness is established only for fully covered windows of newly instrumented subscriptions; legacy baselines remain unknown and evidence loss is partial.'
       required: [subscription_id, app_id, observed_at, window_start, coverage, history_complete, truncated, retained_roots, missing_roots, executions, queued, running, retrying, succeeded, failed, expired, dead_lettered, cancelled, superseded, unknown, successful_attempts, failed_attempts, unknown_attempts, window_completions, window_dead_letters, handler_failure_pct, dead_letter_rate_per_second, completion_latency_p95_seconds]
       properties:
+        lineage_retry_jobs: { $ref: "#/components/schemas/EventExecutionLineageRetryJobHealth" }
         window_coverage: { type: string, enum: [durable_execution_outcomes], description: 'Evidence scope for attempt rates and completion latency; current invocation states retain their separate bounded scope.' }
         window_history_complete: { type: boolean, description: 'True when the requested ledger window has a known baseline and no lost, expired or unknown outcomes.' }
         window_history_status: { type: string, enum: [complete, partial, unknown] }

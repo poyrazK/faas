@@ -743,6 +743,7 @@ type Querier interface {
 	EventExecutionLineageRepairReceipts(ctx context.Context, db DBTX, arg EventExecutionLineageRepairReceiptsParams) ([]EventExecutionLineageRepairReceiptsRow, error)
 	EventExecutionLineageRepairRoot(ctx context.Context, db DBTX, arg EventExecutionLineageRepairRootParams) (EventExecutionLineageRepairRootRow, error)
 	EventExecutionLineageRetryControlSequence(ctx context.Context, db DBTX, arg EventExecutionLineageRetryControlSequenceParams) (int64, error)
+	EventExecutionLineageRetryHealthJobs(ctx context.Context, db DBTX, arg EventExecutionLineageRetryHealthJobsParams) ([]EventExecutionLineageRetryHealthJobsRow, error)
 	EventExecutionLineageRetryJobIdentity(ctx context.Context, db DBTX, arg EventExecutionLineageRetryJobIdentityParams) (EventExecutionLineageRetryJob, error)
 	EventExecutionLineageRetryResult(ctx context.Context, db DBTX, arg EventExecutionLineageRetryResultParams) (EventExecutionLineageRetryResultRow, error)
 	EventExecutionRecoveryBoundary(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)

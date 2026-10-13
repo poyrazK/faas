@@ -870,3 +870,55 @@ order, and the creation guard does not order separate control commands. After a
 lost response, timeout or another operator's opposite control, read status before
 repeating your desired action. A delayed repeated pause/resume can reapply its
 state after an intervening opposite operation; cancellation remains terminal.
+
+## Diagnose pending and paused retry work
+
+Consumer execution health now includes optional `lineage_retry_jobs`, also present
+inside `execution` in combined delivery health. Existing read scope and MFA apply.
+Use the existing commands:
+
+```sh
+gregale --json events subscription-execution-health APP SUB --window 15m
+gregale events subscription-delivery-health APP SUB --window 15m
+```
+
+These diagnostics observe retained pending/paused bulk retry jobs independently
+of the execution outcome window. Completed, cancelled, expired and future-created
+jobs are excluded. They report job counts, pending/paused remaining cases, stalled
+pending jobs, retention-risk jobs, unknown progress, oldest observed pending
+activity, earliest observed expiry and up to ten metadata samples. Samples include
+request UUID, original creation guard, current state/counts, activity/progress ages,
+original retention deadline and warning flags. They contain no case selections,
+case results, command receipts or event payloads.
+
+A pending job becomes `stalled_pending` after at least 15 minutes without job
+activity. This is an advisory warning, not proof that the scheduler failed:
+capacity or other delays can also prevent progress. Deliberately paused jobs never
+receive that flag. Resuming a paused job updates activity and restarts its pending
+inactivity interval. Jobs with 24 hours or less until their original deadline get
+`retention_risk`, including paused work. Diagnostics do not resume, retry, cancel
+or extend retention; review the job before using its existing guarded controls.
+
+`last_progress_at` is now optional on retained job responses and is recorded in
+the existing JSON snapshot when an upgraded worker commits a case evaluation or
+skip, including changed/unavailable cases. A failed/rolled-back evaluation records
+nothing. Pause/resume/cancel controls preserve it. Progress age and activity age
+are separate: before any evaluation progress age uses creation and
+`last_progress_at` is absent; older evaluated snapshots without a timestamp have
+`progress_known: false` and omit progress age instead of treating control time as
+progress. Their next committed worker evaluation establishes evidence. Upgrade
+all API writers and workers to preserve this field consistently; older writers
+may omit it during a rolling upgrade. No progress timestamp is guessed or backfilled.
+
+At most 500 active jobs are observed, ordered by earliest retention deadline then
+activity and UUID. If more exist, `counts_complete: false` means counts are lower
+bounds and extrema cover only the observed set. Samples prioritize retention risk
+then stalled pending work within that set. Neither an empty warning count under
+truncation nor an omitted sample proves all other jobs are healthy. The block's
+completeness is separate from handler outcome history and execution-root truncation;
+it does not change eligibility for existing execution alerts. Older API versions
+may omit the entire block.
+
+The new index-only migration supports this read; no table columns or compliance
+registry entries change. Index rollback preserves job data and progress metadata.
+Go, Node and Python SDK models expose the optional block and last-progress field.
