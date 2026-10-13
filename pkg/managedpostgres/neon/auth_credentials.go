@@ -17,6 +17,19 @@ var authSchemas = []string{"auth", "gregale_auth"}
 
 const authOwnerMarker = "gregale:auth-owner:v1"
 
+// authHelperSQL matches an ADR-1190 authorization helper for pg_proc p and
+// pg_namespace n: a SECURITY DEFINER function that RLS policies and Data API
+// logins call to read the caller's memberships and session. It must live in
+// gregale_auth, be owned by that schema's marked auth owner, carry the helper
+// marker, and be STABLE or IMMUTABLE SQL or PL/pgSQL. PostgreSQL runs such
+// functions read-only (it rejects data-modifying statements in non-volatile
+// SQL and PL/pgSQL), so executing one cannot give a read-only login writes.
+const authHelperSQL = `(n.nspname = 'gregale_auth' AND p.proowner = n.nspowner
+ AND COALESCE(shobj_description(n.nspowner, 'pg_authid'), '') = '` + authOwnerMarker + `'
+ AND COALESCE(obj_description(p.oid, 'pg_proc'), '') = 'gregale:auth-helper:v1'
+ AND p.provolatile IN ('s', 'i')
+ AND p.prolang IN (SELECT oid FROM pg_language WHERE lanname IN ('sql', 'plpgsql')))`
+
 // GoTrue enables RLS on every table it creates, which a DML-only login cannot
 // pass. The auth login therefore acts as a dedicated NOLOGIN owner of the
 // auth schemas, the way migration logins act as the customer schema owner.

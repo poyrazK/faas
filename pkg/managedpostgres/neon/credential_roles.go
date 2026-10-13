@@ -221,6 +221,7 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 // Read-only is a privilege contract, not a client-overridable transaction setting.
 // Reject observed direct, column, PUBLIC, function, and future-object write grants.
 // These statements run against the external customer database, not Gregale's catalog.
+// The one exception is an ADR-1190 authorization helper (authHelperSQL).
 func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
 	var unsafe bool
 	err := tx.QueryRow(ctx, `SELECT
@@ -232,7 +233,8 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR has_any_column_privilege($1,c.oid,'INSERT,UPDATE,REFERENCES')))
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE'))
+ WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
+ AND NOT `+authHelperSQL+`)
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
