@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_escalation_action_review import (
+        OperationWorkflowReviewResponseEscalationActionReview,
+    )
     from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
 
@@ -25,6 +30,11 @@ class OperationWorkflowReviewResponseEscalationCompletion:
     evidence: list[OperationWorkflowReviewResponseLink]
     at: datetime.datetime
     actor: str
+    review: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
+    """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
+    completion evidence order. A clear observation does not establish causality or business completion; observation
+    is not atomic with concurrent application reports. History preserves prior review snapshots within existing
+    retention bounds."""
 
     def to_dict(self) -> dict[str, Any]:
         acknowledged_at = self.acknowledged_at.isoformat()
@@ -40,6 +50,10 @@ class OperationWorkflowReviewResponseEscalationCompletion:
 
         actor = self.actor
 
+        review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.review, Unset):
+            review = self.review.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -51,11 +65,16 @@ class OperationWorkflowReviewResponseEscalationCompletion:
                 "actor": actor,
             }
         )
+        if review is not UNSET:
+            field_dict["review"] = review
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_escalation_action_review import (
+            OperationWorkflowReviewResponseEscalationActionReview,
+        )
         from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
         d = dict(src_dict)
@@ -74,12 +93,20 @@ class OperationWorkflowReviewResponseEscalationCompletion:
 
         actor = d.pop("actor")
 
+        _review = d.pop("review", UNSET)
+        review: OperationWorkflowReviewResponseEscalationActionReview | Unset
+        if isinstance(_review, Unset):
+            review = UNSET
+        else:
+            review = OperationWorkflowReviewResponseEscalationActionReview.from_dict(_review)
+
         operation_workflow_review_response_escalation_completion = cls(
             acknowledged_at=acknowledged_at,
             summary=summary,
             evidence=evidence,
             at=at,
             actor=actor,
+            review=review,
         )
 
         return operation_workflow_review_response_escalation_completion

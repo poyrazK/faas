@@ -485,6 +485,8 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
+	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReviewRequest   `json:"escalation_action_review,omitempty"`
+	EscalationRevision               *OperationWorkflowReviewResponseEscalationRevisionRequest       `json:"escalation_revision,omitempty"`
 	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletionRequest     `json:"escalation_completion,omitempty"`
 	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgmentRequest `json:"escalation_acknowledgment,omitempty"`
 	HandoffAcceptanceEscalationOwner *string                                                         `json:"handoff_acceptance_escalation_owner,omitempty"`
@@ -545,6 +547,7 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated                 bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
+	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReview   `json:"escalation_action_review,omitempty"`
 	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletion     `json:"escalation_completion,omitempty"`
 	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgment `json:"escalation_acknowledgment,omitempty"`
 	HandoffAcceptanceEscalationOwner string                                                   `json:"handoff_acceptance_escalation_owner,omitempty"`
@@ -730,13 +733,15 @@ type OperationWorkflowReviewResponseEscalationAcknowledgmentRequest struct {
 	DueAt       time.Time `json:"due_at"`
 }
 type OperationWorkflowReviewResponseEscalationAcknowledgment struct {
-	Completion        *OperationWorkflowReviewResponseEscalationCompletion `json:"completion,omitempty"`
-	Coordinator       string                                               `json:"coordinator"`
-	Plan              string                                               `json:"plan"`
-	DueAt             time.Time                                            `json:"due_at"`
-	At                time.Time                                            `json:"at"`
-	Actor             string                                               `json:"actor"`
-	OverdueNotifiedAt *time.Time                                           `json:"overdue_notified_at,omitempty"`
+	PreviousCompletedAt *time.Time                                             `json:"previous_completed_at,omitempty"`
+	Basis               *OperationWorkflowReviewResponseEscalationActionReview `json:"basis,omitempty"`
+	Completion          *OperationWorkflowReviewResponseEscalationCompletion   `json:"completion,omitempty"`
+	Coordinator         string                                                 `json:"coordinator"`
+	Plan                string                                                 `json:"plan"`
+	DueAt               time.Time                                              `json:"due_at"`
+	At                  time.Time                                              `json:"at"`
+	Actor               string                                                 `json:"actor"`
+	OverdueNotifiedAt   *time.Time                                             `json:"overdue_notified_at,omitempty"`
 }
 
 // Completion records human coordination work, not an application outcome.
@@ -750,9 +755,32 @@ type OperationWorkflowReviewResponseEscalationCompletionRequest struct {
 	ReviewIndices  []int     `json:"review_indices"`
 }
 type OperationWorkflowReviewResponseEscalationCompletion struct {
-	AcknowledgedAt time.Time                             `json:"acknowledged_at"`
-	Summary        string                                `json:"summary"`
-	Evidence       []OperationWorkflowReviewResponseLink `json:"evidence"`
-	At             time.Time                             `json:"at"`
-	Actor          string                                `json:"actor"`
+	Review         *OperationWorkflowReviewResponseEscalationActionReview `json:"review,omitempty"`
+	AcknowledgedAt time.Time                                              `json:"acknowledged_at"`
+	Summary        string                                                 `json:"summary"`
+	Evidence       []OperationWorkflowReviewResponseLink                  `json:"evidence"`
+	At             time.Time                                              `json:"at"`
+	Actor          string                                                 `json:"actor"`
+}
+
+type OperationWorkflowReviewResponseEscalationActionReviewRequest struct {
+	DecisionAt     time.Time `json:"decision_at"`
+	RequiredAt     time.Time `json:"required_at"`
+	HandedOffAt    time.Time `json:"handed_off_at"`
+	EscalatedAt    time.Time `json:"escalated_at"`
+	AcknowledgedAt time.Time `json:"acknowledged_at"`
+	CompletedAt    time.Time `json:"completed_at"`
+}
+type OperationWorkflowReviewResponseEscalationRevisionRequest struct {
+	OperationWorkflowReviewResponseEscalationActionReviewRequest
+	ReviewAt    time.Time `json:"review_at"`
+	Coordinator string    `json:"coordinator"`
+	Plan        string    `json:"plan"`
+	DueAt       time.Time `json:"due_at"`
+}
+type OperationWorkflowReviewResponseEscalationActionReview struct {
+	CompletedAt time.Time                             `json:"completed_at"`
+	At          time.Time                             `json:"at"`
+	Actor       string                                `json:"actor"`
+	Health      OperationWorkflowReviewResponseHealth `json:"health"`
 }

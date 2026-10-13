@@ -12,7 +12,8 @@ import (
 )
 
 type readinessCoordinationUpdate struct {
-	PreparedReviewResponse *api.OperationWorkflowReviewResponse
+	PreparedEscalationActionReview *api.OperationWorkflowReviewResponseEscalationActionReview
+	PreparedReviewResponse         *api.OperationWorkflowReviewResponse
 	api.OperationWorkflowReadinessCoordinationRequest
 	PreparedReview       *api.OperationWorkflowPlaybookCompletionReview
 	PreparedCompletion   *api.OperationWorkflowReadinessCompletion

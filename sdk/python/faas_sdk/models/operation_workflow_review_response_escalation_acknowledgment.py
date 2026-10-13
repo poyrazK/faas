@@ -9,6 +9,9 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_escalation_action_review import (
+        OperationWorkflowReviewResponseEscalationActionReview,
+    )
     from ..models.operation_workflow_review_response_escalation_completion import (
         OperationWorkflowReviewResponseEscalationCompletion,
     )
@@ -20,7 +23,8 @@ T = TypeVar("T", bound="OperationWorkflowReviewResponseEscalationAcknowledgment"
 @_attrs_define
 class OperationWorkflowReviewResponseEscalationAcknowledgment:
     """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time. Notification
-    acknowledgment alone does not create this record. The system overdue marker and explicit human completion may be appended without changing commitment fields.
+    acknowledgment alone does not create this record. The system overdue marker and explicit human completion may be
+    appended without changing commitment fields.
 
     """
 
@@ -29,6 +33,14 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
     due_at: datetime.datetime
     at: datetime.datetime
     actor: str
+    previous_completed_at: datetime.datetime | Unset = UNSET
+    """Previous coordinator completion that this explicit revised commitment follows. Original completion remains
+    in retained history."""
+    basis: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
+    """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
+    completion evidence order. A clear observation does not establish causality or business completion; observation
+    is not atomic with concurrent application reports. History preserves prior review snapshots within existing
+    retention bounds."""
     completion: OperationWorkflowReviewResponseEscalationCompletion | Unset = UNSET
     """Immutable human completion of escalation coordination work, with linked review references and server actor
     and time. Existing overdue markers remain historical."""
@@ -46,6 +58,14 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        previous_completed_at: str | Unset = UNSET
+        if not isinstance(self.previous_completed_at, Unset):
+            previous_completed_at = self.previous_completed_at.isoformat()
+
+        basis: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.basis, Unset):
+            basis = self.basis.to_dict()
 
         completion: dict[str, Any] | Unset = UNSET
         if not isinstance(self.completion, Unset):
@@ -66,6 +86,10 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
                 "actor": actor,
             }
         )
+        if previous_completed_at is not UNSET:
+            field_dict["previous_completed_at"] = previous_completed_at
+        if basis is not UNSET:
+            field_dict["basis"] = basis
         if completion is not UNSET:
             field_dict["completion"] = completion
         if overdue_notified_at is not UNSET:
@@ -75,6 +99,9 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_escalation_action_review import (
+            OperationWorkflowReviewResponseEscalationActionReview,
+        )
         from ..models.operation_workflow_review_response_escalation_completion import (
             OperationWorkflowReviewResponseEscalationCompletion,
         )
@@ -89,6 +116,20 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _previous_completed_at = d.pop("previous_completed_at", UNSET)
+        previous_completed_at: datetime.datetime | Unset
+        if isinstance(_previous_completed_at, Unset):
+            previous_completed_at = UNSET
+        else:
+            previous_completed_at = datetime.datetime.fromisoformat(_previous_completed_at)
+
+        _basis = d.pop("basis", UNSET)
+        basis: OperationWorkflowReviewResponseEscalationActionReview | Unset
+        if isinstance(_basis, Unset):
+            basis = UNSET
+        else:
+            basis = OperationWorkflowReviewResponseEscalationActionReview.from_dict(_basis)
 
         _completion = d.pop("completion", UNSET)
         completion: OperationWorkflowReviewResponseEscalationCompletion | Unset
@@ -110,6 +151,8 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
             due_at=due_at,
             at=at,
             actor=actor,
+            previous_completed_at=previous_completed_at,
+            basis=basis,
             completion=completion,
             overdue_notified_at=overdue_notified_at,
         )

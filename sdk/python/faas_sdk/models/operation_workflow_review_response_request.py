@@ -19,8 +19,14 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_escalation_acknowledgment_request import (
         OperationWorkflowReviewResponseEscalationAcknowledgmentRequest,
     )
+    from ..models.operation_workflow_review_response_escalation_action_review_request import (
+        OperationWorkflowReviewResponseEscalationActionReviewRequest,
+    )
     from ..models.operation_workflow_review_response_escalation_completion_request import (
         OperationWorkflowReviewResponseEscalationCompletionRequest,
+    )
+    from ..models.operation_workflow_review_response_escalation_revision_request import (
+        OperationWorkflowReviewResponseEscalationRevisionRequest,
     )
     from ..models.operation_workflow_review_response_handoff_acceptance_request import (
         OperationWorkflowReviewResponseHandoffAcceptanceRequest,
@@ -53,6 +59,16 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    escalation_revision: OperationWorkflowReviewResponseEscalationRevisionRequest | Unset = UNSET
+    """Explicit scoped review of the current completed coordinator action and creation of a revised commitment only
+    while the handoff remains unaccepted and undeclined. Supply current episode timestamps and preserve parent
+    owner, plan and exact check-in; omit parent reviews. Cannot combine with other response actions. Evidence
+    unavailable is not clear or application success. Requires the recorded non-clear review timestamp and a fresh
+    non-clear recheck; deadline must be future and within seven days."""
+    escalation_action_review: OperationWorkflowReviewResponseEscalationActionReviewRequest | Unset = UNSET
+    """Explicit scoped review of the current completed coordinator action. Supply current episode timestamps and
+    preserve parent owner, plan and exact check-in; omit parent reviews. Cannot combine with other response actions.
+    Evidence unavailable is not clear or application success."""
     escalation_completion: OperationWorkflowReviewResponseEscalationCompletionRequest | Unset = UNSET
     """Complete one current escalation coordinator commitment with an action summary and saved review evidence.
     Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with
@@ -110,6 +126,14 @@ class OperationWorkflowReviewResponseRequest:
 
         status: str = self.status
 
+        escalation_revision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_revision, Unset):
+            escalation_revision = self.escalation_revision.to_dict()
+
+        escalation_action_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_action_review, Unset):
+            escalation_action_review = self.escalation_action_review.to_dict()
+
         escalation_completion: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_completion, Unset):
             escalation_completion = self.escalation_completion.to_dict()
@@ -164,6 +188,10 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if escalation_revision is not UNSET:
+            field_dict["escalation_revision"] = escalation_revision
+        if escalation_action_review is not UNSET:
+            field_dict["escalation_action_review"] = escalation_action_review
         if escalation_completion is not UNSET:
             field_dict["escalation_completion"] = escalation_completion
         if escalation_acknowledgment is not UNSET:
@@ -201,8 +229,14 @@ class OperationWorkflowReviewResponseRequest:
         from ..models.operation_workflow_review_response_escalation_acknowledgment_request import (
             OperationWorkflowReviewResponseEscalationAcknowledgmentRequest,
         )
+        from ..models.operation_workflow_review_response_escalation_action_review_request import (
+            OperationWorkflowReviewResponseEscalationActionReviewRequest,
+        )
         from ..models.operation_workflow_review_response_escalation_completion_request import (
             OperationWorkflowReviewResponseEscalationCompletionRequest,
+        )
+        from ..models.operation_workflow_review_response_escalation_revision_request import (
+            OperationWorkflowReviewResponseEscalationRevisionRequest,
         )
         from ..models.operation_workflow_review_response_handoff_acceptance_request import (
             OperationWorkflowReviewResponseHandoffAcceptanceRequest,
@@ -221,6 +255,24 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _escalation_revision = d.pop("escalation_revision", UNSET)
+        escalation_revision: OperationWorkflowReviewResponseEscalationRevisionRequest | Unset
+        if isinstance(_escalation_revision, Unset):
+            escalation_revision = UNSET
+        else:
+            escalation_revision = OperationWorkflowReviewResponseEscalationRevisionRequest.from_dict(
+                _escalation_revision
+            )
+
+        _escalation_action_review = d.pop("escalation_action_review", UNSET)
+        escalation_action_review: OperationWorkflowReviewResponseEscalationActionReviewRequest | Unset
+        if isinstance(_escalation_action_review, Unset):
+            escalation_action_review = UNSET
+        else:
+            escalation_action_review = OperationWorkflowReviewResponseEscalationActionReviewRequest.from_dict(
+                _escalation_action_review
+            )
 
         _escalation_completion = d.pop("escalation_completion", UNSET)
         escalation_completion: OperationWorkflowReviewResponseEscalationCompletionRequest | Unset
@@ -300,6 +352,8 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            escalation_revision=escalation_revision,
+            escalation_action_review=escalation_action_review,
             escalation_completion=escalation_completion,
             escalation_acknowledgment=escalation_acknowledgment,
             handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,

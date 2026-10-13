@@ -372,3 +372,5 @@ export type { OperationWorkflowReviewResponseHandoffReassignmentRequest, Operati
 export type { OperationWorkflowReviewResponseEscalationAcknowledgmentRequest, OperationWorkflowReviewResponseEscalationAcknowledgment } from './customer-operations.js';
 
 export type { OperationWorkflowReviewResponseEscalationCompletionRequest, OperationWorkflowReviewResponseEscalationCompletion } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseEscalationActionReviewRequest, OperationWorkflowReviewResponseEscalationRevisionRequest, OperationWorkflowReviewResponseEscalationActionReview } from './customer-operations.js';

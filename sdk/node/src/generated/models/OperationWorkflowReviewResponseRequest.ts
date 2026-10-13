@@ -4,7 +4,9 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecisionRequest } from './OperationWorkflowReviewResponseDecisionRequest.js';
 import type { OperationWorkflowReviewResponseEscalationAcknowledgmentRequest } from './OperationWorkflowReviewResponseEscalationAcknowledgmentRequest.js';
+import type { OperationWorkflowReviewResponseEscalationActionReviewRequest } from './OperationWorkflowReviewResponseEscalationActionReviewRequest.js';
 import type { OperationWorkflowReviewResponseEscalationCompletionRequest } from './OperationWorkflowReviewResponseEscalationCompletionRequest.js';
+import type { OperationWorkflowReviewResponseEscalationRevisionRequest } from './OperationWorkflowReviewResponseEscalationRevisionRequest.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptanceRequest } from './OperationWorkflowReviewResponseHandoffAcceptanceRequest.js';
 import type { OperationWorkflowReviewResponseHandoffDeclineRequest } from './OperationWorkflowReviewResponseHandoffDeclineRequest.js';
 import type { OperationWorkflowReviewResponseHandoffReassignmentRequest } from './OperationWorkflowReviewResponseHandoffReassignmentRequest.js';
@@ -13,6 +15,14 @@ import type { OperationWorkflowReviewResponseLinkRequest } from './OperationWork
  * OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
  */
 export type OperationWorkflowReviewResponseRequest = {
+  /**
+   * OperationWorkflowReviewResponseRequest.escalation_revision. Scoped evidence review for completed coordinator work, separate from business success.
+   */
+  escalation_revision?: OperationWorkflowReviewResponseEscalationRevisionRequest;
+  /**
+   * OperationWorkflowReviewResponseRequest.escalation_action_review. Scoped evidence review for completed coordinator work, separate from business success.
+   */
+  escalation_action_review?: OperationWorkflowReviewResponseEscalationActionReviewRequest;
   /**
    * OperationWorkflowReviewResponseRequest.escalation_completion. Explicit completion of coordinator work, separate from handoff acceptance and business outcomes.
    */

@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_escalation_acknowledgment import (
         OperationWorkflowReviewResponseEscalationAcknowledgment,
     )
+    from ..models.operation_workflow_review_response_escalation_action_review import (
+        OperationWorkflowReviewResponseEscalationActionReview,
+    )
     from ..models.operation_workflow_review_response_escalation_completion import (
         OperationWorkflowReviewResponseEscalationCompletion,
     )
@@ -55,13 +58,18 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    escalation_action_review: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
+    """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
+    completion evidence order. A clear observation does not establish causality or business completion; observation
+    is not atomic with concurrent application reports. History preserves prior review snapshots within existing
+    retention bounds."""
     escalation_completion: OperationWorkflowReviewResponseEscalationCompletion | Unset = UNSET
     """Immutable human completion of escalation coordination work, with linked review references and server actor
     and time. Existing overdue markers remain historical."""
     escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgment | Unset = UNSET
     """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
-    Notification acknowledgment alone does not create this record. Only the system overdue delivery marker may
-    change."""
+    Notification acknowledgment alone does not create this record. The system overdue marker and explicit human
+    completion may be appended without changing commitment fields."""
     handoff_acceptance_escalation_owner: str | Unset = UNSET
     """OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
     label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination
@@ -108,6 +116,10 @@ class OperationWorkflowReviewResponseChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        escalation_action_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_action_review, Unset):
+            escalation_action_review = self.escalation_action_review.to_dict()
 
         escalation_completion: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_completion, Unset):
@@ -162,6 +174,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if escalation_action_review is not UNSET:
+            field_dict["escalation_action_review"] = escalation_action_review
         if escalation_completion is not UNSET:
             field_dict["escalation_completion"] = escalation_completion
         if escalation_acknowledgment is not UNSET:
@@ -197,6 +211,9 @@ class OperationWorkflowReviewResponseChange:
         from ..models.operation_workflow_review_response_escalation_acknowledgment import (
             OperationWorkflowReviewResponseEscalationAcknowledgment,
         )
+        from ..models.operation_workflow_review_response_escalation_action_review import (
+            OperationWorkflowReviewResponseEscalationActionReview,
+        )
         from ..models.operation_workflow_review_response_escalation_completion import (
             OperationWorkflowReviewResponseEscalationCompletion,
         )
@@ -220,6 +237,15 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _escalation_action_review = d.pop("escalation_action_review", UNSET)
+        escalation_action_review: OperationWorkflowReviewResponseEscalationActionReview | Unset
+        if isinstance(_escalation_action_review, Unset):
+            escalation_action_review = UNSET
+        else:
+            escalation_action_review = OperationWorkflowReviewResponseEscalationActionReview.from_dict(
+                _escalation_action_review
+            )
 
         _escalation_completion = d.pop("escalation_completion", UNSET)
         escalation_completion: OperationWorkflowReviewResponseEscalationCompletion | Unset
@@ -297,6 +323,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            escalation_action_review=escalation_action_review,
             escalation_completion=escalation_completion,
             escalation_acknowledgment=escalation_acknowledgment,
             handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecision } from './OperationWorkflowReviewResponseDecision.js';
 import type { OperationWorkflowReviewResponseEscalationAcknowledgment } from './OperationWorkflowReviewResponseEscalationAcknowledgment.js';
+import type { OperationWorkflowReviewResponseEscalationActionReview } from './OperationWorkflowReviewResponseEscalationActionReview.js';
 import type { OperationWorkflowReviewResponseEscalationCompletion } from './OperationWorkflowReviewResponseEscalationCompletion.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptance } from './OperationWorkflowReviewResponseHandoffAcceptance.js';
 import type { OperationWorkflowReviewResponseHandoffDecline } from './OperationWorkflowReviewResponseHandoffDecline.js';
@@ -12,6 +13,10 @@ import type { OperationWorkflowReviewResponseHandoffReassignment } from './Opera
  * OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
  */
 export type OperationWorkflowReviewResponseChange = {
+  /**
+   * OperationWorkflowReviewResponseChange.escalation_action_review. Scoped evidence review for completed coordinator work, separate from business success.
+   */
+  escalation_action_review?: OperationWorkflowReviewResponseEscalationActionReview;
   /**
    * OperationWorkflowReviewResponseChange.escalation_completion. Explicit completion of coordinator work, separate from handoff acceptance and business outcomes.
    */
@@ -59,7 +64,7 @@ export type OperationWorkflowReviewResponseChange = {
   /**
    * OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
    */
-  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted' | 'handoff_declined' | 'handoff_reassigned' | 'escalation_acknowledged' | 'escalation_commitment_completed';
+  reason?: 'human_update' | 'check_in_overdue' | 'decision_review_overdue' | 'handoff_accepted' | 'handoff_declined' | 'handoff_reassigned' | 'escalation_acknowledged' | 'escalation_commitment_completed' | 'escalation_action_reviewed' | 'escalation_commitment_revised';
   /**
    * OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to 256 bytes.
    */
