@@ -479,7 +479,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 422 | [Bare-metal service recovery capacity](422-bare-metal-service-recovery-capacity.md) | accepted | Durable, atomic one-host recovery headroom and operator certificate |
 | 426 | [MCP hosting contract](426-mcp-hosting-contract.md) | proposed | Stateless MCP starter, deployment verification, client OAuth and diagnostics on the app lifecycle |
 | 1150 | [Per-plan request timeout ceilings](1150-per-plan-request-timeouts.md) | accepted | `Limits.RequestBudgetMaxMs` per plan (Free 30 s, Hobby 1 min, Pro 5 min, Scale 15 min); gateway passes `X-Faas-Deadline-Ms` to the guest |
-| 1152 | [Availability architecture: regional cells, three-zone Postgres HA, fenced compute](1152-availability-architecture-cells-zones-fencing.md) | proposed | Regions as cells across 3 zones; self-run Patroni + etcd with a synchronous standby; data plane serves last-known state; node leases and fencing epochs; zero-downtime contract for planned operations; phases P0–P6 with public-release gate |
+| 1152 | [Availability architecture: regional cells, three-zone Postgres HA, fenced compute](1152-availability-architecture-cells-zones-fencing.md) | proposed | Makes the regional branch's cells and directory highly available: 3 zones per cell, self-run Patroni + etcd with a synchronous standby, every-edge global ingress, node leases with self-fencing (quota still released only by signed stop proof), static stability and a zero-downtime contract; phases P0–P6 plus landing the regional branch |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

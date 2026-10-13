@@ -2,42 +2,68 @@
 
 - **Status:** proposed
 - **Date:** 2026-10-13
-- **Decision:** Gregale becomes a set of regional **cells**. Each cell spans
-  three availability zones and runs its own self-managed Postgres HA cluster
-  (Patroni + etcd, one synchronous standby), an active-active edge, and
-  compute nodes that hold expiring leases and fence themselves. The data
-  plane stays available through control-plane and database outages by
-  serving last-known state. Control-plane writes and at-most-once workloads
-  stay consistent: they stop rather than diverge. Planned operations
-  (platform releases, node drains, Postgres switchovers, Firecracker
-  upgrades) must not fail requests.
-- **Why:** Owner goal for public release (2026-10-13): partition
-  tolerance, zero downtime and acceptable scaling, across multiple regions
-  and zones, with Postgres run by us. Today one host (fsn-1) holds every
+- **Decision:** Gregale's regions run as independent **cells**, using the
+  model already built on branch `codex/regional-deployment-20261001`:
+  - a cell's control plane and database are bound to one region;
+  - apps are either pinned to one region or global with targets in
+    several regions;
+  - a global directory pushes signed grants and ingress snapshots.
+
+  This ADR adds what that branch leaves out:
+  - within each cell, three availability zones and a self-run Postgres HA
+    cluster (Patroni + etcd, one synchronous standby);
+  - the same HA for the directory database;
+  - global ingress served from every cell edge instead of one node;
+  - expiring node leases with self-fencing, which respect the branch's
+    rule that only signed stop proof releases quota;
+  - static stability of the data plane;
+  - a zero-downtime contract for planned operations.
+- **Why:** owner goal for public release (2026-10-13): partition tolerance,
+  zero downtime and acceptable scaling across regions and zones, with
+  Postgres run by us. Today a single host (fsn-1) holds every
   control-plane component, the only public origin and the only database.
-  Losing it stops all traffic, including traffic to apps that are already
-  running (see Context).
-- **Consequences:** a per-cell minimum of three control nodes and three
-  compute nodes, one of each per zone; a second region doubles that. A
-  financial-model addendum must land before hardware is ordered. New
-  surfaces: a `postgres_ha` Ansible role, a lease/epoch primitive, node
-  leases, a cell registry and a global directory. Several accepted ADRs are
-  superseded or amended (listed below).
-- **Rejected alternatives:** managed Postgres, one cluster stretched across
-  regions, a distributed SQL database, a second coordination store for
-  leases, ADR-083's DNS leader election as the HA mechanism, and keeping
-  maintenance windows. See the end of this ADR.
-- **Builds on:** ADR-062 (per-node schedd), ADR-066 (live migration),
-  ADR-137/174 (node lifecycle), ADR-208 (rollout handoff), ADR-420/421/422
-  (service and ownership recovery), ADR-472 (vmmd restart quarantine),
-  ADR-510 (snapshot backing identity)
+  The regional branch decides how regions relate, but every cell and the
+  directory are still single-host, single-database deployments.
+- **Consequences:**
+  - Footprint: a per-cell minimum of three control nodes and six compute
+    nodes, plus a three-node directory deployment. A financial-model
+    addendum must land before hardware is ordered.
+  - New surfaces: a `postgres_ha` Ansible role, a lease/epoch primitive,
+    node leases, and replicated ingress snapshots.
+  - Several accepted ADRs are superseded or amended (listed below).
+- **Rejected alternatives:** managed Postgres; one cluster stretched
+  across regions; a distributed SQL database; a second coordination store
+  for leases; ADR-083's DNS leader election; maintenance windows;
+  redesigning regional tenancy here. See the end of this ADR.
+- **Builds on:**
+  - Main: ADR-062 (per-node schedd), ADR-066 (live migration),
+    ADR-137/174 (node lifecycle), ADR-208 (rollout handoff),
+    ADR-420/421/422 (service and ownership recovery), ADR-472 (vmmd
+    restart quarantine), ADR-510 (snapshot backing identity).
+  - Regional branch ADRs (numbers 713–802, to be renumbered before they
+    land):
+    - regional compute placement and the region registry (719/720);
+    - regional service recovery capacity and placement headroom (717/718);
+    - control-plane cell identity (729);
+    - the global app directory and regional bindings (730);
+    - the signed quota protocol (740–746, 760, 772–775);
+    - host incarnations and operation fences (747/748);
+    - native provenance and retirement (757–783);
+    - global ingress (784–786);
+    - global provisioning (797);
+    - the global usage ledger (798–802).
 - **Supersedes (when accepted):** spec §16 leans "maintenance windows" and
-  "FSN + HEL pair"; ADR-083 as the HA mechanism; the ADR-137 heartbeat-gap
-  trigger for recovery
-- **Amends (when accepted):** spec §3 ADR-006 (Postgres topology), §2
-  (architecture overview), §8 (off-box backups via pgBackRest), §13 (RAM
-  ledger for dedicated control nodes), §14 (new acceptance gates), CLAUDE.md
-  ("Gregale runs a single control-plane node today")
+  "FSN + HEL pair"; ADR-083 as the HA mechanism; the ADR-137
+  heartbeat-gap trigger for recovery.
+- **Amends (when accepted):**
+  - spec §3 ADR-006 (Postgres topology);
+  - spec §2 (architecture overview);
+  - spec §8 (off-box backups via pgBackRest);
+  - spec §13 (RAM ledger for dedicated control nodes);
+  - spec §14 (new acceptance gates);
+  - CLAUDE.md ("Gregale runs a single control-plane node today");
+  - the regional branch's ADR-717/718 certificate (§2) and its
+    single-node directory and ingress deployment (§2).
 
 ## Context
 
@@ -62,18 +88,18 @@ control-plane host plus two compute hosts.
   `deploy/cloudflare/public-timeout-worker/worker.mjs:130-145`),
   gatewayd-public, apid, meterd and the control-plane schedd that claims
   apps and fires cron.
-  - If fsn-1 dies, Cloudflare has no origin and every app goes dark,
-    including apps already running on fsn-2/fsn-3.
-  - ADR-083's leader election is built but disabled. It could not survive
-    fsn-1's loss in any case: it reads Postgres and elects compute nodes,
+  - If fsn-1 dies, every app goes dark, including apps already running on
+    the compute hosts.
+  - ADR-083's leader election is built but disabled, and could not
+    survive fsn-1's loss: it reads Postgres and elects compute nodes,
     which do not run gatewayd-public.
-- **Postgres has no HA.** It is one distro cluster with no standby, no
-  pooler (`deploy/ansible/roles/pgbouncer/defaults/main.yml`:
-  `faas_pgbouncer_enabled: false`) and no `archive_timeout`.
+- **Postgres has no HA.** It is one cluster with no standby, no pooler
+  (`deploy/ansible/roles/pgbouncer/defaults/main.yml`) and no
+  `archive_timeout`.
   - The data-loss window is unbounded at low write rates.
     `docs/runbooks/PostgresBackup.md` claims 5–30 s.
-  - Recovery is a manual restart or a manual restore.
-  - Spec §8 already named pgBackRest; `deploy/ansible/roles/postgres` defers it.
+  - Recovery is manual.
+  - Spec §8 already named pgBackRest.
 - **The data plane fails with the database.**
   - gatewayd-public discards its last-known compute endpoints on any
     refresh error (`cmd/gatewayd-public/compute_gateway_pool.go:62-66`),
@@ -84,32 +110,76 @@ control-plane host plus two compute hosts.
     (`pkg/sched/heartbeat.go:404`) sees every node as stale. It starts
     fleet-wide recovery.
 - **Partitions are unfenced.**
-  - A node cut off from the database keeps running VMs and serving its
-    stale routes. Peers mark it unavailable after 90 s and recreate its
-    workloads elsewhere.
-  - Job and app-task retries are dispatched while the original VM still
-    runs. Lost-VM cleanup (`pkg/sched/lost_vms.go`) runs only when a node
-    pings its own vmmd, so it never fires on the peer that did the
-    recreate.
+  - A node cut off from the database keeps running VMs and serving stale
+    routes. Peers recreate its workloads after 90 s.
+  - Job and app-task retries run while the original VM still runs.
+  - Lost-VM cleanup (`pkg/sched/lost_vms.go`) never fires on the peer
+    that did the recreate.
   - `CmdFaultInjector.Partition` (`pkg/e2etest/fault.go:165`) has no
-    callers, and most two-node failure tests skip
-    (`cmd/e2e/twonode_failure_safe_metal_test.go`).
+    callers.
 - **Planned operations fail requests.**
-  - A vmmd restart quarantines the VMs it did not start (ADR-472), so
-    every compute upgrade needs a full drain. The drain pauses VMs for
-    seconds, does not wait for in-flight requests, and cuts streams after 25 s.
-  - guest-init ships in drive0, so almost every release retires every
-    snapshot (ADR-510). The Firecracker-version sweep marks snapshots
-    stale on every node at once (`pkg/state/pgstore.go:18052`).
-  - Migrations run at boot in five daemons. There is no
-    backward-compatibility rule, and platform rollback on a failed gate is
-    off (`.github/workflows/cd-platform.yml`, `rollback_on_gate_failure`).
+  - A vmmd restart quarantines the VMs it did not start (ADR-472), so a
+    compute upgrade needs a full drain.
+  - The drain pauses VMs for seconds and does not wait for in-flight
+    requests.
+  - guest-init ships in drive0, so most releases retire every snapshot
+    (ADR-510). The Firecracker sweep marks snapshots stale on every node
+    at once (`pkg/state/pgstore.go:18052`).
+  - Migrations have no backward-compatibility rule. Platform rollback is
+    off (`.github/workflows/cd-platform.yml`).
 - **Scale has never been measured across hosts.**
-  - Postgres connections limit a fleet to about 12 compute nodes on
-    today's control host.
+  - Postgres connections cap a fleet at about 12 compute nodes on today's
+    control host.
   - meterd scans every app every minute.
-  - gatewayd-public spreads requests round-robin with no app affinity.
-    Route caches and wake coalescing are therefore split N ways.
+  - gatewayd-public routes round-robin with no app affinity.
+
+### What the regional branch adds, and what it leaves open
+
+The branch `codex/regional-deployment-20261001` is at 10379354c6: 98
+commits, 1,294 files, +137.7k lines and 90 ADRs. It forked at 2442c913cf
+and is dark by default. Main is 218 commits ahead of it.
+
+**Already decided there:**
+- **Region pinning.** `apps.compute_region` is immutable, and the
+  scheduler never spills into another region (719).
+- **Cells.** A cell's database carries an immutable cell ID and region.
+  Every daemon checks `FAAS_CONTROL_PLANE_CELL_ID` and
+  `FAAS_CONTROL_PLANE_CELL_REGION` when it opens a connection (729).
+- **Global directory.** It is a separate, unbound database behind
+  directory apid. It holds cells, global apps whose `routing_policy` is
+  `all_selected_regions` (at most one target per region), and owners
+  (730/737).
+- **Push-only delivery.** Regions never query the directory on the
+  runtime path. The directory pushes Ed25519-signed quota grants (740–746,
+  772–775) and probes cells with signed challenges.
+- **Directory loss.** Regional `<slug>.<cell apps_domain>` serving
+  survives a directory outage (730, 785).
+- **Global ingress.** The directory signs a ~5 s snapshot of healthy
+  targets. gatewayd-internal consumes it and proxies round-robin to
+  healthy regions under a 30 s lease (784–786).
+- **Billing.** Cells sign per-minute usage, and a global ledger imports
+  it idempotently (798–802).
+- **Recovery capacity.** Each region keeps enough headroom to recover
+  from losing one host, with at least two healthy hosts (717/718).
+- **Host incarnations.** A per-host epoch changes on each kernel boot, and
+  fences reject stale permits (747/748).
+- **Stop proof.** Capacity is released only by a signed `CapacityStop`
+  backed by native proof that the VM is gone. Elapsed time is never
+  evidence of absence (740, 746, 758/759).
+
+**Left open there, and decided here:**
+- No Postgres HA in a cell or for the directory. Directory HA is not
+  designed, and its publication journal is a singleton (786).
+- Global ingress runs on one gatewayd-internal next to the directory,
+  and a failed request is not retried in another region.
+- Zones are labels used only to break placement ties.
+- No TTL leases or self-fencing. Hosts are fenced only by an
+  authenticated retirement RPC, so an unreachable host keeps its hold
+  indefinitely (759).
+- vmmd restart recovery still quarantines; it does not re-adopt running VMs.
+- Activation is frozen by a hard `CHECK (NOT admission_enabled)`.
+  Billing production integration, global caps, shared organizations and
+  native KVM qualification are unfinished.
 
 ## Decision
 
@@ -119,162 +189,182 @@ control-plane host plus two compute hosts.
 |---|---|---|
 | Serving requests to warm instances | **Available.** Serve last-known routes and targets for a bounded time | Stale tiers on every routing cache (§5) |
 | Wakes and admission | **Consistent.** The minority side returns 503 with `Retry-After` | Cell Postgres quorum (§3) |
-| Customer API writes | **Consistent** | Cell Postgres quorum |
+| Customer API writes | **Consistent** | Cell or directory Postgres quorum |
 | At-most-once work: cron, jobs, app tasks, workflow steps, singleton services, realtime channel ownership | **Consistent and fenced.** Stops on the minority side | Node leases and fencing epochs (§4) |
-| Metering and billing | Eventually consistent and idempotent | Existing ledger catch-up |
+| Regional quota capacity | **Conservative.** Released only by signed stop proof | The branch's quota protocol, unchanged |
+| Metering and billing | Eventually consistent and idempotent | Ledger catch-up, plus the branch's signed usage minutes |
 
-We do not build our own consensus. Each cell's Postgres is the only
-linearizable store; leases and epochs live in it, written in the same
-transaction as the work they guard.
+We do not build our own consensus. Each cell's Postgres and the directory's
+Postgres are the only linearizable stores. Leases and epochs live in them,
+written in the same transaction as the work they guard.
 
-### 2. Topology: regions are cells, zones are the failure domain inside a cell
+### 2. Topology: the regional branch's cells, made highly available
 
-A **cell** is one region's complete Gregale. Every customer resource is
-owned by exactly one cell. A cell contains:
+**Cell contents.** A cell keeps the regional branch's definition. This ADR
+specifies what runs inside it:
 
 - **Control nodes**, three, one per zone. Each runs a Patroni Postgres
   member, an etcd member, HAProxy, pgbouncer, Caddy and gatewayd-public,
   apid, and the lease-holding singletons (meterd, cron/claim scheduler,
   apid timers). Prometheus and Alertmanager run as a pair on two of them.
 - **Compute nodes**, at least one per zone plus one spare per zone for
-  drains (N+1). Each runs vmmd, schedd, gatewayd-internal, builderd and imaged.
+  drains (N+1).
 - **Object storage** in the region, multi-zone, for snapshots, artifacts
   and backups.
 - **Edge:** a Cloudflare Load Balancer pool of the cell's gatewayd-public
-  nodes, health-checked on `/readyz`, active-active. This replaces
-  ADR-083's DNS flip.
+  nodes, health-checked on `/readyz`, active-active. It serves the cell's
+  apps domain and replaces ADR-083's DNS flip.
 
-We do not stretch one cluster across regions, for two reasons:
+**Zones are a failure domain, not a tie-break.**
+- Placement spreads an app's instances and service replicas across zones.
+- The branch's host-loss certificate (717/718) becomes a zone-loss
+  certificate:
+  - It changes from `R ≤ C − L − max_i(S_i − L_i)` over hosts to the same
+    bound taken over zones.
+  - It keeps the per-host bound.
+  - It requires healthy hosts in at least two zones.
 
+**The directory is HA too.**
+- It runs as a three-zone deployment of the same shape in a home region:
+  Patroni + etcd, N directory apid replicas, and a `standby_cluster` in a
+  second region.
+- Its singleton workers run under §4 leases: the ingress publication
+  journal (786), the quota delivery worker (772/775) and provisioning
+  reconciliation (797).
+- A directory outage already leaves regional serving intact (730). With
+  HA it also stops being an outage for global apps.
+
+**Global ingress is served from every edge.**
+- The directory's signed snapshot (784–786) is pushed to every cell, using
+  the same signed-delivery pattern as quota grants. It is not written to
+  one local file.
+- Every cell's gatewayd-internal verifies and serves global hostnames.
+- Cloudflare steers the global apps domain to the nearest healthy cell
+  edge.
+- A request refused before any byte reached a guest is retried once in
+  another eligible region; today the branch never retries across regions.
+- The snapshot lease stays bounded (30 s). Positive serving eligibility
+  stays gated by the branch's admission freeze until its exit criteria
+  are met.
+
+**No stretched cluster.** We do not stretch one cell across regions, for
+two reasons:
 - **Latency.** A cold wake makes several sequential Postgres reads and
-  compare-and-swap writes (`pkg/sched/engine.go`, wake path).
-  Synchronous commits across regions would add one inter-region round
-  trip to each of those writes, against a 350 ms p95 wake target.
-- **Blast radius.** A region-to-region partition would then split one
-  database.
-
-Cells keep each region's failures inside that region, and adding cells is
-how Gregale scales out (§7).
-
-**The global layer is small and off the hot path.**
-- A directory holds identities, billing customers, org → home cell, and
-  hostname → cell.
-  - Writes are rare and may cross regions.
-  - Each cell keeps a read-only replica of what its hot path needs, for
-    example API-key hashes for local auth.
-- Routing works without the directory being up:
-  - The existing public Worker resolves the hostname → cell mapping from
-    Workers KV and overrides the origin to that cell's pool.
-  - A miss, or a stale entry, lands on any cell's gatewayd-public. That
-    cell forwards across cells using its directory replica.
-  - KV is an optimization; a cell that is reachable always routes
-    correctly.
-
-**First tenancy unit: the org's home cell.** All of an org's apps live in
-its home cell. A per-app region is a follow-up ADR (see open decisions).
+  compare-and-swap writes (`pkg/sched/engine.go`). Each would pay an
+  inter-region round trip.
+- **Blast radius.** A partition between regions would split one database.
 
 **Region disaster recovery:**
-- Each cell's Patroni cluster streams asynchronously to a Patroni
-  `standby_cluster` in a paired region.
-- pgBackRest keeps a second repository in that region.
+- Each cell's Patroni cluster streams asynchronously to a
+  `standby_cluster` in a paired region, and pgBackRest keeps a second
+  repository there.
 - Snapshots are a cache and cold boot always works (ADR-005). To evacuate
   a region: promote the standby cluster, re-point the cell's edge pool,
   and let apps cold-boot.
+- Cell identity (729) is preserved, because the promoted database is the
+  same cell.
 
-### 3. Postgres per cell: self-run Patroni
+### 3. Postgres per cell and for the directory: self-run Patroni
 
 - **Members:** three Postgres 16 members, one per zone, managed by
-  Patroni. etcd is the distributed configuration store, with one member
-  per zone on the control nodes.
+  Patroni. etcd is the configuration store, one member per zone.
 - **Settings:** `synchronous_mode: true` and `synchronous_node_count: 1`,
   so losing any one member or zone loses no committed data.
-  `use_pg_rewind: true`. The Linux softdog watchdog is required, so an
-  isolated former primary cannot keep accepting writes.
-- **Failover time:** Patroni's defaults (`ttl` 30 s, `loop_wait` 10 s)
-  put automatic failover at about 30–40 s, inside the 60 s RTO.
-- **Client access** is node-local on every control and compute node:
-  - HAProxy health-checks Patroni's `/primary` endpoint.
-  - pgbouncer in transaction mode serves ordinary queries.
-  - LISTEN uses a small session pool through HAProxy.
+  `use_pg_rewind: true`. The Linux softdog watchdog is required.
+- **Failover time:** Patroni's defaults (`ttl` 30 s, `loop_wait` 10 s) put
+  automatic failover at about 30–40 s.
+- **Client access** is node-local on every node:
+  - HAProxy checks Patroni's `/primary` endpoint.
+  - pgbouncer runs in transaction mode.
+  - LISTEN uses a small session pool.
   - Every DSN becomes localhost.
-  - `max_connections` is fixed per cell, so a node join never restarts
-    Postgres (it does today, via `postgres_capacity`).
+  - The cell-identity checks on pool checkout (729) continue to apply.
+  - `max_connections` is fixed, so a node join never restarts Postgres.
 - **Backups:** pgBackRest replaces the custom `archive_command`.
-  - Settings: `archive_timeout = 60s`, asynchronous archiving, one
-    repository in regional object storage and a second in the paired
-    region, point-in-time recovery.
-  - A restore drill runs automatically every month and records evidence.
+  - `archive_timeout = 60s`, asynchronous archiving, a repository in
+    regional object storage and another in the paired region,
+    point-in-time recovery.
+  - An automated monthly restore drill.
+  - A restore keeps the cell's identity, as 729 already notes.
 - **Upgrades:**
-  - Minor upgrades roll through replicas first, then switch over, with a
-    write pause target under 5 s.
+  - Minor upgrades roll replicas first, then switch over (write pause
+    under 5 s).
   - Major upgrades use logical-replication blue/green, or `pg_upgrade
     --link` with a declared write pause.
-  - In both cases the data plane keeps serving warm traffic (§5); a write
-    pause is not an outage.
+  - The data plane keeps serving warm traffic throughout (§5).
 - **Ownership:** a new `postgres_ha` Ansible role replaces the `postgres`
   role, with runbooks for failover, switchover, member rebuild, etcd
-  quorum loss and standby-cluster promotion.
+  quorum loss and standby promotion.
 
 ### 4. Leases and fencing epochs
 
-**The lease primitive.** One primitive in `pkg/state`: `leases(name, holder,
-epoch, expires_at)`.
+**The lease primitive.** One primitive in `pkg/state`:
+`leases(name, holder, epoch, expires_at)`, in a dedicated table.
 - Expiry uses the database's `now()`.
 - `epoch` comes from a sequence and increases on every change of holder.
-- Every fenced write includes `epoch = $current` in the same statement or
-  transaction.
+- Fenced writes include `epoch = $current`.
+- The claim and stale-finish pattern of the branch's quota delivery outbox
+  is the template.
 
-The primitive is used for three things:
+The primitive is used for:
 
-- **Control-plane singletons:** meterd's sampler and alert evaluator, the
-  cron and claim scheduler (today the control-plane schedd with an empty
-  `FAAS_NODE_NAME`), and apid's plain timers. Replicas run hot and only
-  the lease holder acts.
-- **Node leases:** every compute node holds `node/<name>`.
-  - It renews every 10 s, with a 30 s TTL.
-  - A node that has not renewed for TTL minus a safety margin, measured
-    on its own monotonic clock, fences itself:
-    - it stops at-most-once work, rejects new wakes, and stops claiming
-      jobs;
-    - it keeps serving stateless HTTP to warm instances, which duplicate
-      harmlessly.
-  - Peers recover a node's workloads only when (a) its lease expired by
-    the database clock plus a takeover margin, and (b) the observer itself
-    has been connected for at least one TTL. Condition (b) prevents the
+- **Singletons** in every cell and in the directory.
+- **Node leases.** Each compute node holds `node/<name>`.
+  - It renews every 10 s with a 30 s TTL, in its own table, not on
+    `compute_nodes.last_heartbeat_at`. That row takes the regional
+    service-capacity policy lock (717).
+  - The lease records the host incarnation epoch (747/748) next to the
+    DB-issued epoch. The incarnation identifies the boot; the DB epoch
+    fences the holder.
+  - **Self-fence:** a node that has not renewed for TTL minus a safety
+    margin, on its own monotonic clock:
+    - stops at-most-once work, rejects new wakes, and stops claiming jobs;
+    - keeps serving stateless HTTP to warm instances.
+  - **Takeover:** peers recover a node's workloads only when (a) its lease
+    expired by the database clock plus a margin, and (b) the observer has
+    been connected for at least one TTL. Condition (b) prevents the
     post-outage recovery storm.
   - Lease expiry replaces the 90 s heartbeat gap as the recovery trigger.
-- **Side effects outside Postgres** carry the epoch:
-  - job and app-task completion;
-  - conditional object-storage writes;
-  - idempotency keys on outbound webhooks.
+    The 717/718 certificate uses the same liveness definition, so
+    "healthy" and "alive" never diverge.
 
-**Rejoining.** On re-acquiring its lease, a node immediately destroys every
-VM it does not own. This replaces the peer-side `DestroyLostVMs`.
-`recovering → active` requires three minutes of continuous renewals, and
-repeated flaps back off exponentially up to 30 minutes.
+**Rules from the regional branch that leases must keep:**
+- **Expiry never releases regional quota permits or seats.** Only a
+  signed `CapacityStop` backed by native retirement proof does (740, 746,
+  758/759). Re-placing a fenced node's workloads therefore keeps the old
+  host charged until proof arrives. That loss of capacity during a
+  partition is accepted, and the zone-loss certificate sizes for it.
+- **Lock ordering.** New epoch checks on instance writes follow the
+  branch's write-fence lock ordering (745).
+- **Epoch on side effects.** Side effects outside Postgres carry the
+  epoch: job and app-task completion, conditional object-storage writes,
+  and outbound webhook idempotency keys.
 
-**Supporting changes:**
-- gRPC keepalives on every overlay dial, so a dead peer fails fast
-  instead of holding a 180 s migration lease.
-- The lease timings go in `pkg/api/limits.go`, with every other limit.
+**Rejoining.**
+- On re-acquiring its lease, a node immediately destroys every VM it does
+  not own. Where regional quota applies, it produces the native
+  retirement proof the branch requires.
+- `recovering → active` requires three minutes of continuous renewals,
+  and repeated flaps back off up to 30 minutes.
+- gRPC keepalives go on every overlay dial.
+- The lease timings go in `pkg/api/limits.go`.
 
 ### 5. Static-stability rules for the data plane
 
-1. **Keep last-known-good.** A refresh error never discards last-known-good
-   state. Fix `compute_gateway_pool.go:62-66` first.
-2. **Stale tier everywhere.** Every routing cache has a bounded stale tier,
-   including custom-domain, tenant-surface and environment hosts.
+1. **Keep last-known-good.** A refresh error never discards
+   last-known-good state. Fix `compute_gateway_pool.go:62-66` first.
+2. **Stale tier everywhere.** Every routing cache has a bounded stale
+   tier, including custom-domain, tenant-surface, environment and
+   global-ingress hosts.
 3. **LISTEN is a hint.**
-   - Every consumer already should have a safety ticker (the
-     `pkg/db/notify_hub.go` contract). Consumers that lack one get one:
-     the cluster signing-key loaders, vmmd's egress watcher, the DNS
-     handoff and SSE fan-in.
-   - Reconnecting the hub triggers an immediate resync pass.
+   - Consumers missing the safety ticker that `pkg/db/notify_hub.go`
+     requires get one: the cluster signing-key loaders, vmmd's egress
+     watcher, the DNS handoff and SSE fan-in.
+   - A hub reconnect triggers an immediate resync.
 4. **No decisions from stale observation.** No recovery decision is made
    from evidence gathered while the observer was disconnected.
 5. **Buffer, don't drop.** Activity and usage signals are buffered across
-   outages, so the reaper does not park instances that served traffic
-   during one.
+   outages.
 6. **Wait for dependencies.** Daemons wait for their dependencies instead
    of crash-looping into a failed systemd unit.
 
@@ -289,141 +379,148 @@ These operations must complete under load with zero failed requests:
 
 Required mechanisms:
 
-- **Lossless instance drain.** Reuse ADR-208's handoff for every instance
-  that leaves a node: stop routing to it, collect gateway
-  acknowledgements, wait for in-flight requests to reach zero, then
-  migrate or park. Long-lived streams get a WebSocket close frame or
-  HTTP/2 GOAWAY with a reconnect hint, and realtime resume becomes
-  generally available.
-- **Non-destructive vmmd restart.** Re-adopt running Firecracker
-  processes and their bridges instead of quarantining them (supersedes
-  ADR-472's restart quarantine), so a node upgrade does not need a drain.
+- **Lossless instance drain.** Use ADR-208's handoff for every departing
+  instance: stop routing to it, collect gateway acknowledgements, wait for
+  in-flight requests to reach zero, then migrate or park. Streams get a
+  WebSocket close frame or HTTP/2 GOAWAY with a reconnect hint.
+- **Non-destructive vmmd restart.**
+  - Re-adopt running Firecracker processes and their bridges instead of
+    quarantining them.
+  - Use the regional branch's native provenance and inventory evidence
+    (757–783) as the proof of ownership that re-adoption requires.
+  - This supersedes ADR-472's restart quarantine.
 - **Listener continuity.**
-  - gatewayd-internal and schedd become socket-activated, like
-    gatewayd-public and apid already are.
-  - gatewayd-public retries a request on another compute gateway when it
-    was refused before any byte reached a guest.
-  - Waiters in the WakeGate get `503 Retry-After` on shutdown, never a reset.
+  - gatewayd-internal and schedd become socket-activated.
+  - gatewayd-public retries requests that were refused before any byte
+    reached a guest.
+  - WakeGate waiters get `503 Retry-After`.
   - `TimeoutStopSec` matches each daemon's drain budget.
 - **Snapshot continuity.**
   - guest-init moves out of drive0, or becomes versioned so it is
-    backward compatible, so releases stop retiring snapshots.
+    backward compatible.
   - Firecracker staleness is scoped to the node or release that changed.
-  - Upgraded nodes re-snapshot hot apps in the background before traffic
-    is routed to them.
+  - Upgraded nodes re-snapshot hot apps before traffic is routed to them.
 - **Schema discipline.**
-  - Expand/contract migrations.
-  - A linter requiring `CREATE INDEX CONCURRENTLY` outside a transaction,
-    `lock_timeout` on DDL, and no drop or rename in the release that
-    stops using a column.
-  - A CI job that runs the previous release's binaries against the new
+  - Expand/contract migrations, with a linter for `CREATE INDEX
+    CONCURRENTLY`, `lock_timeout` and deferred drops.
+  - A CI job running the previous release's binaries against the new
     schema.
-  - One migration runner per release, not five daemons migrating at boot.
+  - One migration runner per release.
+  - The branch's `BEFORE TRUNCATE` triggers on `apps` and `deployments`
+    stay compatible with test helpers and migrations.
 - **Version skew.** `buf breaking` on every proto, and capability
-  negotiation between daemons for mixed-release windows.
-- **Release safety.** Each platform release canaries on one node per cell,
-  with automatic rollback on SLO burn. `rollback_on_gate_failure` turns on
-  once the gate has run green.
+  negotiation between daemons.
+- **Release safety.** Each release canaries on one node per cell, with
+  automatic rollback on SLO burn.
 
 ### 7. Scaling rules
 
 **Within a cell**, the initial target is 50 compute nodes, 50,000 apps and
-5,000 requests/s. It is validated by load tests, not assumed:
+5,000 requests/s, validated by load tests:
 
 - pgbouncer everywhere (§3).
-- meterd samples in pages under its lease, or nodes pre-aggregate
-  instance-seconds.
-- gatewayd-public routes each app to the gatewayd-internal on its owner
-  node. That gives one route cache and one wake coalescer per app. The
-  owner schedd hands an already-WAKING instance to a second caller instead
-  of starting another.
-- Generalize `control_plane_change_log` into a sequenced log that
-  consumers read by cursor, with `pg_notify` as a wake-up hint only.
-- Replicate each snapshot to two nodes in different zones, not to every
-  node in the region.
-- Partition `usage_minutes` and `audit_log`.
-- Remove single-box constants from code paths that should use per-node
-  sizing, for example the 38,080 MB eviction threshold in
-  `pkg/sched/reaper.go`.
+- meterd samples in pages under its lease. The branch's signed usage
+  minutes are produced from the same sealed minute, aligned with ADR-790
+  closed-minute catch-up.
+- gatewayd-public routes each app to its owner node's gatewayd-internal.
+  The owner schedd hands a WAKING instance to a second caller instead of
+  starting another.
+- `control_plane_change_log` becomes a sequenced log read by cursor, with
+  `pg_notify` as a hint only.
+- Each snapshot is replicated to two nodes in different zones, not to
+  every node in the region.
+- `usage_minutes` and `audit_log` are partitioned.
+- Single-box constants such as the 38,080 MB eviction threshold in
+  `pkg/sched/reaper.go` are removed.
 
-**Beyond a cell**, add cells. A cell is both the unit of scale and the
-unit of blast radius.
+**Beyond a cell**, add cells. A cell is the unit of scale and blast radius.
 
 ## Phases and exit criteria
 
 | Phase | Scope | Exit criterion (recorded under `docs/ops/evidence/`) |
 |---|---|---|
-| P0 · Proof | SLO dashboards. Native drills for partition, zone loss, Postgres failover and node drain, run nightly (wire `CmdFaultInjector.Partition`, un-skip the two-node tests). Multi-host load test. | Every drill automated, with a baseline recorded |
-| P1 · Static stability | §5, `archive_timeout`, pgbouncer, per-node Firecracker staleness | Postgres down for 5 min: zero errors on warm `*.gregale.dev` and custom-domain traffic; no recovery storm afterwards |
-| P2 · Cell HA across zones | §3 Postgres HA; at least 2 edges behind a Cloudflare Load Balancer; N apid replicas (upload spool in object storage); leases for singletons; monitoring off the database hosts; cell registry and `orgs.home_cell` seams (one cell) | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0 |
-| P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis | Partition drill: zero duplicate at-most-once executions; stateless duplicates bounded by the lease TTL |
-| P4 · Zero-downtime operations | §6 | Platform release, node drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
+| P0 · Proof | SLO dashboards. Native drills for partition, zone loss, Postgres failover and node drain, run nightly (wire `CmdFaultInjector.Partition`). Multi-host load test. | Every drill automated, with a baseline recorded |
+| P1 · Static stability | §5, `archive_timeout`, pgbouncer, per-node Firecracker staleness | Postgres down 5 min: zero errors on warm traffic; no recovery storm afterwards |
+| P2 · Cell HA across zones | §3 Patroni; ≥2 edges behind a Cloudflare Load Balancer; N apid replicas; leases for singletons; monitoring off the database hosts; land the branch's cell identity (729) dark | Kill any one node or zone under load: RTO ≤ 60 s, RPO 0 |
+| P3 · Fenced compute | §4 node leases, self-fencing, epochs, rejoin cleanup, keepalives, hysteresis, zone-loss certificate | Partition drill: zero duplicate at-most-once executions; quota never released without stop proof |
+| P4 · Zero-downtime operations | §6 | Release, drain and Firecracker upgrade under load: zero failed requests; no cold-boot storm |
 | P5 · Scale within a cell | §7 | Load test at the §7 targets within SLO |
-| P6 · Second region | Directory, Worker KV routing with cross-cell forwarding, standby cluster, region-evacuation runbook | Region-loss drill: RPO ≤ 60 s, RTO ≤ 30 min, other cells unaffected |
+| R · Land the regional branch | Renumber its ADRs past 1152 on the branch, then land it in dark, dependency-ordered PRs. Order: regions, builds, cell identity and directory, image releases, quota protocol, vmmd/sched/fcvm runtime, ingress, provisioning, billing. New apid code goes in `pkg/apid/<domain>` (ADR-982). | Each PR default-off with CI green; no behaviour change while dark |
+| P6 · Activate multi-region | Directory HA (§2), every-edge ingress, the branch's remaining work: sealed usage minutes, meterd wiring, global caps and egress, shared organizations, native KVM regional acceptance. Then lift `CHECK (NOT admission_enabled)`. | Region-loss drill: RPO ≤ 60 s, RTO ≤ 30 min, other cells unaffected; global app keeps serving from the surviving region |
 
 **Public-release gate:**
 - P0, P1 and P2, plus P4's lossless drain.
 - P3 must land before jobs, cron, services or realtime are marketed as
   generally available.
-- P6 may follow launch. The P2 seams ensure customer data is never global
-  by accident, which would block P6 later.
+- R can run in parallel, because it is dark.
+- P6 may follow launch.
 
 ## Consequences
 
 - **Footprint:**
-  - Per cell: 3 control nodes and at least 6 compute nodes (3 zones × N+1).
-    Today the fleet is 1 + 2.
-  - A second region doubles this.
+  - Per cell: 3 control nodes and at least 6 compute nodes (3 zones ×
+    N+1). Today the fleet is 1 + 2.
+  - The directory adds 3 nodes in its home region and a standby cluster
+    in a second region.
   - The financial-model addendum (CLAUDE.md, source of truth 3) must
-    price both before P2 hardware.
+    price this before P2 hardware.
 - **Operations:**
-  - Patroni, etcd and pgBackRest join the on-call surface, with runbooks
-    and monthly drills.
-  - The control nodes stop co-hosting tenant VMs. §13's RAM ledger gains
-    a control-node budget.
+  - Patroni, etcd and pgBackRest join on-call, with runbooks and monthly
+    drills.
+  - Control nodes stop co-hosting tenant VMs. §13's RAM ledger gains a
+    control-node budget.
 - **Code:**
   - Gateways: last-known-good state and stale tiers.
   - Notify hub: resync on reconnect.
   - Leases and node fencing in `pkg/state` and `pkg/sched`.
-  - vmmd re-adoption.
+  - vmmd re-adoption on top of the branch's provenance evidence.
   - Instance drain, reusing the ADR-208 handoff.
   - guest-init packaging.
-  - Migration tooling and linters.
-  - gatewayd-public: affinity routing and retry.
+  - Migration tooling.
+  - gatewayd-public affinity routing and retry.
   - meterd paging.
-  - Cell and directory seams in apid.
+  - Ingress snapshot push to every cell.
 - **Superseded:**
   - Spec §16 "maintenance windows" and "FSN + HEL pair at Gate A".
-  - ADR-083 as the HA mechanism (Cloudflare Load Balancing replaces its
-    DNS flip).
+  - ADR-083 as the HA mechanism.
   - The ADR-137 heartbeat-gap recovery trigger.
   - ADR-472's restart quarantine, once P4 re-adoption ships.
+- **Amended (regional branch, at landing):**
+  - The 717/718 certificate moves to zones and to lease liveness.
+  - The 784–786 single-node ingress becomes every-edge.
+  - The 786 publication journal runs under a lease.
 
 ## Rejected alternatives
 
-- **Managed Postgres (Cloud SQL, AlloyDB).** It would tie the control
-  plane to one cloud, while Gregale must deploy on any bare-metal x86_64
-  host (spec preamble). Owner decision on 2026-10-13: self-run.
+- **Managed Postgres (Cloud SQL, AlloyDB).** It ties the control plane to
+  one cloud, while Gregale must deploy on any bare-metal x86_64 host
+  (spec preamble). Owner decision on 2026-10-13: self-run.
 - **One cluster stretched across regions.** Inter-region commit latency on
-  every wake, and one database for every region's partitions.
+  every wake, and one database for every region's partitions. The
+  regional branch already chose independent cells.
 - **Distributed SQL (CockroachDB, Yugabyte, Spanner).** A rewrite of 652
   tables, the sqlc layer and the `pg_notify` contracts, with no
   availability gain inside a region over Patroni.
-- **etcd or Consul for application leases.** A second source of truth: the
-  fencing check must commit in the same transaction as the fenced write.
-  etcd stays private to Patroni.
+- **etcd or Consul for application leases.** The fencing check must
+  commit with the fenced write. etcd stays private to Patroni.
+- **Releasing quota on lease expiry.** It would break the branch's
+  guarantee that capacity is released only by proof of absence.
+  Conservative charging during partitions is the accepted cost.
 - **ADR-083's lexicographic-minimum DNS election.** It depends on the
-  database it is meant to survive, and on DNS TTLs. It is active-passive,
-  and it elects nodes that do not run the edge.
+  database it is meant to survive, and it is active-passive.
 - **Maintenance windows (spec §16 lean).** Incompatible with the
   zero-downtime target.
+- **Redesigning regional tenancy, the directory or billing here.** The
+  regional branch already decides them. This ADR only adds availability
+  properties.
 
 ## Open decisions for the owner
 
-1. **Region tenancy:** the org's home cell (proposed) or per-app region
-   from day one. Per-app region requires account data shared across cells.
-2. **The second region** and its pairing for standby clusters.
-3. **etcd placement:** co-located on control nodes (proposed) or on three
+1. **The directory's home region**, and the second region used for
+   standby clusters.
+2. **etcd placement:** co-located on control nodes (proposed) or on three
    small dedicated nodes.
-4. **Major Postgres upgrades:** logical-replication blue/green, or
+3. **Major Postgres upgrades:** logical-replication blue/green, or
    `pg_upgrade --link` with a declared write pause.
+4. **Order of work:** P1–P4 in a single region before landing the
+   regional branch (proposed), or interleaved.
