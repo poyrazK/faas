@@ -1955,6 +1955,46 @@ jobs:
       - name: Gregale Issues staging smoke contract
         run: node --test tests/issues-smoke/run.test.mjs
 
+  issue-slack-bridge:
+    name: Issues Slack bridge (PostgreSQL receipts + bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ISSUE_SLACK_TEST_DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: 'npm'
+          cache-dependency-path: |
+            sdk/node/package-lock.json
+            examples/issues-slack/package-lock.json
+      - name: Install SDK and bridge dependencies
+        run: |
+          npm --prefix sdk/node ci --ignore-scripts --no-audit --no-fund
+          npm --prefix examples/issues-slack ci --ignore-scripts --no-audit --no-fund
+      - name: Build receiver SDK modules
+        run: npm --prefix sdk/node run build
+      - name: Verify authenticated routing, durable retries and deployment bundle
+        run: npm --prefix examples/issues-slack test
+
   workflow-operation-starter-browser:
     name: customer Operations starters (Chromium + packed SDK)
     runs-on: ubuntu-latest

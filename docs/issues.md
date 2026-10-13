@@ -857,7 +857,7 @@ All populated matchers must match. Source prefixes stop at path-segment boundari
 
 Tags use the existing allowlist and match sanitized reported values exactly. A missing key does not match an explicit empty value. They do not provide verified customer identity. The first matching rule with an eligible target assigns only a newly created group and records the matched source/tag criteria in its normal assignment activity. Recurrences and regressions preserve existing ownership, including manual changes. Configure these fields through the existing ownership-policy API, dashboard JSON form, CLI policy file, or SDK DTOs.
 
-The migration refuses rollback while saved views or source/tag matchers are in use, so rollback cannot silently discard views or broaden routing policies. Provider-specific integrations, organization-wide teams, and full CODEOWNERS glob support remain future work.
+The migration refuses rollback while saved views or source/tag matchers are in use, so rollback cannot silently discard views or broaden routing policies. Native provider connectors, organization-wide teams, and full CODEOWNERS glob support remain future work.
 
 ## Teams and CODEOWNERS
 
@@ -896,3 +896,19 @@ gregale issues codeowners apply --app my-api --file CODEOWNERS --bindings-file o
 ```
 
 Preview is offline and emits the ordered routing policy plus original line numbers. Apply explicitly replaces the complete policy; existing issues keep their ownership. Last matching lines win. On a line with multiple owners, all owners must have bindings and the first owner becomes the assignment target. This importer supports root defaults (`*`, `/`, `/**`) and literal root-anchored paths such as `/src/payments/` or `src/payments/`. It rejects unsupported globs, bare filenames, ownerless rules, URLs and traversal instead of silently dropping lines. Limits are 256 KiB, 4096 lines, 256 bindings and 50 routing rules. No repository fetch or automatic provider synchronization occurs.
+
+## Slack alerts
+
+The Node SDK exposes `issueSlackMessageFromWebhook` for signature verification,
+app/team/event filtering, and Slack plain-text alert formatting. The runnable
+[Issues Slack bridge](../examples/issues-slack/README.md) connects existing
+Gregale app webhooks to a Slack incoming webhook and stores delivery receipts in
+a customer-owned PostgreSQL database. It defaults to new issues, regressions,
+and customer-impact threshold crossings; lifecycle notifications are opt-in.
+
+This is a customer-operated receiver, not a native workspace connector. It
+checks signatures before sending, deduplicates confirmed deliveries across
+restarts, and preserves Gregale retry/replay behavior. Slack has no incoming
+webhook idempotency key, so uncertain provider/database acknowledgements can
+still cause duplicates. GitHub/Linear synchronization and crash-free session
+instrumentation remain separate gaps.
