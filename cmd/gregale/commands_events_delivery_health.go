@@ -72,6 +72,7 @@ func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	if counts := out.CapacityWaits; counts != nil {
 		_, _ = fmt.Fprintf(osStdout, "Capacity waits: consumer %d | app %d | account %d | complete %t | observed %s\n", counts.Consumer, counts.App, counts.Account, counts.Complete, counts.ObservedAt.Format("2006-01-02T15:04:05Z07:00"))
 	}
+	printEventConsumerCapacityPressure(out.CapacityPressure)
 	_, _ = fmt.Fprintf(osStdout, "Oldest pending sample: %d | truncated %t | waiting reasons %v\n", len(sample.Recipients), sample.Truncated, sample.WaitingReasons)
 	if len(sample.Recipients) > 0 {
 		first := sample.Recipients[0]
@@ -243,4 +244,21 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 		return printErr("Delivery health watch stopped", err)
 	}
 	return 0
+}
+
+func printEventConsumerCapacityPressure(pressure *api.EventConsumerCapacityPressure) {
+	if pressure == nil {
+		return
+	}
+	blocker := pressure.BlockingScope
+	if blocker == "" {
+		blocker = "none observed"
+	}
+	_, _ = fmt.Fprintf(osStdout, "Capacity pressure: admission blocker %s | configured consumer ceiling %d (0=plan) | complete %t | observed %s\n", oneLine(blocker), pressure.ConfiguredMaxPendingDeliveries, pressure.Complete, pressure.ObservedAt.Format("2006-01-02T15:04:05Z07:00"))
+	for _, scope := range pressure.Scopes {
+		_, _ = fmt.Fprintf(osStdout, "  %s: live %d / %d | at limit %t | waiting %d | oldest waiting acceptance age %.0fs\n", oneLine(scope.Scope), scope.LiveDeliveries, scope.EffectiveLimit, scope.AtLimit, scope.WaitingRecipients, scope.OldestWaitingAgeSeconds)
+		if scope.AtLimit || scope.WaitingRecipients > 0 {
+			_, _ = fmt.Fprintf(osStdout, "    %s\n", oneLine(scope.Advice))
+		}
+	}
 }

@@ -1093,6 +1093,11 @@ from .event_backlog_response import EventBacklogResponse
 from .event_circuit_breaker_policy import EventCircuitBreakerPolicy
 from .event_circuit_breaker_response import EventCircuitBreakerResponse
 from .event_circuit_breaker_response_state import EventCircuitBreakerResponseState
+from .event_consumer_capacity_pressure import EventConsumerCapacityPressure
+from .event_consumer_capacity_pressure_blocking_scope import EventConsumerCapacityPressureBlockingScope
+from .event_consumer_capacity_pressure_coverage import EventConsumerCapacityPressureCoverage
+from .event_consumer_capacity_scope import EventConsumerCapacityScope
+from .event_consumer_capacity_scope_scope import EventConsumerCapacityScopeScope
 from .event_consumer_capacity_waits import EventConsumerCapacityWaits
 from .event_consumer_capacity_waits_coverage import EventConsumerCapacityWaitsCoverage
 from .event_consumer_delivery_health import EventConsumerDeliveryHealth
@@ -5164,6 +5169,11 @@ __all__ = (
     "EventCircuitBreakerPolicy",
     "EventCircuitBreakerResponse",
     "EventCircuitBreakerResponseState",
+    "EventConsumerCapacityPressure",
+    "EventConsumerCapacityPressureBlockingScope",
+    "EventConsumerCapacityPressureCoverage",
+    "EventConsumerCapacityScope",
+    "EventConsumerCapacityScopeScope",
     "EventConsumerCapacityWaits",
     "EventConsumerCapacityWaitsCoverage",
     "EventConsumerDeliveryHealth",

@@ -63180,6 +63180,7 @@ components:
       description: Independent live routing, retained execution, and oldest-first pending reads. No overall healthy verdict is inferred from incomplete coverage.
       required: [started_at, observed_at, routing, execution, pending_sample]
       properties:
+        capacity_pressure: { $ref: '#/components/schemas/EventConsumerCapacityPressure' }
         waiting_reasons: { $ref: '#/components/schemas/EventConsumerWaitingReasons' }
         capacity_waits: { $ref: '#/components/schemas/EventConsumerCapacityWaits' }
         started_at: { type: string, format: date-time }
@@ -63205,6 +63206,42 @@ components:
           type: object
           description: Counts for circuit_open, circuit_probe_wait, circuit_recovery_rate_limited, subscription_paused, subscription_rate_limited, ordering_blocked, capacity_consumer, capacity_app, capacity_account, routing_in_progress, receipt_processing, retry_backoff, workflow_routing, and ready. Known reasons include zero counts; processing recipients are excluded.
           additionalProperties: { type: integer, format: int64, minimum: 0 }
+
+    EventConsumerCapacityPressure:
+      type: object
+      additionalProperties: false
+      description: Read-only current live slot usage and effective capacity waiting reasons from one owned subscription snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after capacity drains. Age is since event acceptance, not continuous capacity-wait duration. No capacity reservation or delivery-order guarantee.
+      required: [app_id, subscription_id, observed_at, coverage, complete, blocking_scope, configured_max_pending_deliveries, scopes]
+      properties:
+        app_id: { type: string, format: uuid }
+        subscription_id: { type: string, format: uuid }
+        observed_at: { type: string, format: date-time }
+        coverage: { type: string, enum: [live_slots_and_all_pending_application_recipients] }
+        complete: { type: boolean, description: "All trusted live slots and retained pending application recipients in this scope were assessed; not inferred from a bounded sample." }
+        blocking_scope: { type: string, enum: ['', consumer, app, account], description: "Current first full admission ceiling in consumer then app then account order; empty means none observed. Not inferred from recorded waits." }
+        configured_max_pending_deliveries: { type: integer, minimum: 0, description: "Saved subscription ceiling; zero uses the current plan default." }
+        scopes:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: Consumer, app and account scopes in admission priority order. Waiting counts refer only to this subscription; live app/account counts include sibling deliveries in those scopes.
+          items: { $ref: '#/components/schemas/EventConsumerCapacityScope' }
+
+    EventConsumerCapacityScope:
+      type: object
+      additionalProperties: false
+      description: Current usage and ceiling together with this subscription's effective recorded waits for this scope. Advice is informational and never initiates recovery or changes controls.
+      required: [scope, live_deliveries, effective_limit, at_limit, waiting_recipients, oldest_waiting_age_seconds, advice]
+      properties:
+        scope: { type: string, enum: [consumer, app, account] }
+        live_deliveries: { type: integer, format: int64, minimum: 0, description: "Trusted pending plus dispatching delivery slots, including replay descendants; excludes untagged legacy invocations." }
+        effective_limit: { type: integer, minimum: 1, description: "Current plan ceiling, clamped by a configured subscription ceiling for consumer scope." }
+        at_limit: { type: boolean, description: "Live usage is greater than or equal to the effective ceiling." }
+        waiting_recipients: { type: integer, format: int64, minimum: 0, description: "This subscription's retained pending application recipients whose effective reason is capacity at this scope. Precedence follows the existing backlog pause, circuit, ordering and routing-state rules." }
+        oldest_waiting_accepted_at: { type: string, format: date-time, description: "Acceptance timestamp of the oldest such recipient; absent when no recipients wait at this scope." }
+        oldest_waiting_age_seconds: { type: number, format: double, minimum: 0, description: "Age since acceptance at observed_at, not continuous capacity-wait duration; zero when none wait." }
+        advice: { type: string, description: "Suggested read-only investigation or operator review based on current scope pressure." }
+
 
     EventConsumerCapacityWaits:
       type: object

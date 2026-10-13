@@ -3109,3 +3109,43 @@ all routing/replay writers before relying on custom ceilings. Older routing writ
 only enforce plan limits. Downgrade restores the earlier replay guard and plan
 limits, discarding overrides. This implementation does not execute the migration.
 See [ADR-1174](adr/1174-configurable-subscription-delivery-capacity.md).
+
+### Diagnose subscription capacity pressure
+
+```sh
+gregale --json events subscription-delivery-health APP SUB
+```
+
+The existing delivery-health response adds optional `capacity_pressure`, containing
+its own `observed_at`, complete aggregate coverage, configured subscription ceiling,
+and `blocking_scope`. This blocker reflects current trusted live slot counts,
+checking consumer, app, then account limits. An empty blocker means no full ceiling
+was observed. It does not establish eligibility past ordering, pause/circuit,
+filtering or other delivery gates.
+
+The three `scopes` show current live usage, effective limit, `at_limit`, this
+subscription's effective capacity-waiting recipient count, oldest waiting event's
+acceptance timestamp/age, and operator advice. Consumer usage covers this
+subscription; app/account usage includes sibling deliveries. Consumer limits clamp
+the saved setting to the current plan. Trusted live slots include pending and
+dispatching invocations and replay descendants; untagged legacy work is excluded.
+
+Waiting counts cover all retained pending application recipients in the snapshot,
+using the existing backlog waiting-reason precedence. They are independent of the
+bounded pending sample and health history window. Recorded waits can remain after
+capacity drains, so they do not imply current saturation. The age is since event
+acceptance, not how long a continuous capacity wait has lasted. Empty groups omit
+the oldest timestamp and report zero age.
+
+For consumer pressure, inspect its live backlog and review its configured ceiling
+within plan limits. For app/account pressure, inspect sibling backlogs and allow
+live work to drain; raising only this subscription's limit does not remove those
+shared ceilings. Advice is informational and performs no mutation.
+
+Pressure has one consistent read-only snapshot, while routing, execution,
+capacity-wait counts and other combined health components remain independent
+reads. Compare their timestamps before interpreting differences. These
+observations reserve no capacity and guarantee neither immediate admission nor
+delivery order. Go/Node/Python SDKs expose the optional pressure models; existing
+watch thresholds and at-least-once execution behavior remain unchanged. See
+[ADR-1175](adr/1175-subscription-capacity-pressure-diagnostics.md).
