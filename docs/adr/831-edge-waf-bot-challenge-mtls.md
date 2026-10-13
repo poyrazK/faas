@@ -331,3 +331,24 @@ not merge until this ADR is accepted, including this amendment.
   the reference node under production-like load against the 2 ms gate,
   and review false positives in `observe` on real traffic before
   recommending `block`.
+
+## Amendment 5: detections as security events (2026-10-13)
+
+Customers could only see WAF detections as aggregate metrics, which made
+false-positive review (the gate before recommending `block`) impractical.
+Detections are now ADR-964 security events:
+
+- New event outcomes: `detected` (a detection in an off-path sample, any
+  mode), `warned` and `blocked` (in-path verdicts of warn and block rules).
+- A detection event carries the CRS rule IDs that scored (at most 32), their
+  attack categories (at most 16) and the anomaly score, plus the usual
+  request ID, method, host, path without query, client IP, country and user
+  agent. Never the matched payload.
+- Detections have their own sampling budget, 10 per rule per minute per
+  gateway, separate from match sampling. A WAF rule's plain matches are
+  still counted (ADR-960) but no longer sampled as events: every inspected
+  request matches, and those events would bury the detections.
+- Off-path detections resolve the client's country only when a detection is
+  recorded, through the request's match context, so matched requests pay no
+  extra GeoIP lookup.
+- Retention and plan windows are ADR-964's (7 days; read window by plan).

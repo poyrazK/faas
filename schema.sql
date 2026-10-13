@@ -19375,13 +19375,17 @@ CREATE TABLE public.edge_rule_events (
     client_ip inet,
     country text DEFAULT ''::text NOT NULL,
     user_agent text DEFAULT ''::text NOT NULL,
+    waf_rule_ids integer[] DEFAULT '{}'::integer[] NOT NULL,
+    waf_categories text[] DEFAULT '{}'::text[] NOT NULL,
+    waf_score integer DEFAULT 0 NOT NULL,
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
-    CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256))
+    CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
+    CONSTRAINT edge_rule_events_waf_chk CHECK ((((cardinality(waf_rule_ids) <= 32) AND (cardinality(waf_categories) <= 16)) AND ((waf_score >= 0) AND (waf_score <= 10000))))
 );
 
 
