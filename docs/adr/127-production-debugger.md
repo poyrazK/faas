@@ -243,10 +243,16 @@ app pass instead of once per regressed route.
 **Request logs in evidence.** Request evidence carries up to 20 log lines the
 request emitted, matched by its trace ID within a bounded window around the
 request (its last lines when it logged more). Messages pass through the
-`airedact` detectors (emails, payment cards, IBANs, issuer-format secrets)
+ADR-096 redactor (`pkg/redact`, the one that guards app-error samples)
 and are bounded to 512 bytes; structured fields are omitted. §7.1 still holds:
 the synthesis layer receives log levels only, never log text, and reports
 `error_logs` when the request logged error-level lines.
+
+**Request IDs open evidence.** The evidence endpoint and the dashboard request
+view resolve a public `x-faas-request-id` through the request-ID journal, as
+the request lookup endpoint already did, so the request IDs app errors record
+link straight to the request's evidence. App errors return the ID as a dashed
+UUID while the gateway issues it as 32 hex characters; both spellings resolve.
 
 ## Why now
 

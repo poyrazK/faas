@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -203,6 +204,9 @@ func suspectedDependencyFor(comparison *api.DebugDependencyDeploymentComparison,
 				suspect.Reason = "failures"
 				suspect.BaselineErrorRatePct, suspect.ErrorRatePct = item.BaselineErrorRatePct, item.CurrentErrorRatePct
 				suspect.ErrorType = item.TopErrorType
+			}
+			if query := debugger.RegressedQuery(item, failures); query != nil {
+				suspect.Query = query.Pattern
 			}
 			return suspect
 		}

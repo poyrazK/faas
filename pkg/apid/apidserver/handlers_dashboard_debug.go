@@ -1185,7 +1185,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	now := time.Now().UTC()
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
+		Identifier:    s.resolveDebugRequestTraceIdentifier(ctx, acct.ID, app.ID, identifier, now.Add(-since), now),
 		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
 		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
 	})

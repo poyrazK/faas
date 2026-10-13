@@ -75604,7 +75604,7 @@ components:
       type: object
       required: [request_id, received_at, route, http_status, error_class, sample_message]
       properties:
-        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Public x-faas-request-id of the failed request; GET /v1/apps/{slug}/debug/requests/{request_id}/evidence opens its debugger evidence while the request is retained." }
         received_at: { type: string, format: date-time }
         route: { type: string }
         http_status: { type: integer, format: int32 }
@@ -81288,6 +81288,30 @@ components:
         error_rate_delta_pct: { type: number }
         failure_regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed calls, and the current error rate is at least 5 percentage points and 2x above baseline." }
         top_error_type: { type: string, maxLength: 96, description: "Most frequent span failure class, from the current side when it has failures." }
+        queries:
+          type: array
+          maxItems: 5
+          description: "Database dependencies only: the dependency broken down by normalized query pattern (literals, placeholders, IN lists and VALUES rows folded), regressions first."
+          items: { $ref: '#/components/schemas/DebugDependencyQueryItem' }
+        queries_truncated: { type: boolean, description: "True when more query patterns were seen than are returned." }
+
+    DebugDependencyQueryItem:
+      type: object
+      description: "One normalized query pattern within a database dependency, with the same latency and failure comparison as its dependency."
+      required: [pattern, calls, error_calls, p95_ms, regression, failure_regression]
+      properties:
+        pattern: { type: string, maxLength: 256, description: "Redacted, normalized statement; never contains literal values." }
+        calls: { type: integer, format: int64, minimum: 1 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_p95_ms: { type: integer, format: int64, minimum: 0 }
+        regression_factor: { type: number, minimum: 0 }
+        regression: { type: boolean }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        failure_regression: { type: boolean }
+        top_error_type: { type: string, maxLength: 96 }
 
     DebugDependencyImpactEdge:
       type: object
@@ -81668,6 +81692,7 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_type: { type: string, maxLength: 96 }
+        query: { type: string, maxLength: 256, description: "Normalized pattern of the database query that regressed within the dependency, when one did." }
 
     DebugRegressionActionRequest:
       type: object

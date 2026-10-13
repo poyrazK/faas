@@ -37,6 +37,8 @@ class DebugSuspectedDependency:
     baseline_error_rate_pct: float | Unset = UNSET
     error_rate_pct: float | Unset = UNSET
     error_type: str | Unset = UNSET
+    query: str | Unset = UNSET
+    """Normalized pattern of the database query that regressed within the dependency, when one did."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +64,8 @@ class DebugSuspectedDependency:
 
         error_type = self.error_type
 
+        query = self.query
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -83,6 +87,8 @@ class DebugSuspectedDependency:
             field_dict["error_rate_pct"] = error_rate_pct
         if error_type is not UNSET:
             field_dict["error_type"] = error_type
+        if query is not UNSET:
+            field_dict["query"] = query
 
         return field_dict
 
@@ -114,6 +120,8 @@ class DebugSuspectedDependency:
 
         error_type = d.pop("error_type", UNSET)
 
+        query = d.pop("query", UNSET)
+
         debug_suspected_dependency = cls(
             type_=type_,
             name=name,
@@ -125,6 +133,7 @@ class DebugSuspectedDependency:
             baseline_error_rate_pct=baseline_error_rate_pct,
             error_rate_pct=error_rate_pct,
             error_type=error_type,
+            query=query,
         )
 
         debug_suspected_dependency.additional_properties = d

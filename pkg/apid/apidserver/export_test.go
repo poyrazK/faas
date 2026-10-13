@@ -326,6 +326,7 @@ var DebugCoverageTimestamp = debugCoverageTimestamp
 var DebugRegressionCandidateRoutes = debugRegressionCandidateRoutes
 var DebugRegressionObservationToItem = debugRegressionObservationToItem
 var DebugRegressionParams = debugRegressionParams
+var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename

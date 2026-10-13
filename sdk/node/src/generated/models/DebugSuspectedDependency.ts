@@ -19,5 +19,9 @@ export type DebugSuspectedDependency = {
   baseline_error_rate_pct?: number;
   error_rate_pct?: number;
   error_type?: string;
+  /**
+   * Normalized pattern of the database query that regressed within the dependency, when one did.
+   */
+  query?: string;
 };
 

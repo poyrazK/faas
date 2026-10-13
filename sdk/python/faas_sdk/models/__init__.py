@@ -747,6 +747,7 @@ from .debug_dependency_impact_exemplar_window import DebugDependencyImpactExempl
 from .debug_dependency_latency_item import DebugDependencyLatencyItem
 from .debug_dependency_latency_item_type import DebugDependencyLatencyItemType
 from .debug_dependency_latency_response import DebugDependencyLatencyResponse
+from .debug_dependency_query_item import DebugDependencyQueryItem
 from .debug_evidence_explanation import DebugEvidenceExplanation
 from .debug_evidence_explanation_confidence import DebugEvidenceExplanationConfidence
 from .debug_evidence_explanation_diagnosis import DebugEvidenceExplanationDiagnosis
@@ -4820,6 +4821,7 @@ __all__ = (
     "DebugDependencyLatencyItem",
     "DebugDependencyLatencyItemType",
     "DebugDependencyLatencyResponse",
+    "DebugDependencyQueryItem",
     "DebugEvidenceExplanation",
     "DebugEvidenceExplanationConfidence",
     "DebugEvidenceExplanationDiagnosis",

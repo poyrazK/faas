@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/outbound/airedact"
+	"github.com/onebox-faas/faas/pkg/redact"
 )
 
 // Request evidence carries the log lines a request emitted, matched by its
@@ -35,8 +35,9 @@ type EvidenceLogInput struct {
 }
 
 // EvidenceLogs redacts and bounds log events for request evidence and returns
-// them in chronological order. Emails, payment cards, IBANs and issuer-format
-// secrets in a message are replaced with "[REDACTED:kind]" before it is
+// them in chronological order. Emails, card numbers, tokens, keys and other
+// credentials in a message are replaced with "[REDACTED:kind]" by the ADR-096
+// redactor that also guards app-error sample messages, before the message is
 // bounded, so evidence stays a redacted envelope. When a request logged more
 // than the limit the evidence keeps its last lines, the ones nearest a
 // failure.
@@ -48,21 +49,26 @@ func EvidenceLogs(events []EvidenceLogInput) []api.DebugEvidenceLogLine {
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].OccurredAt.Before(events[j].OccurredAt) })
 	out := make([]api.DebugEvidenceLogLine, 0, len(events))
+	redactor := redact.New(evidenceLogRedactorCap)
 	for _, event := range events {
 		out = append(out, api.DebugEvidenceLogLine{
 			OccurredAt: event.OccurredAt.UTC().Format(time.RFC3339Nano),
 			Source:     boundDebugEvidenceText(strings.TrimSpace(event.Source), 32),
 			Level:      boundDebugEvidenceText(strings.ToLower(strings.TrimSpace(event.Level)), 16),
 			Stream:     boundDebugEvidenceText(strings.TrimSpace(event.Stream), 16),
-			Message:    boundDebugEvidenceText(redactEvidenceLogMessage(event.Message), EvidenceLogMaxMessageBytes),
+			Message:    boundDebugEvidenceText(redactEvidenceLogMessage(redactor, event.Message), EvidenceLogMaxMessageBytes),
 		})
 	}
 	return out
 }
 
-func redactEvidenceLogMessage(message string) string {
-	redacted, _ := airedact.Redact([]byte(strings.TrimRight(message, "\r\n")), airedact.Kinds...)
-	return string(redacted)
+// evidenceLogRedactorCap bounds the text the redactor scans; the result is
+// then cut to EvidenceLogMaxMessageBytes.
+const evidenceLogRedactorCap = 4096
+
+func redactEvidenceLogMessage(redactor *redact.Redactor, message string) string {
+	redacted, _ := redactor.Apply(strings.TrimRight(message, "\r\n"))
+	return redacted
 }
 
 // synthesisLogs keeps only what the rules read from log lines. ADR-127 §7.1:

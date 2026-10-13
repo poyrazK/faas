@@ -737,6 +737,78 @@ type debugDependencyHistoryAggregate struct {
 	dependencyKind string
 	name           string
 	debugDependencyHistoryRollup
+	// queries breaks a database dependency down by normalized query
+	// pattern; at most debugDependencyQueryMaxPatterns distinct patterns.
+	queries          map[string]*debugDependencyHistoryRollup
+	queriesTruncated bool
+}
+
+// debugDependencyQueryMaxPatterns bounds the query patterns tracked per
+// dependency; debugDependencyQueryMaxOutput bounds those returned.
+const (
+	debugDependencyQueryMaxPatterns = 16
+	debugDependencyQueryMaxOutput   = 5
+)
+
+// addQuerySample files a database span's sample under its query pattern.
+func (a *debugDependencyHistoryAggregate) addQuerySample(statement string, sample debugDependencyHistorySample, isCurrent bool) {
+	pattern := debugger.QueryPattern(statement)
+	if pattern == "" {
+		return
+	}
+	rollup := a.queries[pattern]
+	if rollup == nil {
+		if len(a.queries) >= debugDependencyQueryMaxPatterns {
+			a.queriesTruncated = true
+			return
+		}
+		if a.queries == nil {
+			a.queries = make(map[string]*debugDependencyHistoryRollup)
+		}
+		rollup = &debugDependencyHistoryRollup{}
+		a.queries[pattern] = rollup
+	}
+	addDebugDependencyHistorySample(rollup, sample, isCurrent)
+}
+
+// queryItems summarizes the query breakdown, regressions first, then by
+// current p95 and calls.
+func (a *debugDependencyHistoryAggregate) queryItems() ([]api.DebugDependencyQueryItem, bool) {
+	if len(a.queries) == 0 {
+		return nil, false
+	}
+	out := make([]api.DebugDependencyQueryItem, 0, len(a.queries))
+	for pattern, rollup := range a.queries {
+		metrics := summarizeDebugDependencyHistory(rollup)
+		out = append(out, api.DebugDependencyQueryItem{
+			Pattern: pattern, Calls: rollup.calls, ErrorCalls: rollup.errors,
+			P95MS: metrics.p95MS, BaselineP95MS: metrics.baselineP95MS, CurrentP95MS: metrics.currentP95MS,
+			RegressionFactor: metrics.regressionFactor, Regression: metrics.regression,
+			BaselineErrorRatePct: metrics.baselineErrorRatePct, CurrentErrorRatePct: metrics.currentErrorRatePct,
+			FailureRegression: metrics.failureRegression, TopErrorType: metrics.topErrorType,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Regression != out[j].Regression {
+			return out[i].Regression
+		}
+		if out[i].FailureRegression != out[j].FailureRegression {
+			return out[i].FailureRegression
+		}
+		if out[i].CurrentP95MS != out[j].CurrentP95MS {
+			return out[i].CurrentP95MS > out[j].CurrentP95MS
+		}
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		return out[i].Pattern < out[j].Pattern
+	})
+	truncated := a.queriesTruncated
+	if len(out) > debugDependencyQueryMaxOutput {
+		out = out[:debugDependencyQueryMaxOutput]
+		truncated = true
+	}
+	return out, truncated
 }
 
 type debugDependencyImpactAggregate struct {
@@ -836,6 +908,9 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			}
 			if aggregate != nil {
 				addDebugDependencyHistorySample(&aggregate.debugDependencyHistoryRollup, sample, isCurrent)
+				if span.DBStatement != "" {
+					aggregate.addQuerySample(span.DBStatement, sample, isCurrent)
+				}
 			}
 
 			from := debugDependencyRootSegment()
@@ -892,6 +967,7 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			FailureRegression:      metrics.failureRegression,
 			TopErrorType:           metrics.topErrorType,
 		})
+		out[len(out)-1].Queries, out[len(out)-1].QueriesTruncated = aggregate.queryItems()
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Regression != out[j].Regression {
@@ -1414,7 +1490,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
+		Identifier:    s.resolveDebugRequestTraceIdentifier(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now),
 		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
 		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
 	})

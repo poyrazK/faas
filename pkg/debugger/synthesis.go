@@ -153,6 +153,9 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		depRef := addRef("dependency_comparison", "Dependency comparison with the previous deployment", "dependency:"+label)
 		detail := fmt.Sprintf("%s now fails %.1f%% of calls versus %.1f%% before the deployment%s%s.",
 			label, failureRegression.CurrentErrorRatePct, failureRegression.BaselineErrorRatePct, deploymentSuffix(dependencyComparison.PreviousDeploymentTag), errorTypeSuffix(failureRegression.TopErrorType))
+		if query := RegressedQuery(*failureRegression, true); query != nil {
+			detail += fmt.Sprintf(" The failing query is `%s` (%.1f%% of its calls).", query.Pattern, query.CurrentErrorRatePct)
+		}
 		addFinding("dependency_failure_regression", "A dependency fails more often since the last deployment", detail, "high", depRef)
 		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (timeouts, credentials, request shape) before rolling back.")
 	}
@@ -162,6 +165,9 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		depRef := addRef("dependency_comparison", "Dependency comparison with the previous deployment", "dependency:"+label)
 		detail := fmt.Sprintf("%s p95 rose from %dms to %dms (%.1fx) compared with the previous deployment%s.",
 			label, dependencyRegression.BaselineP95MS, dependencyRegression.CurrentP95MS, dependencyRegression.RegressionFactor, deploymentSuffix(dependencyComparison.PreviousDeploymentTag))
+		if query := RegressedQuery(*dependencyRegression, false); query != nil {
+			detail += fmt.Sprintf(" The slower query is `%s` (p95 %dms to %dms).", query.Pattern, query.BaselineP95MS, query.CurrentP95MS)
+		}
 		addFinding("dependency_regression", "A dependency slowed down after the last deployment", detail, "high", depRef)
 		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (new queries, missing indexes, extra round trips) before rolling back.")
 	}
