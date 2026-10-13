@@ -97,21 +97,26 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, apiKey, "hello")
-	// A pull binding for the lease check. It is created before the first
-	// boot characterizes the app, so a worker-class binding is accepted on
-	// this HTTP fixture; the lease path only needs the enabled pull binding.
-	if body, code := doReq(t, h, apiKey, http.MethodPost, "/v1/apps/hello/queue-bindings", api.CreateQueueBindingRequest{
-		Name: "jobs", QueueName: "jobs", Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 2,
-	}); code != http.StatusCreated {
-		t.Fatalf("create pull binding: %d %s", code, body)
+	// A pull binding for the lease check. The fixture must stay an HTTP app
+	// to serve /identity through the gateway, and the binding API refuses a
+	// worker-class binding on an HTTP app, so the row is written through the
+	// store: the lease path only needs an enabled pull binding on the app.
+	store := state.NewPgStore(pool)
+	app, err := store.AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateQueueBinding(context.Background(), state.QueueBinding{AccountID: app.AccountID, AppID: appID,
+		Name: "jobs", QueueName: "jobs", Mode: "pull", WorkloadClass: state.WorkloadClassWorker, Enabled: true, MaxConcurrency: 2}); err != nil {
+		t.Fatalf("create pull binding: %v", err)
 	}
 	// vmmd keeps VMs running across a restart, so idle-park the app before
 	// the harness stops or its microVM leaks on the host.
 	t.Cleanup(func() {
 		setAppIdleTimeout(t, h, apiKey, "hello", api.IdleTimeoutFloorSeconds)
-		parkCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		parkCtx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 		defer cancel()
-		if _, err := e2etest.WaitForAppParked(parkCtx, t, pool, appID, 60*time.Second); err != nil {
+		if _, err := e2etest.WaitForAppParked(parkCtx, t, pool, appID, 4*time.Minute); err != nil {
 			t.Errorf("teardown: app not parked, its microVM will leak: %v", err)
 		}
 	})
@@ -128,23 +133,25 @@ func TestWorkloadIdentityMetal(t *testing.T) {
 	if err := json.Unmarshal(raw, &dep); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	// Imaging (layer build, secret and CVE scans, base patch) takes minutes on a
+	// loaded nested-virt host; the deadlines bound a hang, not a fast path.
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 	defer h.DumpLogs(t)
-	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, dep.ID, 90*time.Second); err != nil {
+	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, dep.ID, 12*time.Minute); err != nil {
 		t.Fatalf("deployment not live: %v", err)
 	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
+	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 4*time.Minute); err != nil {
 		t.Fatalf("no parked instance: %v", err)
 	}
 	client := h.HTTPClient()
-	if err := e2etest.WaitForHTTPReady(ctx, t, client, gatewayAppURL(h, "hello"), 10*time.Second); err != nil {
+	if err := e2etest.WaitForHTTPReady(ctx, t, client, gatewayAppURL(h, "hello"), 3*time.Minute); err != nil {
 		t.Fatalf("gateway not ready: %v", err)
 	}
-	if body, status := doGetWithHost(t, client, gatewayAppURL(h, "hello"), "hello.apps.test.example", 60*time.Second); status != http.StatusOK || strings.TrimSpace(string(body)) != helloBody {
+	if body, status := doGetWithHost(t, client, gatewayAppURL(h, "hello"), "hello.apps.test.example", 3*time.Minute); status != http.StatusOK || strings.TrimSpace(string(body)) != helloBody {
 		t.Fatalf("wake = %d %q", status, body)
 	}
-	serving, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateRunning, 10*time.Second)
+	serving, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateRunning, time.Minute)
 	if err != nil || len(serving) == 0 {
 		t.Fatalf("no running instance: %v", err)
 	}
