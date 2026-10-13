@@ -188,6 +188,13 @@ type Config struct {
 	// the same nodes. A node without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
+	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
+	// place at its idle timeout instead of parking it: vmmd keeps the VM
+	// paused in memory, unbilled, and the next request thaws it. Off by
+	// default. Thawing and parking frozen instances run either way, so
+	// turning it off drains the tier within FrozenTTL.
+	FrozenTier bool `toml:"frozen_tier"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).
