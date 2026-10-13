@@ -103,7 +103,23 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	capture := newRestoreBreakdownCapture(t)
 	defer capture.restore()
 
-	vmm := newMetalVMM(t, 30*time.Second).WithStorage(store)
+	// FAAS_RESTORE_BENCH_CACHE_MISS=1 restores through an empty node cache
+	// every cycle. That is a wake on a node that does not hold the snapshot:
+	// the memory and vmstate are fetched from the canonical store into the
+	// node cache before the restore can load them.
+	var backend storage.StorageBackend = store
+	var nodeCache *storage.LocalCacheBackend
+	cacheMiss := os.Getenv("FAAS_RESTORE_BENCH_CACHE_MISS") == "1"
+	if cacheMiss {
+		nodeCache, err = storage.NewLocalCacheBackend(remoteOnlyStore{store}, filepath.Join(dir, "node-cache"), 64<<30)
+		if err != nil {
+			t.Fatal(err)
+		}
+		backend = nodeCache
+		t.Log("restoring through an empty node cache every cycle")
+	}
+
+	vmm := newMetalVMM(t, 30*time.Second).WithStorage(backend)
 	stageBenchMountHelper(t, vmm)
 	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, fcVersion, nil, nil)
 	if n := benchPreparedNetworks(t); n > 0 {
@@ -177,6 +193,9 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		// fixes: if resume_hook moves, the cost is fault I/O and prefetch
 		// helps; if it does not, the cost is fault COUNT and only hugepages
 		// or UFFD can help.
+		if cacheMiss {
+			emptyNodeCache(t, nodeCache)
+		}
 		if dropCaches {
 			dropPageCache(t)
 		}
@@ -209,6 +228,29 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	reportRestoreTiming(t, rows)
 	if path := os.Getenv("FAAS_RESTORE_BENCH_JSON"); path != "" {
 		writeRestoreTimingJSON(t, path, rows)
+	}
+}
+
+// remoteOnlyStore hides the local store's paths, so the node cache in front
+// of it has to fetch, as it does from the remote store in production.
+type remoteOnlyStore struct{ storage.StorageBackend }
+
+// emptyNodeCache removes every entry of the bench's node cache so the next
+// restore misses. A cache that installs fills in the background is drained
+// first, or a fill installed after this would turn the next miss into a hit.
+func emptyNodeCache(t *testing.T, cache *storage.LocalCacheBackend) {
+	t.Helper()
+	if deferred, ok := any(cache).(interface{ WaitDeferred() }); ok {
+		deferred.WaitDeferred()
+	}
+	entries, err := os.ReadDir(cache.Root())
+	if err != nil {
+		t.Fatalf("read node cache: %v", err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(cache.Root(), e.Name())); err != nil {
+			t.Fatalf("empty node cache: %v", err)
+		}
 	}
 }
 
