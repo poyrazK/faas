@@ -179,14 +179,14 @@ schedd's config enables the scheduler and lists the database nodes.
 - A wake that leaves `waking` (running or failed) and a park signal the
   node's queued wakes in the same process, which retry at once; the backoff
   covers other replicas.
-- Metal (`TestMetalWakeStorm`, six 384 MiB databases on the loaded 2-vCPU
-  nested test host, polling only): woken at once, all six were up in
-  10.3 s, every wake taking ~10.3 s. With two boot slots, never more than
-  two booted at once; the median wake fell to 8.8 s, the last took 13.6 s.
-  Part of that tail was the backoff's idle gaps between waves, which the
-  in-process signal removes (not yet measured on metal). Over the RAM
-  ceiling, a wake parked the database idle for ten minutes and was up in
-  8.5 s.
+- Metal (`TestMetalWakeStorm`, six 384 MiB databases on the shared 2-vCPU
+  nested test host; compare within a run). Woken at once, all six were up
+  in 14.8 s, every wake taking ~14.6 s. With two boot slots, never more
+  than two booted at once, and all six were up in 9.7 s, median wake
+  7.0 s. Before the in-process signal, polling alone left idle gaps
+  between waves: 13.6 s against 10.3 s unbounded in that run. Over the
+  RAM ceiling, a wake parked the database idle for ten minutes and was up
+  in 1.7 s.
 
 ### Proxy surface
 
