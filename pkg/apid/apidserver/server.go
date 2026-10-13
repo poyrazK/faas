@@ -20,6 +20,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
@@ -2133,7 +2135,16 @@ func (s *server) handler() http.Handler {
 	// deployment_detail.html audit block reads (api.ListDeploymentAuditResponse).
 	// IDOR posture identical to getDeployment above — the handler
 	// re-validates the deployment belongs to acct via s.store.AppByDeploymentID.
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
+	mux.HandleFunc("GET /v1/mcp-connection-health", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.ConnectionHealthHandler(s.store))))
+	mux.HandleFunc("GET /v1/mcp-oauth-retirements", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.RetirementHandler(s.store))))
+	mux.HandleFunc("POST /v1/mcp-oauth-retirements/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.RetirementHandler(s.store)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/mcp-catalog-monitor/oauth", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.OAuthHandler(s.store, s.authMw, hostIdentitiesForUnseal)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/mcp-catalog-monitor/observations", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(mcpcatalog.Handler(s.store, s.authMw))))
 	mux.HandleFunc("GET /v1/deployments/{id}/audit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeploymentAudit))))
+	mux.HandleFunc("GET /v1/deployments/{id}/mcp-admissions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpadmission.Handler(s.store, false)))))
+	mux.HandleFunc("GET /v1/mcp/admissions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpadmission.Handler(s.store, true)))))
 	// ADR-122 / issue #975 item #1: per-deployment OpenAPI
 	// document discovery surface. Three routes (GET, PATCH,
 	// DELETE) under /v1/apps/{slug}/deployments/{deployment}/openapi.

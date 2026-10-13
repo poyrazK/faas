@@ -7395,6 +7395,7 @@ haveApp:
 
 	// Include admission, queueing, and restore from the ingress timestamp.
 	// Starting here measures only the proxy after the guest is already ready.
+	defer h.startMCPStream(r, app, isStreaming)()
 	wakeStart := start
 	// Issue #676 / ADR-080: detect inbound Connection: Upgrade +
 	// Upgrade: <token> requests BEFORE the plain-HTTP forwarder
@@ -7671,6 +7672,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// bug so this is now request-received → handler-return, not
 	// "now() — now()").
 	elapsed := time.Since(startTime(r))
+	h.observeMCPRequest(r, status, appID, elapsed)
 	if h.metrics != nil {
 		// Use placeholder labels for the unknown-host path so 404s show up on
 		// the dashboard under a sentinel app_id (e.g. "-" or "").

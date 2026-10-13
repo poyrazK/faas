@@ -16,11 +16,12 @@ import (
 )
 
 type mcpReleaseRole struct {
-	Name     string `json:"name"`
-	TokenEnv string `json:"token_env,omitempty"`
-	Baseline string `json:"baseline"`
-	contract mcphosting.Contract
-	token    string
+	Name          string                   `json:"name"`
+	TokenEnv      string                   `json:"token_env,omitempty"`
+	Baseline      string                   `json:"baseline"`
+	Authorization *mcpReleaseAuthorization `json:"authorization,omitempty"`
+	contract      mcphosting.Contract
+	token         string
 }
 
 type mcpCatalogPinReceipt struct {
@@ -72,6 +73,10 @@ func validateMCPDeploymentCatalogFleetPin(pin *mcpCatalogPinReceipt, fleet mcpCa
 }
 
 func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
+	return loadMCPReleasePolicyWithTokens(path, true)
+}
+
+func loadMCPReleasePolicyWithTokens(path string, withTokens bool) ([]mcpReleaseRole, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -114,9 +119,11 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 			return nil, errors.New("release roles require unique names and baseline paths")
 		}
 		seen[r.Name] = true
-		r.token, err = mcpToken(r.TokenEnv)
-		if err != nil {
-			return nil, fmt.Errorf("role %s: %w", r.Name, err)
+		if withTokens {
+			r.token, err = mcpToken(r.TokenEnv)
+			if err != nil {
+				return nil, fmt.Errorf("role %s: %w", r.Name, err)
+			}
 		}
 		baseline, err := root.Open(r.Baseline)
 		if err != nil {
@@ -129,6 +136,15 @@ func loadMCPReleasePolicy(path string) ([]mcpReleaseRole, error) {
 		}
 		if r.contract.Version != 2 {
 			return nil, fmt.Errorf("role %s requires a full catalog format-2 baseline", r.Name)
+		}
+	}
+	for i := range policy.Roles {
+		validate := validateMCPAuthorizationDeclarations
+		if withTokens {
+			validate = loadMCPRoleAuthorization
+		}
+		if err := validate(&policy.Roles[i]); err != nil {
+			return nil, fmt.Errorf("role %s authorization: %w", policy.Roles[i].Name, err)
 		}
 	}
 	return policy.Roles, nil
@@ -226,7 +242,17 @@ func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRol
 		if err != nil {
 			return checks, err
 		}
-		checks = append(checks, map[string]any{"role": role.Name, "diff": diff})
+		entry := map[string]any{"role": role.Name, "diff": diff}
+		if role.Authorization != nil {
+			authorization := probe.CheckAuthorization(ctx, role.Authorization.AuthorizationExpectations, catalog, role.Authorization.insufficientToken)
+			entry["authorization"] = authorization
+			checks = append(checks, entry)
+			if !mcpAuthorizationChecksPassed(authorization) {
+				return checks, fmt.Errorf("role %s authorization expectations failed; promotion blocked", role.Name)
+			}
+		} else {
+			checks = append(checks, entry)
+		}
 		if !diff.Compatible {
 			return checks, fmt.Errorf("role %s catalog requires review; capture and review its baseline before promoting", role.Name)
 		}
@@ -235,6 +261,14 @@ func verifyMCPRoles(ctx context.Context, candidate string, roles []mcpReleaseRol
 }
 
 func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, pin ...*mcpCatalogPinReceipt) int {
+	return finishMCPDeployWithAudit(ctx, c, slug, id, cfg, token, roles, nil, pin...)
+}
+
+func finishMCPDeployWithAudit(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, pin ...*mcpCatalogPinReceipt) int {
+	return finishMCPDeployWithSmoke(ctx, c, slug, id, cfg, token, roles, audit, nil, pin...)
+}
+
+func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
 	endpoint, candidate, serving, err := prepareMCPCandidate(ctx, c, slug, id, cfg)
 	if err != nil {
 		return printErr("MCP candidate", err)
@@ -288,7 +322,33 @@ func finishMCPDeploy(ctx context.Context, c *Client, slug, id string, cfg mcphos
 			if gateErr != nil {
 				receipt["promotion_error"] = gateErr.Error()
 			} else {
-				_, err = c.PatchDeploymentTrafficIfServing(ctx, id, 100, serving)
+				var policy *api.MCPAccessPolicyExpectation
+				if audit != nil {
+					access := collectMCPAccessAudit(probeCtx, c, slug, cfg, roles, *audit)
+					receipt["access_audit"] = access
+					policy = access.PolicyExpectation
+					if !access.OK {
+						receipt["promotion_error"] = "reviewed MCP access policy drift or missing evidence blocks promotion"
+						if code := jsonOut(writeJSON(receipt)); code != 0 {
+							return code
+						}
+						return 1
+					}
+				}
+				if smoke != nil {
+					smokeCtx, smokeCancel := context.WithTimeout(ctx, 30*time.Second)
+					smokeReport := runMCPSmokeGate(smokeCtx, candidate, token, smoke)
+					smokeCancel()
+					receipt["smoke_tests"] = smokeReport
+					if !smokeReport.OK {
+						receipt["promotion_error"] = "MCP smoke fixtures failed; candidate remains unpromoted"
+						if code := jsonOut(writeJSON(receipt)); code != 0 {
+							return code
+						}
+						return 1
+					}
+				}
+				_, err = c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, id, 100, serving, policy)
 				if err != nil {
 					receipt["promotion_error"] = err.Error()
 				} else {

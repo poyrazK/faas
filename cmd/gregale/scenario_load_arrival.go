@@ -87,18 +87,28 @@ func (c *testLoadCollector) arrivalBudgetExceeded() bool {
 	return c.budgetExceeded
 }
 
+// arrivalLoadRunner is a dependency seam for serial CLI reporting tests. The
+// production runner always uses monotonic wall time and real timers.
+var arrivalLoadRunner = runTestArrivalLoad
+
 func runTestArrivalLoad(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, started time.Time, runJourney func(int)) {
+	stopProgress := monitorTestLoadProgress(ctx, collector, cfg, started)
+	defer stopProgress()
+	runTestArrivalLoadWithClock(ctx, collector, cfg, func() time.Duration { return time.Since(started) }, waitTestLoad, runJourney)
+}
+
+func runTestArrivalLoadWithClock(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, elapsed func() time.Duration, wait func(context.Context, time.Duration) bool, runJourney func(int)) {
 	schedule := testLoadArrivalSchedule{rate: cfg.Rate, duration: cfg.Duration, total: cfg.plannedArrivals()}
 	slots := make(chan struct{}, cfg.maxVUs())
 	var workers sync.WaitGroup
 	for ctx.Err() == nil && !collector.arrivalBudgetExceeded() {
-		arrival, late, delay, done := schedule.due(time.Since(started))
+		arrival, late, delay, done := schedule.due(elapsed())
 		collector.recordArrival(late, false, false)
 		if done {
 			break
 		}
 		if delay > 0 {
-			if !waitTestLoad(ctx, delay) {
+			if !wait(ctx, delay) {
 				break
 			}
 			continue
@@ -120,7 +130,7 @@ func runTestArrivalLoad(ctx context.Context, collector *testLoadCollector, cfg *
 		}
 	}
 	collector.mu.Lock()
-	collector.schedulingDuration = time.Since(started)
+	collector.schedulingDuration = elapsed()
 	collector.mu.Unlock()
 	workers.Wait()
 }

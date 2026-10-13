@@ -891,16 +891,7 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 }
 
 func alertMetricActionRestriction(metric string) string {
-	if metric == string(state.AlertMetricMCPTaskPromotionHoldAgeSeconds) {
-		return "MCP promotion hold alerts support webhook action only"
-	}
-	if metric == string(state.AlertMetricMCPTasksOldestAgeSeconds) {
-		return "MCP task age alerts support webhook action only"
-	}
-	if metric == string(state.AlertMetricMCPTasksMetricsStale) {
-		return "MCP task metrics freshness alerts support webhook action only"
-	}
-	return "pre-auth target metrics support webhook action only"
+	return api.AlertMetricActionRestriction(metric)
 }
 
 // alertRuleRowForValidation folds an existing row + a partial update

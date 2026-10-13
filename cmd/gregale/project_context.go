@@ -20,6 +20,18 @@ const (
 
 var errProjectContextNotFound = errors.New("no linked Gregale project context")
 
+// Set only by TestMain: tests must neither inherit nor overwrite a developer's
+// checkout context when their temporary directories have linked ancestors.
+var testOnlyProjectContextRoot string
+
+func projectContextRootAllowed(path string) bool {
+	if testOnlyProjectContextRoot == "" {
+		return true
+	}
+	rel, err := filepath.Rel(testOnlyProjectContextRoot, path)
+	return err == nil && (rel == "." || filepath.IsLocal(rel))
+}
+
 // localProjectContext is deliberately non-secret. It identifies the remote
 // project and, when a project has one or an explicitly selected workload, the
 // app that app-scoped commands should target. The file lives in the checkout,
@@ -55,6 +67,9 @@ func findProjectContext(start string) (localProjectContext, string, error) {
 		abs = filepath.Dir(abs)
 	}
 	for {
+		if !projectContextRootAllowed(abs) {
+			return localProjectContext{}, "", errProjectContextNotFound
+		}
 		path := projectContextPath(abs)
 		b, readErr := os.ReadFile(path)
 		if readErr == nil {
@@ -102,7 +117,7 @@ func projectContextRoot(start string) (string, error) {
 	} else if !errors.Is(err, errProjectContextNotFound) {
 		return "", err
 	}
-	if root, err := gitRootFromCwd(start); err == nil {
+	if root, err := gitRootFromCwd(start); err == nil && projectContextRootAllowed(root) {
 		return root, nil
 	}
 	return filepath.Abs(start)

@@ -1018,6 +1018,7 @@ func runTestLoadWithCaptures(parent context.Context, baseURL, runID string, cons
 	} else if cfg.Rate > 0 {
 		runTestArrivalLoad(ctx, collector, cfg, started, runJourney)
 	} else {
+		stopProgress = monitorTestLoadProgress(ctx, collector, cfg, started)
 		runTestConcurrencyLoad(ctx, collector, cfg, started, runJourney)
 	}
 	stopProgress()

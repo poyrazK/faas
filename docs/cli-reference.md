@@ -128,13 +128,20 @@ Scaffold, deploy and verify stateless MCP servers
 
 Create an MCP starter in Node, Go or Python
 
-`gregale mcp init --path <DIR> [--language <LANGUAGE>] [--runtime <RUNTIME>]`
+`gregale mcp init --path <DIR> [--language <LANGUAGE>] [--runtime <RUNTIME>] [--auth <MODE>] [--issuer <URL>] [--jwks-url <URL>] [--resource <URL>] [--scopes <SCOPES>] [--tasks] [--name <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--path <DIR>` | empty destination directory | required |
 | `--language <LANGUAGE>` | starter language alias | one of `node` · `go` · `python` |
 | `--runtime <RUNTIME>` | starter language (node, go or python; default node) | one of `node` · `go` · `python` |
+| `--auth <MODE>` | access mode (default open) | one of `open` · `external-oauth` |
+| `--issuer <URL>` | HTTPS OAuth issuer for private access |  |
+| `--jwks-url <URL>` | HTTPS OAuth signing-key URL |  |
+| `--resource <URL>` | canonical HTTPS MCP endpoint and token audience |  |
+| `--scopes <SCOPES>` | comma-separated required OAuth scopes |  |
+| `--tasks` | scaffold separate web, worker and observer task projects |  |
+| `--name <SLUG>` | app slug prefix and task namespace (required with --tasks) |  |
 
 Examples:
 
@@ -142,13 +149,510 @@ Examples:
 gregale mcp init --path ./my-mcp
 gregale mcp init --path ./my-mcp --runtime go
 gregale mcp init --path ./my-mcp --runtime python
+gregale mcp init --path ./private-mcp --auth external-oauth --issuer https://identity.example.com --jwks-url https://identity.example.com/jwks --resource https://mcp.example.com/mcp --scopes mcp:tools
+gregale mcp init --path ./reports --tasks --name reports
 ```
+
+### mcp capabilities
+
+Show the built-in starter contract and runtime differences
+
+`gregale mcp capabilities [--runtime <RUNTIME>] [--markdown]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--runtime <RUNTIME>` | filter to one starter runtime | one of `node` · `go` · `python` |
+| `--markdown` | render the generated starter capability reference |  |
+
+Examples:
+
+```sh
+gregale mcp capabilities --json
+gregale mcp capabilities --runtime python
+```
+
+### mcp monitor
+
+Manage reviewed catalog roles and OAuth connections
+
+#### mcp monitor setup
+
+setup catalog observer
+
+`gregale mcp monitor setup [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor disable
+
+disable catalog observer
+
+`gregale mcp monitor disable [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor status
+
+status catalog observer
+
+`gregale mcp monitor status [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor run
+
+run catalog observer
+
+`gregale mcp monitor run [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor pause
+
+pause catalog observer
+
+`gregale mcp monitor pause [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor resume
+
+resume catalog observer
+
+`gregale mcp monitor resume [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor restart
+
+restart catalog observer
+
+`gregale mcp monitor restart [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor stop
+
+stop catalog observer
+
+`gregale mcp monitor stop [--app <VALUE>] [--role <VALUE>] [--all-roles] [--oauth-revocation-endpoint <VALUE>] [--oauth-revocation-auth-method <VALUE>] [--oauth-profile <VALUE>] [--oauth-token-auth-method <VALUE>] [--oauth-callback-port <VALUE>] [--oauth-resource <VALUE>] [--oauth-issuer <VALUE>] [--oauth-discovery-url <VALUE>] [--oauth-guided] [--oauth-authorization-endpoint <VALUE>] [--oauth-scopes <VALUE>] [--oauth-token-endpoint <VALUE>] [--oauth-client-id <VALUE>] [--oauth-refresh-secret-ref <VALUE>] [--oauth-client-secret-ref <VALUE>] [--managed] [--secret-ref <VALUE>] [--baseline <VALUE>] [--freshness-seconds <VALUE>] [--token-env <VALUE>] [--endpoint <VALUE>] [--interval <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | reviewed MCP authorization role |  |
+| `--all-roles` | aggregate all configured roles (status only) |  |
+| `--oauth-revocation-endpoint <VALUE>` | explicit HTTPS RFC 7009 endpoint |  |
+| `--oauth-revocation-auth-method <VALUE>` | revocation authentication: none, client_secret_basic or client_secret_post |  |
+| `--oauth-profile <VALUE>` | provider profile: generic (default), google or oidc |  |
+| `--oauth-token-auth-method <VALUE>` | none, client_secret_basic or client_secret_post |  |
+| `--oauth-callback-port <VALUE>` | fixed loopback port; 0 chooses a dynamic port |  |
+| `--oauth-resource <VALUE>` | reviewed HTTPS MCP resource indicator |  |
+| `--oauth-issuer <VALUE>` | reviewed HTTPS provider issuer |  |
+| `--oauth-discovery-url <VALUE>` | explicit HTTPS provider metadata URL |  |
+| `--oauth-guided` | use browser authorization instead of a refresh secret |  |
+| `--oauth-authorization-endpoint <VALUE>` | explicit HTTPS browser authorization endpoint |  |
+| `--oauth-scopes <VALUE>` | space-separated OAuth scopes |  |
+| `--oauth-token-endpoint <VALUE>` | explicit HTTPS OAuth token endpoint (managed setup) |  |
+| `--oauth-client-id <VALUE>` | OAuth client ID (managed setup) |  |
+| `--oauth-refresh-secret-ref <VALUE>` | app secret holding initial OAuth refresh token |  |
+| `--oauth-client-secret-ref <VALUE>` | optional app secret for confidential client authentication |  |
+| `--managed` | run a platform-managed observer (setup only) |  |
+| `--secret-ref <VALUE>` | app default-scope secret:NAME for the managed MCP token (setup only) |  |
+| `--baseline <VALUE>` | reviewed format-2 catalog baseline (setup only) |  |
+| `--freshness-seconds <VALUE>` | maximum observation age (setup only) |  |
+| `--token-env <VALUE>` | MCP client token environment variable name (setup/run) |  |
+| `--endpoint <VALUE>` | MCP endpoint path (managed setup/run) |  |
+| `--interval <VALUE>` | catalog check interval (managed setup/run) |  |
+| `--timeout <VALUE>` | per-check read and report deadline |  |
+
+#### mcp monitor connect
+
+connect catalog observer
+
+`gregale mcp monitor connect [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+#### mcp monitor reconnect
+
+reconnect catalog observer
+
+`gregale mcp monitor reconnect [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+#### mcp monitor disconnect
+
+disconnect catalog observer
+
+`gregale mcp monitor disconnect [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+#### mcp monitor provider-check
+
+provider-check catalog observer
+
+`gregale mcp monitor provider-check [--app <VALUE>] [--role <VALUE>] [--callback-port <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | HTTP MCP app slug |  |
+| `--role <VALUE>` | managed OAuth role |  |
+| `--callback-port <VALUE>` | override a dynamic loopback callback port (0–65535) |  |
+| `--timeout <VALUE>` | browser authorization deadline |  |
+
+### mcp access
+
+Audit stored MCP policy and admission evidence
+
+#### mcp access audit
+
+audit MCP access evidence
+
+`gregale mcp access audit [--app <VALUE>] [--path <VALUE>] [--auth-placement <VALUE>] [--algorithms <VALUE>] [--release-policy <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <VALUE>` | MCP application slug |  |
+| `--path <VALUE>` | reviewed MCP source directory |  |
+| `--auth-placement <VALUE>` | gateway or guest-only (required) |  |
+| `--algorithms <VALUE>` | reviewed gateway algorithms (default RS256,ES256) |  |
+| `--release-policy <VALUE>` | optional role baselines and authorization exclusions |  |
+| `--timeout <VALUE>` | overall audit deadline, at most 2m |  |
+
+#### mcp access history
+
+history MCP access evidence
+
+`gregale mcp access history [--deployment <VALUE>] [--limit <VALUE>] [--cursor <VALUE>] [--outcome <VALUE>] [--evidence <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--deployment <VALUE>` | deployment id to inspect (promotion or recovery target) |  |
+| `--limit <VALUE>` | MCP receipts per page, 1–50 |  |
+| `--cursor <VALUE>` | next cursor from a previous page |  |
+| `--outcome <VALUE>` | filter accepted or rejected receipts |  |
+| `--evidence <VALUE>` | inspect an exact evidence UUID instead of deployment history |  |
+| `--timeout <VALUE>` | overall read deadline, at most 2m |  |
+
+#### mcp access explain
+
+explain MCP access evidence
+
+`gregale mcp access explain [--evidence <VALUE>] [--app <VALUE>] [--timeout <VALUE>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--evidence <VALUE>` | retained admission evidence UUID |  |
+| `--app <VALUE>` | optional application slug for current convergence |  |
+| `--timeout <VALUE>` | overall read deadline, at most 2m |  |
+
+### mcp health
+
+Inspect account MCP connection health
+
+`gregale mcp health [--app <SLUG>] [--offset <N>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | optional app filter |  |
+| `--offset <N>` | issue page offset |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+### mcp diagnostics
+
+Summarize retained MCP transport failures
+
+`gregale mcp diagnostics --app <SLUG> [--route <PATH>] [--since <DURATION>] [--cursor <CURSOR>] [--limit <N>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--route <PATH>` | retained route label |  |
+| `--since <DURATION>` | telemetry window |  |
+| `--cursor <CURSOR>` | next page cursor |  |
+| `--limit <N>` | rows per page |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+### mcp validate
+
+Validate MCP protocol and catalog compatibility
+
+`gregale mcp validate --url <URL> [--app <SLUG>] [--deployment <ID>] [--endpoint-path <PATH>] [--token-env <ENV>] [--protocol-version <VERSION>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint | required |
+| `--app <SLUG>` | optional app for exact-instance probes |  |
+| `--deployment <ID>` | deployment to qualify |  |
+| `--endpoint-path <PATH>` | configured MCP path |  |
+| `--token-env <ENV>` | MCP token environment variable |  |
+| `--protocol-version <VERSION>` | selected protocol version |  |
+| `--timeout <DURATION>` | overall deadline |  |
+
+### mcp test
+
+Run reviewed MCP application smoke fixtures
+
+`gregale mcp test --url <URL> [--fixtures <PATH>] [--token-env <ENV>] [--allow-tool-execution] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url <URL>` | MCP endpoint | required |
+| `--fixtures <PATH>` | fixture JSON file |  |
+| `--token-env <ENV>` | MCP token environment variable |  |
+| `--allow-tool-execution` | execute reviewed tool fixtures once |  |
+| `--timeout <DURATION>` | overall deadline |  |
+
+### mcp retirements
+
+Inspect and recover durable OAuth grant retirement
+
+#### mcp retirements list
+
+List retirement history
+
+`gregale mcp retirements list [--offset <N>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--offset <N>` | history page offset |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+#### mcp retirements retry
+
+Retry provider retirement
+
+`gregale mcp retirements retry --id <ID> [--allow-active-grant-revocation] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | retirement UUID | required |
+| `--allow-active-grant-revocation` | allow active grant revocation |  |
+| `--timeout <DURATION>` | API deadline |  |
+
+#### mcp retirements acknowledge-manual
+
+Acknowledge manual provider cleanup
+
+`gregale mcp retirements acknowledge-manual --id <ID> [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | retirement UUID | required |
+| `--timeout <DURATION>` | API deadline |  |
 
 ### mcp deploy
 
 Pin the candidate catalog to its revision, verify MCP discovery and promote
 
-`gregale mcp deploy [--path <DIR>] --name <SLUG> [--profile <NAME>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--idempotency-key <KEY>] [--mcp-task-migration-override] [--timeout <SECONDS>]`
+`gregale mcp deploy [--path <DIR>] --name <SLUG> [--profile <NAME>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--validate-url <URL>] [--fixtures <PATH>] [--allow-tool-execution] [--access-audit <PLACEMENT>] [--access-audit-algorithms <LIST>] [--idempotency-key <KEY>] [--mcp-task-migration-override] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -158,6 +662,11 @@ Pin the candidate catalog to its revision, verify MCP discovery and promote
 | `--token-env <ENV>` | client token for external OAuth verification |  |
 | `--secrets-file <PATH>` | sealed app secrets |  |
 | `--release-policy <PATH>` | role-specific catalog baselines to verify before promotion |  |
+| `--validate-url <URL>` | pre-upload compatibility gate endpoint |  |
+| `--fixtures <PATH>` | candidate smoke fixtures |  |
+| `--allow-tool-execution` | execute reviewed tool fixtures once |  |
+| `--access-audit <PLACEMENT>` | optional stored-policy gate with gateway or guest-only placement | one of `gateway` · `guest-only` |
+| `--access-audit-algorithms <LIST>` | reviewed gateway algorithms for --access-audit (default RS256,ES256) |  |
 | `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
 | `--timeout <SECONDS>` | deployment wait timeout in seconds (default 1200) |  |
@@ -166,6 +675,56 @@ Examples:
 
 ```sh
 gregale mcp deploy --path ./my-mcp --name my-mcp --profile small
+```
+
+### mcp access
+
+Inspect reviewed OAuth and gateway access-policy drift
+
+#### mcp access audit
+
+Compare source and role policy with stored account gateway rules
+
+`gregale mcp access audit --app <SLUG> [--path <DIR>] --auth-placement <PLACEMENT> [--algorithms <LIST>] [--release-policy <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | MCP application slug | required |
+| `--path <DIR>` | reviewed source directory (default .) |  |
+| `--auth-placement <PLACEMENT>` | explicit authentication placement | required; one of `gateway` · `guest-only` |
+| `--algorithms <LIST>` | reviewed gateway algorithms (default RS256,ES256) |  |
+| `--release-policy <PATH>` | optional confined role baselines and exclusions; tokens are not read |  |
+| `--timeout <DURATION>` | overall audit deadline (default 30s, at most 2m) |  |
+
+Examples:
+
+```sh
+gregale mcp access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json
+gregale mcp access audit --app my-mcp --auth-placement guest-only --release-policy release.json
+```
+
+### mcp overview
+
+Inspect serving replicas, Task workers, observer readiness and promotion holds
+
+`gregale mcp overview --app <SLUG> [--worker-app <SLUG>] [--observer-app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--release-policy <PATH>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | serving HTTP MCP application | required |
+| `--worker-app <SLUG>` | optional separate durable Task worker application |  |
+| `--observer-app <SLUG>` | observer to inspect (defaults to worker scaling link) |  |
+| `--endpoint <PATH>` | literal MCP endpoint path (default /mcp) |  |
+| `--token-env <ENV>` | MCP bearer token environment variable |  |
+| `--release-policy <PATH>` | role-specific reviewed catalog baselines |  |
+| `--timeout <DURATION>` | overall inspection deadline (default 30s, at most 2m) |  |
+
+Examples:
+
+```sh
+gregale mcp overview --app my-mcp
+gregale mcp overview --app reports-web --worker-app reports-worker --observer-app reports-observer --json
+gregale mcp overview --app my-mcp --release-policy release.json
 ```
 
 ### mcp status
@@ -197,7 +756,7 @@ gregale mcp status --app my-mcp --watch --interval 15s --json
 
 Check discovery, Origin rejection, compatibility and optional streaming
 
-`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--stack] [--hosting] [--path <DIR>] [--worker-app <SLUG>] [--observer-app <SLUG>] [--release-policy <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -214,11 +773,18 @@ Check discovery, Origin rejection, compatibility and optional streaming
 | `--arguments-file <PATH>` | JSON file containing tool or prompt arguments |  |
 | `--name <NAME>` | connection name (config) |  |
 | `--timeout <DURATION>` | total diagnostic timeout (default 30s) |  |
+| `--stack` | check hosting overview and reviewed OAuth configuration |  |
+| `--hosting` | run the existing Task hosting doctor |  |
+| `--path <DIR>` | source configuration directory (with --stack) |  |
+| `--worker-app <SLUG>` | distinct Task worker app (with --stack) |  |
+| `--observer-app <SLUG>` | observer app (with --stack) |  |
+| `--release-policy <PATH>` | reviewed role catalog baselines (with --stack) |  |
 
 Examples:
 
 ```sh
 gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo
+gregale mcp doctor --stack --app reports-web --worker-app reports-worker --path ./reports/web --json
 ```
 
 ### mcp tools
@@ -538,6 +1104,27 @@ gregale mcp task-cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe
 
 Configure, release and inspect durable task workers
 
+#### mcp tasks configure
+
+Preview or apply non-secret role settings before first deployment
+
+`gregale mcp tasks configure --app <SLUG> --role <ROLE> --namespace <NAME> [--worker-app <SLUG>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | reserved task app slug | required |
+| `--role <ROLE>` | task process role | required; one of `web` · `worker` · `observer` |
+| `--namespace <NAME>` | shared stable queue namespace | required |
+| `--worker-app <SLUG>` | metrics destination for worker or observer |  |
+| `--apply` | write the previewed non-secret settings |  |
+
+Examples:
+
+```sh
+gregale mcp tasks configure --app reports-worker --role worker --namespace reports --worker-app reports-worker
+gregale mcp tasks configure --app reports-observer --role observer --namespace reports --worker-app reports-worker --apply
+```
+
 #### mcp tasks release
 
 Deploy and resume a gated web and worker release
@@ -561,7 +1148,7 @@ gregale mcp tasks release status --plan release.json --state ./release-state.jso
 
 Preview or apply the task-backlog scaling policy
 
-`gregale mcp tasks setup [--app <SLUG>] [--min <N>] [--max <N>] [--target <N>] [--apply]`
+`gregale mcp tasks setup [--app <SLUG>] [--min <N>] [--max <N>] [--target <N>] [--observer-app <SLUG>] [--apply]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -569,24 +1156,62 @@ Preview or apply the task-backlog scaling policy
 | `--min <N>` | minimum replicas (default 1; use 0 with an always-on observer) |  |
 | `--max <N>` | maximum replicas (default 10) |  |
 | `--target <N>` | outstanding tasks per worker (default 4) |  |
+| `--observer-app <SLUG>` | separate always-on observer publishing worker metrics |  |
 | `--apply` | apply the proposed worker scaling policy |  |
 
 Examples:
 
 ```sh
 gregale mcp tasks setup --app mcp-worker
-gregale mcp tasks setup --app mcp-worker --min 0 --apply
+gregale mcp tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
 ```
+
+#### mcp tasks observer
+
+Validate observer credentials, namespace and metric readiness
+
+`gregale mcp tasks observer <setup|status>`
+
+##### mcp tasks observer setup
+
+Inspect the observer and optionally ensure minimum one replica
+
+`gregale mcp tasks observer setup --app <SLUG> --worker-app <SLUG> [--config <PATH>] [--apply]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | observer worker app slug | required |
+| `--worker-app <SLUG>` | task worker app slug | required |
+| `--config <PATH>` | local MCP source config (default gregale-mcp.json) |  |
+| `--apply` | ensure at least one configured observer replica |  |
+
+##### mcp tasks observer status
+
+Read observer configuration and heartbeat freshness
+
+`gregale mcp tasks observer status [--app <SLUG>] --worker-app <SLUG> [--config <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | observer slug (defaults to linked observer) |  |
+| `--worker-app <SLUG>` | task worker app slug | required |
+| `--config <PATH>` | optional local MCP source config |  |
 
 #### mcp tasks status
 
 Show task scaling policy and custom metric freshness
 
-`gregale mcp tasks status [--app <SLUG>]`
+`gregale mcp tasks status [--app <SLUG>] [--details] [--require-fresh] [--max-oldest-age <DURATION>] [--max-without-compatible-worker <N>] [--sustain-for <DURATION>] [--poll-interval <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | worker app slug (defaults to the linked project app) |  |
+| `--details` | include observer handler-version compatibility details |  |
+| `--require-fresh` | fail when required metrics or observer signals are unavailable |  |
+| `--max-oldest-age <DURATION>` | maximum oldest queued Task age |  |
+| `--max-without-compatible-worker <N>` | maximum pending Tasks without compatible workers |  |
+| `--sustain-for <DURATION>` | require a violation to persist before failing |  |
+| `--poll-interval <DURATION>` | poll interval for sustained checks (default 15s) |  |
 
 Examples:
 

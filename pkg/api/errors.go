@@ -1129,7 +1129,8 @@ const (
 	CodeTrafficPercentSumInvalid = "traffic_percent_sum_invalid"
 	// CodeTrafficServingChanged is a 409 when a conditional promotion's
 	// expected 100% serving deployment no longer serves the app.
-	CodeTrafficServingChanged = "traffic_serving_changed"
+	CodeTrafficServingChanged  = "traffic_serving_changed"
+	CodeMCPAccessPolicyChanged = "mcp_access_policy_changed"
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
@@ -2007,7 +2008,7 @@ func StatusForCode(code string) int {
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
 		return http.StatusConflict
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -6634,3 +6635,32 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 const CodeProfileInvestigationLimit = "profile_investigation_limit"
 
 const CodeProfileGateBlocked = "profile_gate_blocked"
+
+func ErrMCPAccessPolicyChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeMCPAccessPolicyChanged, "MCP access policy changed", "Stored MCP access policy changed after the audit. Audit again before retrying promotion; traffic was not changed.")
+}
+
+const (
+	CodeMCPAccountRevisionChanged     = "mcp_account_revision_changed"
+	CodeMCPGatewayEvidenceUnavailable = "mcp_gateway_evidence_unavailable"
+	CodeMCPGatewayEvidenceStale       = "mcp_gateway_evidence_stale"
+	CodeMCPGatewayReplayPending       = "mcp_gateway_replay_pending"
+)
+
+func ErrMCPGatewayPromotion(code string) *Problem {
+	return NewProblem(http.StatusConflict, code, "MCP gateway convergence condition failed", "Account policy or gateway evidence no longer satisfies the audited condition. Audit again before retrying; traffic was not changed.")
+}
+
+func IsMCPPromotionConditionFailure(code string) bool {
+	switch code {
+	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+		return true
+	}
+	return false
+}
+
+const CodeMCPAdmissionEvidenceUnavailable = "mcp_admission_evidence_unavailable"
+
+func ErrMCPAdmissionEvidenceUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeMCPAdmissionEvidenceUnavailable, "MCP admission evidence unavailable", "Traffic admission evidence could not be committed. Inspect deployment traffic before retrying after audit storage recovers.")
+}

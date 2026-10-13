@@ -53,6 +53,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -245,54 +246,7 @@ func (s *server) getAuditEvent(w http.ResponseWriter, r *http.Request, acct stat
 // (Items + Limit echo). The dashboard and SDK both consume this;
 // the SDK method is pkg/api.Client.ListDeploymentAudit.
 func (s *server) listDeploymentAudit(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
-	if id == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid id", "id path segment is required"))
-		return
-	}
-	// IDOR check — same two-step pattern as getDeployment
-	// (handlers_ext.go:1320). Cross-account 404s the same way an
-	// unknown id does (we never reveal whether the id exists in a
-	// different account).
-	d, err := s.store.DeploymentByID(r.Context(), id)
-	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-			"Deployment not found", "no deployment with that id belongs to this account"))
-		return
-	}
-	app, err := s.store.AppByID(r.Context(), d.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-			"Deployment not found", "no deployment with that id belongs to this account"))
-		return
-	}
-	limit := listDeploymentAuditLimitDefault
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Invalid limit", "limit must be a positive integer"))
-			return
-		}
-		if n > listDeploymentAuditLimitMax {
-			n = listDeploymentAuditLimitMax
-		}
-		limit = n
-	}
-	rows, err := s.store.ListDeploymentAudit(r.Context(), id, limit)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list deployment audit"))
-		return
-	}
-	items := make([]api.DeploymentAuditResponse, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, deploymentAuditResponse(row))
-	}
-	writeJSON(w, http.StatusOK, api.ListDeploymentAuditResponse{
-		Items: items,
-		Limit: limit,
-	})
+	mcpadmission.ListDeploymentAudit(s.store, w, r, acct, listDeploymentAuditLimitDefault, listDeploymentAuditLimitMax)
 }
 
 // deploymentAuditResponse projects one pkg/state.DeploymentAudit
@@ -308,16 +262,7 @@ func (s *server) listDeploymentAudit(w http.ResponseWriter, r *http.Request, acc
 // (deployment_detail.html) and the SDK leaves it as bytes for the
 // caller to decode.
 func deploymentAuditResponse(r state.DeploymentAudit) api.DeploymentAuditResponse {
-	out := api.DeploymentAuditResponse{
-		At:    r.At.UTC().Format(time.RFC3339Nano),
-		Kind:  string(r.Kind),
-		Actor: r.Actor,
-		Data:  r.Data,
-	}
-	if r.AccountID != nil {
-		out.AccountID = r.AccountID.String()
-	}
-	return out
+	return mcpadmission.DeploymentAuditResponse(r)
 }
 
 // eventDataHasAppID returns true iff data is a JSON object whose

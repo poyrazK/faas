@@ -2387,6 +2387,7 @@ type EdgeRuleChangeLog struct {
 	Operation  string
 	MatchHosts []string
 	CreatedAt  pgtype.Timestamptz
+	AccountIds []pgtype.UUID
 }
 
 type EdgeRuleEvent struct {
@@ -5203,6 +5204,24 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	StatusCode   string
 	LastSeenAt   pgtype.Timestamptz
 	Lost         bool
+}
+
+type McpCatalogMonitor struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Payload   []byte
+}
+
+type McpOauthRetirement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BindingSha256 string
+	CreatedAt     pgtype.Timestamptz
+	RetainUntil   pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	State         pgtype.Text
+	Payload       []byte
 }
 
 type MeterGatewayUsageEvent struct {
