@@ -3834,7 +3834,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Count of recovery-timeline events emitted via pkg/events.Platform.EmitRecovery, labelled by kind (the substring after `node.` / `instance.`, e.g. `draining`, `drained`, `failed`, `recovered`, `migrated`, `recreated`) and result ∈ {ok, failed} (Workstream B / issue #1184, ADR-137). Single-registry: registered on every daemon; only schedd / apid increment via Platform.EmitRecovery. The closed 7-kind set is pre-instantiated at boot so the recovery-dashboard panel surfaces zero on an idle daemon.",
 	}, []string{"kind", "result"})
 	// commonCollectors is the per-daemon collector set that every
-	// prefix registers. PR-E adds ociEgressDeny to the set when
+	// prefix registers, minus the single-owner collectors that
+	// withoutForeignCollectors keeps off other daemons (owner map
+	// above reg.MustRegister below). PR-E adds ociEgressDeny to the set when
 	// prefix == "imaged" — keeping the common slice as a single source
 	// of truth (review finding #5 on PR #332) means a future collector
 	// only needs to be added here, not in two parallel MustRegister
@@ -4810,6 +4812,67 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		operatorActionTraceCompletenessFirstTickCompleted,
 		operatorActionTraceCompletenessLastSuccessTimestamp,
 	)
+	// Single-owner collectors register only on the daemons whose code
+	// writes them. Registered everywhere, their pre-instantiated label
+	// sets exported zero-valued copies from every daemon: 55k of
+	// the 207k series on the two-node test fleet. An owner is a daemon
+	// whose binary reaches one of the collector's accessors; ownership
+	// is pinned by TestSingleOwnerCollectorsRegisterOnOwners and
+	// TestSingleOwnerAccessorsHaveKnownCallers. Calling an accessor from
+	// another daemon still works but exports nothing until the daemon is
+	// added here.
+	schedd := []string{"schedd"}
+	commonCollectors = withoutForeignCollectors(prefix, commonCollectors, map[prometheus.Collector][]string{
+		// Spec §4 names vmmd as the waitUntil tail owner; nothing
+		// writes these yet.
+		guestTailSeconds:     {"vmmd"},
+		guestTailFailedTotal: {"vmmd"},
+		tailCapReached:       {"vmmd"},
+		guestInitDuration:    {"vmmd"},
+		bridgeFramingTotal:   {"vmmd"},
+		// pkg/apid/apidserver, pkg/apid/apidsource and pkg/imaged; the
+		// last is linked into builderd and vmmd too.
+		apiHostingPhaseTotal:    {"apid", "builderd", "imaged", "vmmd"},
+		apiHostingPhaseDuration: {"apid", "builderd", "imaged", "vmmd"},
+		imagedOCIPull:           {"builderd", "imaged", "vmmd"},
+		deployStageDuration:     {"builderd", "imaged", "vmmd"},
+		// pkg/meter and pkg/safedeploy run in apid and meterd.
+		stripePushDur:               {"apid", "meterd"},
+		paddlePushDur:               {"apid", "meterd"},
+		polarPushDur:                {"apid", "meterd"},
+		meteredMBSecondsTotal:       {"apid", "meterd"},
+		deploymentAuditEmittedTotal: {"apid", "meterd"},
+		buildDur:                    {"builderd"},
+		gatewayDrainWaitSeconds:     {"gatewayd", "gatewayd_public"},
+		writeRedirectTotal:          {"gatewayd"},
+		writeRedirectLatency:        {"gatewayd"},
+		// pkg/sched types that only cmd/schedd constructs: Engine, Loop,
+		// Drain, ExecutionCoordinator and the scale-up Trigger.
+		executionActive:                    schedd,
+		executionTotal:                     schedd,
+		executionPhaseDuration:             schedd,
+		executionFailures:                  schedd,
+		executionOutputBytes:               schedd,
+		executionSweeps:                    schedd,
+		executionQueueDepth:                schedd,
+		executionQueueOldestWait:           schedd,
+		executionWorkers:                   schedd,
+		wakeRPCDuration:                    schedd,
+		serviceRolloutHandoffPhaseDuration: schedd,
+		serviceReplicaStatus:               schedd,
+		esmPollsTotal:                      schedd,
+		esmRecordsConsumedTotal:            schedd,
+		esmLagSeconds:                      schedd,
+		esmRecordsOutcomeTotal:             schedd,
+		esmRecordProcessingSeconds:         schedd,
+		esmConsumerLagMessages:             schedd,
+		esmConsumerLagAgeSeconds:           schedd,
+		cronFireNowDispatchDur:             schedd,
+		delayedTasks.dispatchTotal:         schedd,
+		delayedTasks.scheduleLagSeconds:    schedd,
+		evictionFiredTotal:                 schedd,
+		scaleUpAdmitRPS:                    schedd,
+	})
 	reg.MustRegister(commonCollectors...)
 	// Pre-instantiate the closed (op,result) set for the OCI-pull
 	// histogram so its HELP/TYPE and zero-valued buckets surface in

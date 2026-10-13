@@ -1239,7 +1239,7 @@ func NewMetrics() *Metrics {
 		// without re-running the §12 fleet p95 calibration; the
 		// new histogram is opt-in and not part of any SLO.
 		wakeLatencyByNode: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_wake_latency_seconds_by_node",
+			Name:    "gateway_wake_latency_seconds_by_node",
 			Help:    "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
 			Buckets: wakeLatencyBuckets(),
 		}, []string{"node_id"}),

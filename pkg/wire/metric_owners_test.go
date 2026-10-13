@@ -1,0 +1,243 @@
+package wire_test
+
+import (
+	"go/scanner"
+	"go/token"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+// productionMetricPrefixes are the prefixes the daemon binaries pass to
+// wire.NewOpsMetrics.
+var productionMetricPrefixes = []string{
+	"apid", "builderd", "gatewayd", "gatewayd_public", "githubd", "imaged",
+	"meterd", "outboundd", "profiled", "realtimed", "s3_gateway", "schedd", "vmmd",
+}
+
+// singleOwnerMetrics mirrors the owner map in NewOpsMetrics: metric name
+// (without the daemon prefix) to the daemons that register it.
+var singleOwnerMetrics = map[string][]string{
+	"guest_tail_seconds":                             {"vmmd"},
+	"guest_tail_failed_total":                        {"vmmd"},
+	"tail_cap_reached_total":                         {"vmmd"},
+	"guest_init_duration_seconds":                    {"vmmd"},
+	"bridge_framing_total":                           {"vmmd"},
+	"api_hosting_phase_total":                        {"apid", "builderd", "imaged", "vmmd"},
+	"api_hosting_phase_duration_seconds":             {"apid", "builderd", "imaged", "vmmd"},
+	"oci_pull_duration_seconds":                      {"builderd", "imaged", "vmmd"},
+	"deploy_stage_duration_seconds":                  {"builderd", "imaged", "vmmd"},
+	"stripe_push_duration_seconds":                   {"apid", "meterd"},
+	"paddle_push_duration_seconds":                   {"apid", "meterd"},
+	"polar_push_duration_seconds":                    {"apid", "meterd"},
+	"metered_mb_seconds_total":                       {"apid", "meterd"},
+	"deployment_audit_emitted_total":                 {"apid", "meterd"},
+	"build_duration_seconds":                         {"builderd"},
+	"drain_wait_seconds":                             {"gatewayd", "gatewayd_public"},
+	"write_redirect_total":                           {"gatewayd"},
+	"write_redirect_latency_seconds":                 {"gatewayd"},
+	"execution_active":                               {"schedd"},
+	"execution_total":                                {"schedd"},
+	"execution_phase_duration_seconds":               {"schedd"},
+	"execution_failures_total":                       {"schedd"},
+	"execution_output_bytes_total":                   {"schedd"},
+	"execution_sweeps_total":                         {"schedd"},
+	"execution_queue_depth":                          {"schedd"},
+	"execution_queue_oldest_wait_seconds":            {"schedd"},
+	"execution_workers":                              {"schedd"},
+	"wake_rpc_duration_seconds":                      {"schedd"},
+	"service_rollout_handoff_phase_duration_seconds": {"schedd"},
+	"service_replicas":                               {"schedd"},
+	"esm_polls_total":                                {"schedd"},
+	"esm_records_consumed_total":                     {"schedd"},
+	"esm_lag_seconds":                                {"schedd"},
+	"esm_records_outcome_total":                      {"schedd"},
+	"esm_record_processing_seconds":                  {"schedd"},
+	"esm_consumer_lag_messages":                      {"schedd"},
+	"esm_consumer_lag_age_seconds":                   {"schedd"},
+	"cron_fire_now_dispatch_duration_seconds":        {"schedd"},
+	"delayed_task_dispatch_total":                    {"schedd"},
+	"delayed_task_schedule_lag_seconds":              {"schedd"},
+	"eviction_fired_total":                           {"schedd"},
+	"scale_up_admit_rps":                             {"schedd"},
+}
+
+// singleOwnerAccessorCallers lists, for each accessor of a single-owner
+// collector, the packages that call it outside pkg/wire. The owners above
+// are the daemons whose binaries run these packages.
+var singleOwnerAccessorCallers = map[string][]string{
+	"GuestTailSeconds":                  nil,
+	"GuestTailFailedTotal":              nil,
+	"TailCapReached":                    nil,
+	"GuestInitDuration":                 {"pkg/vmmdgrpc"},
+	"BridgeFramingTotal":                {"pkg/vmmdgrpc"},
+	"ObserveAPIHostingPhase":            {"pkg/apid/apidserver", "pkg/apid/apidsource", "pkg/imaged"},
+	"ObserveImagedOCIPull":              {"pkg/imaged"},
+	"ObserveDeployStageDuration":        {"pkg/imaged"},
+	"StripePushDuration":                {"pkg/meter"},
+	"PaddlePushDuration":                {"pkg/meter"},
+	"PolarPushDuration":                 {"pkg/meter"},
+	"MeteredMBSecondsTotal":             {"pkg/meter"},
+	"DeploymentAuditEmittedTotal":       {"pkg/safedeploy"},
+	"ObserveBuildDuration":              {"pkg/builderd"},
+	"ObserveDrainWait":                  {"cmd/gatewayd-internal", "cmd/gatewayd-public"},
+	"WriteRedirectTotal":                {"cmd/gatewayd-internal"},
+	"WriteRedirectLatency":              {"cmd/gatewayd-internal"},
+	"RecordExecutionStarted":            {"pkg/sched"},
+	"RecordExecutionFinished":           {"pkg/sched"},
+	"RecordExecutionTerminal":           {"pkg/sched"},
+	"ObserveExecutionPhase":             {"pkg/sched"},
+	"RecordExecutionFailure":            {"pkg/sched"},
+	"ObserveExecutionOutput":            {"pkg/sched"},
+	"RecordExecutionSweep":              {"pkg/sched"},
+	"SetExecutionQueue":                 {"pkg/sched"},
+	"SetExecutionWorkers":               {"pkg/sched"},
+	"WakeRPCDuration":                   {"pkg/sched"},
+	"ObserveServiceRolloutHandoffPhase": {"pkg/sched"},
+	"SetServiceReplicaStatus":           {"pkg/sched"},
+	"ObserveESMPoll":                    {"pkg/sched"},
+	"ObserveESMRecords":                 {"pkg/sched"},
+	"ObserveESMLag":                     {"pkg/sched"},
+	"ObserveESMRecordOutcome":           {"pkg/sched"},
+	"ObserveESMRecordProcessing":        {"pkg/sched"},
+	"ObserveESMConsumerLag":             {"pkg/sched"},
+	"CronFireNowDispatchDuration":       {"pkg/sched"},
+	"ObserveDelayedTaskDispatch":        {"pkg/sched"},
+	"ObserveDelayedTaskScheduleLag":     {"pkg/sched"},
+	"EvictionFired":                     {"pkg/sched"},
+	"ObserveScaleUpAdmitRPS":            {"pkg/sched/scaleup"},
+}
+
+// TestSingleOwnerCollectorsRegisterOnOwners pins the owner map in
+// NewOpsMetrics: each single-owner metric is registered on exactly its
+// owners, and a non-daemon prefix (tests, tools) still registers all.
+// spec: §12
+func TestSingleOwnerCollectorsRegisterOnOwners(t *testing.T) {
+	for _, prefix := range productionMetricPrefixes {
+		m := wire.NewOpsMetrics(prefix)
+		for metric, owners := range singleOwnerMetrics {
+			want := containsName(owners, prefix)
+			if got := isRegistered(m.Registry(), prefix+"_"+metric); got != want {
+				t.Errorf("%s_%s registered=%v, want %v (owners %v)", prefix, metric, got, want, owners)
+			}
+		}
+	}
+	m := wire.NewOpsMetrics("owner_test")
+	for metric := range singleOwnerMetrics {
+		if !isRegistered(m.Registry(), "owner_test_"+metric) {
+			t.Errorf("owner_test_%s is not registered; non-daemon prefixes must keep every collector", metric)
+		}
+	}
+}
+
+// TestSingleOwnerAccessorsHaveKnownCallers fails when an accessor of a
+// single-owner collector gains a caller package. A new caller may run in a
+// daemon that does not register the collector, where its writes would never
+// be exported: add that daemon to the owner map in NewOpsMetrics and to
+// singleOwnerMetrics, then list the package here.
+func TestSingleOwnerAccessorsHaveKnownCallers(t *testing.T) {
+	root := filepath.Join("..", "..")
+	found := map[string]map[string]bool{}
+	for _, dir := range []string{"cmd", "pkg"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == "testdata" || filepath.ToSlash(path) == filepath.ToSlash(filepath.Join(root, "pkg", "wire")) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(root, filepath.Dir(path))
+			if err != nil {
+				return err
+			}
+			for _, accessor := range selectorCalls(t, path) {
+				if _, tracked := singleOwnerAccessorCallers[accessor]; tracked {
+					if found[accessor] == nil {
+						found[accessor] = map[string]bool{}
+					}
+					found[accessor][filepath.ToSlash(rel)] = true
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	for accessor, allowed := range singleOwnerAccessorCallers {
+		var unexpected []string
+		for pkg := range found[accessor] {
+			if !containsName(allowed, pkg) {
+				unexpected = append(unexpected, pkg)
+			}
+		}
+		sort.Strings(unexpected)
+		for _, pkg := range unexpected {
+			t.Errorf("%s now calls %s: register its collector on the daemons that run %s (owner map in NewOpsMetrics) and list the package in singleOwnerAccessorCallers", pkg, accessor, pkg)
+		}
+		for _, pkg := range allowed {
+			if !found[accessor][pkg] {
+				t.Errorf("singleOwnerAccessorCallers[%q] lists %s, which no longer calls it; drop it and recheck the collector's owners", accessor, pkg)
+			}
+		}
+	}
+}
+
+// selectorCalls returns every identifier that follows a '.' in the file's
+// code, ignoring comments and string literals.
+func selectorCalls(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	fset := token.NewFileSet()
+	var sc scanner.Scanner
+	sc.Init(fset.AddFile(path, fset.Base(), len(raw)), raw, nil, 0)
+	var names []string
+	afterPeriod := false
+	for {
+		_, tok, lit := sc.Scan()
+		if tok == token.EOF {
+			return names
+		}
+		if afterPeriod && tok == token.IDENT {
+			names = append(names, lit)
+		}
+		afterPeriod = tok == token.PERIOD
+	}
+}
+
+// isRegistered reports whether reg already holds a collector named name:
+// registering a probe with that name and a different help text fails only
+// when the name is taken.
+func isRegistered(reg *prometheus.Registry, name string) bool {
+	probe := prometheus.NewGauge(prometheus.GaugeOpts{Name: name, Help: "registration probe"})
+	if err := reg.Register(probe); err != nil {
+		return true
+	}
+	reg.Unregister(probe)
+	return false
+}
+
+func containsName(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
