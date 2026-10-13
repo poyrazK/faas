@@ -325,6 +325,9 @@ service Schedd {
   rpc DatabaseAdmin(DatabaseAdminRequest) returns (DatabaseAdminResponse);
   rpc DeleteDatabase(DatabaseRef) returns (DeleteDatabaseResponse);
   rpc GetDatabase(DatabaseRef) returns (DatabaseRuntime);
+  // SetDatabaseAlwaysOn switches a database between scale-to-zero and
+  // always-on (ADR-1027). apid only.
+  rpc SetDatabaseAlwaysOn(SetDatabaseAlwaysOnRequest) returns (DatabaseRuntime);
 }
 
 message LivenessFailedReport {
@@ -1154,6 +1157,13 @@ message ProvisionDatabaseRequest {
   int32 vcpu_count = 3;
   int32 mem_mib = 4;
   int64 volume_bytes = 5;
+  // always_on keeps the database running (scale_to_zero = false).
+  bool always_on = 6;
+}
+
+message SetDatabaseAlwaysOnRequest {
+  string database_id = 1;
+  bool always_on = 2;
 }
 
 message DatabaseRuntime {
@@ -1172,6 +1182,7 @@ message DatabaseRuntime {
   int32 vcpu_count = 8;
   int32 mem_mib = 9;
   int64 volume_bytes = 10;
+  bool always_on = 11;
 }
 
 message TouchDatabaseResponse {}

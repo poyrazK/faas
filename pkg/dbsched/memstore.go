@@ -155,6 +155,21 @@ func (m *MemStore) Touch(_ context.Context, id string, at time.Time) error {
 	return nil
 }
 
+func (m *MemStore) SetAlwaysOn(_ context.Context, id string, alwaysOn bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if vm.State == StateDeleting {
+		return ErrConflict
+	}
+	vm.AlwaysOn = alwaysOn
+	m.vms[id] = vm
+	return nil
+}
+
 func (m *MemStore) Delete(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

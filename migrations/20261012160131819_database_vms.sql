@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS database_vms (
     state text NOT NULL
         CHECK (state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'deleting', 'failed')),
     bootstrapped boolean NOT NULL DEFAULT false,
+    -- Always-on databases are never parked for idleness, and schedd wakes
+    -- them when they are found parked (scale_to_zero = false).
+    always_on boolean NOT NULL DEFAULT false,
     -- Stable error code of the last failed transition; never free text.
     last_error text
         CHECK (last_error IS NULL OR last_error ~ '^[a-z_]{1,64}$'),

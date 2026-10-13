@@ -49,6 +49,7 @@ const (
 	Schedd_DatabaseAdmin_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/DatabaseAdmin"
 	Schedd_DeleteDatabase_FullMethodName        = "/onebox.faas.schedd.v1.Schedd/DeleteDatabase"
 	Schedd_GetDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/GetDatabase"
+	Schedd_SetDatabaseAlwaysOn_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/SetDatabaseAlwaysOn"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -348,6 +349,9 @@ type ScheddClient interface {
 	DatabaseAdmin(ctx context.Context, in *DatabaseAdminRequest, opts ...grpc.CallOption) (*DatabaseAdminResponse, error)
 	DeleteDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DeleteDatabaseResponse, error)
 	GetDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// SetDatabaseAlwaysOn switches a database between scale-to-zero and
+	// always-on (ADR-1027). apid only.
+	SetDatabaseAlwaysOn(ctx context.Context, in *SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 }
 
 type scheddClient struct {
@@ -583,6 +587,16 @@ func (c *scheddClient) GetDatabase(ctx context.Context, in *DatabaseRef, opts ..
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DatabaseRuntime)
 	err := c.cc.Invoke(ctx, Schedd_GetDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) SetDatabaseAlwaysOn(ctx context.Context, in *SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseRuntime)
+	err := c.cc.Invoke(ctx, Schedd_SetDatabaseAlwaysOn_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -886,6 +900,9 @@ type ScheddServer interface {
 	DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error)
 	DeleteDatabase(context.Context, *DatabaseRef) (*DeleteDatabaseResponse, error)
 	GetDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
+	// SetDatabaseAlwaysOn switches a database between scale-to-zero and
+	// always-on (ADR-1027). apid only.
+	SetDatabaseAlwaysOn(context.Context, *SetDatabaseAlwaysOnRequest) (*DatabaseRuntime, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -958,6 +975,9 @@ func (UnimplementedScheddServer) DeleteDatabase(context.Context, *DatabaseRef) (
 }
 func (UnimplementedScheddServer) GetDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDatabase not implemented")
+}
+func (UnimplementedScheddServer) SetDatabaseAlwaysOn(context.Context, *SetDatabaseAlwaysOnRequest) (*DatabaseRuntime, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetDatabaseAlwaysOn not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1333,6 +1353,24 @@ func _Schedd_GetDatabase_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_SetDatabaseAlwaysOn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetDatabaseAlwaysOnRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).SetDatabaseAlwaysOn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_SetDatabaseAlwaysOn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).SetDatabaseAlwaysOn(ctx, req.(*SetDatabaseAlwaysOnRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1411,6 +1449,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDatabase",
 			Handler:    _Schedd_GetDatabase_Handler,
+		},
+		{
+			MethodName: "SetDatabaseAlwaysOn",
+			Handler:    _Schedd_SetDatabaseAlwaysOn_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

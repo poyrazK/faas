@@ -42,6 +42,11 @@ func (f *fakeDatabases) Admin(_ context.Context, _, sql string) (dbguest.Respons
 }
 func (f *fakeDatabases) Delete(context.Context, string) error            { return f.err }
 func (f *fakeDatabases) Get(context.Context, string) (dbsched.VM, error) { return f.vm, f.err }
+func (f *fakeDatabases) SetAlwaysOn(_ context.Context, _ string, alwaysOn bool) (dbsched.VM, error) {
+	vm := f.vm
+	vm.AlwaysOn = alwaysOn
+	return vm, f.err
+}
 
 // asCaller attaches an mTLS peer whose certificate names cn; an empty cn
 // models a unix-socket caller without TLS.
@@ -78,6 +83,17 @@ func TestDatabaseRPCCallerIdentity(t *testing.T) {
 			return err
 		}, codes.PermissionDenied},
 		{"pgproxyd cannot delete", callerPgproxy, func(c context.Context) error { _, err := s.DeleteDatabase(c, ref); return err }, codes.PermissionDenied},
+		{"pgproxyd cannot change always-on", callerPgproxy, func(c context.Context) error {
+			_, err := s.SetDatabaseAlwaysOn(c, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: ref.GetDatabaseId(), AlwaysOn: true})
+			return err
+		}, codes.PermissionDenied},
+		{"apid changes always-on", callerAPID, func(c context.Context) error {
+			rt, err := s.SetDatabaseAlwaysOn(c, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: ref.GetDatabaseId(), AlwaysOn: true})
+			if err == nil && !rt.GetAlwaysOn() {
+				return status.Error(codes.Internal, "always_on not reported")
+			}
+			return err
+		}, codes.OK},
 		{"vmmd cannot provision", "vmmd.faas", func(c context.Context) error {
 			_, err := s.ProvisionDatabase(c, &scheddpb.ProvisionDatabaseRequest{DatabaseId: testDBID, PostgresMajor: 17, VcpuCount: 1, MemMib: 384, VolumeBytes: 1 << 30})
 			return err

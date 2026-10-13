@@ -50,14 +50,17 @@ type Node struct {
 
 // VM is the runtime record of one native database.
 type VM struct {
-	DatabaseID     string
-	NodeID         string
-	Major          int
-	VcpuCount      int
-	MemMiB         int
-	VolumeBytes    int64
-	State          State
-	Bootstrapped   bool
+	DatabaseID   string
+	NodeID       string
+	Major        int
+	VcpuCount    int
+	MemMiB       int
+	VolumeBytes  int64
+	State        State
+	Bootstrapped bool
+	// AlwaysOn databases are never parked for idleness; the keep-warm sweep
+	// wakes them when found parked (scale_to_zero = false).
+	AlwaysOn       bool
 	LastError      string
 	LastActiveAt   time.Time
 	StateChangedAt time.Time
@@ -94,6 +97,9 @@ type Store interface {
 	Transition(ctx context.Context, id string, from []State, to State, opts TransitionOptions) error
 	// Touch records activity on a running database.
 	Touch(ctx context.Context, id string, at time.Time) error
+	// SetAlwaysOn changes whether idle parking applies. A deleting
+	// database is ErrConflict.
+	SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) error
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
 }

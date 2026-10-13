@@ -31,6 +31,7 @@ type DatabaseScheduler interface {
 	Admin(ctx context.Context, id, sql string) (dbguest.Response, error)
 	Delete(ctx context.Context, id string) error
 	Get(ctx context.Context, id string) (dbsched.VM, error)
+	SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) (dbsched.VM, error)
 }
 
 // WithDatabases enables the database RPCs.
@@ -73,6 +74,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 		DatabaseId: vm.DatabaseID, NodeId: vm.NodeID, State: string(vm.State),
 		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError, VmmdTarget: vm.NodeTarget,
 		PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
+		AlwaysOn: vm.AlwaysOn,
 	}
 }
 
@@ -83,7 +85,7 @@ func (s *Server) ProvisionDatabase(ctx context.Context, req *scheddpb.ProvisionD
 	}
 	pr := dbsched.ProvisionRequest{
 		DatabaseID: req.GetDatabaseId(), Major: int(req.GetPostgresMajor()), VcpuCount: int(req.GetVcpuCount()),
-		MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(),
+		MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(), AlwaysOn: req.GetAlwaysOn(),
 	}
 	if err := pr.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -169,6 +171,18 @@ func (s *Server) GetDatabase(ctx context.Context, req *scheddpb.DatabaseRef) (*s
 	vm, err := d.Get(ctx, req.GetDatabaseId())
 	if err != nil {
 		return nil, s.databaseStatus("get", err)
+	}
+	return databaseRuntime(vm), nil
+}
+
+func (s *Server) SetDatabaseAlwaysOn(ctx context.Context, req *scheddpb.SetDatabaseAlwaysOnRequest) (*scheddpb.DatabaseRuntime, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	vm, err := d.SetAlwaysOn(ctx, req.GetDatabaseId(), req.GetAlwaysOn())
+	if err != nil {
+		return nil, s.databaseStatus("set always-on", err)
 	}
 	return databaseRuntime(vm), nil
 }

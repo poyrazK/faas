@@ -224,3 +224,36 @@ func TestStoreTransitionsTouchAndDelete(t *testing.T) {
 		})
 	}
 }
+
+// adr: 1027 — always-on is placed with the database and toggled in place;
+// a deleting database cannot change.
+func TestStoreAlwaysOn(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 100 << 30, Lifecycle: NodeActive})
+			want := newVM(1<<30, 384)
+			want.AlwaysOn = true
+			vm, err := s.Place(ctx, want)
+			if err != nil || !vm.AlwaysOn {
+				t.Fatalf("Place always-on = %+v, %v", vm, err)
+			}
+			id := vm.DatabaseID
+			if err := s.SetAlwaysOn(ctx, id, false); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, id); got.AlwaysOn {
+				t.Fatal("always-on did not turn off")
+			}
+			if err := s.SetAlwaysOn(ctx, uuid.NewString(), true); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing database = %v, want ErrNotFound", err)
+			}
+			if err := s.Transition(ctx, id, []State{StateProvisioning}, StateDeleting, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SetAlwaysOn(ctx, id, true); !errors.Is(err, ErrConflict) {
+				t.Fatalf("deleting database = %v, want ErrConflict", err)
+			}
+		})
+	}
+}

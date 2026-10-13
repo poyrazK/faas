@@ -74,7 +74,7 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 	return VM{
 		DatabaseID: uuid.UUID(r.DatabaseID.Bytes).String(), NodeID: r.NodeID, Major: int(r.PostgresMajor),
 		VcpuCount: int(r.VcpuCount), MemMiB: int(r.MemMib), VolumeBytes: r.VolumeBytes, State: State(r.State),
-		Bootstrapped: r.Bootstrapped, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
+		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
 	}
 }
@@ -156,7 +156,7 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		}
 		if _, err := s.q.InsertDatabaseVM(ctx, tx, sqlc.InsertDatabaseVMParams{
 			DatabaseID: key, NodeID: node.ID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount),
-			MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
+			MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes, AlwaysOn: vm.AlwaysOn,
 		}); err != nil {
 			return VM{}, fmt.Errorf("dbsched: insert %s: %w", vm.DatabaseID, err)
 		}
@@ -216,6 +216,24 @@ func (s *PgStore) transition(ctx context.Context, db sqlc.DBTX, id string, from 
 	}
 	if n == 0 {
 		if _, err := s.get(ctx, db, id); err != nil {
+			return err
+		}
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.SetDatabaseVMAlwaysOn(ctx, s.pool, sqlc.SetDatabaseVMAlwaysOnParams{AlwaysOn: alwaysOn, DatabaseID: key})
+	if err != nil {
+		return fmt.Errorf("dbsched: set always-on %s: %w", id, err)
+	}
+	if n == 0 {
+		if _, err := s.Get(ctx, id); err != nil {
 			return err
 		}
 		return ErrConflict

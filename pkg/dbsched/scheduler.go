@@ -31,7 +31,13 @@ const (
 	errCodeBootstrap = "bootstrap_failed"
 	errCodeNotReady  = "not_ready"
 	errCodeStop      = "stop_failed"
+	// errCodeVMLost marks a running database whose VM vmmd no longer has
+	// (for example after a database node rebooted).
+	errCodeVMLost = "vm_lost"
 )
+
+// ErrVMNotRunning reports that vmmd has no running VM for a database.
+var ErrVMNotRunning = errors.New("dbsched: database VM is not running")
 
 // ProvisionRequest describes a new native database.
 type ProvisionRequest struct {
@@ -40,6 +46,8 @@ type ProvisionRequest struct {
 	VcpuCount   int
 	MemMiB      int
 	VolumeBytes int64
+	// AlwaysOn keeps the database running (scale_to_zero = false).
+	AlwaysOn bool
 }
 
 // Validate rejects a request that cannot become a database VM.
@@ -135,7 +143,7 @@ func (s *Scheduler) Provision(ctx context.Context, req ProvisionRequest) (VM, er
 	}
 	unlock := s.lock(req.DatabaseID)
 	defer unlock()
-	vm, err := s.store.Place(ctx, VM{DatabaseID: req.DatabaseID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB, VolumeBytes: req.VolumeBytes})
+	vm, err := s.store.Place(ctx, VM{DatabaseID: req.DatabaseID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB, VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn})
 	if err != nil || vm.State != StateProvisioning {
 		return vm, err
 	}
@@ -373,7 +381,7 @@ func (s *Scheduler) ParkIdle(ctx context.Context) (int, error) {
 	cutoff := s.now().Add(-s.cfg.IdleTimeout)
 	parked := 0
 	for _, vm := range running {
-		if vm.LastActiveAt.After(cutoff) {
+		if vm.AlwaysOn || vm.LastActiveAt.After(cutoff) {
 			continue
 		}
 		if err := s.Park(ctx, vm.DatabaseID); err != nil {
@@ -383,6 +391,69 @@ func (s *Scheduler) ParkIdle(ctx context.Context) (int, error) {
 		parked++
 	}
 	return parked, nil
+}
+
+// SetAlwaysOn changes whether a database scales to zero. Turning it on
+// leaves a parked database to the keep-warm sweep, which wakes it.
+func (s *Scheduler) SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) (VM, error) {
+	unlock := s.lock(id)
+	defer unlock()
+	if err := s.store.SetAlwaysOn(ctx, id, alwaysOn); err != nil {
+		return VM{}, err
+	}
+	if !alwaysOn {
+		// Restart the idle clock: scale-to-zero applies from now, not from
+		// the last query of the always-on period.
+		_ = s.store.Touch(ctx, id, s.now())
+	}
+	return s.store.Get(ctx, id)
+}
+
+// KeepWarm keeps always-on databases running: it wakes those found parked
+// and recovers those whose VM vmmd no longer runs (a node reboot). It
+// reports how many it woke.
+func (s *Scheduler) KeepWarm(ctx context.Context) (int, error) {
+	vms, err := s.store.List(ctx, StateParked, StateRunning)
+	if err != nil {
+		return 0, err
+	}
+	woke := 0
+	for _, vm := range vms {
+		if !vm.AlwaysOn || !vm.Bootstrapped {
+			continue
+		}
+		if vm.State == StateRunning && !s.vmLost(ctx, vm) {
+			continue
+		}
+		if _, err := s.Wake(ctx, vm.DatabaseID); err != nil {
+			s.log.Warn("dbsched: keep-warm wake failed", "database_id", vm.DatabaseID, "err", err)
+			continue
+		}
+		woke++
+	}
+	return woke, nil
+}
+
+// vmLost probes a running database and, when vmmd reports no VM, parks the
+// record so the next wake boots it again. Any other failure (an
+// unreachable node) leaves it alone: restarting a healthy database on a
+// network blip would be worse than waiting.
+func (s *Scheduler) vmLost(ctx context.Context, vm VM) bool {
+	node, err := s.node(ctx, vm.NodeID)
+	if err != nil {
+		return false
+	}
+	_, err = s.vmm.Control(ctx, node, vm.DatabaseID, dbguest.Request{Op: dbguest.OpStatus})
+	if !errors.Is(err, ErrVMNotRunning) {
+		return false
+	}
+	unlock := s.lock(vm.DatabaseID)
+	defer unlock()
+	if err := s.store.Transition(ctx, vm.DatabaseID, []State{StateRunning}, StateParked, TransitionOptions{LastError: errCodeVMLost}); err != nil {
+		return false
+	}
+	s.log.Warn("dbsched: running database had no VM; rebooting it", "database_id", vm.DatabaseID, "node_id", vm.NodeID)
+	return true
 }
 
 // Recover settles transitions a previous schedd process left in flight:
@@ -423,6 +494,11 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 				s.log.Warn("dbsched: idle sweep failed", "err", err)
 			} else if n > 0 {
 				s.log.Info("dbsched: parked idle databases", "count", n)
+			}
+			if n, err := s.KeepWarm(ctx); err != nil {
+				s.log.Warn("dbsched: keep-warm sweep failed", "err", err)
+			} else if n > 0 {
+				s.log.Info("dbsched: woke always-on databases", "count", n)
 			}
 		}
 	}

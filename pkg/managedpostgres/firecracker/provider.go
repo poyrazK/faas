@@ -31,6 +31,7 @@ type Scheduler interface {
 	GetDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	DatabaseAdmin(ctx context.Context, in *scheddpb.DatabaseAdminRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseAdminResponse, error)
 	DeleteDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DeleteDatabaseResponse, error)
+	SetDatabaseAlwaysOn(ctx context.Context, in *scheddpb.SetDatabaseAlwaysOnRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore
@@ -142,7 +143,8 @@ var _ managedpostgres.Provider = (*Provider)(nil)
 
 // Capabilities states what the backend does today. It has no point-in-time
 // restore or usage meters yet (ADR-1027 phasing), so it accepts only specs
-// without a restore window and reports no usage.
+// without a restore window and reports no usage. A database switches
+// between scale-to-zero and always-on in place.
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	classes := make([]managedpostgres.ServiceClass, 0, len(p.cfg.Classes))
 	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
@@ -151,12 +153,13 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		}
 	}
 	return managedpostgres.Capabilities{
-		PostgresMajors:   append([]int(nil), p.cfg.Majors...),
-		ServiceClasses:   classes,
-		Availability:     []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
-		CredentialAccess: []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
-		ScaleToZero:      true,
-		MaxStorageBytes:  p.cfg.MaxStorageBytes,
+		PostgresMajors:    append([]int(nil), p.cfg.Majors...),
+		ServiceClasses:    classes,
+		Availability:      []managedpostgres.Availability{managedpostgres.AvailabilitySingleZone},
+		CredentialAccess:  []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration},
+		ScaleToZero:       true,
+		ScaleToZeroUpdate: true,
+		MaxStorageBytes:   p.cfg.MaxStorageBytes,
 	}
 }
 
@@ -169,7 +172,7 @@ func (p *Provider) Provision(ctx context.Context, req managedpostgres.ProvisionR
 	shape := p.cfg.Classes[req.Spec.Class]
 	rt, err := p.scheduler.ProvisionDatabase(ctx, &scheddpb.ProvisionDatabaseRequest{
 		DatabaseId: req.ResourceID, PostgresMajor: int32(req.Spec.PostgresMajor), VcpuCount: int32(shape.vcpus),
-		MemMib: int32(shape.memMiB), VolumeBytes: req.Spec.StorageLimitBytes,
+		MemMib: int32(shape.memMiB), VolumeBytes: req.Spec.StorageLimitBytes, AlwaysOn: !req.Spec.ScaleToZero,
 	})
 	if err != nil {
 		return managedpostgres.ObservedDatabase{}, providerError(err)
@@ -188,13 +191,13 @@ func (p *Provider) Provision(ctx context.Context, req managedpostgres.ProvisionR
 }
 
 // supports admits only specs Inspect reports back unchanged, since the
-// service fails a database whose observed spec differs. Always-on (no
-// idle parking) and an unbounded volume have no VM equivalent yet.
+// service fails a database whose observed spec differs. An unbounded volume
+// has no VM equivalent.
 func (p *Provider) supports(spec managedpostgres.Spec) error {
 	if err := p.Capabilities().Supports(spec); err != nil {
 		return err
 	}
-	if spec.Region != p.cfg.Region || !spec.ScaleToZero || spec.StorageLimitBytes <= 0 {
+	if spec.Region != p.cfg.Region || spec.StorageLimitBytes <= 0 {
 		return managedpostgres.ErrUnsupported
 	}
 	return nil
@@ -211,7 +214,9 @@ func (p *Provider) Inspect(ctx context.Context, providerResourceID string) (mana
 }
 
 func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.ObservedDatabase {
-	obs := managedpostgres.ObservedDatabase{ProviderResourceID: rt.GetDatabaseId(), ComputeState: managedpostgres.ComputeStateUnknown}
+	// The dataset is the database's volume, which only this resource id
+	// names; a future restore creates a new id.
+	obs := managedpostgres.ObservedDatabase{ProviderResourceID: rt.GetDatabaseId(), DataResourceID: rt.GetDatabaseId(), ComputeState: managedpostgres.ComputeStateUnknown}
 	switch rt.GetState() {
 	case "parked":
 		obs.Status, obs.ComputeState = managedpostgres.ProviderStatusReady, managedpostgres.ComputeStateSuspended
@@ -234,7 +239,7 @@ func (p *Provider) observed(rt *scheddpb.DatabaseRuntime) managedpostgres.Observ
 func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 	spec := managedpostgres.Spec{
 		Region: p.cfg.Region, PostgresMajor: int(rt.GetPostgresMajor()), Availability: managedpostgres.AvailabilitySingleZone,
-		ScaleToZero: true, StorageLimitBytes: rt.GetVolumeBytes(),
+		ScaleToZero: !rt.GetAlwaysOn(), StorageLimitBytes: rt.GetVolumeBytes(),
 	}
 	for class, s := range p.cfg.Classes {
 		if int32(s.vcpus) == rt.GetVcpuCount() && int32(s.memMiB) == rt.GetMemMib() {
@@ -244,11 +249,30 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 	return spec
 }
 
-// Update, Restore: not yet (ADR-1027 phasing).
-func (p *Provider) Update(context.Context, managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
-	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+// Update switches a database between scale-to-zero and always-on. Other
+// spec changes (class, storage, major) are not supported yet. Turning
+// always-on on leaves a parked database to schedd's keep-warm sweep, so
+// the observation may still be suspended for one sweep.
+func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
+	if req.ResourceID == "" || (req.DataResourceID != "" && req.DataResourceID != req.ResourceID) {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrInvalid
+	}
+	previous := req.PreviousSpec
+	previous.ScaleToZero = req.Spec.ScaleToZero
+	if previous != req.Spec {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
+	}
+	if err := p.supports(req.Spec); err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: req.ResourceID, AlwaysOn: !req.Spec.ScaleToZero})
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, providerError(err)
+	}
+	return p.observed(rt), nil
 }
 
+// Restore: not yet (ADR-1027 phasing).
 func (p *Provider) Restore(context.Context, managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
 	return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 }

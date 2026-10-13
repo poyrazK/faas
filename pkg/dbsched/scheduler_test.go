@@ -21,6 +21,7 @@ type fakeVMM struct {
 	running      map[string]bool
 	calls        []string
 	startErr     error
+	controlErr   error
 	adminResp    dbguest.Response
 	lastAdminSQL string
 }
@@ -76,8 +77,11 @@ func (f *fakeVMM) Stop(_ context.Context, _ Node, id string) error {
 func (f *fakeVMM) Control(_ context.Context, _ Node, id string, req dbguest.Request) (dbguest.Response, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.controlErr != nil {
+		return dbguest.Response{}, f.controlErr
+	}
 	if !f.running[id] {
-		return dbguest.Response{}, errors.New("not running")
+		return dbguest.Response{}, ErrVMNotRunning
 	}
 	switch req.Op {
 	case dbguest.OpBootstrap:

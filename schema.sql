@@ -17633,6 +17633,7 @@ CREATE TABLE public.database_vms (
     volume_bytes bigint NOT NULL,
     state text NOT NULL,
     bootstrapped boolean DEFAULT false NOT NULL,
+    always_on boolean DEFAULT false NOT NULL,
     last_error text,
     last_active_at timestamp with time zone,
     state_changed_at timestamp with time zone DEFAULT now() NOT NULL,

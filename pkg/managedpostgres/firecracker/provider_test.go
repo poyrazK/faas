@@ -53,7 +53,7 @@ func (f *fakeScheduler) ProvisionDatabase(_ context.Context, in *scheddpb.Provis
 		state = "failed"
 	}
 	rt := &scheddpb.DatabaseRuntime{DatabaseId: in.GetDatabaseId(), State: state, PostgresMajor: in.GetPostgresMajor(),
-		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes()}
+		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes(), AlwaysOn: in.GetAlwaysOn()}
 	f.vms[in.GetDatabaseId()] = rt
 	return rt, nil
 }
@@ -94,6 +94,17 @@ func (f *fakeScheduler) DeleteDatabase(_ context.Context, in *scheddpb.DatabaseR
 	}
 	delete(f.vms, in.GetDatabaseId())
 	return &scheddpb.DeleteDatabaseResponse{}, nil
+}
+
+func (f *fakeScheduler) SetDatabaseAlwaysOn(_ context.Context, in *scheddpb.SetDatabaseAlwaysOnRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt, ok := f.vms[in.GetDatabaseId()]
+	if !ok {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	rt.AlwaysOn = in.GetAlwaysOn()
+	return rt, nil
 }
 
 func (f *fakeScheduler) lastAdmin() string {
@@ -245,7 +256,7 @@ func TestCapabilitiesAreValidAndHonest(t *testing.T) {
 	if err := caps.Validate(); err != nil {
 		t.Fatalf("capabilities invalid: %v", err)
 	}
-	if caps.PointInTimeRestore || len(caps.UsageMeters) != 0 || !caps.ScaleToZero || caps.ScaleToZeroUpdate || caps.ClassResize {
+	if caps.PointInTimeRestore || len(caps.UsageMeters) != 0 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || caps.ClassResize {
 		t.Fatalf("capabilities claim more than the backend does: %+v", caps)
 	}
 	if err := caps.Supports(devSpec()); err != nil {
@@ -294,7 +305,6 @@ func TestProvisionRejectsSpecsItCannotReportBack(t *testing.T) {
 		mutate func(*managedpostgres.Spec)
 		want   error
 	}{
-		{"always on", func(s *managedpostgres.Spec) { s.ScaleToZero = false }, managedpostgres.ErrUnsupported},
 		{"restore window", func(s *managedpostgres.Spec) { s.RestoreWindowSeconds = 3600 }, managedpostgres.ErrUnsupported},
 		{"other region", func(s *managedpostgres.Spec) { s.Region = "us-east" }, managedpostgres.ErrUnsupported},
 		{"unbounded storage", func(s *managedpostgres.Spec) { s.StorageLimitBytes = 0 }, managedpostgres.ErrUnsupported},
@@ -317,6 +327,49 @@ func TestProvisionRejectsSpecsItCannotReportBack(t *testing.T) {
 				t.Fatal("an unsupported spec reached schedd")
 			}
 		})
+	}
+}
+
+func TestAlwaysOnRoundTripsAndToggles(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	always := devSpec()
+	always.ScaleToZero = false
+	obs, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: always})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.Spec != always || !sched.provision[0].GetAlwaysOn() {
+		t.Fatalf("always-on provision: observed %+v, request %+v", obs.Spec, sched.provision[0])
+	}
+	if obs.DataResourceID != testDatabaseID {
+		t.Fatalf("DataResourceID = %q; the service needs it for compute-policy changes", obs.DataResourceID)
+	}
+
+	toScale := devSpec()
+	obs, err = p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, DataResourceID: testDatabaseID, PreviousSpec: always, Spec: toScale})
+	if err != nil || obs.Spec != toScale || sched.vms[testDatabaseID].GetAlwaysOn() {
+		t.Fatalf("to scale-to-zero: %+v, %v", obs.Spec, err)
+	}
+	obs, err = p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: toScale, Spec: always})
+	if err != nil || obs.Spec != always {
+		t.Fatalf("back to always-on: %+v, %v", obs.Spec, err)
+	}
+
+	bigger := always
+	bigger.Class = managedpostgres.ClassBurstable
+	for name, req := range map[string]managedpostgres.UpdateRequest{
+		"class change":        {ResourceID: testDatabaseID, PreviousSpec: always, Spec: bigger},
+		"storage change":      {ResourceID: testDatabaseID, PreviousSpec: always, Spec: managedpostgres.Spec{Region: "eu-central", PostgresMajor: 17, Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, StorageLimitBytes: 2 << 30}},
+		"other data resource": {ResourceID: testDatabaseID, DataResourceID: "other", PreviousSpec: always, Spec: toScale},
+		"missing resource id": {PreviousSpec: always, Spec: toScale},
+	} {
+		if _, err := p.Update(ctx, req); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: "2b7d3c5e-8f43-4c7a-9d0e-5a1f2b3c4d5e", PreviousSpec: always, Spec: toScale}); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("unknown database = %v", err)
 	}
 }
 
@@ -507,9 +560,6 @@ func TestDeleteRemovesVMAndVerifiers(t *testing.T) {
 func TestUnsupportedOperations(t *testing.T) {
 	p, _, _ := newTestProvider(t)
 	ctx := context.Background()
-	if _, err := p.Update(ctx, managedpostgres.UpdateRequest{}); !errors.Is(err, managedpostgres.ErrUnsupported) {
-		t.Errorf("update = %v", err)
-	}
 	if _, err := p.Restore(ctx, managedpostgres.RestoreRequest{}); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Errorf("restore = %v", err)
 	}

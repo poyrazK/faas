@@ -17353,7 +17353,7 @@ func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetD
 
 const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17369,6 +17369,7 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.VolumeBytes,
 		&i.State,
 		&i.Bootstrapped,
+		&i.AlwaysOn,
 		&i.LastError,
 		&i.LastActiveAt,
 		&i.StateChangedAt,
@@ -20827,9 +20828,9 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 }
 
 const insertDatabaseVM = `-- name: InsertDatabaseVM :execrows
-INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state)
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on, state)
 VALUES ($1, $2, $3, $4,
-    $5, $6, 'provisioning')
+    $5, $6, $7, 'provisioning')
 ON CONFLICT (database_id) DO NOTHING
 `
 
@@ -20840,6 +20841,7 @@ type InsertDatabaseVMParams struct {
 	VcpuCount     int32
 	MemMib        int32
 	VolumeBytes   int64
+	AlwaysOn      bool
 }
 
 func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error) {
@@ -20850,6 +20852,7 @@ func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatab
 		arg.VcpuCount,
 		arg.MemMib,
 		arg.VolumeBytes,
+		arg.AlwaysOn,
 	)
 	if err != nil {
 		return 0, err
@@ -30343,7 +30346,7 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 
 const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30365,6 +30368,7 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.VolumeBytes,
 			&i.State,
 			&i.Bootstrapped,
+			&i.AlwaysOn,
 			&i.LastError,
 			&i.LastActiveAt,
 			&i.StateChangedAt,
@@ -68548,6 +68552,24 @@ type SetCustomerOperationWorkflowIdentityParams struct {
 
 func (q *Queries) SetCustomerOperationWorkflowIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationWorkflowIdentityParams) (int64, error) {
 	result, err := db.Exec(ctx, setCustomerOperationWorkflowIdentity, arg.RunID, arg.OperationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setDatabaseVMAlwaysOn = `-- name: SetDatabaseVMAlwaysOn :execrows
+UPDATE database_vms SET always_on = $1
+WHERE database_id = $2 AND state <> 'deleting'
+`
+
+type SetDatabaseVMAlwaysOnParams struct {
+	AlwaysOn   bool
+	DatabaseID pgtype.UUID
+}
+
+func (q *Queries) SetDatabaseVMAlwaysOn(ctx context.Context, db DBTX, arg SetDatabaseVMAlwaysOnParams) (int64, error) {
+	result, err := db.Exec(ctx, setDatabaseVMAlwaysOn, arg.AlwaysOn, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}

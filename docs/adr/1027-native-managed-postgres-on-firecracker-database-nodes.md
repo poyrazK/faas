@@ -329,15 +329,30 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   objects (`P0001` fails the batch). Revoke deletes the verifier first, so
   the proxy refuses the role before the VM is woken to disable it.
 - **Admission** is strict because the service fails a database whose
-  observed spec differs from the requested one: the driver refuses
-  always-on (`scale_to_zero=false`), any restore window, an unbounded volume
-  and other regions with `ErrUnsupported`. `Capabilities` advertises no PITR
-  and no usage meters.
+  observed spec differs from the requested one. The driver refuses any
+  restore window, an unbounded volume and other regions with
+  `ErrUnsupported`. `Capabilities` advertises no PITR and no usage meters.
+- **Always-on** (`scale_to_zero=false`) is a `database_vms.always_on` flag:
+  - Idle parking skips the database.
+  - schedd's sweep also wakes always-on databases it finds parked. It
+    probes the running ones, and when vmmd has no VM for a running record
+    (a node reboot: `FailedPrecondition`, recorded as `vm_lost`) it reboots
+    it. An unreachable node is left alone rather than restarting a database
+    that may be healthy.
+  - `Update` switches a database between the two policies in place
+    (`SetDatabaseAlwaysOn`), so `ScaleToZeroUpdate` is true. Turning
+    scale-to-zero back on restarts the idle clock.
+  - The observation carries `DataResourceID` (the database id: the volume
+    only this id names), which the service requires for compute-policy
+    changes.
+  - Metal: `TestMetalAlwaysOnKeepWarmAndLostVM` checks the database is never
+    idle-parked, and that a VM stopped behind the scheduler's back is
+    detected and rebooted in 1.4 s.
 
-Not yet: Update (resize, scale-to-zero toggle), Restore, usage, and an
-always-on mode. Always-on needs a per-database "never idle-park" flag in
-`database_vms`; until then plans that allow always-on must not route new
-databases here.
+Not yet: class/storage resize, Restore and usage. Qualification also needs
+the backend probers (`ScaleToZeroProber`, `ComputePolicyProber`,
+`CredentialPrivilegeProber`, `ReadOnlyCredentialProber`) before native can
+pass `QualifyProvider`.
 
 ## Phasing
 

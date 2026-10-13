@@ -18467,19 +18467,23 @@ GROUP BY n.id ORDER BY n.id;
 
 -- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
-    bootstrapped, last_error, last_active_at, state_changed_at, created_at
+    bootstrapped, always_on, last_error, last_active_at, state_changed_at, created_at
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
-INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state)
+INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on, state)
 VALUES (sqlc.arg(database_id), sqlc.arg(node_id), sqlc.arg(postgres_major), sqlc.arg(vcpu_count),
-    sqlc.arg(mem_mib), sqlc.arg(volume_bytes), 'provisioning')
+    sqlc.arg(mem_mib), sqlc.arg(volume_bytes), sqlc.arg(always_on), 'provisioning')
 ON CONFLICT (database_id) DO NOTHING;
+
+-- name: SetDatabaseVMAlwaysOn :execrows
+UPDATE database_vms SET always_on = sqlc.arg(always_on)
+WHERE database_id = sqlc.arg(database_id) AND state <> 'deleting';
 
 -- name: TransitionDatabaseVM :execrows
 UPDATE database_vms SET state = sqlc.arg(to_state), state_changed_at = now(),

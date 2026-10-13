@@ -56,40 +56,7 @@ func TestMetalSchedulerLifecycle(t *testing.T) {
 	if workdir == "" || base == "" {
 		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
 	}
-	parent := "dbsched-metal-test"
-	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
-	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
-		JailBase: filepath.Join(workdir, "schedjail"), VolumeRoot: filepath.Join(workdir, "schedvolumes"),
-		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
-		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &topLeaser{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.Recover(); err != nil {
-		t.Fatal(err)
-	}
-	sock := filepath.Join(workdir, "dbsched-vmmd.sock")
-	_ = os.Remove(sock)
-	lis, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gsrv := grpc.NewServer()
-	vmmdpb.RegisterVmmdServer(gsrv, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt))
-	go func() { _ = gsrv.Serve(lis) }()
-	t.Cleanup(gsrv.Stop)
-
-	store := NewMemStore()
-	seedNodes(t, store, Node{ID: "db-test", TargetURL: "unix://" + sock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: 20 << 30, Lifecycle: NodeActive})
-	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {
-		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	})
-	t.Cleanup(func() { _ = vmm.Close() })
-	s := New(store, vmm, Config{IdleTimeout: 2 * time.Second, ReadyTimeout: time.Minute}, nil)
+	s, store, rt := metalScheduler(t, workdir, base)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -173,4 +140,98 @@ func query(ctx context.Context, t *testing.T, rt *dbvm.Runtime, id, password, sq
 		t.Fatalf("exec: %v", err)
 	}
 	return out
+}
+
+// metalScheduler runs a real database runtime behind an in-process vmmd
+// gRPC server and returns a scheduler that reaches it through GRPCVMM.
+func metalScheduler(t *testing.T, workdir, base string) (*Scheduler, *MemStore, *dbvm.Runtime) {
+	t.Helper()
+	parent := "dbsched-metal-test"
+	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
+	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
+		JailBase: filepath.Join(workdir, "schedjail"), VolumeRoot: filepath.Join(workdir, "schedvolumes"),
+		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
+		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &topLeaser{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(workdir, "dbsched-vmmd.sock")
+	_ = os.Remove(sock)
+	lis, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gsrv := grpc.NewServer()
+	vmmdpb.RegisterVmmdServer(gsrv, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt))
+	go func() { _ = gsrv.Serve(lis) }()
+	t.Cleanup(gsrv.Stop)
+
+	store := NewMemStore()
+	seedNodes(t, store, Node{ID: "db-test", TargetURL: "unix://" + sock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: 20 << 30, Lifecycle: NodeActive})
+	vmm := NewGRPCVMMWithDial(nil, func(ctx context.Context, target string, _ *tls.Config) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	})
+	t.Cleanup(func() { _ = vmm.Close() })
+	s := New(store, vmm, Config{IdleTimeout: 2 * time.Second, ReadyTimeout: time.Minute}, nil)
+	return s, store, rt
+}
+
+// adr: 1027 — an always-on database is woken by the keep-warm sweep, never
+// parked for idleness, and rebooted when its VM disappears behind the
+// scheduler's back (a database node reboot). Back on scale-to-zero it parks.
+func TestMetalAlwaysOnKeepWarmAndLostVM(t *testing.T) {
+	workdir, base := os.Getenv("FAAS_DBVM_WORKDIR"), os.Getenv("FAAS_DBVM_BASE")
+	if workdir == "" || base == "" {
+		t.Skip("set FAAS_DBVM_WORKDIR and FAAS_DBVM_BASE to run the scheduler metal test")
+	}
+	s, store, rt := metalScheduler(t, workdir, base)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	id := uuid.NewString()
+	t.Cleanup(func() { _ = s.Delete(context.Background(), id) })
+	if _, err := s.Provision(ctx, ProvisionRequest{DatabaseID: id, Major: 17, VcpuCount: 1, MemMiB: 384, VolumeBytes: 1 << 30, AlwaysOn: true}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.KeepWarm(ctx); err != nil || n != 1 || !rt.Running(id) {
+		t.Fatalf("keep-warm after provision = %d, %v, running %v", n, err, rt.Running(id))
+	}
+	time.Sleep(3 * time.Second) // past the 2 s idle timeout
+	if n, err := s.ParkIdle(ctx); err != nil || n != 0 {
+		t.Fatalf("ParkIdle = %d, %v; an always-on database must stay up", n, err)
+	}
+
+	// The node "reboots": the VM stops without the scheduler knowing.
+	if err := rt.Stop(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.Get(ctx, id); got.State != StateRunning {
+		t.Fatalf("record = %s before the sweep", got.State)
+	}
+	lost := time.Now()
+	if n, err := s.KeepWarm(ctx); err != nil || n != 1 {
+		t.Fatalf("keep-warm after VM loss = %d, %v", n, err)
+	}
+	recovered := time.Since(lost)
+	if !rt.Running(id) {
+		t.Fatal("lost VM was not rebooted")
+	}
+	if resp, err := s.Admin(ctx, id, "SELECT 1"); err != nil || resp.Error != "" {
+		t.Fatalf("admin after recovery = %+v, %v", resp, err)
+	}
+
+	if _, err := s.SetAlwaysOn(ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second)
+	if n, err := s.ParkIdle(ctx); err != nil || n != 1 || rt.Running(id) {
+		t.Fatalf("back on scale-to-zero: ParkIdle = %d, %v, running %v", n, err, rt.Running(id))
+	}
+	t.Logf("lost VM detected and rebooted in %v", recovered.Round(time.Millisecond))
 }

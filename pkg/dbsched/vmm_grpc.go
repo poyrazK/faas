@@ -3,6 +3,7 @@ package dbsched
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -123,6 +124,9 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 		return dbguest.Response{}, err
 	}
 	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(req.Op), Sql: req.SQL})
+	if status.Code(err) == codes.FailedPrecondition {
+		return dbguest.Response{}, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
+	}
 	if err != nil {
 		return dbguest.Response{}, err
 	}

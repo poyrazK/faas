@@ -1910,6 +1910,7 @@ type DatabaseVm struct {
 	VolumeBytes    int64
 	State          string
 	Bootstrapped   bool
+	AlwaysOn       bool
 	LastError      pgtype.Text
 	LastActiveAt   pgtype.Timestamptz
 	StateChangedAt pgtype.Timestamptz
