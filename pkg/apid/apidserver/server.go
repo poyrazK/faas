@@ -70,6 +70,7 @@ type server struct {
 	serviceMapEnabled                      bool // ADR-750 (FAAS_SERVICE_MAP_ENABLED=1)
 	changeTimelineEnabled                  bool // ADR-751 (FAAS_CHANGE_TIMELINE_ENABLED=1)
 	anomalyAlertsEnabled                   bool // ADR-744 (FAAS_ANOMALY_ALERTS_ENABLED=1)
+	customMetricHistoryEnabled             bool // ADR-745 (FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1)
 	devBridgeURL                           string
 	devBridgeObserver                      *devbridge.Observer
 	operation                              operation.Service // ADR-977; Host wired in newServer
@@ -2129,6 +2130,10 @@ func (s *server) handler() http.Handler {
 	// account read surface lets operators inspect freshness and handler counts.
 	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-task-compatibility", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.putMCPTaskCompatibilityReport)))
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-task-compatibility", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getMCPTaskCompatibilityReport)))
+	// ADR-745 — custom metric history recorded from the exporter.
+	mux.HandleFunc("GET /v1/apps/{slug}/custom-metrics/{name}/series", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCustomMetricSeries)))
+	// ADR-745 — OTLP/HTTP metric exports stored as custom metrics.
+	mux.HandleFunc("POST /v1/apps/{slug}/otlp/v1/metrics", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(s.postOTLPMetrics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOpenAPIDoc))))
 	mux.HandleFunc("GET /v1/apps/{slug}/deployments/{deployment}/route-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentRoutePolicySnapshot))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/deployments/{deployment}/openapi", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.patchOpenAPIDoc))))
@@ -3790,6 +3795,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/dev-bridges/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDevBridgesDashboard))))
 	mux.Handle("GET /dashboard/service-map", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderServiceMapDashboard))))
 	mux.Handle("GET /dashboard/apps/{slug}/changes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppChangesDashboard))))
+	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 
 	// PR-B bind picker UX (handlers_install_github.go). Both routes

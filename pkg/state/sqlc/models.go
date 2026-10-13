@@ -246,6 +246,7 @@ type AlertRule struct {
 	Action                          string
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
+	CustomMetricName                pgtype.Text
 }
 
 type AlertRuleChannel struct {
@@ -569,6 +570,7 @@ type AppCustomMetric struct {
 	Name       string
 	Value      float64
 	ObservedAt pgtype.Timestamptz
+	Kind       string
 }
 
 type AppDefaultDomain struct {

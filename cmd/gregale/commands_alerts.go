@@ -127,6 +127,7 @@ func cmdAlertAdd(args []string) int {
 	threshold := fs.Float64("threshold", math.NaN(), "threshold value (must be finite)")
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
+	customMetric := fs.String("custom-metric", "", "pushed custom metric name — required iff --metric=custom_metric")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (https://...); optional with --channel")
 	var channels stringListFlag
@@ -151,6 +152,9 @@ func cmdAlertAdd(args []string) int {
 	if !validateAlertClosedSets(metric, comparison, windowSpec, failureSource, action) {
 		return 1
 	}
+	if (*metric == api.AlertRuleMetricCustomMetric) != (*customMetric != "") {
+		return printErr("Invalid custom-metric", fmt.Errorf("--custom-metric is required with --metric=custom_metric and not allowed otherwise"))
+	}
 	windowSeconds, err := alertRollbackWindowSeconds(*postWindow)
 	if err != nil || windowSeconds > 0 && *action != "rollback" {
 		return printErr("Invalid post-deploy rollback window", fmt.Errorf("requires action=rollback and a whole-second duration from 0 to 1h"))
@@ -172,6 +176,7 @@ func cmdAlertAdd(args []string) int {
 		EventSubscriptionID:             *eventSubscription,
 		FailureSource:                   *failureSource,
 		ChannelIDs:                      channels,
+		CustomMetricName:                *customMetric,
 		Action:                          ptrIfNonEmpty(*action),
 		WebhookURL:                      *webhookURL,
 		WebhookSecret:                   *webhookSecret,
@@ -282,6 +287,9 @@ func cmdAlertInfo(args []string) int {
 	}
 	if len(resp.ChannelIDs) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "channels:     %s\n", strings.Join(resp.ChannelIDs, ", "))
+	}
+	if resp.CustomMetricName != "" {
+		_, _ = fmt.Fprintf(osStdout, "custom_metric: %s\n", resp.CustomMetricName)
 	}
 	_, _ = fmt.Fprintf(osStdout, "action:       %s\n", resp.Action)
 	_, _ = fmt.Fprintf(osStdout, "webhook_url:  %s\n", resp.WebhookURL)

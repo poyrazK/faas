@@ -13,5 +13,9 @@ export type CustomMetricResponse = {
    * True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-side so the API and the scheduler cannot disagree about which rows count.
    */
   stale: boolean;
+  /**
+   * gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive scaling.
+   */
+  kind?: 'gauge' | 'counter';
 };
 

@@ -68,6 +68,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 752 | [One-command Datadog integration](752-datadog-integration.md) | proposed | Agentless logs and deployment events to Datadog with unified service tags |
 | 751 | [Application change timeline](751-app-change-timeline.md) | proposed | One read-only timeline of an app's deploys, config changes, incidents and health transitions |
 | 750 | [Customer service map](750-customer-service-map.md) | proposed | Account-scoped caller → target map from unsampled service-proxy edge metrics |
+| 745 | [Custom metric history, OTLP ingestion, charts, and alerts](745-custom-metric-history.md) | proposed | Extends ADR-202 pushed gauges with Prometheus-backed history and read surfaces |
 | 744 | [Baseline-relative ("anomaly") alerts for apps](744-anomaly-alerts.md) | proposed | Alert on a multiple of the app's usual metric value instead of a fixed threshold |
 | 743 | [Allocate route compute cost by request time](743-route-cost-by-request-time.md) | proposed | Route cost estimates follow time spent serving, not request count |
 | 742 | [WebSocket forwarding through Dev Bridge](742-dev-bridge-websocket-forwarding.md) | accepted for internal Dev Bridge use | Bounded, revocable WebSocket upgrades in both bridge directions; other upgrades, gRPC and raw TCP remain out of scope |

@@ -12422,6 +12422,79 @@ paths:
               schema: { $ref: '#/components/schemas/TestNotificationChannelResponse' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/custom-metrics/{name}/series:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: "The pushed custom metric whose history to read."
+        schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' }
+    get:
+      operationId: getCustomMetricSeries
+      summary: Read a custom metric's history (ADR-745)
+      description: |
+        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+        otherwise 503 `custom_metric_history_unavailable`.
+
+        Returns the values Prometheus recorded from pushed custom metrics over
+        `range` (`1h`, `6h`, `24h` default, `7d`, `15d`). Only fresh pushes are
+        recorded, so a gap means nothing was pushed then. Prometheus failure
+        returns 200 with `source: "degraded: <reason>"` and null `points`.
+      tags: [apps]
+      parameters:
+        - name: range
+          in: query
+          required: false
+          description: History window. Default 24h.
+          schema: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'], default: '24h' }
+      responses:
+        '200':
+          description: The recorded history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomMetricSeriesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/otlp/v1/metrics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      operationId: postOTLPMetrics
+      summary: Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+      description: |
+        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+        otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
+        with a `metrics:write` API key as the bearer token.
+
+        Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
+        or `application/json` (at most 1 MiB) and answers in the same encoding.
+        Gauges are stored as gauges and cumulative monotonic sums as counters;
+        metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
+        or non-monotonic sums, histograms, data points with attributes,
+        negative values, and names beyond the per-app limit are not stored and
+        are reported through `partialSuccess`.
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+          application/json:
+            schema: { type: object, description: OTLP ExportMetricsServiceRequest in its JSON encoding. }
+      responses:
+        '200':
+          description: The export was processed; rejected data points are reported in partialSuccess.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { type: object, description: OTLP ExportMetricsServiceResponse in its JSON encoding. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -58808,7 +58881,32 @@ components:
         stale:
           description: "True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-side so the API and the scheduler cannot disagree about which rows count."
           type: boolean
-      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false }
+        kind:
+          type: string
+          enum: [gauge, counter]
+          description: "gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive scaling."
+      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge }
+    CustomMetricSeriesResponse:
+      description: "ADR-745 history of one pushed custom metric. Degraded responses carry null points."
+      type: object
+      required: [app_id, name, kind, range, step, source, points]
+      properties:
+        app_id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count." }
+        range: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'] }
+        step: { type: string, description: "Prometheus step between points." }
+        source: { type: string, description: '"prometheus" or "degraded: <reason>".' }
+        points:
+          type: [array, "null"]
+          items: { $ref: '#/components/schemas/CustomMetricSeriesPoint' }
+    CustomMetricSeriesPoint:
+      description: One recorded custom metric value.
+      type: object
+      required: [at, value]
+      properties:
+        at: { type: string, format: date-time }
+        value: { type: number, format: double }
     CustomMetricListResponse:
       description: "The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
@@ -70091,6 +70189,7 @@ components:
             - workflow_pending_age_seconds
             - workflow_waiting_age_seconds
             - workflow_due_age_seconds
+            - custom_metric
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -70102,6 +70201,11 @@ components:
           type: string
           description: 'Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk).'
           enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
+        custom_metric_name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          description: 'The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric.'
+          example: orders_pending
         webhook_url:
           type: string
           example: "https://example.com/hook"
@@ -70153,7 +70257,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -70164,6 +70268,11 @@ components:
           type: string
           description: 'Required when metric == failed_invocations; omit otherwise (xor_chk).'
           enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
+        custom_metric_name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
+          example: orders_pending
         webhook_url:
           type: string
           format: uri
@@ -70205,7 +70314,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, custom_metric]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

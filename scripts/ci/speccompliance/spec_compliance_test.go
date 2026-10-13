@@ -80,6 +80,7 @@ const (
 	runtimeReleasesFile           = "runtime_releases.go"            // ADR-736 immutable runtime identity and update preview DTOs
 	serviceMapFile                = "service_map.go"                 // ADR-750 account service map DTOs
 	changeTimelineFile            = "change_timeline.go"             // ADR-751 app change timeline DTOs
+	customMetricSeriesFile        = "custom_metric_series.go"        // ADR-745 custom metric history DTOs
 )
 
 // routeExclude lists server.go routes that are deliberately not in the
@@ -186,6 +187,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/dev-bridges":                                 true, // ADR-379 HTML session inventory
 	"GET /dashboard/dev-bridges/{id}":                            true, // ADR-379 HTML activity projection
 	"GET /dashboard/apps/{slug}/changes":                         true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/apps/{slug}/custom-metrics":                  true, // ADR-745 HTML view of custom metric history
 	"POST /dashboard/dev-bridges/{id}/revoke":                    true, // ADR-379 cookie + CSRF form
 	"GET /dashboard/service-map":                                 true, // ADR-750 HTML view of GET /v1/service-map
 	"POST /dashboard/apps/new":                                   true, // dashboard-only create + GitHub bind form adapter
@@ -1238,6 +1240,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", serviceMapFile),
 		filepath.Join(root, "pkg", "api", changeTimelineFile),
+		filepath.Join(root, "pkg", "api", customMetricSeriesFile),
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO

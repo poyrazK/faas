@@ -178,6 +178,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := validateCustomMetricAlert(req.Metric, req.CustomMetricName, req.WindowSpec, req.Action, s.customMetricHistoryEnabled); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
@@ -202,6 +206,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
 		EventSubscriptionID:             req.EventSubscriptionID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
+		CustomMetricName:                req.CustomMetricName,
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
@@ -250,6 +255,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"threshold":                           row.Threshold,
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
+		"custom_metric_name":                  row.CustomMetricName,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
@@ -710,6 +716,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		WindowSpec:                      string(r.WindowSpec),
 		EventSubscriptionID:             r.EventSubscriptionID,
 		FailureSource:                   string(r.FailureSource),
+		CustomMetricName:                r.CustomMetricName,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
 		CooldownMinutes:                 r.CooldownMinutes,
@@ -915,6 +922,11 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if !api.AlertRuleActionAllowedForMetric(string(merged.Metric), string(merged.Action)) {
 		return api.ErrAlertRuleInvalid(alertMetricActionRestriction(string(merged.Metric)))
 	}
+	if merged.Metric == state.AlertMetricCustomMetric {
+		if p := validateCustomMetricAlertWindow(string(merged.WindowSpec)); p != nil {
+			return p
+		}
+	}
 	if !api.IsFiniteFloat(merged.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
 	}
@@ -1016,6 +1028,11 @@ func alertRuleFamily(m state.AlertMetric) string {
 	}
 	if m == state.AlertMetricFailedInvocs {
 		return alertRuleMetricFailedInvocations
+	}
+	if m == state.AlertMetricCustomMetric {
+		// The rule's custom_metric_name only means something for this
+		// metric (alert_rules_custom_metric_chk); swapping away would orphan it.
+		return api.AlertRuleMetricCustomMetric
 	}
 	return "other"
 }
