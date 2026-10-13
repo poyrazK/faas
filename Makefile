@@ -1357,6 +1357,12 @@ data-api-browser-acceptance: ## Real browser CORS acceptance with disposable Pos
 data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
 	@bash scripts/test-data-api-packaging.sh
 
+.PHONY: test-auth-app
+test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (ADR-1190); needs Node 22+ and npm
+	@scratch="$$(mktemp -d)" && trap 'rm -rf "$$scratch"' EXIT && \
+	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
+	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
+
 .PHONY: data-api-staging-check data-api-staging-canary
 data-api-staging-check: ## Staging canary harness contracts without provider calls
 	@npm run build --prefix sdk/data
