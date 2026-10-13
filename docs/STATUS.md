@@ -20,9 +20,9 @@ pools are reclaimed and queued job tasks deferred. App purge keeps `usage_minute
 so far) in the pusher, `CurrentMonthOverageCents` and `OverageMBSecondsForRange`.
 `pkg/meter`, `pkg/billing`, `pkg/billing/reconciler` and `pkg/api` tests pass locally
 (one known timing-flaky loop health test aside), as do the new `pkg/state` plan-history
-tests and the MemStore conformance suite. The new `pkg/sched` spend-cap tests are
-written but unrun; PG-backed tests, `make lint` and a live Polar sandbox delivery
-remain unrun.
+tests, the MemStore conformance suite and the full `pkg/sched` suite including the new
+spend-cap tests. PG-backed tests, `make lint` and a live Polar sandbox delivery remain
+unrun.
 No PR, deployment setting or provider configuration changed.
 
 ## Local built validators and project publication — 2026-10-10
