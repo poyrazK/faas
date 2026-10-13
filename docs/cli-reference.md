@@ -2388,6 +2388,21 @@ Submit a reviewed fixed lineage retry selection
 |---|---|---|
 | `--file <PATH>` | scoped retry file or legacy request body (maximum 200) |  |
 
+### events subscription-lineage-retry-job-controls-export
+
+Export a guarded private control-history snapshot
+
+`gregale events subscription-lineage-retry-job-controls-export [--file <PATH>] [--expected-created-at <TIMESTAMP>] [--action <ACTION>] [--actor-id <UUID_OR_STORE>] [--credential-type <TYPE>] [--timeout <DURATION>] <app> <subscription-id> <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | new private JSON artifact (never overwrite) |  |
+| `--expected-created-at <TIMESTAMP>` | required original job creation timestamp |  |
+| `--action <ACTION>` | exact action: pause, resume or cancel |  |
+| `--actor-id <UUID_OR_STORE>` | exact original actor identity |  |
+| `--credential-type <TYPE>` | exact original credential type |  |
+| `--timeout <DURATION>` | maximum export duration (default 2m) |  |
+
 ### events subscription-lineage-retry-job-controls
 
 List retained immutable bulk retry command receipts

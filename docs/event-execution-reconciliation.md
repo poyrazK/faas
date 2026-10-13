@@ -593,6 +593,55 @@ field. Upgrade SDKs that use closed receipt action/state enums before reading
 cancellation history. Downgrade refuses while cancellation receipts remain; stop
 UUID-keyed cancellations and expire/prune their parent jobs first.
 
+## Export control history for an incident review
+
+```sh
+gregale --json events subscription-lineage-retry-job-controls-export APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --file controls.json
+# Select receipts from the same bounded observation:
+gregale --json events subscription-lineage-retry-job-controls-export APP SUB REQUEST_UUID --expected-created-at ORIGINAL_CREATED_AT --file cancellations.json --action cancel --credential-type api_key
+```
+
+The export requires read scope and MFA and does not mutate the job or replay any
+command. It first reads the retained job to pin app/subscription/job identity and
+the reviewed creation timestamp, then fetches its entire unfiltered control
+journal in one guarded GET. The maximum 128 receipts fit in one page; filters are
+applied locally after validating the response. No paging loop can mix commands
+from different observations. The command rejects incomplete pages, invalid
+sequences, duplicate commands, scope or incarnation mismatches, and malformed
+receipt outcomes or attribution before publishing a file.
+
+`controls.json` is a version-1 `gregale.event-lineage-control-history` artifact.
+It contains app slug and stable app/subscription/job IDs, `expected_created_at`,
+`job_retain_until`, local `observed_at`, normalized `filters`, `observed_receipts`,
+`through_sequence`, and the selected `controls` array. The sequence boundary and
+observed count describe the full unfiltered history read, even if filters match
+nothing. Receipt sequences remain original sequences, so filtered output can have
+gaps. Empty histories and empty matching sets produce a valid artifact with an
+empty array; an empty history has `through_sequence: 0`.
+
+Original actor attribution is preserved, including absent fields on legacy
+receipts. No event payloads, case selections/results, token values or session IDs
+are exported. The file is unsigned and editable; it is an observation for review,
+not a replay request or proof of tamper resistance. Later commands, previously
+expired jobs/receipts, legacy controls without UUIDs and failed requests are
+outside this export. The initial job read and history read are separate requests;
+job state may change between them, and the artifact deliberately omits that state.
+Server retention is not extended; a saved artifact can outlive the server copy.
+
+The encoded JSON is bounded to 256 KiB. The CLI creates a private 0600 temporary
+file in the destination directory, syncs its contents and atomically publishes the
+completed file without replacing an existing destination, including a symlink.
+Failures remove the temporary file and never expose a partial destination. A
+process crash may leave a private temporary file; the final path is always absent
+or complete. Filesystems without hard-link support fail without a fallback write.
+This does not guarantee the directory entry survives a filesystem crash.
+Use `--timeout DURATION` for the overall bound (default `2m`, must be positive).
+Each API read also uses the existing control timeout. Ctrl-C before publication
+aborts; after publication the completed artifact remains saved. API errors,
+unavailable/expired jobs and stale creation guards do not produce an artifact.
+JSON stdout summarizes the saved file and counts; the bundle is in `--file`.
+No API or schema migration is needed.
+
 ## Cancel a bulk retry job
 
 Read the retained job and copy its original `created_at`, then cancel with that

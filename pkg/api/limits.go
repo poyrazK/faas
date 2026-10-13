@@ -10415,3 +10415,6 @@ const EventExecutionLineageRetryJobsCursorMaxBytes = 128
 const EventExecutionLineageRetryControlMaxReceipts = 128
 const EventExecutionLineageRetryControlPageDefault = 50
 const EventExecutionLineageRetryControlPageMax = 200
+
+// Local control-history artifacts contain bounded receipt metadata, not event payloads.
+const EventExecutionLineageRetryControlExportMaxBytes = 256 * 1024
