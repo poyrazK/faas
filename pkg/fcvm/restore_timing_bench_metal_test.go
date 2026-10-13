@@ -111,7 +111,14 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	var nodeCache *storage.LocalCacheBackend
 	cacheMiss := os.Getenv("FAAS_RESTORE_BENCH_CACHE_MISS") == "1"
 	if cacheMiss {
-		nodeCache, err = storage.NewLocalCacheBackend(remoteOnlyStore{store}, filepath.Join(dir, "node-cache"), 64<<30)
+		// Production keeps the node cache on the filesystem of vmmd's
+		// TMPDIR, so a fetched fill is hard-linked into place rather than
+		// copied; FAAS_RESTORE_BENCH_CACHE_DIR puts it there.
+		cacheDir := os.Getenv("FAAS_RESTORE_BENCH_CACHE_DIR")
+		if cacheDir == "" {
+			cacheDir = filepath.Join(dir, "node-cache")
+		}
+		nodeCache, err = storage.NewLocalCacheBackend(remoteOnlyStore{store}, cacheDir, 64<<30)
 		if err != nil {
 			t.Fatal(err)
 		}
