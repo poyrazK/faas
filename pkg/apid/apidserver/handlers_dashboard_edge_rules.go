@@ -584,7 +584,7 @@ func (s *server) dashboardApplyEdgeRuleRecipe(w http.ResponseWriter, r *http.Req
 		http.NotFound(w, r)
 		return
 	}
-	recipe, ok := api.EdgeRuleRecipeByID(r.PathValue("recipe"))
+	recipe, ok := api.EdgeRuleRecipeByID(r.PostFormValue("recipe"))
 	if !ok {
 		http.NotFound(w, r)
 		return
