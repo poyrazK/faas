@@ -2587,6 +2587,15 @@ type DebugRegressionView struct {
 	LastDetectedAt  string
 	RequestsURL     string
 	CompareURL      string
+	// Kind is latency, errors or latency_and_errors; ErrorRatePct and
+	// ErrorRateBasePct are the route's HTTP 5xx share after and before the
+	// deployment, preformatted ("12.5").
+	Kind             string
+	HasErrors        bool
+	HasLatency       bool
+	ErrorRatePct     string
+	ErrorRateBasePct string
+	ErrorCount       int
 }
 
 // DebugRequestView is one row in the debugger request table.
@@ -2632,6 +2641,18 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+	// Logs are the request's own log lines, matched by trace ID.
+	Logs          []DebugLogLineView
+	LogsTruncated bool
+}
+
+// DebugLogLineView is one bounded log line attached to request evidence.
+type DebugLogLineView struct {
+	OccurredAt string
+	Source     string
+	Level      string
+	Stream     string
+	Message    string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

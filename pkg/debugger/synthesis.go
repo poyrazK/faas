@@ -17,6 +17,7 @@ const synthesisVersion = "rules-v1"
 // debugger evidence. The rules intentionally report observations and safe
 // next actions; they do not infer a causal chain when a stage is missing.
 func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExplanation {
+	evidence.Logs = synthesisLogs(evidence.Logs)
 	out := evidence.Explanation
 	if out.Status == "" {
 		out.Status = "unobserved"
@@ -94,8 +95,14 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	regressionRef := ""
 	if regression := evidence.Regression; regression != nil {
 		regressionRef = addRef("regression", "Regression observation", "regression")
-		detail := fmt.Sprintf("The route is at p95 %dms versus %dms baseline (%sx), affecting %d represented requests.", regression.P95MS, regression.P95BaseMS, regression.Factor, regression.AffectedCount)
-		addFinding("performance_regression", "A deployment regression is active", detail, "high", regressionRef)
+		if RegressionHasErrors(regression.Kind) {
+			detail := fmt.Sprintf("The route fails %.1f%% of requests versus %.1f%% on the previous deployment (%d failed requests).", regression.ErrorRatePct, regression.ErrorRateBasePct, regression.ErrorCount)
+			addFinding("error_regression", "The route fails more often since the deployment", detail, "high", regressionRef)
+		}
+		if RegressionHasLatency(regression.Kind) {
+			detail := fmt.Sprintf("The route is at p95 %dms versus %dms baseline (%sx), affecting %d represented requests.", regression.P95MS, regression.P95BaseMS, regression.Factor, regression.AffectedCount)
+			addFinding("performance_regression", "A deployment regression is active", detail, "high", regressionRef)
+		}
 		addRecommendation("compare_deployments", "Compare this deployment with its previous healthy deployment before rolling back.")
 	}
 
@@ -159,6 +166,13 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 		addRecommendation("inspect_dependency_change", "Review how this deployment changed its calls to "+label+" (new queries, missing indexes, extra round trips) before rolling back.")
 	}
 
+	if errorLines := countErrorLogLines(evidence.Logs); errorLines > 0 {
+		logRef := addRef("logs", "Request log lines", "logs")
+		addFinding("error_logs", "The request logged errors",
+			fmt.Sprintf("The request emitted %d error-level log line(s); they are attached to this evidence.", errorLines), "medium", logRef)
+		addRecommendation("inspect_request_logs", "Read the request's error log lines alongside the failing span or stage.")
+	}
+
 	if len(evidence.Spans) > 0 {
 		spanRef := addRef("span", "Slowest retained span", "span:0")
 		primary := evidence.Spans[0]
@@ -213,6 +227,10 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	} else if failureRegression != nil {
 		out.Diagnosis = "dependency_failure"
 		out.Confidence = "medium"
+	} else if evidence.Regression != nil && RegressionHasErrors(evidence.Regression.Kind) {
+		// Failing requests outrank slower ones when both regressed.
+		out.Diagnosis = "error_regression"
+		out.Confidence = "high"
 	} else if evidence.Regression != nil {
 		out.Diagnosis = "performance_regression"
 		out.Confidence = "high"
@@ -250,6 +268,8 @@ func Synthesize(evidence api.DebugRequestEvidenceResponse) api.DebugEvidenceExpl
 	case "dependency_regression":
 		out.Headline = fmt.Sprintf("%s slowed from %dms to %dms p95 since the previous deployment%s.",
 			dependencyLabel(*dependencyRegression), dependencyRegression.BaselineP95MS, dependencyRegression.CurrentP95MS, deploymentSuffix(dependencyComparison.PreviousDeploymentTag))
+	case "error_regression":
+		out.Headline = fmt.Sprintf("This route fails %.1f%% of requests since the deployment, up from %.1f%%.", evidence.Regression.ErrorRatePct, evidence.Regression.ErrorRateBasePct)
 	case "performance_regression":
 		out.Headline = "An active deployment regression is the strongest retained signal for this request."
 	case "cold_start":
@@ -283,6 +303,16 @@ func dependencyLabel(item api.DebugDependencyLatencyItem) string {
 		return fmt.Sprintf("%q", item.Name)
 	}
 	return fmt.Sprintf("%s %q", kind, item.Name)
+}
+
+func countErrorLogLines(lines []api.DebugEvidenceLogLine) int {
+	count := 0
+	for _, line := range lines {
+		if errorLogLevel(line.Level) {
+			count++
+		}
+	}
+	return count
 }
 
 // spanDependencyLabel renders one classified span for prose, preferring its

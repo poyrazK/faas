@@ -3734,6 +3734,22 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 -- refactor. Go-side composition of the two PR-A queries above is the
 -- chosen workaround (cheap, no parser gymnastics).
 
+-- name: RequestTelemetryErrorsByRoute :many
+-- Per-route represented request and server-error (HTTP 5xx) counts for one
+-- deployment and window, weighted by the publisher's collapsed-row count.
+-- The regression detector compares the error share of the current and the
+-- previous deployment (ADR-127 amendment: error-rate regressions). Same
+-- index as RequestTelemetryBaselineP95ByRoute.
+SELECT route,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests,
+       COALESCE(SUM(GREATEST(count, 1)::bigint) FILTER (WHERE status >= 500), 0)::bigint AS error_requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+GROUP BY route;
+
 -- name: UpsertRegressionObservation :exec
 -- Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 -- route) — the cron upserts on this triple so the table grows at most
@@ -3746,17 +3762,24 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency,
+    kind, error_rate_pct, error_rate_base_pct, error_count
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now(), $8::jsonb
+    $7, 'active', now(), now(), $8::jsonb,
+    $9, $10, $11, $12
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- kind and error rates describe the latest pass that saw the regression.
+    kind                = EXCLUDED.kind,
+    error_rate_pct      = EXCLUDED.error_rate_pct,
+    error_rate_base_pct = EXCLUDED.error_rate_base_pct,
+    error_count         = EXCLUDED.error_count,
     -- Keep the last known suspect when a pass could not compute one.
     suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
@@ -3794,7 +3817,8 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -3816,7 +3840,8 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
@@ -3845,7 +3870,8 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency;
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count;
 
 -- name: ResolveStaleRegressionObservations :many
 -- A detector pass that no longer sees a regression resolves the previous
@@ -3859,7 +3885,8 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency;
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count;
 
 -- name: ListDeploymentsForCompare :many
 -- Backs the dashboard compare panel's two `<select>` dropdowns: "pick

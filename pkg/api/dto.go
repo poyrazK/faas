@@ -11437,8 +11437,23 @@ type DebugRequestEvidenceResponse struct {
 	DependencyComparison *DebugDependencyDeploymentComparison `json:"dependency_comparison,omitempty"`
 	Spans                []DebugTelemetrySpan                 `json:"spans"`
 	SpansTruncated       bool                                 `json:"spans_truncated"`
-	Explanation          DebugEvidenceExplanation             `json:"explanation"`
-	GeneratedAt          string                               `json:"generated_at"`
+	// Logs are the lines the request emitted, matched by its trace ID, in
+	// chronological order; at most 20, the request's last lines when it
+	// logged more (LogsTruncated).
+	Logs          []DebugEvidenceLogLine   `json:"logs"`
+	LogsTruncated bool                     `json:"logs_truncated"`
+	Explanation   DebugEvidenceExplanation `json:"explanation"`
+	GeneratedAt   string                   `json:"generated_at"`
+}
+
+// DebugEvidenceLogLine is one log line attached to request evidence. The
+// message is bounded to 512 bytes; structured log fields are not included.
+type DebugEvidenceLogLine struct {
+	OccurredAt string `json:"occurred_at"`
+	Source     string `json:"source"`
+	Level      string `json:"level,omitempty"`
+	Stream     string `json:"stream,omitempty"`
+	Message    string `json:"message"`
 }
 
 // RequestAnalyticsRoute is one aggregated route/method row returned by
@@ -11717,6 +11732,14 @@ type DebugRegressionItem struct {
 	// the previous and this deployment on the route (ADR-958 §5); absent when
 	// no dependency regressed or no spans were retained.
 	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
+	// Kind is which signal regressed: "latency" (p95, the original
+	// detector), "errors" (the share of HTTP 5xx responses rose) or
+	// "latency_and_errors". For an errors-only observation AffectedCount is
+	// the number of failed requests and Factor is at least 1.00.
+	Kind             string  `json:"kind"`
+	ErrorRatePct     float64 `json:"error_rate_pct,omitempty"`
+	ErrorRateBasePct float64 `json:"error_rate_base_pct,omitempty"`
+	ErrorCount       int     `json:"error_count,omitempty"`
 }
 
 // DebugSuspectedDependency is a bounded, redacted dependency identity with

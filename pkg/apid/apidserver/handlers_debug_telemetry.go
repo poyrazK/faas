@@ -1475,6 +1475,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		explanation = buildDebugEvidenceDegradedExplanation(spans)
 	}
 
+	logs, logsTruncated := s.debugEvidenceLogs(r.Context(), acct.ID, app.ID, request)
 	response := api.DebugRequestEvidenceResponse{
 		Request:                    request,
 		Regression:                 regression,
@@ -1486,6 +1487,8 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 		DependencyComparison:       s.debugEvidenceDependencyComparison(r, app, acct, request, now.Add(-retention), now),
 		Spans:                      spans,
 		SpansTruncated:             truncated,
+		Logs:                       logs,
+		LogsTruncated:              logsTruncated,
 		Explanation:                explanation,
 		GeneratedAt:                now.Format(time.RFC3339Nano),
 	}
@@ -2291,6 +2294,7 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 		}
 	}
 	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
+	applyDebugRegressionSignal(&item, row.Kind, row.ErrorRatePct, row.ErrorRateBasePct, row.ErrorCount)
 	return item
 }
 

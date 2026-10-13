@@ -216,6 +216,38 @@ or raw span attribute is passed to the synthesis layer. A future prose model
 can consume this same redacted envelope without changing the customer-facing
 contract.
 
+### 7.2 Amendment (2026-10-13): error-rate regressions and request logs
+
+**Error-rate regressions.** The detector originally opened observations only
+on p95 latency, so a deployment that made a route fail without slowing it
+never alerted. Each pass now also compares, per route, the share of HTTP 5xx
+responses in the same two 30-minute windows (`RequestTelemetryErrorsByRoute`,
+weighted by the collapsed-row count). A route regresses on errors when both
+windows have at least 50 requests, the current window has at least 10 failed
+requests, and the error share rose by at least 5 percentage points and at
+least 2x.
+
+Each observation records `kind` (`latency`, `errors`, `latency_and_errors`)
+plus `error_rate_pct`, `error_rate_base_pct` and `error_count`, all CHECKed.
+The (app, deployment, route) key is unchanged, so acknowledge, dismiss and
+resolve still act on one lifecycle per route; `kind` reflects the latest pass.
+`regression_factor` stays the latency inflation and stores 1.00 for an
+error-only observation whose p95 did not rise, which satisfies its ≥ 1.0
+CHECK. The suspected dependency for an error-only regression prefers a
+dependency whose error rate regressed (ADR-958 §5). The synthesis reports
+`error_regression` (failures outrank slowness when both regressed). The
+regressions API, event stream, `debug.regression.*` webhooks, CLI and
+dashboard carry the kind and rates. The latency drilldown is now read once per
+app pass instead of once per regressed route.
+
+**Request logs in evidence.** Request evidence carries up to 20 log lines the
+request emitted, matched by its trace ID within a bounded window around the
+request (its last lines when it logged more). Messages pass through the
+`airedact` detectors (emails, payment cards, IBANs, issuer-format secrets)
+and are bounded to 512 bytes; structured fields are omitted. §7.1 still holds:
+the synthesis layer receives log levels only, never log text, and reports
+`error_logs` when the request logged error-level lines.
+
 ## Why now
 
 Issue #517 closed the wake timeline. Issue #477 closed consumer_keys. The mirror comparator (ADR-125, PR #1019) shipped the dual-fire primitive but no customer-facing surface. The "did v81 make it slow?" question is the most-asked operator question on Hobby / Pro plans; the answer is unanswerable today. PR-A lands the data plane so PR-B (cron + alerting) and PR-C (LLM synthesis) can compose on top.

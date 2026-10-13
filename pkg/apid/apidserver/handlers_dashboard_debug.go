@@ -994,16 +994,22 @@ func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since stri
 	values := debugTelemetryFilterValues(since, item.Route, "", filters)
 	values.Set("deployment_id", item.DeploymentID)
 	return dashboard.DebugRegressionView{
-		DeploymentID:    item.DeploymentID,
-		Route:           item.Route,
-		State:           item.State,
-		P95MS:           item.P95MS,
-		P95BaseMS:       item.P95BaseMS,
-		AffectedCount:   item.AffectedCount,
-		Factor:          item.Factor,
-		FirstDetectedAt: item.FirstDetectedAt,
-		LastDetectedAt:  item.LastDetectedAt,
-		RequestsURL:     "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
+		DeploymentID:     item.DeploymentID,
+		Route:            item.Route,
+		State:            item.State,
+		P95MS:            item.P95MS,
+		P95BaseMS:        item.P95BaseMS,
+		AffectedCount:    item.AffectedCount,
+		Factor:           item.Factor,
+		FirstDetectedAt:  item.FirstDetectedAt,
+		LastDetectedAt:   item.LastDetectedAt,
+		RequestsURL:      "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
+		Kind:             item.Kind,
+		HasErrors:        debugger.RegressionHasErrors(item.Kind),
+		HasLatency:       debugger.RegressionHasLatency(item.Kind),
+		ErrorRatePct:     strconv.FormatFloat(item.ErrorRatePct, 'f', -1, 64),
+		ErrorRateBasePct: strconv.FormatFloat(item.ErrorRateBasePct, 'f', -1, 64),
+		ErrorCount:       item.ErrorCount,
 	}
 }
 
@@ -1258,7 +1264,10 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 	var apiRegression *api.DebugRegressionItem
 	if matching != nil {
-		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt, State: matching.State}
+		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt, State: matching.State,
+			Kind: matching.Kind, ErrorCount: matching.ErrorCount}
+		apiRegression.ErrorRatePct, _ = strconv.ParseFloat(matching.ErrorRatePct, 64)
+		apiRegression.ErrorRateBasePct, _ = strconv.ParseFloat(matching.ErrorRateBasePct, 64)
 	}
 	explanation := buildDebugEvidenceExplanation(item, apiRegression, spans)
 	if regressionErr != nil {
@@ -1296,6 +1305,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			Approximate:   stage.Approximate,
 		})
 	}
+	logs, logsTruncated := s.debugEvidenceLogs(ctx, acct.ID, app.ID, item)
 	evidence := api.DebugRequestEvidenceResponse{
 		Request:                    item,
 		Regression:                 apiRegression,
@@ -1305,6 +1315,8 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		DependencyLatencyTruncated: dependencyLatencyTruncated,
 		Spans:                      spans,
 		SpansTruncated:             truncated,
+		Logs:                       logs,
+		LogsTruncated:              logsTruncated,
 		Explanation:                explanation,
 	}
 	explanation = debugger.Synthesize(evidence)
@@ -1338,8 +1350,20 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		Findings:                   findingViews,
 		Recommendations:            recommendationViews,
 		GeneratedAt:                now.Format(time.RFC3339),
+		Logs:                       dashboardDebugLogViews(logs),
+		LogsTruncated:              logsTruncated,
 	}
 	return nil
+}
+
+func dashboardDebugLogViews(lines []api.DebugEvidenceLogLine) []dashboard.DebugLogLineView {
+	views := make([]dashboard.DebugLogLineView, 0, len(lines))
+	for _, line := range lines {
+		views = append(views, dashboard.DebugLogLineView{
+			OccurredAt: line.OccurredAt, Source: line.Source, Level: line.Level, Stream: line.Stream, Message: line.Message,
+		})
+	}
+	return views
 }
 
 func buildDebugCriticalPath(spans []api.DebugTelemetrySpan) *api.DebugRequestCriticalPath {

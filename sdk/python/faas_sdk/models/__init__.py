@@ -754,6 +754,7 @@ from .debug_evidence_explanation_generated_by import DebugEvidenceExplanationGen
 from .debug_evidence_explanation_status import DebugEvidenceExplanationStatus
 from .debug_evidence_finding import DebugEvidenceFinding
 from .debug_evidence_finding_confidence import DebugEvidenceFindingConfidence
+from .debug_evidence_log_line import DebugEvidenceLogLine
 from .debug_evidence_recommendation import DebugEvidenceRecommendation
 from .debug_evidence_ref import DebugEvidenceRef
 from .debug_guest_execution_evidence import DebugGuestExecutionEvidence
@@ -764,6 +765,7 @@ from .debug_regression_action_request import DebugRegressionActionRequest
 from .debug_regression_action_request_action import DebugRegressionActionRequestAction
 from .debug_regression_action_response import DebugRegressionActionResponse
 from .debug_regression_item import DebugRegressionItem
+from .debug_regression_item_kind import DebugRegressionItemKind
 from .debug_regression_item_state import DebugRegressionItemState
 from .debug_regressions_response import DebugRegressionsResponse
 from .debug_replay_comparison import DebugReplayComparison
@@ -4825,6 +4827,7 @@ __all__ = (
     "DebugEvidenceExplanationStatus",
     "DebugEvidenceFinding",
     "DebugEvidenceFindingConfidence",
+    "DebugEvidenceLogLine",
     "DebugEvidenceRecommendation",
     "DebugEvidenceRef",
     "DebugGuestExecutionEvidence",
@@ -4835,6 +4838,7 @@ __all__ = (
     "DebugRegressionActionRequestAction",
     "DebugRegressionActionResponse",
     "DebugRegressionItem",
+    "DebugRegressionItemKind",
     "DebugRegressionItemState",
     "DebugRegressionsResponse",
     "DebugReplayComparison",

@@ -3397,6 +3397,24 @@ type Querier interface {
 	// for requests dropped before persistence, so the API must not invent a
 	// capture percentage.
 	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
+	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
+	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
+	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
+	// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
+	// exceeds p95_base_ms * 1.20). The detections persist here.
+	//
+	// A native sqlc RequestTelemetryRegression query was tried during the PR-A
+	// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
+	// reference" parser on (deployment_id) even after explicit ON clauses;
+	// the workaround is a LATERAL join that requires a more invasive query
+	// refactor. Go-side composition of the two PR-A queries above is the
+	// chosen workaround (cheap, no parser gymnastics).
+	// Per-route represented request and server-error (HTTP 5xx) counts for one
+	// deployment and window, weighted by the publisher's collapsed-row count.
+	// The regression detector compares the error share of the current and the
+	// previous deployment (ADR-127 amendment: error-rate regressions). Same
+	// index as RequestTelemetryBaselineP95ByRoute.
+	RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)
@@ -3834,18 +3852,6 @@ type Querier interface {
 	// updated_at, audit_login) and preserves created_at. Returns the
 	// full row as stored.
 	UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg UpsertOIDCTrustPolicyParams) (UpsertOIDCTrustPolicyRow, error)
-	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
-	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
-	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
-	// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
-	// exceeds p95_base_ms * 1.20). The detections persist here.
-	//
-	// A native sqlc RequestTelemetryRegression query was tried during the PR-A
-	// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
-	// reference" parser on (deployment_id) even after explicit ON clauses;
-	// the workaround is a LATERAL join that requires a more invasive query
-	// refactor. Go-side composition of the two PR-A queries above is the
-	// chosen workaround (cheap, no parser gymnastics).
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most
 	// one row per (deployment, route) across all cron passes, not one row

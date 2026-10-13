@@ -166,16 +166,27 @@ func compareDependencyDeployments(scoped []sqlc.ListRequestTelemetryDependencySp
 	return comparison
 }
 
-// suspectedDependency picks the regressed dependency to name in a route
-// regression: a classified dependency (app or platform), never an
-// anonymous application span. A latency regression is preferred, since the
-// route regression itself is a p95 signal; a dependency that started failing
-// more often is the fallback. Items arrive regressions-first by current p95.
+// suspectedDependency picks the regressed dependency to name in a latency
+// route regression; see suspectedDependencyFor.
 func suspectedDependency(comparison *api.DebugDependencyDeploymentComparison) *api.DebugSuspectedDependency {
+	return suspectedDependencyFor(comparison, false)
+}
+
+// suspectedDependencyFor picks the regressed dependency to name in a route
+// regression: a classified dependency (app or platform), never an anonymous
+// application span. A latency route regression prefers a dependency whose
+// p95 regressed and falls back to one that started failing more often; an
+// error-only route regression (preferFailures) checks failures first. Items
+// arrive regressions-first by current p95.
+func suspectedDependencyFor(comparison *api.DebugDependencyDeploymentComparison, preferFailures bool) *api.DebugSuspectedDependency {
 	if comparison == nil {
 		return nil
 	}
-	for _, failures := range []bool{false, true} {
+	order := []bool{false, true}
+	if preferFailures {
+		order = []bool{true, false}
+	}
+	for _, failures := range order {
 		for _, item := range comparison.Dependencies {
 			if item.Type == "" || item.Type == "application" {
 				continue

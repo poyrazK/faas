@@ -29353,6 +29353,12 @@ func (s *PgStore) RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sq
 	return s.appErrorsQueries().RequestTelemetryBaselineP95ByRoute(ctx, s.pool, arg)
 }
 
+// RequestTelemetryErrorsByRoute backs the regression detector's error-rate
+// signal (per-route requests and 5xx counts for one deployment and window).
+func (s *PgStore) RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error) {
+	return s.appErrorsQueries().RequestTelemetryErrorsByRoute(ctx, s.pool, arg)
+}
+
 // RequestTelemetryAnalyticsSummary backs the customer-facing aggregated
 // request analytics summary. The SQL weights collapsed telemetry rows by
 // their count column and is bounded by the caller's retention window.

@@ -381,6 +381,7 @@ export type { DebugDependencyLatencyItem } from './models/DebugDependencyLatency
 export type { DebugDependencyLatencyResponse } from './models/DebugDependencyLatencyResponse.js';
 export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './models/DebugEvidenceFinding.js';
+export type { DebugEvidenceLogLine } from './models/DebugEvidenceLogLine.js';
 export type { DebugEvidenceRecommendation } from './models/DebugEvidenceRecommendation.js';
 export type { DebugEvidenceRef } from './models/DebugEvidenceRef.js';
 export type { DebugGuestExecutionEvidence } from './models/DebugGuestExecutionEvidence.js';
