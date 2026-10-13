@@ -203,9 +203,10 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 	})
 
 	t.Run("quiet release that fails after its smoke aborts on probe evidence", func(t *testing.T) {
-		// A second Hobby account: the drill account is at its 5-app limit.
+		// A second Hobby account (SeedAccount reuses an account per plan and
+		// label): the drill account is at its 5-app limit.
 		ld := *d
-		ld.key = d.h.SeedAccount(context.Background(), api.PlanHobby)
+		ld.key = d.h.SeedAccount(context.Background(), api.PlanHobby, "probe-abort")
 		ld.createApp(t, "sr-late")
 		stable := ld.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: v1})
 		candidate := ld.deployLive(t, "sr-late", api.CreateDeploymentRequest{Image: late, Canary: customCanary("1", "30s")})
