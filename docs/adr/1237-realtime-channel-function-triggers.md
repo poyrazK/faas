@@ -42,16 +42,15 @@ The function receives one JSON record:
  "created_at": "…", "attempt": 1, "fencing_token": "…"}
 ```
 
-Outcomes map onto group settlement:
+Outcomes map onto group settlement through the gateway's stable per-record codes:
 
-| Function result | Group settlement |
+| Dispatch result | Group settlement |
 |---|---|
-| 2xx | `complete` |
-| non-2xx | `retry` with `failure_code` `http_<status>` |
-| invocation timeout | `retry` with `invoke_timeout` |
-| wake or dispatch failure | `release` (the attempt is returned; the platform failed, not the handler) |
+| succeeded | `complete` |
+| `function_failed`, `function_state_<state>`, `invoke_timeout`, `response_malformed` | `retry` with that code as `failure_code` |
+| `invoke_error`, `batch_timeout`, rate-limited, transport or claim failure | `release`: the handler never ran, so the attempt is returned |
 
-Because failure codes are stable, a group retry policy's permanent codes (for example `http_400`) dead-letter on the first failure.
+Because failure codes are stable, a group retry policy's permanent codes (for example `function_failed`) dead-letter on the first failure. A handler returns an empty or JSON body, as for every trigger kind; a non-JSON body counts as `response_malformed`.
 
 ### Concurrency
 
@@ -61,7 +60,7 @@ Per-key ordering needs no new code. The group never leases a message while an ea
 
 ### Retries and dead letters
 
-The group is authoritative. Its attempts, retry policy, circuit breaker and dead-letter queue govern delivery. The trigger ledger still records each delivery for audit and metrics. When the group dead-letters a message, the ledger marks the record `dead_letter` but writes no `trigger_dead_letter` row. Customers therefore see one dead-letter queue, the group's, with its existing inspector, export and replay jobs.
+The group is authoritative. Its attempts, retry policy, circuit breaker and dead-letter queue govern delivery. Each claim is one delivery with its own ledger item (`<sequence>:<fencing token>`), so the trigger's retry, backoff and dead-letter machinery never acts on it. A successful delivery's ledger record ends `succeeded`; any other ends `superseded` when it is handed back to the group, and no `trigger_dead_letter` row is written. Customers therefore see one dead-letter queue, the group's, with its existing inspector, export and replay jobs.
 
 ### Binding exclusivity
 
@@ -82,6 +81,8 @@ apid writes the trigger and the binding (customer intent). schedd claims and set
 - Widen the `triggers.kind` CHECK to admit `realtime`.
 - Add `managed_realtime_consumer_groups.trigger_id uuid UNIQUE REFERENCES triggers(id) ON DELETE SET NULL`.
 - Add `RealtimeTriggerMinLeaseSeconds = 120` to `pkg/api/limits.go`.
+- A realtime trigger is created disabled, bound, then enabled, so no dispatcher polls a group the trigger cannot consume. A failed binding deletes the trigger again.
+- Realtime lanes share the push-queue dispatch pool (`QueuePushDispatchSlotsPerNode`).
 
 ### Observability
 
@@ -108,3 +109,4 @@ Four small PRs, each behind the retained-realtime preview:
 - Customers get serverless consumers for realtime channels, with ordering, retries and replay they already know from consumer groups.
 - Throughput per trigger is bounded by the plan's concurrency and one message per invocation. High-volume channels may need multi-message invocations later.
 - A long-running handler must finish within the 30 s invocation limit, as for every other trigger.
+- Trigger ledger rows have no default retention for any kind; only rows with an explicit `result_retention_until` are reaped. Realtime adds one row per delivery, as other kinds add one per broker record. A default ledger retention is a separate follow-up.
