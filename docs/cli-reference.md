@@ -9734,7 +9734,7 @@ List one bounded page of retained business work
 | `--scope <SCOPE>` | explicit deployment environment | required |
 | `--tenant <UUID>` | optional platform tenant filter |  |
 | `--name <NAME>` | operation name |  |
-| `--state <STATE>` | business state | one of `accepted` · `running` · `succeeded` · `failed` · `cancelled` · `requires_reconciliation` |
+| `--state <STATE>` | business state | one of `accepted` · `running` · `waiting` · `succeeded` · `failed` · `cancelled` · `requires_reconciliation` |
 | `--limit <N>` | page size, 1–100 |  |
 | `--cursor <CURSOR>` | next page cursor |  |
 
@@ -9826,6 +9826,21 @@ Request cancellation at an observed generation
 | `--timeout <D>` | local request/wait deadline; work continues |  |
 | `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
 | `--self` | use authenticated tenant routes; omit --app |  |
+
+### customer-operations approve
+
+Decide a declared approval on a waiting operation (ADR-1156)
+
+`gregale customer-operations approve [--app <SLUG>] [--timeout <D>] --expected-generation <N> --step <STEP> --decision <DECISION> [--comment <TEXT>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | required in account mode; omit with --self |  |
+| `--timeout <D>` | local request/wait deadline; work continues |  |
+| `--expected-generation <N>` | observed generation; stale decisions are rejected | required |
+| `--step <STEP>` | declared approval step | required |
+| `--decision <DECISION>` | approval decision | required; one of `approved` · `rejected` |
+| `--comment <TEXT>` | optional note recorded with the decision |  |
 
 ### customer-operations recover
 
