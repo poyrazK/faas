@@ -711,7 +711,8 @@ Update every API and gateway binary before native rollout; older binaries fail
 closed on the new field. See [ADR-666](adr/666-operation-execution-preview-admission.md).
 
 The policy is capped at 64 KiB, ten cohorts, ten customers per cohort and a
-one-hour window. Each admission reads the file again. Missing, unreadable,
+30-day window (raised from one hour so a pilot can run without hourly file
+rotation). Each admission reads the file again. Missing, unreadable,
 malformed, expired or group/world-writable files close admission, without a
 cached open fallback. Changes use atomic file replacement and require no daemon
 restart. The allowed cohort covers definition registration and source deployment;
