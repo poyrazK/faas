@@ -3269,6 +3269,37 @@
     "kind": "operational"
   },
   {
+    "table": "event_execution_lineage_cases",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "outbox_id",
+      "reason",
+      "recorded_at",
+      "retain_until",
+      "retry_count",
+      "revision",
+      "root_created_at",
+      "root_invocation_id",
+      "status",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_execution_lineage_retries",
+    "columns": [
+      "expected_revision",
+      "outbox_id",
+      "request_id",
+      "result",
+      "retain_until",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_execution_outcomes",
     "columns": [
       "account_id",
