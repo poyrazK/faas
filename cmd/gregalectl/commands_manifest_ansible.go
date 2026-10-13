@@ -198,11 +198,30 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if sharedPrivateHosts {
 			privateHosts = nil
 		}
-		hostScheddTarget, targetErr := manifestScheddTarget(m, host, scheddTarget)
+		// ADR-1152 §2: every control node runs its own scheduler and its own
+		// Postgres member, so render each one's own address rather than the
+		// last control node's. With one control node these equal the values
+		// computed above.
+		hostControlPlaneTarget, hostPostgresListen := scheddTarget, postgresListenAddress
+		if host.Role == roleControlPlane {
+			hostControlPlaneTarget, err = manifest.ServiceTCPURL(host.Role, host.Address)
+			if err != nil {
+				return nil, fmt.Errorf("host %s scheduler address: %w", host.Name, err)
+			}
+			hostPostgresListen = ansibleHost
+		}
+		// Compute gateways reach apid through apid.faas once there is more
+		// than one control node: every control node registers that name, and
+		// the Go dialer tries each address until one answers.
+		apidLoopback := controlPlaneAPIDLoopback
+		if m.Fleet.ControlPlaneCount() > 1 {
+			apidLoopback = "http://" + net.JoinHostPort("apid.faas", "8081")
+		}
+		hostScheddTarget, targetErr := manifestScheddTarget(m, host, hostControlPlaneTarget)
 		if targetErr != nil {
 			return nil, fmt.Errorf("host %s schedd target: %w", host.Name, targetErr)
 		}
-		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
+		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, apidLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, hostPostgresListen, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 		}
@@ -396,6 +415,11 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 	fmt.Fprintf(&b, "# Generated from the split-box manifest for %s; do not hand-edit.\n", host.Name)
 	fmt.Fprintf(&b, "faas_box_role: %s\n", host.Role)
 	fmt.Fprintf(&b, "faas_node_name: %s\n", canonicalNodeName)
+	if host.Zone != "" {
+		// ADR-1152 §2: the Postgres HA role places Patroni and etcd members
+		// by zone.
+		fmt.Fprintf(&b, "faas_host_zone: %q\n", host.Zone)
+	}
 	fmt.Fprintf(&b, "ansible_host: %q\n", ansibleHost)
 	b.WriteString("ansible_python_interpreter: /usr/bin/python3\n")
 	if host.StorageDevice != "" {

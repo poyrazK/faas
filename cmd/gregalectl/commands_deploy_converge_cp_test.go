@@ -460,7 +460,10 @@ func TestConvergeControlPlaneFailurePaths(t *testing.T) {
 	}
 }
 
-func TestSoleControlPlaneHostRequiresExactlyOne(t *testing.T) {
+// adr: 1152
+// TestControlPlaneHostsReturnsEveryControlNode: convergence contacts every
+// control-plane host of the cell; a manifest without one is refused.
+func TestControlPlaneHostsReturnsEveryControlNode(t *testing.T) {
 	tests := []struct {
 		name  string
 		roles []string
@@ -468,7 +471,7 @@ func TestSoleControlPlaneHostRequiresExactlyOne(t *testing.T) {
 	}{
 		{name: "one", roles: []string{roleControlPlane, roleComputeOnly}, want: "cp-0"},
 		{name: "none", roles: []string{roleComputeOnly}},
-		{name: "two", roles: []string{roleControlPlane, roleControlPlane}},
+		{name: "three", roles: []string{roleControlPlane, roleComputeOnly, roleControlPlane, roleControlPlane}, want: "cp-0,cp-2,cp-3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -476,15 +479,15 @@ func TestSoleControlPlaneHostRequiresExactlyOne(t *testing.T) {
 			for i, role := range tt.roles {
 				m.Fleet.Hosts = append(m.Fleet.Hosts, manifest.Host{Name: fmt.Sprintf("cp-%d", i), Role: role})
 			}
-			got, err := soleControlPlaneHost(m)
+			got, err := controlPlaneHosts(m)
 			if tt.want == "" {
 				if err == nil {
-					t.Fatalf("soleControlPlaneHost() = %+v, want an error", got)
+					t.Fatalf("controlPlaneHosts() = %+v, want an error", got)
 				}
 				return
 			}
-			if err != nil || got.Name != tt.want {
-				t.Fatalf("soleControlPlaneHost() = %+v, %v; want %s", got, err, tt.want)
+			if err != nil || controlPlaneHostNames(got) != tt.want {
+				t.Fatalf("controlPlaneHosts() = %+v, %v; want %s", got, err, tt.want)
 			}
 		})
 	}

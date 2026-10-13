@@ -126,11 +126,11 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	if err != nil {
 		return report, err
 	}
-	controlPlane, err := soleControlPlaneHost(m)
+	controlPlanes, err := controlPlaneHosts(m)
 	if err != nil {
 		return report, err
 	}
-	report.Host = controlPlane.Name
+	report.Host = controlPlaneHostNames(controlPlanes)
 
 	tempRoot, err := os.MkdirTemp("", "gregale-cp-converge-")
 	if err != nil {
@@ -138,10 +138,10 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	}
 	defer func() { _ = os.RemoveAll(tempRoot) }()
 
-	// Only the control plane is contacted, so its key is the one that must
-	// be verified; peers are reached through DNS, not SSH.
+	// Only the control-plane hosts are contacted, so their keys are the ones
+	// that must be verified; peers are reached through DNS, not SSH.
 	cpOnly := *m
-	cpOnly.Fleet.Hosts = []manifest.Host{controlPlane}
+	cpOnly.Fleet.Hosts = controlPlanes
 	if err := requireFleetKnownHosts(opts.SSHKnownHostsFile, &cpOnly, "", "", 0); err != nil {
 		return report, err
 	}
@@ -209,17 +209,27 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	return report, nil
 }
 
-func soleControlPlaneHost(m *manifest.Manifest) (manifest.Host, error) {
+// controlPlaneHosts returns every control-plane host. ADR-1152 §2 cells run
+// three (one per zone); the manifest validator enforces the allowed counts.
+func controlPlaneHosts(m *manifest.Manifest) ([]manifest.Host, error) {
 	var found []manifest.Host
 	for _, host := range m.Fleet.Hosts {
 		if host.Role == roleControlPlane {
 			found = append(found, host)
 		}
 	}
-	if len(found) != 1 {
-		return manifest.Host{}, fmt.Errorf("manifest declares %d control-plane hosts; want exactly 1", len(found))
+	if len(found) == 0 {
+		return nil, errors.New("manifest declares no control-plane host")
 	}
-	return found[0], nil
+	return found, nil
+}
+
+func controlPlaneHostNames(hosts []manifest.Host) string {
+	names := make([]string, len(hosts))
+	for i, h := range hosts {
+		names[i] = h.Name
+	}
+	return strings.Join(names, ",")
 }
 
 // controlPlaneBootstrapContractHash covers every input the control-plane

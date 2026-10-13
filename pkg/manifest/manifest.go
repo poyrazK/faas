@@ -384,6 +384,60 @@ func (f Fleet) ComputeNodeCount() int {
 	return count
 }
 
+// ControlPlaneCount returns the number of control-plane hosts in the fleet.
+func (f Fleet) ControlPlaneCount() int {
+	count := 0
+	for _, host := range f.Hosts {
+		if host.Role == "control-plane" {
+			count++
+		}
+	}
+	return count
+}
+
+// zonePattern is a cloud zone or rack label: lower-case letters, digits and
+// hyphens, as GCP and AWS zone names are.
+var zonePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validateZones enforces the ADR-1152 §2 cell shape. One control-plane host
+// keeps the single-node layout. More than one must be an odd number of at
+// least three, because the Postgres and etcd members they carry need a
+// majority to survive the loss of one, and each must name its own zone so
+// one zone outage takes out at most one member.
+func (f Fleet) validateZones() Errors {
+	var errs Errors
+	seen := map[string]string{}
+	for i, h := range f.Hosts {
+		if h.Zone != "" && !zonePattern.MatchString(h.Zone) {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].zone", i),
+				fmt.Sprintf("zone %q must be lower-case letters, digits and hyphens", h.Zone)})
+		}
+		if h.Role != "control-plane" {
+			continue
+		}
+		if prev, dup := seen[h.Zone]; dup && h.Zone != "" {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].zone", i),
+				fmt.Sprintf("control-plane hosts %s and %s share zone %q; place one control-plane host per zone", prev, h.Name, h.Zone)})
+		}
+		seen[h.Zone] = h.Name
+	}
+	n := f.ControlPlaneCount()
+	if n <= 1 {
+		return errs
+	}
+	if n < 3 || n%2 == 0 {
+		errs = append(errs, Error{"fleet.hosts",
+			fmt.Sprintf("declares %d control-plane hosts; use 1, or an odd number of at least 3 so Postgres and etcd keep a majority after losing one", n)})
+	}
+	for i, h := range f.Hosts {
+		if h.Role == "control-plane" && h.Zone == "" {
+			errs = append(errs, Error{fmt.Sprintf("fleet.hosts[%d].zone", i),
+				fmt.Sprintf("control-plane host %s needs a zone when the fleet has more than one control-plane host", h.Name)})
+		}
+	}
+	return errs
+}
+
 // Host is one control-plane node in the fleet. `name` is the canonical
 // identity (matches `compute_nodes.name` in the database) and `role`
 // is one of `pkg/role.AllRoles`. `Overlay` is a pointer because the
@@ -400,6 +454,12 @@ type Host struct {
 	// is empty, the deployment requires an already-mounted fast root instead
 	// of guessing which disk is safe to format.
 	StorageDevice string `yaml:"storage_device,omitempty"`
+	// Zone is the failure domain the host runs in (a cloud availability
+	// zone, or a rack). ADR-1152 §2: a cell with more than one control-plane
+	// host places them one per zone, so its Postgres and etcd members and its
+	// edges survive the loss of any one zone. Optional for a single control
+	// plane and for compute hosts.
+	Zone string `yaml:"zone,omitempty"`
 	// Tags are free-form, opaque labels the doctor uses to filter
 	// checks (e.g. `--role=compute-only` skips cert checks for the
 	// egress server leaf, which lives on the control-plane box).
@@ -1176,6 +1236,7 @@ func (f *Fleet) validate() Errors {
 				fmt.Sprintf("storage_device %q must be an absolute device path", h.StorageDevice)})
 		}
 	}
+	errs = append(errs, f.validateZones()...)
 	computeNodeCount := f.ComputeNodeCount()
 	if computeNodeCount > MaxComputeNodes {
 		errs = append(errs, Error{"fleet.hosts",
