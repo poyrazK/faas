@@ -423,12 +423,15 @@ var dtoExclude = map[string]bool{
 	"PlatformTenantActivityOptions":                   true, // client-only query parameters; the response DTOs are in the public spec
 	"OperationMilestoneListOptions":                   true, // client-only milestone query selectors
 	"OperationListOptions":                            true, // client-only history query parameters; OperationListResponse is the wire DTO
-	"AutomationHealthOptions":                         true, // client-only query parameters for the documented automation health response
-	"WorkflowRunListOptions":                          true, // client-only history query parameters for the documented run list response
-	"ListWorkflowScheduleOccurrencesOptions":          true, // client-only history query parameters; the occurrence response DTOs are in the public spec
-	"InboundWebhookEndpointRow":                       true,
-	"AppLogDrainRow":                                  true,
-	"QueueBindingRow":                                 true,
+	// ADR-1155: the operation input delivered to the app, not an apid request or response.
+	"OperationWebhookInput":                  true,
+	"OperationWebhookEvent":                  true,
+	"AutomationHealthOptions":                true, // client-only query parameters for the documented automation health response
+	"WorkflowRunListOptions":                 true, // client-only history query parameters for the documented run list response
+	"ListWorkflowScheduleOccurrencesOptions": true, // client-only history query parameters; the occurrence response DTOs are in the public spec
+	"InboundWebhookEndpointRow":              true,
+	"AppLogDrainRow":                         true,
+	"QueueBindingRow":                        true,
 	// ADR-091 D20.5 amendment / issue #881 — per-route throttle
 	// validator context. The EdgeRuleThrottleAction.Validate() takes
 	// a per-plan ceiling argument bag (RateLimitRPS / RateLimitBurst)
