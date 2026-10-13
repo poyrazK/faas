@@ -100,9 +100,10 @@ func validateRoute(route Requirement) error {
 	}
 	if t := checks.Throttle; t != nil {
 		switch t.KeyBy {
-		case api.ThrottleKeyByNone, api.ThrottleKeyByAPIKey, api.ThrottleKeyByConsumerID, api.ThrottleKeyByJWTSubject:
+		case api.ThrottleKeyByNone, api.ThrottleKeyByAPIKey, api.ThrottleKeyByConsumerID, api.ThrottleKeyByJWTSubject,
+			api.ThrottleKeyByCountry, api.ThrottleKeyByIP:
 		default:
-			return errors.New("throttle.key_by must be none, api_key, consumer_id, or jwt_subject")
+			return errors.New("throttle.key_by must be none, api_key, consumer_id, jwt_subject, country, or ip")
 		}
 		if t.MaxRPS != nil && (*t.MaxRPS <= 0 || math.IsNaN(*t.MaxRPS) || math.IsInf(*t.MaxRPS, 0)) {
 			return errors.New("throttle.max_rps must be a finite positive value when set")
@@ -115,7 +116,7 @@ func validateRoute(route Requirement) error {
 		}
 	}
 	if b := checks.Budget; b != nil {
-		if (b.MaxMS == nil && !b.Explicit) || (b.MaxMS != nil && (*b.MaxMS <= 0 || *b.MaxMS > api.RequestBudgetMax.Milliseconds())) {
+		if (b.MaxMS == nil && !b.Explicit) || (b.MaxMS != nil && (*b.MaxMS <= 0 || *b.MaxMS > api.RequestBudgetPlanMax.Milliseconds())) {
 			return errors.New("budget needs explicit: true or a positive max_ms within the platform request-budget ceiling")
 		}
 	}

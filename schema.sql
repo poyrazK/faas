@@ -600,11 +600,14 @@ CREATE FUNCTION public.apps_streaming_plan_app_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    IF NEW.streaming_enabled THEN
+    IF NEW.streaming_enabled
+       AND (TG_OP = 'INSERT'
+            OR NOT OLD.streaming_enabled
+            OR OLD.account_id IS DISTINCT FROM NEW.account_id) THEN
         PERFORM 1
           FROM accounts
          WHERE id = NEW.account_id
-         FOR UPDATE;
+         FOR NO KEY UPDATE;
     END IF;
     RETURN NEW;
 END;
@@ -987,6 +990,39 @@ END $$;
 
 
 --
+-- Name: capture_event_execution_outcome(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_execution_outcome() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE finished timestamptz := clock_timestamp(); result text;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.state='dispatching' AND OLD.attempts>0 THEN
+   PERFORM record_event_execution_outcome(OLD.id,OLD.created_at,OLD.replay_root_invocation_id,OLD.replay_root_created_at,
+    OLD.account_id,OLD.app_id,OLD.replay_generation,OLD.attempts,'attempt',finished,'unknown');
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF OLD.state='dispatching' AND OLD.attempts>0 AND (NEW.state<>'dispatching' OR NEW.attempts<>OLD.attempts OR NEW.replay_generation<>OLD.replay_generation) THEN
+  result := CASE WHEN NEW.replay_generation<>OLD.replay_generation THEN 'unknown'
+   WHEN NEW.state='completed' THEN 'succeeded' WHEN NEW.outcome='uncertain' THEN 'unknown'
+   WHEN NEW.state='pending' AND NEW.last_error='dispatch lease expired; requeued' THEN 'unknown'
+   WHEN NEW.state='pending' THEN 'retry' WHEN NEW.state='failed' THEN 'failed'
+   WHEN NEW.state='dead_letter' THEN 'dead_letter' WHEN NEW.state='cancelled' THEN 'cancelled' ELSE 'unknown' END;
+  PERFORM record_event_execution_outcome(OLD.id,OLD.created_at,OLD.replay_root_invocation_id,OLD.replay_root_created_at,
+   OLD.account_id,OLD.app_id,OLD.replay_generation,OLD.attempts,'attempt',finished,result);
+ END IF;
+ IF NEW.state='completed' AND NEW.completed_at IS NOT NULL THEN
+  PERFORM record_event_execution_outcome(NEW.id,NEW.created_at,NEW.replay_root_invocation_id,NEW.replay_root_created_at,
+   NEW.account_id,NEW.app_id,NEW.replay_generation,0,'completion',NEW.completed_at,'succeeded');
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: capture_event_recipient_ordering_snapshot(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1061,6 +1097,39 @@ BEGIN
  FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
  WHERE item.state='queued' AND job.selection->>'mode'='execution' AND job.account_id=p_account AND job.app_id=p_app
   AND item.replay_invocation_id=p_invocation AND item.replay_generation=p_generation AND item.replay_created_at=p_created
+ ORDER BY item.job_id,item.position
+ FOR KEY SHARE OF item
+ ON CONFLICT (job_id,position) DO NOTHING;
+END $$;
+
+
+--
+-- Name: capture_event_recovery_workflow_result(uuid, uuid, text, integer, text, timestamp with time zone, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_event_recovery_workflow_result(p_run uuid, p_app uuid, p_name text, p_count integer, p_status text, p_updated timestamp with time zone, p_finished timestamp with time zone, p_cancelled boolean) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE observed timestamptz := clock_timestamp();
+BEGIN
+ IF p_updated>observed THEN RETURN; END IF;
+ INSERT INTO event_recovery_workflow_results(job_id,position,run_id,resume_number,admitted_at,state,completed_at,recorded_at)
+ SELECT item.job_id,item.position,p_run,resume.resume_number,resume.created_at,
+ CASE WHEN p_count>resume.resume_number THEN 'superseded'
+ WHEN p_status='succeeded' THEN 'succeeded'
+ WHEN p_cancelled THEN 'cancelled' ELSE 'failed' END,
+ CASE WHEN p_count>resume.resume_number THEN NULL ELSE p_finished END,observed
+ FROM event_recovery_items item JOIN event_recovery_jobs job ON job.id=item.job_id
+ JOIN apps app ON app.id=job.app_id AND app.account_id=job.account_id
+ JOIN workflow_run_resumes resume ON resume.run_id=p_run AND resume.account_id=job.account_id
+  AND resume.resume_number=(item.expected_progress->>'expected_resume_count')::integer+1
+  AND resume.created_at>=job.created_at AND resume.created_at<=observed
+ WHERE item.state='queued' AND job.selection->>'mode'='workflow' AND job.app_id=p_app
+  AND job.selection->'workflow_runs'->>'name'=p_name
+  AND (item.expected_progress->>'run_id')::uuid=p_run
+  AND p_count>=resume.resume_number AND p_updated>=resume.created_at
+  AND (p_count>resume.resume_number OR p_status IN ('succeeded','failed','dead'))
+  AND (p_count>resume.resume_number OR p_finished IS NULL OR p_finished BETWEEN resume.created_at AND observed)
  ORDER BY item.job_id,item.position
  FOR KEY SHARE OF item
  ON CONFLICT (job_id,position) DO NOTHING;
@@ -1214,6 +1283,30 @@ BEGIN
   PERFORM bump_binding_promotion_revision(target);
  END LOOP;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
+
+
+--
+-- Name: capture_workflow_recovery_failure(uuid, uuid, text, text, integer, timestamp with time zone, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.capture_workflow_recovery_failure(p_app uuid, p_run uuid, p_workflow text, p_status text, p_count integer, p_completed timestamp with time zone, p_cancelled boolean) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE observed timestamptz:=clock_timestamp(); retained integer; age_seconds bigint; inserted uuid;
+BEGIN
+ IF p_status NOT IN ('failed','dead') OR p_cancelled OR p_completed>observed THEN RETURN; END IF;
+ IF NOT EXISTS(SELECT 1 FROM apps WHERE id=p_app AND status<>'deleted') THEN RETURN; END IF;
+ -- Serialize retention and first-observation capture for this app only.
+ PERFORM pg_advisory_xact_lock(hashtextextended('workflow-failure-evidence:'||p_app::text,0));
+ SELECT max_entries,retention_seconds INTO retained,age_seconds FROM workflow_recovery_failure_capture WHERE singleton;
+ INSERT INTO workflow_recovery_failure_evidence(id,app_id,run_id,workflow,resume_count,failure_status,observed_at,completed_at)
+ VALUES(gen_random_uuid(),p_app,p_run,p_workflow,p_count,p_status,observed,p_completed)
+ ON CONFLICT(app_id,run_id,resume_count) DO NOTHING RETURNING id INTO inserted;
+ IF inserted IS NULL THEN RETURN; END IF;
+ DELETE FROM workflow_recovery_failure_evidence WHERE app_id=p_app AND observed_at<=observed-make_interval(secs=>age_seconds::double precision);
+ DELETE FROM workflow_recovery_failure_evidence WHERE app_id=p_app AND sequence < (
+ SELECT sequence FROM workflow_recovery_failure_evidence WHERE app_id=p_app ORDER BY sequence DESC OFFSET retained-1 LIMIT 1);
 END $$;
 
 
@@ -6075,6 +6168,28 @@ END $$;
 
 
 --
+-- Name: gateway_try_acquire_concurrency_queue_lease(text, uuid, integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.gateway_try_acquire_concurrency_queue_lease(p_app_id text, p_lease_id uuid, p_limit integer, p_ttl_ms bigint, OUT admitted boolean, OUT depth integer) RETURNS record
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('gateway-concurrency-queue:' || p_app_id, 0));
+    DELETE FROM gateway_concurrency_queue_leases WHERE app_id = p_app_id::uuid AND expires_at <= now();
+    SELECT count(*)::integer INTO depth FROM gateway_concurrency_queue_leases WHERE app_id = p_app_id::uuid;
+    IF depth >= p_limit THEN
+        admitted := false;
+        RETURN;
+    END IF;
+    INSERT INTO gateway_concurrency_queue_leases (lease_id, app_id, expires_at)
+    VALUES (p_lease_id, p_app_id::uuid, now() + p_ttl_ms * interval '1 millisecond');
+    admitted := true;
+    depth := depth + 1;
+END $$;
+
+
+--
 -- Name: github_webhook_secrets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8476,6 +8591,24 @@ $$;
 
 
 --
+-- Name: guard_managed_postgres_cutover_drain(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_cutover_drain() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF ROW(NEW.id,NEW.cutover_id,NEW.app_id,NEW.deployment_id,NEW.instance_id,NEW.node_id,NEW.wake_id,NEW.owner_node_id,NEW.owner_revision,NEW.fenced_at,NEW.created_at)
+  IS DISTINCT FROM ROW(OLD.id,OLD.cutover_id,OLD.app_id,OLD.deployment_id,OLD.instance_id,OLD.node_id,OLD.wake_id,OLD.owner_node_id,OLD.owner_revision,OLD.fenced_at,OLD.created_at)
+  OR (OLD.state='retired' AND NEW IS DISTINCT FROM OLD) THEN
+  RAISE EXCEPTION 'drain identity and receipts are immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_managed_postgres_database_bindings(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9816,6 +9949,8 @@ CREATE FUNCTION public.invalidate_lifecycle_successor_routes() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE oldrow jsonb; newrow jsonb; affected uuid; owner uuid; hostname text;
+ watched text[] := ARRAY['status','slug','manifest','visibility','org_id','project_id','account_id',
+                         'only_declared_routes','declared_routes','consumer_auth_mode','maintenance_mode'];
 BEGIN
  IF TG_OP<>'INSERT' THEN oldrow:=to_jsonb(OLD); END IF;
  IF TG_OP<>'DELETE' THEN newrow:=to_jsonb(NEW); END IF;
@@ -9823,9 +9958,17 @@ BEGIN
   UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE split_part(m->>'successor_url','/',3) IN (oldrow->>'hostname',newrow->>'hostname'));
   RETURN NULL;
  END IF;
+ IF TG_TABLE_NAME='apps' AND TG_OP='UPDATE' AND
+    (SELECT jsonb_object_agg(k, CASE WHEN k='status' AND v #>> '{}' IN ('active','evicted_cold') THEN '"scale_to_zero"'::jsonb ELSE v END)
+       FROM jsonb_each(oldrow) e(k,v) WHERE k=ANY(watched))
+    IS NOT DISTINCT FROM
+    (SELECT jsonb_object_agg(k, CASE WHEN k='status' AND v #>> '{}' IN ('active','evicted_cold') THEN '"scale_to_zero"'::jsonb ELSE v END)
+       FROM jsonb_each(newrow) e(k,v) WHERE k=ANY(watched)) THEN
+  RETURN NULL;
+ END IF;
  FOR affected IN SELECT DISTINCT id FROM (VALUES(coalesce(oldrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN oldrow->>'id' END)::uuid),(coalesce(newrow->>'app_id',CASE WHEN TG_TABLE_NAME='apps' THEN newrow->>'id' END)::uuid)) ids(id) WHERE id IS NOT NULL LOOP
   SELECT account_id INTO owner FROM apps WHERE id=affected;
-  PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+  PERFORM 1 FROM accounts WHERE id=owner FOR NO KEY UPDATE;
   UPDATE route_lifecycle_approvals r SET invalidated_at=clock_timestamp() WHERE r.invalidated_at IS NULL AND
    ((TG_TABLE_NAME<>'deployments' AND r.app_id=affected) OR EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE m->>'successor_app_id'=affected::text AND (TG_TABLE_NAME<>'deployments' OR affected<>r.app_id)));
  END LOOP;
@@ -10114,6 +10257,44 @@ END $$;
 
 
 --
+-- Name: lose_event_execution_coverage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.lose_event_execution_coverage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='event_fanout_outbox' THEN
+  UPDATE event_execution_coverage c SET lost_at=clock_timestamp(),loss_reason='receipt_deleted'
+  WHERE c.lost_at IS NULL AND (
+   EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(OLD.recipient_snapshot,'[]'::jsonb)) r WHERE r->>'id'=c.subscription_id::text)
+   OR EXISTS (SELECT 1 FROM event_fanout_recipients r WHERE r.outbox_id=OLD.id AND r.subscription_id=c.subscription_id::text));
+ ELSIF TG_TABLE_NAME='event_fanout_recipients' THEN
+  UPDATE event_execution_coverage SET lost_at=clock_timestamp(),loss_reason='recipient_deleted'
+  WHERE lost_at IS NULL AND subscription_id::text=OLD.subscription_id;
+ ELSE
+  IF TG_OP='UPDATE' THEN
+   IF OLD.replay_generation IS NOT DISTINCT FROM NEW.replay_generation
+   AND OLD.created_at IS NOT DISTINCT FROM NEW.created_at AND OLD.app_id IS NOT DISTINCT FROM NEW.app_id
+   AND OLD.account_id IS NOT DISTINCT FROM NEW.account_id
+   AND OLD.replay_root_invocation_id IS NOT DISTINCT FROM NEW.replay_root_invocation_id
+   AND OLD.replayed_from_invocation_id IS NOT DISTINCT FROM NEW.replayed_from_invocation_id
+   AND (OLD.state<>'completed' OR (NEW.state='completed' AND OLD.completed_at IS NOT DISTINCT FROM NEW.completed_at)) THEN
+    RETURN NEW;
+   END IF;
+  END IF;
+  -- Lost invocation associations cannot reliably be mapped to one subscription.
+  UPDATE event_execution_coverage SET lost_at=clock_timestamp(),
+   loss_reason=CASE WHEN TG_OP='UPDATE' THEN 'execution_replaced'
+    WHEN TG_TABLE_NAME='invocations' THEN 'invocation_deleted' ELSE 'attempt_deleted' END
+  WHERE lost_at IS NULL AND app_id=OLD.app_id;
+ END IF;
+ IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
+ RETURN OLD;
+END $$;
+
+
+--
 -- Name: managed_realtime_channel_route_targets_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10187,6 +10368,20 @@ CREATE FUNCTION public.managed_secret_target_lock_key(target_app_id uuid, target
         0
     );
 $$;
+
+
+--
+-- Name: mark_event_execution_outcome_loss(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mark_event_execution_outcome_loss() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ UPDATE event_execution_coverage SET ledger_lost_through_at=greatest(ledger_lost_through_at,OLD.finished_at)
+ WHERE subscription_id=OLD.subscription_id;
+ RETURN OLD;
+END $$;
 
 
 --
@@ -12021,6 +12216,7 @@ BEGIN
     IF OLD.credential_source = 'customer_sealed'
        AND (NEW.credential_source <> 'customer_sealed' OR NEW.provider_auth_mode <> 'managed') THEN
         DELETE FROM outbound_integration_credentials WHERE integration_id = NEW.id;
+        DELETE FROM outbound_integration_credential_keys WHERE integration_id = NEW.id;
     END IF;
     RETURN NEW;
 END;
@@ -12112,6 +12308,36 @@ $$;
 
 
 --
+-- Name: record_event_execution_outcome(uuid, timestamp with time zone, uuid, timestamp with time zone, uuid, uuid, bigint, integer, text, timestamp with time zone, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_execution_outcome(p_id uuid, p_created timestamp with time zone, p_root uuid, p_root_created timestamp with time zone, p_account uuid, p_app uuid, p_generation bigint, p_attempt integer, p_kind text, p_finished timestamp with time zone, p_outcome text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE root_record event_execution_roots%ROWTYPE;
+BEGIN
+ SELECT * INTO root_record FROM event_execution_roots WHERE root_invocation_id=coalesce(p_root,p_id)
+ AND root_created_at=coalesce(p_root_created,p_created) AND account_id=p_account AND app_id=p_app;
+ IF NOT FOUND THEN RETURN; END IF;
+ IF EXISTS (SELECT 1 FROM event_execution_outcomes WHERE invocation_id=p_id AND invocation_created_at=p_created AND replay_generation=p_generation AND attempt=p_attempt AND kind=p_kind) THEN RETURN; END IF;
+ IF NOT isfinite(p_finished) OR p_finished<greatest(root_record.root_created_at,root_record.accepted_at) THEN
+  UPDATE event_execution_coverage SET ledger_lost_through_at=greatest(ledger_lost_through_at,clock_timestamp(),root_record.root_created_at,root_record.accepted_at) WHERE subscription_id=root_record.subscription_id;
+  RETURN;
+ END IF;
+ INSERT INTO event_execution_outcomes(root_invocation_id,root_created_at,invocation_id,invocation_created_at,replay_generation,attempt,kind,
+ subscription_id,account_id,app_id,finished_at,outcome,latency_seconds,retain_until)
+ SELECT r.root_invocation_id,r.root_created_at,p_id,p_created,p_generation,p_attempt,p_kind,
+ r.subscription_id,r.account_id,r.app_id,p_finished,p_outcome,
+ CASE WHEN p_kind='completion' THEN extract(epoch FROM p_finished-r.accepted_at)::double precision ELSE 0 END,
+ p_finished+make_interval(secs=>r.retention_seconds)
+ FROM event_execution_roots r JOIN apps a ON a.id=r.app_id
+ WHERE r.root_invocation_id=coalesce(p_root,p_id) AND r.root_created_at=coalesce(p_root_created,p_created)
+ AND r.account_id=p_account AND r.app_id=p_app AND p_finished>=r.root_created_at
+ ON CONFLICT DO NOTHING;
+END $$;
+
+
+--
 -- Name: record_event_recovery_admitted_result(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12152,6 +12378,27 @@ BEGIN
  PERFORM capture_event_recovery_invocation_result(NEW.id,NEW.account_id,NEW.app_id,NEW.created_at,NEW.replay_generation,
   NEW.state,NEW.outcome,NEW.attempts,NEW.completed_at);
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: record_event_recovery_workflow_result(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_event_recovery_workflow_result() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP IN ('DELETE','UPDATE') THEN
+  PERFORM capture_event_recovery_workflow_result(OLD.id,OLD.app_id,OLD.workflow_name,OLD.resume_count,
+   OLD.status,OLD.updated_at,OLD.finished_at,OLD.cancelled_at IS NOT NULL OR coalesce(OLD.last_error='cancelled by operator',false));
+ END IF;
+ IF TG_OP<>'DELETE' THEN
+  PERFORM capture_event_recovery_workflow_result(NEW.id,NEW.app_id,NEW.workflow_name,NEW.resume_count,
+   NEW.status,NEW.updated_at,NEW.finished_at,NEW.cancelled_at IS NOT NULL OR coalesce(NEW.last_error='cancelled by operator',false));
+  RETURN NEW;
+ END IF;
+ RETURN OLD;
 END $$;
 
 
@@ -12345,6 +12592,23 @@ END $$;
 
 
 --
+-- Name: record_workflow_recovery_failure(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_workflow_recovery_failure() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF OLD.status IN ('failed','dead','succeeded') AND OLD.resume_count=NEW.resume_count THEN RETURN NEW; END IF;
+ END IF;
+ PERFORM capture_workflow_recovery_failure(NEW.app_id,NEW.id,NEW.workflow_name,NEW.status,NEW.resume_count,NEW.finished_at,
+ NEW.cancelled_at IS NOT NULL OR coalesce(NEW.last_error='cancelled by operator',false));
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: refresh_event_routing_backlog(bigint, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12380,6 +12644,16 @@ DELETE FROM event_routing_backlog b WHERE b.outbox_id=p_outbox_id
     AND (p_subscription_id IS NULL OR b.subscription_id=p_subscription_id)
     AND NOT EXISTS (SELECT 1 FROM candidates c WHERE c.subscription_id=b.subscription_id);
 $$;
+
+
+--
+-- Name: reject_event_execution_outcome_update(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reject_event_execution_outcome_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN RAISE EXCEPTION 'event execution outcomes are immutable'; END $$;
 
 
 --
@@ -13507,6 +13781,21 @@ END $$;
 
 
 --
+-- Name: start_event_execution_coverage(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.start_event_execution_coverage() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE started timestamptz := clock_timestamp();
+BEGIN
+ INSERT INTO event_execution_coverage(subscription_id,account_id,app_id,started_at,baseline_known,ledger_started_at,ledger_baseline_known)
+ VALUES(NEW.id,NEW.account_id,NEW.app_id,started,true,started,true) ON CONFLICT DO NOTHING;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: sync_app_task_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14325,7 +14614,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -14378,12 +14667,14 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
+    CONSTRAINT alert_rules_edge_security_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text]))),
+    CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text]))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -15213,6 +15504,20 @@ CREATE TABLE public.app_log_drains (
 
 
 --
+-- Name: app_mcp_task_compatibility; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_mcp_task_compatibility (
+    app_id uuid NOT NULL,
+    handlers jsonb NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_mcp_task_compatibility_handlers_shape CHECK (((jsonb_typeof(handlers) = 'array'::text) AND (jsonb_array_length(handlers) <= 256))),
+    CONSTRAINT app_mcp_task_compatibility_handlers_size CHECK ((octet_length((handlers)::text) <= 131072))
+);
+
+
+--
 -- Name: app_openapi_docs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15309,6 +15614,20 @@ CREATE TABLE public.app_registry_credentials (
     CONSTRAINT app_registry_credentials_password_chk CHECK ((length(password_encrypted) > 0)),
     CONSTRAINT app_registry_credentials_registry_chk CHECK (((length(registry) > 0) AND (length(registry) <= 253))),
     CONSTRAINT app_registry_credentials_username_chk CHECK (((length(username) > 0) AND (length(username) <= 256)))
+);
+
+
+--
+-- Name: app_route_priorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_route_priorities (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    routes jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_route_priorities_routes_check CHECK (((jsonb_typeof(routes) = 'array'::text) AND (jsonb_array_length(routes) <= 20))),
+    CONSTRAINT app_route_priorities_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -15513,6 +15832,19 @@ CREATE TABLE public.app_service_address_cursors (
     account_id uuid NOT NULL,
     last_index integer NOT NULL,
     CONSTRAINT app_service_address_cursors_last_index_chk CHECK (((last_index >= 0) AND (last_index <= 65534)))
+);
+
+
+--
+-- Name: app_service_wake_ahead; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_service_wake_ahead (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT app_service_wake_ahead_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -15759,7 +16091,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -15934,7 +16266,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_request_rate_limit_burst_positive CHECK (((request_rate_limit_burst IS NULL) OR (request_rate_limit_burst > 0))),
     CONSTRAINT apps_request_rate_limit_rps_positive CHECK (((request_rate_limit_rps IS NULL) OR (request_rate_limit_rps > 0))),
     CONSTRAINT apps_retry_policy_object_chk CHECK ((jsonb_typeof(retry_policy) = 'object'::text)),
-    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text])))),
+    CONSTRAINT apps_runtime_check CHECK (((runtime IS NULL) OR (runtime = ANY (ARRAY['node22'::text, 'python312'::text, 'go124'::text, 'go124-alpine'::text, 'node24'::text, 'python313'::text, 'binary'::text])))),
     CONSTRAINT apps_scaling_policy_revision_positive CHECK ((scaling_policy_revision > 0)),
     CONSTRAINT apps_security_policy_chk CHECK ((security_policy = ANY (ARRAY['off'::text, 'warn'::text, 'enforce'::text]))),
     CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
@@ -16322,8 +16654,14 @@ CREATE TABLE public.commit_receipts (
     accepted_at timestamp with time zone DEFAULT now() NOT NULL,
     operation_id uuid,
     routing jsonb,
-    CONSTRAINT commit_receipt_one_operation CHECK (((((invocation_id IS NOT NULL))::integer + ((operation_id IS NOT NULL))::integer) = 1)),
+    publication_acceptance_id bigint,
+    publication_source text,
+    publication_event_id text,
+    schema_version text DEFAULT ''::text NOT NULL,
+    CONSTRAINT commit_receipt_one_operation CHECK ((((((invocation_id IS NOT NULL))::integer + ((operation_id IS NOT NULL))::integer) + ((publication_acceptance_id IS NOT NULL))::integer) = 1)),
+    CONSTRAINT commit_receipt_publication_identity CHECK ((((publication_acceptance_id IS NULL) AND (publication_source IS NULL) AND (publication_event_id IS NULL)) OR ((publication_acceptance_id IS NOT NULL) AND (publication_source IS NOT NULL) AND (publication_event_id IS NOT NULL) AND (routing IS NULL) AND (length(publication_source) > 0) AND (length(publication_event_id) > 0)))),
     CONSTRAINT commit_receipts_operation_state_check CHECK ((operation_state = ANY (ARRAY['accepted'::text, 'running'::text, 'completed'::text, 'cancelled'::text, 'failed'::text, 'unknown'::text]))),
+    CONSTRAINT commit_receipts_publication_acceptance_id_check CHECK ((publication_acceptance_id > 0)),
     CONSTRAINT commit_receipts_routing_check CHECK (((routing IS NULL) OR COALESCE(((jsonb_typeof(routing) = 'object'::text) AND ((routing -> 'version'::text) = '2'::jsonb) AND (jsonb_typeof((routing -> 'key'::text)) = ANY (ARRAY['string'::text, 'number'::text, 'boolean'::text]))), false)))
 );
 
@@ -16364,8 +16702,10 @@ CREATE TABLE public.commit_sources (
     operation_policy text,
     contract_version integer DEFAULT 1 NOT NULL,
     allow_tenant_selection boolean DEFAULT false NOT NULL,
+    destination text DEFAULT 'operation'::text NOT NULL,
     CONSTRAINT commit_source_operation_policy_name CHECK (((operation_policy IS NULL) OR (operation_policy ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
-    CONSTRAINT commit_sources_contract_version_check CHECK (((contract_version = ANY (ARRAY[1, 2])) AND ((NOT allow_tenant_selection) OR (contract_version = 2)))),
+    CONSTRAINT commit_sources_contract_version_check CHECK ((((destination = 'operation'::text) AND (contract_version = ANY (ARRAY[1, 2])) AND ((NOT allow_tenant_selection) OR (contract_version = 2))) OR ((destination = 'event'::text) AND (contract_version = 3) AND (NOT allow_tenant_selection) AND (operation_policy IS NULL)))),
+    CONSTRAINT commit_sources_destination_check CHECK ((destination = ANY (ARRAY['operation'::text, 'event'::text]))),
     CONSTRAINT commit_sources_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
     CONSTRAINT commit_sources_relay_status_check CHECK ((relay_status = ANY (ARRAY['unconfigured'::text, 'healthy'::text, 'credential_unavailable'::text, 'database_unavailable'::text, 'schema_unqualified'::text, 'source_binding_unqualified'::text, 'replay_pending'::text, 'retention_unqualified'::text, 'cleanup_pending'::text, 'blocked_scan_pending'::text, 'blocked_status_pending'::text, 'handoff_pending'::text, 'status_unavailable'::text, 'blocked_events'::text])))
 );
@@ -17227,6 +17567,10 @@ CREATE TABLE public.customer_operation_workflow_state_reports (
     outcome_only boolean DEFAULT false NOT NULL,
     depends_on jsonb DEFAULT '[]'::jsonb NOT NULL,
     dependencies_only boolean DEFAULT false NOT NULL,
+    selected_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    change_reason jsonb DEFAULT 'null'::jsonb NOT NULL,
+    CONSTRAINT customer_operation_workflow_change_reason_check CHECK ((jsonb_typeof(change_reason) = ANY (ARRAY['object'::text, 'null'::text]))),
+    CONSTRAINT customer_operation_workflow_selected_paths_check CHECK (((jsonb_typeof(selected_paths) = 'array'::text) AND (jsonb_array_length(selected_paths) <= 8))),
     CONSTRAINT customer_operation_workflow_state_rep_blocker_resolutions_check CHECK (((jsonb_typeof(blocker_resolutions) = 'array'::text) AND (jsonb_array_length(blocker_resolutions) <= 16))),
     CONSTRAINT customer_operation_workflow_state_rep_evidence_milestones_check CHECK (((jsonb_typeof(evidence_milestones) = 'array'::text) AND (jsonb_array_length(evidence_milestones) <= 16))),
     CONSTRAINT customer_operation_workflow_state_report_contract_version_check CHECK (((contract_version >= 1) AND (contract_version <= 1000000))),
@@ -17267,6 +17611,59 @@ CREATE TABLE public.customer_operation_workflow_states (
     CONSTRAINT customer_operation_workflow_states_subject_id_check CHECK ((((octet_length(subject_id) >= 1) AND (octet_length(subject_id) <= 256)) AND (subject_id !~ '[\x00-\x1f\x7f]'::text))),
     CONSTRAINT customer_operation_workflow_states_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT customer_operation_workflow_states_workflow_check CHECK ((workflow ~ '^[a-z][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: customer_workflow_playbook_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_playbook_progress (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    case_key text NOT NULL,
+    revision bigint NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT customer_workflow_playbook_progress_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_playbook_progress_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: customer_workflow_readiness_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_readiness_notifications (
+    subscription_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT customer_workflow_readiness_notifications_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_readiness_notifications_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_workflow_readiness_subscriptions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid,
+    operator boolean NOT NULL,
+    scope text NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    next_evaluation_at timestamp with time zone NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT customer_workflow_readiness_subscriptions_check CHECK ((operator OR (tenant_id IS NOT NULL))),
+    CONSTRAINT customer_workflow_readiness_subscriptions_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT customer_workflow_readiness_subscriptions_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT customer_workflow_readiness_subscriptions_scope_check CHECK ((((length(scope) >= 1) AND (length(scope) <= 40)) AND (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))
 );
 
 
@@ -17463,7 +17860,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text])))
+    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])))
 );
 
 
@@ -17597,6 +17994,46 @@ CREATE SEQUENCE public.deployment_logs_seq_seq
 --
 
 ALTER SEQUENCE public.deployment_logs_seq_seq OWNED BY public.deployment_logs.seq;
+
+
+--
+-- Name: deployment_mcp_task_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_task_holds (
+    deployment_id uuid NOT NULL,
+    detail text NOT NULL,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    first_held_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    recovery_channel text DEFAULT ''::text NOT NULL,
+    recovery_payload jsonb,
+    owner_node text DEFAULT ''::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_until timestamp with time zone,
+    claim_generation bigint DEFAULT 0 NOT NULL,
+    wake_requested boolean DEFAULT false NOT NULL,
+    last_recovery_outcome text DEFAULT ''::text NOT NULL,
+    last_recovery_at timestamp with time zone,
+    last_recovery_error_code text DEFAULT ''::text NOT NULL,
+    CONSTRAINT deployment_mcp_task_holds_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT deployment_mcp_task_holds_detail_check CHECK ((octet_length(detail) <= 8192)),
+    CONSTRAINT deployment_mcp_task_holds_last_recovery_error_code_check CHECK ((length(last_recovery_error_code) <= 128)),
+    CONSTRAINT deployment_mcp_task_holds_last_recovery_outcome_check CHECK ((last_recovery_outcome = ANY (ARRAY[''::text, 'held'::text, 'retry'::text, 'recovered'::text, 'inactive'::text, 'cancelled'::text]))),
+    CONSTRAINT deployment_mcp_task_holds_recovery_channel_check CHECK ((recovery_channel = ANY (ARRAY[''::text, 'snapshot_written'::text, 'deployment_ready'::text]))),
+    CONSTRAINT deployment_mcp_task_holds_recovery_payload_check CHECK ((octet_length((recovery_payload)::text) <= 65536))
+);
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_mcp_task_migration_overrides (
+    deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    used_at timestamp with time zone
+);
 
 
 --
@@ -18231,7 +18668,7 @@ CREATE TABLE public.edge_rules (
     match_expr jsonb,
     mode text DEFAULT 'enforce'::text NOT NULL,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
-    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text]))),
+    CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
     CONSTRAINT edge_rules_match_headers_shape_chk CHECK (((jsonb_typeof(match_headers) = 'object'::text) AND (jsonb_array_length(jsonb_path_query_array(match_headers, '$.keyvalue()'::jsonpath)) <= 10))),
     CONSTRAINT edge_rules_mode_chk CHECK ((mode = ANY (ARRAY['enforce'::text, 'log'::text]))),
@@ -19023,6 +19460,75 @@ CREATE TABLE public.event_delivery_slots (
 
 
 --
+-- Name: event_execution_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_coverage (
+    subscription_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    baseline_known boolean NOT NULL,
+    lost_at timestamp with time zone,
+    loss_reason text DEFAULT ''::text NOT NULL,
+    ledger_started_at timestamp with time zone,
+    ledger_baseline_known boolean DEFAULT false NOT NULL,
+    ledger_lost_through_at timestamp with time zone,
+    CONSTRAINT event_execution_coverage_check CHECK (((lost_at IS NULL) = (loss_reason = ''::text))),
+    CONSTRAINT event_execution_coverage_loss_reason_check CHECK ((loss_reason = ANY (ARRAY[''::text, 'receipt_deleted'::text, 'recipient_deleted'::text, 'invocation_deleted'::text, 'attempt_deleted'::text, 'execution_replaced'::text])))
+);
+
+
+--
+-- Name: event_execution_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_outcomes (
+    root_invocation_id uuid NOT NULL,
+    root_created_at timestamp with time zone NOT NULL,
+    invocation_id uuid NOT NULL,
+    replay_generation bigint NOT NULL,
+    attempt integer NOT NULL,
+    kind text NOT NULL,
+    subscription_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    outcome text NOT NULL,
+    latency_seconds double precision NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    invocation_created_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_execution_outcomes_attempt_check CHECK ((attempt >= 0)),
+    CONSTRAINT event_execution_outcomes_check CHECK (((finished_at >= root_created_at) AND (retain_until > finished_at))),
+    CONSTRAINT event_execution_outcomes_check1 CHECK ((((kind = 'attempt'::text) AND (attempt > 0)) OR ((kind = 'completion'::text) AND (outcome = 'succeeded'::text) AND (attempt = 0)))),
+    CONSTRAINT event_execution_outcomes_invocation_created_at_check CHECK (isfinite(invocation_created_at)),
+    CONSTRAINT event_execution_outcomes_kind_check CHECK ((kind = ANY (ARRAY['attempt'::text, 'completion'::text]))),
+    CONSTRAINT event_execution_outcomes_latency_seconds_check CHECK (((latency_seconds >= (0)::double precision) AND (latency_seconds < 'Infinity'::double precision))),
+    CONSTRAINT event_execution_outcomes_outcome_check CHECK ((outcome = ANY (ARRAY['succeeded'::text, 'retry'::text, 'failed'::text, 'dead_letter'::text, 'cancelled'::text, 'unknown'::text]))),
+    CONSTRAINT event_execution_outcomes_replay_generation_check CHECK ((replay_generation >= 0))
+);
+
+
+--
+-- Name: event_execution_roots; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_execution_roots (
+    root_invocation_id uuid NOT NULL,
+    root_created_at timestamp with time zone NOT NULL,
+    subscription_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    accepted_at timestamp with time zone NOT NULL,
+    outbox_id bigint NOT NULL,
+    retention_seconds integer NOT NULL,
+    CONSTRAINT event_execution_roots_check CHECK ((isfinite(root_created_at) AND isfinite(accepted_at))),
+    CONSTRAINT event_execution_roots_outbox_id_check CHECK ((outbox_id > 0)),
+    CONSTRAINT event_execution_roots_retention_seconds_check CHECK ((retention_seconds > 0))
+);
+
+
+--
 -- Name: event_fanout_acceptance_order_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -19242,14 +19748,18 @@ CREATE TABLE public.event_recovery_history (
     state text NOT NULL,
     previous_rate integer NOT NULL,
     rate integer NOT NULL,
-    CONSTRAINT event_recovery_history_action_check CHECK ((action = ANY (ARRAY['created'::text, 'paused'::text, 'resumed'::text, 'rate_changed'::text, 'cancelled'::text, 'expired'::text]))),
+    target_position bigint,
+    target_run_id uuid,
+    target_resume_count integer,
+    CONSTRAINT event_recovery_history_action_check CHECK ((action = ANY (ARRAY['created'::text, 'paused'::text, 'resumed'::text, 'rate_changed'::text, 'cancelled'::text, 'expired'::text, 'workflow_cancelled'::text]))),
     CONSTRAINT event_recovery_history_actor_id_check CHECK (((length(actor_id) > 0) AND (octet_length(actor_id) <= 256))),
     CONSTRAINT event_recovery_history_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['account'::text, 'api_key'::text, 'internal'::text, 'system'::text]))),
     CONSTRAINT event_recovery_history_previous_rate_check CHECK (((previous_rate >= 0) AND (previous_rate <= 100))),
     CONSTRAINT event_recovery_history_previous_state_check CHECK ((previous_state = ANY (ARRAY[''::text, 'running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
     CONSTRAINT event_recovery_history_rate_check CHECK (((rate >= 1) AND (rate <= 100))),
     CONSTRAINT event_recovery_history_reason_check CHECK ((octet_length(reason) <= 512)),
-    CONSTRAINT event_recovery_history_state_check CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text])))
+    CONSTRAINT event_recovery_history_state_check CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
+    CONSTRAINT event_recovery_history_target_check CHECK ((((action = 'workflow_cancelled'::text) AND ((target_position >= 1) AND (target_position <= 25)) AND (target_run_id IS NOT NULL) AND ((target_resume_count >= 1) AND (target_resume_count <= 16)) AND (target_position IS NOT NULL) AND (target_resume_count IS NOT NULL)) OR ((action <> 'workflow_cancelled'::text) AND (target_position IS NULL) AND (target_run_id IS NULL) AND (target_resume_count IS NULL))))
 );
 
 
@@ -19279,7 +19789,7 @@ ALTER SEQUENCE public.event_recovery_history_id_seq OWNED BY public.event_recove
 CREATE TABLE public.event_recovery_items (
     job_id uuid NOT NULL,
     "position" bigint NOT NULL,
-    outbox_id bigint NOT NULL,
+    outbox_id bigint,
     subscription_id text NOT NULL,
     event_source text NOT NULL,
     event_id text NOT NULL,
@@ -19298,7 +19808,7 @@ CREATE TABLE public.event_recovery_items (
     CONSTRAINT event_recovery_items_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'changed'::text, 'receipt_expired'::text, 'target_unavailable'::text, 'cancelled'::text, 'expired'::text]))),
     CONSTRAINT event_recovery_items_replay_identity_chk CHECK ((((replay_invocation_id IS NULL) AND (replay_generation IS NULL) AND (replay_created_at IS NULL)) OR ((replay_invocation_id IS NOT NULL) AND (replay_generation IS NOT NULL) AND (replay_generation >= 0) AND (replay_created_at IS NOT NULL) AND (state = 'queued'::text)))),
     CONSTRAINT event_recovery_items_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'queued'::text, 'skipped'::text, 'cancelled'::text]))),
-    CONSTRAINT event_recovery_items_subscription_id_check CHECK ((subscription_id <> ''::text))
+    CONSTRAINT event_recovery_items_target_check CHECK ((((outbox_id IS NOT NULL) AND (subscription_id <> ''::text) AND (NOT (expected_progress ? 'run_id'::text))) OR ((outbox_id IS NULL) AND (subscription_id = ''::text) AND (event_source = ''::text) AND (event_id = ''::text) AND (event_type = ''::text) AND (COALESCE((expected_progress ->> 'run_id'::text), ''::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND (COALESCE(jsonb_typeof((expected_progress -> 'expected_resume_count'::text)), ''::text) = 'number'::text) AND ((((expected_progress ->> 'expected_resume_count'::text))::integer >= 0) AND (((expected_progress ->> 'expected_resume_count'::text))::integer <= 16)))))
 );
 
 
@@ -19332,14 +19842,15 @@ CREATE TABLE public.event_recovery_jobs (
     request_id uuid,
     notification_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
     notification_retry_receipts jsonb DEFAULT '{}'::jsonb NOT NULL,
+    execution_attention_next_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT event_recovery_capacity_wait_chk CHECK ((((capacity_scope = ''::text) AND (capacity_wait_started_at IS NULL) AND (capacity_wait_observed_at IS NULL)) OR ((wait_reason = 'capacity'::text) AND (capacity_scope <> ''::text) AND (capacity_wait_started_at IS NOT NULL) AND (capacity_wait_observed_at IS NOT NULL) AND (capacity_wait_observed_at >= capacity_wait_started_at)))),
-    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text)))),
+    CONSTRAINT event_recovery_child_request_chk CHECK ((((request_id IS NULL) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = ''::text)) OR ((request_id IS NOT NULL) AND (COALESCE((selection ->> 'request_id'::text), ''::text) = (request_id)::text) AND (((COALESCE((selection ->> 'mode'::text), ''::text) = 'execution'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) <> ''::text)) OR ((COALESCE((selection ->> 'mode'::text), ''::text) = 'workflow'::text) AND (COALESCE(jsonb_typeof((selection -> 'workflow_runs'::text)), ''::text) = 'object'::text)) OR ((COALESCE((selection ->> 'mode'::text), ''::text) = 'routing'::text) AND (COALESCE((selection ->> 'parent_job_id'::text), ''::text) = ''::text) AND (COALESCE(jsonb_typeof((selection -> 'workflow_routing'::text)), ''::text) = 'object'::text)))))),
     CONSTRAINT event_recovery_execution_finished_chk CHECK (((execution_finished_at IS NULL) OR (execution_notification_captured AND (completed_at IS NOT NULL) AND (execution_finished_at >= completed_at)))),
     CONSTRAINT event_recovery_jobs_capacity_scope_check CHECK ((capacity_scope = ANY (ARRAY[''::text, 'account'::text, 'app'::text, 'consumer'::text, 'unknown'::text]))),
     CONSTRAINT event_recovery_jobs_check2 CHECK ((expires_at > created_at)),
     CONSTRAINT event_recovery_jobs_completion_chk CHECK (((state = ANY (ARRAY['running'::text, 'paused'::text])) = (completed_at IS NULL))),
     CONSTRAINT event_recovery_jobs_lifecycle_chk CHECK ((state = ANY (ARRAY['running'::text, 'paused'::text, 'completed'::text, 'cancelled'::text]))),
-    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text]) = '{}'::jsonb))),
+    CONSTRAINT event_recovery_jobs_notification_receipts_chk CHECK (((jsonb_typeof(notification_receipts) = 'object'::text) AND ((notification_receipts - ARRAY['event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'event_recovery.execution_attention'::text]) = '{}'::jsonb))),
     CONSTRAINT event_recovery_jobs_pause_chk CHECK (((state = 'paused'::text) = (paused_at IS NOT NULL))),
     CONSTRAINT event_recovery_jobs_rate_per_second_check CHECK (((rate_per_second >= 1) AND (rate_per_second <= 100))),
     CONSTRAINT event_recovery_jobs_selection_check CHECK ((jsonb_typeof(selection) = 'object'::text)),
@@ -19347,6 +19858,28 @@ CREATE TABLE public.event_recovery_jobs (
     CONSTRAINT event_recovery_jobs_window_budget_chk CHECK (((window_count >= 0) AND (window_count <= 100))),
     CONSTRAINT event_recovery_notification_retry_receipts_object_chk CHECK ((jsonb_typeof(notification_retry_receipts) = 'object'::text)),
     CONSTRAINT event_recovery_receipt_protection_chk CHECK (((NOT (selection ? 'protect_receipts'::text)) OR (jsonb_typeof((selection -> 'protect_receipts'::text)) = 'boolean'::text)))
+);
+
+
+--
+-- Name: event_recovery_workflow_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_recovery_workflow_results (
+    job_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    run_id uuid NOT NULL,
+    resume_number integer NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    state text NOT NULL,
+    completed_at timestamp with time zone,
+    recorded_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_recovery_workflow_results_check CHECK ((recorded_at >= admitted_at)),
+    CONSTRAINT event_recovery_workflow_results_check1 CHECK (((completed_at IS NULL) OR ((completed_at >= admitted_at) AND (completed_at <= recorded_at)))),
+    CONSTRAINT event_recovery_workflow_results_check2 CHECK (((state <> 'superseded'::text) OR (completed_at IS NULL))),
+    CONSTRAINT event_recovery_workflow_results_position_check CHECK (("position" > 0)),
+    CONSTRAINT event_recovery_workflow_results_resume_number_check CHECK ((resume_number > 0)),
+    CONSTRAINT event_recovery_workflow_results_state_check CHECK ((state = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text, 'superseded'::text])))
 );
 
 
@@ -21585,6 +22118,34 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_verified_at_check CHECK (((verified_at IS NULL) OR (state = 'sealed'::text)))
+);
+
+
+--
+-- Name: managed_postgres_cutover_drains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_drains (
+    id uuid NOT NULL,
+    cutover_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    owner_node_id uuid NOT NULL,
+    owner_revision bigint NOT NULL,
+    fenced_at timestamp with time zone NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    native_generation uuid,
+    kernel_boot_id uuid,
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_cutover_drains_check CHECK ((((state = 'pending'::text) AND (native_generation IS NULL) AND (kernel_boot_id IS NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (native_generation IS NOT NULL) AND (kernel_boot_id IS NOT NULL) AND (retired_at IS NOT NULL)))),
+    CONSTRAINT managed_postgres_cutover_drains_kernel_boot_id_check CHECK (((kernel_boot_id IS NULL) OR (kernel_boot_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT managed_postgres_cutover_drains_native_generation_check CHECK (((native_generation IS NULL) OR (native_generation <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT managed_postgres_cutover_drains_owner_revision_check CHECK ((owner_revision > 0)),
+    CONSTRAINT managed_postgres_cutover_drains_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'retired'::text])))
 );
 
 
@@ -23945,7 +24506,13 @@ CREATE TABLE public.outbound_admission_leases (
     lease_id uuid NOT NULL,
     integration_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    binding_app_id uuid,
+    ai_reserved_tokens bigint DEFAULT 0 NOT NULL,
+    ai_reserved_cost_millicents bigint DEFAULT 0 NOT NULL,
+    ai_end_user text,
+    CONSTRAINT outbound_admission_leases_ai_end_user_chk CHECK (((ai_end_user IS NULL) OR (ai_end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
+    CONSTRAINT outbound_admission_leases_ai_reservation_chk CHECK (((ai_reserved_tokens >= 0) AND (ai_reserved_cost_millicents >= 0)))
 );
 
 
@@ -23969,12 +24536,175 @@ CREATE TABLE public.outbound_admission_state (
     retry_budget_policy_per_minute integer DEFAULT 0 NOT NULL,
     provider_cooldown_until timestamp with time zone,
     provider_cooldown_policy_revision bigint DEFAULT 0 NOT NULL,
+    daily_ai_token_count bigint DEFAULT 0 NOT NULL,
+    daily_ai_cost_millicents bigint DEFAULT 0 NOT NULL,
+    monthly_usage_month date DEFAULT (date_trunc('month'::text, (now() AT TIME ZONE 'UTC'::text)))::date NOT NULL,
+    monthly_ai_cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_admission_state_ai_cost_chk CHECK (((daily_ai_cost_millicents >= 0) AND (monthly_ai_cost_millicents >= 0))),
     CONSTRAINT outbound_admission_state_circuit_failure_count_check CHECK ((circuit_failure_count >= 0)),
     CONSTRAINT outbound_admission_state_circuit_policy_chk CHECK ((((circuit_policy_failure_threshold = 0) AND (circuit_policy_open_seconds = 0)) OR (((circuit_policy_failure_threshold >= 1) AND (circuit_policy_failure_threshold <= 20)) AND ((circuit_policy_open_seconds >= 1) AND (circuit_policy_open_seconds <= 300))))),
+    CONSTRAINT outbound_admission_state_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
     CONSTRAINT outbound_admission_state_daily_request_count_chk CHECK ((daily_request_count >= 0)),
     CONSTRAINT outbound_admission_state_retry_budget_policy_per_minute_check CHECK (((retry_budget_policy_per_minute >= 0) AND (retry_budget_policy_per_minute <= 3000))),
     CONSTRAINT outbound_admission_state_retry_budget_tokens_check CHECK (((retry_budget_tokens >= (0)::double precision) AND (retry_budget_tokens <= (3000)::double precision))),
     CONSTRAINT outbound_admission_state_tokens_check CHECK ((tokens >= (0)::double precision))
+);
+
+
+--
+-- Name: outbound_ai_budget_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_budget_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    integration_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    budget text NOT NULL,
+    app_id uuid,
+    period_start date NOT NULL,
+    threshold_percent smallint NOT NULL,
+    limit_value bigint NOT NULL,
+    used_value bigint NOT NULL,
+    crossed_at timestamp with time zone DEFAULT now() NOT NULL,
+    end_user text,
+    CONSTRAINT outbound_ai_budget_alerts_app_chk CHECK (((budget = 'app_daily_tokens'::text) = (app_id IS NOT NULL))),
+    CONSTRAINT outbound_ai_budget_alerts_budget_chk CHECK ((budget = ANY (ARRAY['daily_tokens'::text, 'app_daily_tokens'::text, 'daily_cost'::text, 'monthly_cost'::text, 'user_daily_tokens'::text, 'user_daily_cost'::text]))),
+    CONSTRAINT outbound_ai_budget_alerts_end_user_chk CHECK ((((budget = ANY (ARRAY['user_daily_tokens'::text, 'user_daily_cost'::text])) = (end_user IS NOT NULL)) AND ((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text)))),
+    CONSTRAINT outbound_ai_budget_alerts_threshold_chk CHECK ((threshold_percent = ANY (ARRAY[80, 100]))),
+    CONSTRAINT outbound_ai_budget_alerts_values_chk CHECK (((limit_value >= 1) AND (used_value >= 0)))
+);
+
+
+--
+-- Name: outbound_ai_price_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_price_entries (
+    price_list_id uuid NOT NULL,
+    model_prefix text NOT NULL,
+    input_millicents_per_mtok bigint NOT NULL,
+    cached_input_millicents_per_mtok bigint,
+    cache_write_millicents_per_mtok bigint,
+    output_millicents_per_mtok bigint NOT NULL,
+    CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000)))))
+);
+
+
+--
+-- Name: outbound_ai_price_lists; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_price_lists (
+    id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    effective_from timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_ai_request_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_request_log (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    integration_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    caller text NOT NULL,
+    route_id uuid,
+    model text NOT NULL,
+    status smallint NOT NULL,
+    outcome text NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    cached_input_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    duration_ms integer NOT NULL,
+    ttfb_ms integer,
+    attempts smallint NOT NULL,
+    end_user text,
+    CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
+    CONSTRAINT outbound_ai_request_log_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
+    CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
+    CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
+    CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
+    CONSTRAINT outbound_ai_request_log_values_chk CHECK (((input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0) AND (duration_ms >= 0) AND ((ttfb_ms IS NULL) OR (ttfb_ms >= 0)) AND ((attempts >= 0) AND (attempts <= 100))))
+);
+
+
+--
+-- Name: outbound_ai_route_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_route_targets (
+    route_id uuid NOT NULL,
+    "position" smallint NOT NULL,
+    integration_id uuid NOT NULL,
+    model text,
+    CONSTRAINT outbound_ai_route_targets_model_chk CHECK (((model IS NULL) OR (((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))),
+    CONSTRAINT outbound_ai_route_targets_position_chk CHECK ((("position" >= 1) AND ("position" <= 5)))
+);
+
+
+--
+-- Name: outbound_ai_routes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_routes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    format text DEFAULT 'native'::text NOT NULL,
+    CONSTRAINT outbound_ai_routes_format_chk CHECK ((format = ANY (ARRAY['native'::text, 'openai'::text]))),
+    CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: outbound_ai_usage_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_usage_daily (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    caller text NOT NULL,
+    model text NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    usage_unknown_requests bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    cached_input_tokens bigint DEFAULT 0 NOT NULL,
+    cache_write_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = 'runs'::text) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
+    CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
+    CONSTRAINT outbound_ai_usage_daily_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))
+);
+
+
+--
+-- Name: outbound_ai_user_usage_daily; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_user_usage_daily (
+    integration_id uuid NOT NULL,
+    usage_date date NOT NULL,
+    end_user text NOT NULL,
+    requests bigint DEFAULT 0 NOT NULL,
+    error_requests bigint DEFAULT 0 NOT NULL,
+    input_tokens bigint DEFAULT 0 NOT NULL,
+    output_tokens bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_user_usage_daily_end_user_chk CHECK (((end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text) OR (end_user = '~other'::text))),
+    CONSTRAINT outbound_ai_user_usage_daily_values_chk CHECK (((requests >= 0) AND ((error_requests >= 0) AND (error_requests <= requests)) AND (input_tokens >= 0) AND (output_tokens >= 0) AND (cost_millicents >= 0)))
 );
 
 
@@ -23987,7 +24717,13 @@ CREATE TABLE public.outbound_app_binding_usage (
     app_id uuid NOT NULL,
     daily_usage_date date DEFAULT ((now() AT TIME ZONE 'UTC'::text))::date NOT NULL,
     daily_request_count bigint DEFAULT 0 NOT NULL,
-    CONSTRAINT outbound_app_binding_usage_daily_request_count_check CHECK ((daily_request_count >= 0))
+    daily_ai_token_count bigint DEFAULT 0 NOT NULL,
+    minute_window_start timestamp with time zone,
+    minute_request_count integer DEFAULT 0 NOT NULL,
+    minute_ai_token_count bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_app_binding_usage_daily_ai_token_count_chk CHECK ((daily_ai_token_count >= 0)),
+    CONSTRAINT outbound_app_binding_usage_daily_request_count_check CHECK ((daily_request_count >= 0)),
+    CONSTRAINT outbound_app_binding_usage_minute_chk CHECK (((minute_request_count >= 0) AND (minute_ai_token_count >= 0)))
 );
 
 
@@ -24003,7 +24739,14 @@ CREATE TABLE public.outbound_app_bindings (
     allowed_methods text[],
     allowed_path_prefixes text[],
     daily_request_limit bigint,
+    ai_daily_token_limit bigint,
+    ai_requests_per_minute integer,
+    ai_tokens_per_minute bigint,
+    ai_allowed_models text[],
+    ai_max_output_tokens integer,
     CONSTRAINT outbound_app_binding_route_pair_chk CHECK ((((allowed_methods IS NULL) AND (allowed_path_prefixes IS NULL)) OR ((allowed_methods IS NOT NULL) AND (allowed_path_prefixes IS NOT NULL) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_app_bindings_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint)))),
+    CONSTRAINT outbound_app_bindings_ai_guardrails_chk CHECK ((((ai_requests_per_minute IS NULL) OR ((ai_requests_per_minute >= 1) AND (ai_requests_per_minute <= 100000))) AND ((ai_tokens_per_minute IS NULL) OR ((ai_tokens_per_minute >= 1) AND (ai_tokens_per_minute <= 1000000000))) AND ((ai_max_output_tokens IS NULL) OR ((ai_max_output_tokens >= 1) AND (ai_max_output_tokens <= 1000000))) AND ((ai_allowed_models IS NULL) OR (((cardinality(ai_allowed_models) >= 1) AND (cardinality(ai_allowed_models) <= 32)) AND (array_position(ai_allowed_models, NULL::text) IS NULL))))),
     CONSTRAINT outbound_app_bindings_daily_request_limit_chk CHECK (((daily_request_limit IS NULL) OR ((daily_request_limit >= 1) AND (daily_request_limit <= 100000000))))
 );
 
@@ -24016,6 +24759,22 @@ CREATE TABLE public.outbound_integration_apps (
     integration_id uuid NOT NULL,
     app_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: outbound_integration_credential_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_integration_credential_keys (
+    id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    label text NOT NULL,
+    authorization_sealed bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_integration_credential_keys_label_chk CHECK ((label ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text)),
+    CONSTRAINT outbound_integration_credential_keys_sealed_chk CHECK (((octet_length(authorization_sealed) >= 1) AND (octet_length(authorization_sealed) <= 65536)))
 );
 
 
@@ -24077,7 +24836,19 @@ CREATE TABLE public.outbound_integrations (
     retry_budget_per_minute integer DEFAULT 0 NOT NULL,
     response_cache_ttl_seconds integer DEFAULT 0 NOT NULL,
     runs_enabled boolean DEFAULT false NOT NULL,
+    ai_provider text,
+    ai_daily_token_limit bigint,
+    ai_daily_cost_limit_millicents bigint,
+    ai_monthly_cost_limit_millicents bigint,
+    ai_request_log_enabled boolean DEFAULT false NOT NULL,
+    ai_user_daily_token_limit bigint,
+    ai_user_daily_cost_limit_millicents bigint,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
+    CONSTRAINT outbound_integrations_ai_cost_limits_chk CHECK ((((ai_daily_cost_limit_millicents IS NULL) AND (ai_monthly_cost_limit_millicents IS NULL)) OR ((ai_provider IS NOT NULL) AND ((ai_daily_cost_limit_millicents IS NULL) OR ((ai_daily_cost_limit_millicents >= 1) AND (ai_daily_cost_limit_millicents <= '1000000000000'::bigint))) AND ((ai_monthly_cost_limit_millicents IS NULL) OR ((ai_monthly_cost_limit_millicents >= 1) AND (ai_monthly_cost_limit_millicents <= '1000000000000'::bigint)))))),
+    CONSTRAINT outbound_integrations_ai_daily_token_limit_chk CHECK (((ai_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_daily_token_limit >= 1) AND (ai_daily_token_limit <= '100000000000'::bigint))))),
+    CONSTRAINT outbound_integrations_ai_provider_chk CHECK (((ai_provider IS NULL) OR (ai_provider = ANY (ARRAY['openai'::text, 'anthropic'::text, 'gemini'::text, 'azure_openai'::text, 'bedrock'::text, 'vertex'::text])))),
+    CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
+    CONSTRAINT outbound_integrations_ai_user_limits_chk CHECK ((((ai_user_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_token_limit >= 1) AND (ai_user_daily_token_limit <= '100000000000'::bigint)))) AND ((ai_user_daily_cost_limit_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_cost_limit_millicents >= 1) AND (ai_user_daily_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
     CONSTRAINT outbound_integrations_allowed_path_prefixes_count_chk CHECK ((cardinality(allowed_path_prefixes) <= 32)),
     CONSTRAINT outbound_integrations_burst_check CHECK ((burst > 0)),
@@ -26277,7 +27048,7 @@ CREATE TABLE public.request_telemetry (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -26336,7 +27107,7 @@ CREATE TABLE public.request_telemetry_202610 (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -26394,7 +27165,7 @@ CREATE TABLE public.request_telemetry_202611 (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -26452,7 +27223,7 @@ CREATE TABLE public.request_telemetry_202612 (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -26558,7 +27329,7 @@ CREATE TABLE public.request_telemetry_default (
     CONSTRAINT request_telemetry_guest_error_class_check CHECK ((guest_error_class = ANY (ARRAY[''::text, 'http_5xx'::text, 'handler_exec'::text, 'handler_protocol'::text, 'timeout'::text, 'canceled'::text]))),
     CONSTRAINT request_telemetry_guest_outcome_check CHECK ((guest_outcome = ANY (ARRAY['ok'::text, 'http_error'::text, 'handler_error'::text, 'timeout'::text, 'canceled'::text, 'missing'::text]))),
     CONSTRAINT request_telemetry_guest_peak_rss_mb_check CHECK (((guest_peak_rss_mb >= 0) AND (guest_peak_rss_mb <= 65536))),
-    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, '__unknown__'::text]))),
+    CONSTRAINT request_telemetry_guest_runtime_check CHECK ((guest_runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'binary'::text, '__unknown__'::text]))),
     CONSTRAINT request_telemetry_latency_ms_check CHECK ((latency_ms >= 0)),
     CONSTRAINT request_telemetry_method_check CHECK ((method = ANY (ARRAY['GET'::text, 'POST'::text, 'PUT'::text, 'PATCH'::text, 'DELETE'::text, 'HEAD'::text, 'OPTIONS'::text]))),
     CONSTRAINT request_telemetry_referrer_host_check CHECK ((((length(referrer_host) >= 1) AND (length(referrer_host) <= 253)) AND (referrer_host = lower(referrer_host)) AND (referrer_host !~ '[/?#[:space:]]'::text))),
@@ -28594,6 +29365,265 @@ CREATE TABLE public.workflow_operation_effects (
 
 
 --
+-- Name: workflow_recovery_action_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_action_receipts (
+    job_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    request jsonb NOT NULL,
+    response jsonb NOT NULL,
+    captured_at timestamp with time zone NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    CONSTRAINT workflow_recovery_action_receipts_request_check CHECK ((jsonb_typeof(request) = 'object'::text)),
+    CONSTRAINT workflow_recovery_action_receipts_response_check CHECK ((jsonb_typeof(response) = 'object'::text))
+);
+
+
+--
+-- Name: workflow_recovery_failure_capture; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_failure_capture (
+    singleton boolean NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    max_entries integer NOT NULL,
+    retention_seconds bigint NOT NULL,
+    CONSTRAINT workflow_recovery_failure_capture_max_entries_check CHECK ((max_entries > 0)),
+    CONSTRAINT workflow_recovery_failure_capture_retention_seconds_check CHECK ((retention_seconds > 0)),
+    CONSTRAINT workflow_recovery_failure_capture_singleton_check CHECK (singleton),
+    CONSTRAINT workflow_recovery_failure_capture_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: workflow_recovery_failure_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_failure_evidence (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    app_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    workflow text NOT NULL,
+    resume_count integer NOT NULL,
+    failure_status text NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone,
+    eligibility_observed_at timestamp with time zone,
+    eligibility jsonb,
+    CONSTRAINT workflow_failure_eligibility_shape CHECK ((((eligibility IS NULL) AND (eligibility_observed_at IS NULL)) OR ((eligibility IS NOT NULL) AND (eligibility_observed_at IS NOT NULL) AND (jsonb_typeof(eligibility) = 'object'::text) AND (jsonb_typeof((eligibility -> 'blockers'::text)) = 'array'::text) AND (eligibility ? 'reason'::text) AND (eligibility ? 'observed_at'::text) AND ((eligibility ->> 'reason'::text) = ANY (ARRAY['eligible'::text, 'capacity'::text, 'resume_ineligible'::text, 'resume_limit_reached'::text, 'run_not_retained'::text, 'changed'::text, 'parent_not_retained'::text, 'inspection_error'::text])) AND (((eligibility ->> 'observed_at'::text))::timestamp with time zone = eligibility_observed_at)))),
+    CONSTRAINT workflow_recovery_failure_evidence_check CHECK (((completed_at IS NULL) OR (completed_at <= observed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_check1 CHECK ((isfinite(eligibility_observed_at) AND (eligibility_observed_at >= observed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_completed_at_check CHECK (((completed_at IS NULL) OR isfinite(completed_at))),
+    CONSTRAINT workflow_recovery_failure_evidence_failure_status_check CHECK ((failure_status = ANY (ARRAY['failed'::text, 'dead'::text]))),
+    CONSTRAINT workflow_recovery_failure_evidence_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT workflow_recovery_failure_evidence_resume_count_check CHECK ((resume_count >= 0)),
+    CONSTRAINT workflow_recovery_failure_evidence_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT workflow_recovery_failure_evidence_workflow_check CHECK ((workflow <> ''::text))
+);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workflow_recovery_failure_evidence ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workflow_recovery_failure_evidence_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workflow_recovery_health_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_health_incidents (
+    app_id uuid NOT NULL,
+    incident jsonb NOT NULL,
+    CONSTRAINT workflow_recovery_health_incidents_incident_check CHECK (((jsonb_typeof(incident) = 'object'::text) AND ((jsonb_typeof((incident -> 'episode_id'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'opened_at'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'candidate_since'::text)) = 'string'::text) IS TRUE) AND ((jsonb_typeof((incident -> 'observed_at'::text)) = 'string'::text) IS TRUE) AND (((incident ->> 'status'::text) = ANY (ARRAY['healthy'::text, 'inactive'::text, 'paused'::text, 'blocked'::text, 'stalled'::text, 'unknown'::text])) IS TRUE) AND ((jsonb_typeof((incident -> 'reason'::text)) = 'string'::text) IS TRUE) AND ((NOT (incident ? 'closed_at'::text)) OR (jsonb_typeof((incident -> 'closed_at'::text)) = 'string'::text)) AND ((NOT (incident ? 'alert_notification'::text)) OR ((jsonb_typeof((incident -> 'alert_notification'::text)) = 'object'::text) AND ((((incident -> 'alert_notification'::text) ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) IS TRUE))) AND ((NOT (incident ? 'recovery_notification'::text)) OR ((incident ? 'closed_at'::text) AND (incident ? 'alert_notification'::text) AND (jsonb_typeof((incident -> 'recovery_notification'::text)) = 'object'::text) AND ((((incident -> 'recovery_notification'::text) ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) IS TRUE)))))
+);
+
+
+--
+-- Name: workflow_recovery_history_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_history_events (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    app_id uuid NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    entry jsonb NOT NULL,
+    CONSTRAINT workflow_recovery_history_candidate_evidence_check CHECK (((((entry ->> 'kind'::text) <> 'candidates_observed'::text) OR ((jsonb_typeof((entry -> 'candidate_evidence'::text)) = 'object'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'decisions'::text)) = 'array'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'policy'::text)) = 'object'::text) AND (((entry -> 'candidate_evidence'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'candidate_evidence'::text) ->> 'review_id'::text) = (entry ->> 'review_id'::text)) AND (((entry -> 'candidate_evidence'::text) ->> 'job_id'::text) = (entry ->> 'job_id'::text)) AND (((entry -> 'candidate_evidence'::text) -> 'policy_version'::text) = (entry -> 'policy_version'::text)) AND ((((entry -> 'candidate_evidence'::text) ->> 'observed_at'::text))::timestamp with time zone = occurred_at) AND (NOT ((entry -> 'candidate_evidence'::text) ? 'plan'::text)))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_check CHECK ((((jsonb_typeof(entry) = 'object'::text) AND ((entry -> 'durable'::text) = 'true'::jsonb) AND ((entry ->> 'id'::text) = ('audit:'::text || (id)::text)) AND ((entry ->> 'kind'::text) = ANY (ARRAY['candidates_observed'::text, 'policy_changed'::text, 'policy_paused'::text, 'retry_transition'::text, 'health_opened'::text, 'health_changed'::text, 'health_closed'::text, 'health_alert_captured'::text, 'health_recovered_captured'::text])) AND (jsonb_typeof((entry -> 'reason'::text)) = 'string'::text) AND (jsonb_typeof((entry -> 'outcome'::text)) = 'string'::text) AND (((entry ->> 'policy_version'::text))::bigint > 0) AND (((entry ->> 'occurred_at'::text))::timestamp with time zone = occurred_at) AND (((entry ->> 'kind'::text) <> 'policy_changed'::text) OR (jsonb_typeof((entry -> 'policy'::text)) = 'object'::text))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT workflow_recovery_history_events_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT workflow_recovery_history_events_sequence_check CHECK ((sequence > 0))
+);
+
+
+--
+-- Name: workflow_recovery_history_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workflow_recovery_history_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.workflow_recovery_history_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: workflow_recovery_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policies (
+    app_id uuid NOT NULL,
+    version bigint NOT NULL,
+    enabled boolean NOT NULL,
+    policy jsonb NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    next_evaluate_at timestamp with time zone NOT NULL,
+    last_evaluated_at timestamp with time zone,
+    job_cursor uuid,
+    status text NOT NULL,
+    next_execute_at timestamp with time zone DEFAULT now() NOT NULL,
+    automatic_failures integer DEFAULT 0 NOT NULL,
+    automatic_paused_at timestamp with time zone,
+    automatic_pause_reason text DEFAULT ''::text NOT NULL,
+    next_health_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_recovery_policies_automatic_failures_check CHECK ((automatic_failures >= 0)),
+    CONSTRAINT workflow_recovery_policies_next_health_at_check CHECK (isfinite(next_health_at)),
+    CONSTRAINT workflow_recovery_policies_policy_check CHECK (((jsonb_typeof(policy) = 'object'::text) AND ((policy ->> 'mode'::text) = ANY (ARRAY['preview'::text, 'automatic_retry'::text])))),
+    CONSTRAINT workflow_recovery_policies_status_check CHECK ((status = ANY (ARRAY['disabled'::text, 'monitoring'::text, 'review_limit'::text, 'paused'::text]))),
+    CONSTRAINT workflow_recovery_policies_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: workflow_recovery_policy_controls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_controls (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    operation text NOT NULL,
+    reason text NOT NULL,
+    actor_kind text NOT NULL,
+    actor_id text NOT NULL,
+    controlled_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_recovery_policy_controls_actor_id_check CHECK ((length(actor_id) > 0)),
+    CONSTRAINT workflow_recovery_policy_controls_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['account'::text, 'api_key'::text, 'system'::text, 'internal'::text]))),
+    CONSTRAINT workflow_recovery_policy_controls_operation_check CHECK ((operation = ANY (ARRAY['pause'::text, 'resume'::text]))),
+    CONSTRAINT workflow_recovery_policy_controls_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_recovery_policy_controls_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 512)))
+);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_execution_charges (
+    action_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    applied_at timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: workflow_recovery_policy_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_executions (
+    action_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    review_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    "position" bigint NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    child_job_id uuid,
+    applied_at timestamp with time zone,
+    result jsonb,
+    suppression jsonb,
+    blocked_notification jsonb,
+    next_blocked_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_evaluation jsonb,
+    CONSTRAINT workflow_recovery_policy_executions_blocked_notification_check CHECK (((blocked_notification IS NULL) OR ((jsonb_typeof(blocked_notification) = 'object'::text) AND ((blocked_notification ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text]))))),
+    CONSTRAINT workflow_recovery_policy_executions_check CHECK (((status = 'applied'::text) = ((child_job_id IS NOT NULL) AND (applied_at IS NOT NULL)))),
+    CONSTRAINT workflow_recovery_policy_executions_check1 CHECK (((result IS NULL) OR (status = 'applied'::text))),
+    CONSTRAINT workflow_recovery_policy_executions_check2 CHECK (((suppression IS NULL) OR ((jsonb_typeof(suppression) = 'object'::text) AND (status = 'suppressed'::text) AND (reason = 'operator_suppressed'::text)))),
+    CONSTRAINT workflow_recovery_policy_executions_last_evaluation_check CHECK (((last_evaluation IS NULL) OR ((jsonb_typeof(last_evaluation) = 'object'::text) AND ((jsonb_typeof((last_evaluation -> 'evaluated_at'::text)) = 'string'::text) IS TRUE) AND (((last_evaluation ->> 'reason'::text) = ANY (ARRAY['hourly_budget'::text, 'cooldown'::text, 'execution_quota'::text, 'evidence_unknown'::text, 'outstanding_retry'::text, 'admission_wait'::text, 'execution_wait'::text, 'retry_running'::text, 'inspection_error'::text, 'child_created'::text, 'result_recorded'::text, 'suppressed'::text])) IS TRUE) AND ((NOT (last_evaluation ? 'waiting_since'::text)) OR (jsonb_typeof((last_evaluation -> 'waiting_since'::text)) = 'string'::text)) AND (((last_evaluation ->> 'reason'::text) <> ALL (ARRAY['child_created'::text, 'result_recorded'::text, 'suppressed'::text])) OR (NOT (last_evaluation ? 'waiting_since'::text)))))),
+    CONSTRAINT workflow_recovery_policy_executions_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_recovery_policy_executions_position_check CHECK (("position" > 0)),
+    CONSTRAINT workflow_recovery_policy_executions_result_check CHECK (((result IS NULL) OR ((jsonb_typeof(result) = 'object'::text) AND (((result -> 'complete'::text) = 'true'::jsonb) IS TRUE)))),
+    CONSTRAINT workflow_recovery_policy_executions_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'applied'::text, 'suppressed'::text])))
+);
+
+
+--
+-- Name: workflow_recovery_policy_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_reviews (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    job_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    review jsonb NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    review_decision jsonb,
+    CONSTRAINT workflow_recovery_policy_reviews_review_check CHECK ((jsonb_typeof(review) = 'object'::text)),
+    CONSTRAINT workflow_recovery_policy_reviews_review_decision_check CHECK (((review_decision IS NULL) OR ((jsonb_typeof(review_decision) = 'object'::text) AND ((review_decision ->> 'decision'::text) = ANY (ARRAY['approved'::text, 'dismissed'::text])) AND (review_decision ?& ARRAY['reason'::text, 'decided_at'::text, 'actor_kind'::text, 'actor_id'::text]))))
+);
+
+
+--
+-- Name: workflow_recovery_policy_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_policy_targets (
+    app_id uuid NOT NULL,
+    review_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    resume_count integer NOT NULL,
+    action text NOT NULL,
+    prepared_at timestamp with time zone NOT NULL,
+    CONSTRAINT workflow_recovery_policy_targets_action_check CHECK ((action = ANY (ARRAY['cancel'::text, 'retry'::text]))),
+    CONSTRAINT workflow_recovery_policy_targets_resume_count_check CHECK (((resume_count >= 1) AND (resume_count <= 16)))
+);
+
+
+--
+-- Name: workflow_recovery_review_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_recovery_review_notifications (
+    review_id uuid NOT NULL,
+    next_at timestamp with time zone DEFAULT now() NOT NULL,
+    receipt jsonb,
+    next_completion_at timestamp with time zone DEFAULT now() NOT NULL,
+    completion jsonb,
+    CONSTRAINT workflow_recovery_review_notifications_completion_check CHECK (((completion IS NULL) OR ((jsonb_typeof(completion) = 'object'::text) AND ((completion ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) AND (completion ?& ARRAY['event_id'::text, 'status'::text, 'captured_at'::text, 'receiver_webhook_ids'::text, 'result'::text]) AND (jsonb_typeof((completion -> 'result'::text)) = 'object'::text) AND ((((completion -> 'result'::text) ->> 'complete'::text) = 'true'::text) IS TRUE)))),
+    CONSTRAINT workflow_recovery_review_notifications_receipt_check CHECK (((receipt IS NULL) OR ((jsonb_typeof(receipt) = 'object'::text) AND ((receipt ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text, 'suppressed'::text])) AND (receipt ?& ARRAY['event_id'::text, 'captured_at'::text, 'receiver_webhook_ids'::text, 'reason'::text]))))
+);
+
+
+--
 -- Name: workflow_run_resumes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29353,6 +30383,14 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_mcp_task_compatibility app_mcp_task_compatibility_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_task_compatibility
+    ADD CONSTRAINT app_mcp_task_compatibility_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_openapi_docs app_openapi_docs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29406,6 +30444,14 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: app_route_priorities app_route_priorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -29486,6 +30532,14 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -30145,6 +31199,30 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_workflow_readiness_notifications customer_workflow_readiness_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_notifications
+    ADD CONSTRAINT customer_workflow_readiness_notifications_pkey PRIMARY KEY (subscription_id, sequence);
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30246,6 +31324,22 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_pkey PRIMARY KEY (deployment_id, seq);
+
+
+--
+-- Name: deployment_mcp_task_holds deployment_mcp_task_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_holds
+    ADD CONSTRAINT deployment_mcp_task_holds_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides deployment_mcp_task_migration_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
+    ADD CONSTRAINT deployment_mcp_task_migration_overrides_pkey PRIMARY KEY (deployment_id);
 
 
 --
@@ -30961,6 +32055,30 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 
 --
+-- Name: event_execution_coverage event_execution_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_coverage
+    ADD CONSTRAINT event_execution_coverage_pkey PRIMARY KEY (subscription_id);
+
+
+--
+-- Name: event_execution_outcomes event_execution_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_outcomes
+    ADD CONSTRAINT event_execution_outcomes_pkey PRIMARY KEY (invocation_id, invocation_created_at, replay_generation, attempt, kind);
+
+
+--
+-- Name: event_execution_roots event_execution_roots_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_roots
+    ADD CONSTRAINT event_execution_roots_pkey PRIMARY KEY (root_invocation_id, root_created_at);
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31038,6 +32156,14 @@ ALTER TABLE ONLY public.event_recovery_items
 
 ALTER TABLE ONLY public.event_recovery_jobs
     ADD CONSTRAINT event_recovery_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: event_recovery_workflow_results event_recovery_workflow_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_workflow_results
+    ADD CONSTRAINT event_recovery_workflow_results_pkey PRIMARY KEY (job_id, "position");
 
 
 --
@@ -31950,6 +33076,22 @@ ALTER TABLE ONLY public.managed_postgres_cutover_credentials
 
 ALTER TABLE ONLY public.managed_postgres_cutover_credentials
     ADD CONSTRAINT managed_postgres_cutover_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_cutover_drains managed_postgres_cutover_drain_identity_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drains
+    ADD CONSTRAINT managed_postgres_cutover_drain_identity_key UNIQUE (cutover_id, instance_id, node_id, wake_id, owner_node_id, owner_revision, fenced_at);
+
+
+--
+-- Name: managed_postgres_cutover_drains managed_postgres_cutover_drains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_drains
+    ADD CONSTRAINT managed_postgres_cutover_drains_pkey PRIMARY KEY (id);
 
 
 --
@@ -32905,6 +34047,78 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 
 --
+-- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_budget_alerts
+    ADD CONSTRAINT outbound_ai_budget_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_price_entries outbound_ai_price_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_entries
+    ADD CONSTRAINT outbound_ai_price_entries_pkey PRIMARY KEY (price_list_id, model_prefix);
+
+
+--
+-- Name: outbound_ai_price_lists outbound_ai_price_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_lists
+    ADD CONSTRAINT outbound_ai_price_lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_request_log outbound_ai_request_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_log
+    ADD CONSTRAINT outbound_ai_request_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_pkey PRIMARY KEY (route_id, "position");
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_account_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_account_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_usage_daily
+    ADD CONSTRAINT outbound_ai_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, caller, model);
+
+
+--
+-- Name: outbound_ai_user_usage_daily outbound_ai_user_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_user_usage_daily
+    ADD CONSTRAINT outbound_ai_user_usage_daily_pkey PRIMARY KEY (integration_id, usage_date, end_user);
+
+
+--
 -- Name: outbound_app_binding_usage outbound_app_binding_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32926,6 +34140,22 @@ ALTER TABLE ONLY public.outbound_app_bindings
 
 ALTER TABLE ONLY public.outbound_integration_apps
     ADD CONSTRAINT outbound_integration_apps_pkey PRIMARY KEY (integration_id, app_id);
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_label_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_label_key UNIQUE (integration_id, label);
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_pkey PRIMARY KEY (id);
 
 
 --
@@ -35129,6 +36359,134 @@ ALTER TABLE ONLY public.workflow_operation_effects
 
 
 --
+-- Name: workflow_recovery_action_receipts workflow_recovery_action_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_action_receipts
+    ADD CONSTRAINT workflow_recovery_action_receipts_pkey PRIMARY KEY (job_id, request_id);
+
+
+--
+-- Name: workflow_recovery_failure_capture workflow_recovery_failure_capture_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_capture
+    ADD CONSTRAINT workflow_recovery_failure_capture_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_eviden_app_id_run_id_resume_count_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_eviden_app_id_run_id_resume_count_key UNIQUE (app_id, run_id, resume_count);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: workflow_recovery_health_incidents workflow_recovery_health_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_health_incidents
+    ADD CONSTRAINT workflow_recovery_health_incidents_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: workflow_recovery_policies workflow_recovery_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policies
+    ADD CONSTRAINT workflow_recovery_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: workflow_recovery_policy_controls workflow_recovery_policy_controls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_controls
+    ADD CONSTRAINT workflow_recovery_policy_controls_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges workflow_recovery_policy_execution_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_execution_charges
+    ADD CONSTRAINT workflow_recovery_policy_execution_charges_pkey PRIMARY KEY (action_id);
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_pkey PRIMARY KEY (action_id);
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_app_id_job_id_fingerprint_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_app_id_job_id_fingerprint_key UNIQUE (app_id, job_id, fingerprint);
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_pkey PRIMARY KEY (app_id, run_id, resume_count, action);
+
+
+--
+-- Name: workflow_recovery_review_notifications workflow_recovery_review_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_review_notifications
+    ADD CONSTRAINT workflow_recovery_review_notifications_pkey PRIMARY KEY (review_id);
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -35657,6 +37015,13 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 
 
 --
+-- Name: app_route_priorities_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_route_priorities_account_idx ON public.app_route_priorities USING btree (account_id);
+
+
+--
 -- Name: app_scaling_policy_scheduler_status_observed_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -35738,6 +37103,13 @@ CREATE UNIQUE INDEX app_secrets_managed_postgres_binding_idx ON public.app_secre
 --
 
 CREATE INDEX app_secrets_org_id_idx ON public.app_secrets USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: app_service_wake_ahead_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_service_wake_ahead_account_idx ON public.app_service_wake_ahead USING btree (account_id);
 
 
 --
@@ -36784,6 +38156,27 @@ CREATE INDEX customer_operations_tenant_subject_history_idx ON public.customer_o
 
 
 --
+-- Name: customer_workflow_playbook_progress_case; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_playbook_progress_case ON public.customer_workflow_playbook_progress USING btree (account_id, app_id, tenant_id, case_key, id);
+
+
+--
+-- Name: customer_workflow_readiness_subscription_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_readiness_subscription_due ON public.customer_workflow_readiness_subscriptions USING btree (next_evaluation_at, id);
+
+
+--
+-- Name: customer_workflow_readiness_subscription_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_workflow_readiness_subscriptions USING btree (account_id, app_id, operator, scope);
+
+
+--
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -36910,6 +38303,13 @@ CREATE INDEX deployment_audit_deployment_idx ON public.deployment_audit USING bt
 
 
 --
+-- Name: deployment_audit_worker_drain_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_audit_worker_drain_idx ON public.deployment_audit USING btree (deployment_id, id DESC) WHERE (kind = ANY (ARRAY['deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text]));
+
+
+--
 -- Name: deployment_image_preparations_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -36921,6 +38321,13 @@ CREATE INDEX deployment_image_preparations_pending_idx ON public.deployment_imag
 --
 
 CREATE INDEX deployment_logs_seq_idx ON public.deployment_logs USING btree (deployment_id, seq DESC);
+
+
+--
+-- Name: deployment_mcp_task_holds_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_mcp_task_holds_due_idx ON public.deployment_mcp_task_holds USING btree (next_attempt_at) WHERE (recovery_payload IS NOT NULL);
 
 
 --
@@ -37372,6 +38779,48 @@ CREATE INDEX event_delivery_slots_consumer ON public.event_delivery_slots USING 
 
 
 --
+-- Name: event_execution_attempt_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_attempt_window_idx ON public.invocation_attempt_history USING btree (account_id, app_id, finished_at) INCLUDE (retain_until) WHERE (finished_at IS NOT NULL);
+
+
+--
+-- Name: event_execution_coverage_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_coverage_app_idx ON public.event_execution_coverage USING btree (app_id);
+
+
+--
+-- Name: event_execution_outcomes_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_outcomes_retention_idx ON public.event_execution_outcomes USING btree (retain_until, invocation_id);
+
+
+--
+-- Name: event_execution_outcomes_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_outcomes_window_idx ON public.event_execution_outcomes USING btree (account_id, app_id, subscription_id, finished_at);
+
+
+--
+-- Name: event_execution_roots_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_roots_owner_idx ON public.event_execution_roots USING btree (account_id, app_id, subscription_id, root_created_at);
+
+
+--
+-- Name: event_execution_roots_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_execution_roots_retention_idx ON public.event_execution_roots USING btree (root_created_at, root_invocation_id);
+
+
+--
 -- Name: event_fanout_attempt_history_app_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37505,6 +38954,13 @@ CREATE UNIQUE INDEX event_recovery_child_request_identity_idx ON public.event_re
 
 
 --
+-- Name: event_recovery_execution_attention_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_execution_attention_pending_idx ON public.event_recovery_jobs USING btree (execution_attention_next_at, id) WHERE (((selection ->> 'mode'::text) = 'workflow'::text) AND (execution_finished_at IS NULL) AND (NOT (notification_receipts ? 'event_recovery.execution_attention'::text)));
+
+
+--
 -- Name: event_recovery_execution_notification_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -37537,6 +38993,20 @@ CREATE INDEX event_recovery_items_pending_idx ON public.event_recovery_items USI
 --
 
 CREATE INDEX event_recovery_items_receipt_hold_idx ON public.event_recovery_items USING btree (outbox_id, job_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: event_recovery_items_workflow_identity_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_recovery_items_workflow_identity_idx ON public.event_recovery_items USING btree ((((expected_progress ->> 'run_id'::text))::uuid)) WHERE ((state = 'queued'::text) AND (expected_progress ? 'run_id'::text));
+
+
+--
+-- Name: event_recovery_items_workflow_run_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_recovery_items_workflow_run_key ON public.event_recovery_items USING btree (job_id, ((expected_progress ->> 'run_id'::text))) WHERE (outbox_id IS NULL);
 
 
 --
@@ -39003,6 +40473,13 @@ CREATE UNIQUE INDEX managed_postgres_clone_reservation_key ON public.managed_pos
 
 
 --
+-- Name: managed_postgres_cutover_drains_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_drains_pending_idx ON public.managed_postgres_cutover_drains USING btree (owner_node_id, id) WHERE (state = 'pending'::text);
+
+
+--
 -- Name: managed_postgres_cutovers_active_app_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -39889,6 +41366,62 @@ CREATE INDEX orgs_status_idx ON public.orgs USING btree (status) WHERE (status <
 --
 
 CREATE INDEX outbound_admission_leases_expiry_idx ON public.outbound_admission_leases USING btree (integration_id, expires_at);
+
+
+--
+-- Name: outbound_ai_budget_alerts_once_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX outbound_ai_budget_alerts_once_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, budget, COALESCE(app_id, '00000000-0000-0000-0000-000000000000'::uuid), COALESCE(end_user, ''::text), period_start, threshold_percent);
+
+
+--
+-- Name: outbound_ai_budget_alerts_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_budget_alerts_recent_idx ON public.outbound_ai_budget_alerts USING btree (integration_id, crossed_at DESC);
+
+
+--
+-- Name: outbound_ai_price_lists_current_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lists USING btree (integration_id, effective_from DESC);
+
+
+--
+-- Name: outbound_ai_request_log_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_prune_idx ON public.outbound_ai_request_log USING btree (created_at);
+
+
+--
+-- Name: outbound_ai_request_log_recent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_recent_idx ON public.outbound_ai_request_log USING btree (integration_id, created_at DESC, id DESC);
+
+
+--
+-- Name: outbound_ai_route_targets_integration_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_route_targets USING btree (integration_id);
+
+
+--
+-- Name: outbound_ai_usage_daily_usage_date_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_usage_daily_usage_date_idx ON public.outbound_ai_usage_daily USING btree (usage_date);
+
+
+--
+-- Name: outbound_ai_user_usage_daily_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_user_usage_daily_prune_idx ON public.outbound_ai_user_usage_daily USING btree (usage_date);
 
 
 --
@@ -41446,10 +42979,143 @@ CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree
 
 
 --
+-- Name: workflow_failure_eligibility_queue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_failure_eligibility_queue_idx ON public.workflow_recovery_failure_evidence USING btree (eligibility_observed_at NULLS FIRST, observed_at, id);
+
+
+--
 -- Name: workflow_operation_effects_attempt_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX workflow_operation_effects_attempt_idx ON public.workflow_operation_effects USING btree (run_id, step_name, generation, name);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_app_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_app_sequence ON public.workflow_recovery_failure_evidence USING btree (app_id, sequence DESC);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_app_time ON public.workflow_recovery_failure_evidence USING btree (app_id, observed_at, id);
+
+
+--
+-- Name: workflow_recovery_failure_evidence_observed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_failure_evidence_observed ON public.workflow_recovery_failure_evidence USING btree (observed_at, id);
+
+
+--
+-- Name: workflow_recovery_history_events_app_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_recorded ON public.workflow_recovery_history_events USING btree (app_id, recorded_at DESC, id DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_app_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_sequence ON public.workflow_recovery_history_events USING btree (app_id, sequence DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_app_time ON public.workflow_recovery_history_events USING btree (app_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: workflow_recovery_history_events_recorded; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_history_events_recorded ON public.workflow_recovery_history_events USING btree (recorded_at, id);
+
+
+--
+-- Name: workflow_recovery_policies_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policies_due ON public.workflow_recovery_policies USING btree (next_evaluate_at, app_id) WHERE enabled;
+
+
+--
+-- Name: workflow_recovery_policies_health_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policies_health_idx ON public.workflow_recovery_policies USING btree (next_health_at, app_id);
+
+
+--
+-- Name: workflow_recovery_policy_controls_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_controls_app_idx ON public.workflow_recovery_policy_controls USING btree (app_id, controlled_at);
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges_budget; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_execution_charges_budget ON public.workflow_recovery_policy_execution_charges USING btree (app_id, applied_at);
+
+
+--
+-- Name: workflow_recovery_policy_executions_applied; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_applied ON public.workflow_recovery_policy_executions USING btree (app_id, applied_at) WHERE (status = 'applied'::text);
+
+
+--
+-- Name: workflow_recovery_policy_executions_blocked_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_blocked_idx ON public.workflow_recovery_policy_executions USING btree (next_blocked_at, app_id, action_id) WHERE (blocked_notification IS NULL);
+
+
+--
+-- Name: workflow_recovery_policy_executions_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_executions_pending ON public.workflow_recovery_policy_executions USING btree (app_id, policy_version, review_id, "position") WHERE (status = 'pending'::text);
+
+
+--
+-- Name: workflow_recovery_policy_reviews_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_reviews_app ON public.workflow_recovery_policy_reviews USING btree (app_id, id);
+
+
+--
+-- Name: workflow_recovery_policy_targets_budget; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_policy_targets_budget ON public.workflow_recovery_policy_targets USING btree (app_id, prepared_at);
+
+
+--
+-- Name: workflow_recovery_review_completion_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_review_completion_pending ON public.workflow_recovery_review_notifications USING btree (next_completion_at, review_id) WHERE (completion IS NULL);
+
+
+--
+-- Name: workflow_recovery_review_notifications_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_recovery_review_notifications_pending ON public.workflow_recovery_review_notifications USING btree (next_at, review_id) WHERE (receipt IS NULL);
 
 
 --
@@ -43280,6 +44946,55 @@ CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON
 
 
 --
+-- Name: invocation_attempt_history event_execution_attempt_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_attempt_loss BEFORE DELETE ON public.invocation_attempt_history FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
+-- Name: invocations event_execution_invocation_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_invocation_loss BEFORE DELETE OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
+-- Name: invocations event_execution_outcome_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_outcome_capture AFTER DELETE OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.capture_event_execution_outcome();
+
+
+--
+-- Name: event_execution_outcomes event_execution_outcome_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_outcome_immutable BEFORE UPDATE ON public.event_execution_outcomes FOR EACH ROW EXECUTE FUNCTION public.reject_event_execution_outcome_update();
+
+
+--
+-- Name: event_execution_outcomes event_execution_outcome_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_outcome_loss BEFORE DELETE ON public.event_execution_outcomes FOR EACH ROW EXECUTE FUNCTION public.mark_event_execution_outcome_loss();
+
+
+--
+-- Name: event_fanout_outbox event_execution_receipt_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_receipt_loss BEFORE DELETE ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
+-- Name: event_fanout_recipients event_execution_recipient_loss; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_execution_recipient_loss BEFORE DELETE ON public.event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION public.lose_event_execution_coverage();
+
+
+--
 -- Name: event_fanout_outbox event_fanout_ordering_snapshot; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -43305,6 +45020,13 @@ CREATE TRIGGER event_recovery_admitted_result AFTER INSERT OR UPDATE OF state, r
 --
 
 CREATE TRIGGER event_recovery_invocation_result AFTER INSERT OR DELETE OR UPDATE OF state, attempts, replay_generation, completed_at, outcome ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_invocation_result();
+
+
+--
+-- Name: workflow_runs event_recovery_workflow_result; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_recovery_workflow_result BEFORE DELETE OR UPDATE OF status, resume_count, finished_at, cancelled_at, last_error ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_event_recovery_workflow_result();
 
 
 --
@@ -43788,6 +45510,13 @@ CREATE TRIGGER managed_postgres_cutover_binding_guard BEFORE INSERT OR DELETE OR
 --
 
 CREATE TRIGGER managed_postgres_cutover_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_cutover_database();
+
+
+--
+-- Name: managed_postgres_cutover_drains managed_postgres_cutover_drain_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_cutover_drain_guard BEFORE UPDATE ON public.managed_postgres_cutover_drains FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_cutover_drain();
 
 
 --
@@ -44603,6 +46332,13 @@ CREATE TRIGGER outbound_app_binding_owner_guard BEFORE INSERT OR UPDATE OF accou
 
 
 --
+-- Name: outbound_integration_credential_keys outbound_credential_key_owner_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER outbound_credential_key_owner_guard BEFORE INSERT OR UPDATE OF integration_id, account_id, authorization_sealed ON public.outbound_integration_credential_keys FOR EACH ROW EXECUTE FUNCTION public.guard_outbound_credential_owner();
+
+
+--
 -- Name: outbound_integration_credentials outbound_credential_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -45219,6 +46955,13 @@ CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status O
 
 
 --
+-- Name: event_subscriptions start_event_execution_coverage; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER start_event_execution_coverage AFTER INSERT ON public.event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.start_event_execution_coverage();
+
+
+--
 -- Name: status_incident_updates status_incident_updates_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -45391,6 +47134,13 @@ CREATE TRIGGER workflow_due_trg AFTER INSERT OR UPDATE OF status ON public.workf
 --
 
 CREATE TRIGGER workflow_event_due_trg AFTER INSERT ON public.workflow_events FOR EACH ROW EXECUTE FUNCTION public.workflow_event_due_notify();
+
+
+--
+-- Name: workflow_runs workflow_recovery_failure_evidence_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER workflow_recovery_failure_evidence_capture AFTER INSERT OR UPDATE OF status, resume_count ON public.workflow_runs FOR EACH ROW EXECUTE FUNCTION public.record_workflow_recovery_failure();
 
 
 --
@@ -46203,6 +47953,14 @@ ALTER TABLE ONLY public.app_log_drains
 
 
 --
+-- Name: app_mcp_task_compatibility app_mcp_task_compatibility_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_mcp_task_compatibility
+    ADD CONSTRAINT app_mcp_task_compatibility_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_openapi_docs app_openapi_docs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46272,6 +48030,22 @@ ALTER TABLE ONLY public.app_registry_credentials
 
 ALTER TABLE ONLY public.app_registry_credentials
     ADD CONSTRAINT app_registry_credentials_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_route_priorities app_route_priorities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_route_priorities
+    ADD CONSTRAINT app_route_priorities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -46416,6 +48190,22 @@ ALTER TABLE ONLY public.app_secrets
 
 ALTER TABLE ONLY public.app_service_address_cursors
     ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_service_wake_ahead app_service_wake_ahead_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_service_wake_ahead
+    ADD CONSTRAINT app_service_wake_ahead_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -47331,6 +49121,62 @@ ALTER TABLE ONLY public.customer_operations
 
 
 --
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_playbook_progress customer_workflow_playbook_progress_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_playbook_progress
+    ADD CONSTRAINT customer_workflow_playbook_progress_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_notifications customer_workflow_readiness_notifications_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_notifications
+    ADD CONSTRAINT customer_workflow_readiness_notifications_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.customer_workflow_readiness_subscriptions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_workflow_readiness_subscriptions customer_workflow_readiness_subscriptions_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
+    ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: data_upstreams data_upstreams_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47432,6 +49278,22 @@ ALTER TABLE ONLY public.deployment_image_preparations
 
 ALTER TABLE ONLY public.deployment_logs
     ADD CONSTRAINT deployment_logs_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_task_holds deployment_mcp_task_holds_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_holds
+    ADD CONSTRAINT deployment_mcp_task_holds_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_mcp_task_migration_overrides deployment_mcp_task_migration_overrides_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
+    ADD CONSTRAINT deployment_mcp_task_migration_overrides_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --
@@ -48315,6 +50177,46 @@ ALTER TABLE ONLY public.event_delivery_slots
 
 
 --
+-- Name: event_execution_coverage event_execution_coverage_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_coverage
+    ADD CONSTRAINT event_execution_coverage_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_outcomes event_execution_outcomes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_outcomes
+    ADD CONSTRAINT event_execution_outcomes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_outcomes event_execution_outcomes_root_invocation_id_root_created_a_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_outcomes
+    ADD CONSTRAINT event_execution_outcomes_root_invocation_id_root_created_a_fkey FOREIGN KEY (root_invocation_id, root_created_at) REFERENCES public.event_execution_roots(root_invocation_id, root_created_at) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_roots event_execution_roots_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_roots
+    ADD CONSTRAINT event_execution_roots_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_execution_roots event_execution_roots_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_execution_roots
+    ADD CONSTRAINT event_execution_roots_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.event_execution_coverage(subscription_id) ON DELETE CASCADE;
+
+
+--
 -- Name: event_fanout_attempt_history event_fanout_attempt_history_outbox_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -48392,6 +50294,14 @@ ALTER TABLE ONLY public.event_recovery_jobs
 
 ALTER TABLE ONLY public.event_recovery_jobs
     ADD CONSTRAINT event_recovery_jobs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_recovery_workflow_results event_recovery_workflow_results_job_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_recovery_workflow_results
+    ADD CONSTRAINT event_recovery_workflow_results_job_id_position_fkey FOREIGN KEY (job_id, "position") REFERENCES public.event_recovery_items(job_id, "position") ON DELETE CASCADE;
 
 
 --
@@ -50651,6 +52561,86 @@ ALTER TABLE ONLY public.outbound_admission_state
 
 
 --
+-- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_budget_alerts
+    ADD CONSTRAINT outbound_ai_budget_alerts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_budget_alerts outbound_ai_budget_alerts_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_budget_alerts
+    ADD CONSTRAINT outbound_ai_budget_alerts_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_price_entries outbound_ai_price_entries_price_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_entries
+    ADD CONSTRAINT outbound_ai_price_entries_price_list_id_fkey FOREIGN KEY (price_list_id) REFERENCES public.outbound_ai_price_lists(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_price_lists outbound_ai_price_lists_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_price_lists
+    ADD CONSTRAINT outbound_ai_price_lists_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_request_log outbound_ai_request_log_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_request_log
+    ADD CONSTRAINT outbound_ai_request_log_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_route_targets outbound_ai_route_targets_route_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_route_targets
+    ADD CONSTRAINT outbound_ai_route_targets_route_id_fkey FOREIGN KEY (route_id) REFERENCES public.outbound_ai_routes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_routes outbound_ai_routes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_routes
+    ADD CONSTRAINT outbound_ai_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_usage_daily outbound_ai_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_usage_daily
+    ADD CONSTRAINT outbound_ai_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_user_usage_daily outbound_ai_user_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_user_usage_daily
+    ADD CONSTRAINT outbound_ai_user_usage_daily_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: outbound_app_binding_usage outbound_app_binding_usage_binding_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50696,6 +52686,22 @@ ALTER TABLE ONLY public.outbound_integration_apps
 
 ALTER TABLE ONLY public.outbound_integration_apps
     ADD CONSTRAINT outbound_integration_apps_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_integration_credential_keys outbound_integration_credential_keys_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_integration_credential_keys
+    ADD CONSTRAINT outbound_integration_credential_keys_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --
@@ -53539,6 +55545,118 @@ ALTER TABLE ONLY public.workflow_operation_effects
 
 
 --
+-- Name: workflow_recovery_action_receipts workflow_recovery_action_receipts_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_action_receipts
+    ADD CONSTRAINT workflow_recovery_action_receipts_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_recovery_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_failure_evidence workflow_recovery_failure_evidence_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_failure_evidence
+    ADD CONSTRAINT workflow_recovery_failure_evidence_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_health_incidents workflow_recovery_health_incidents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_health_incidents
+    ADD CONSTRAINT workflow_recovery_health_incidents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_history_events workflow_recovery_history_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_history_events
+    ADD CONSTRAINT workflow_recovery_history_events_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policies workflow_recovery_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policies
+    ADD CONSTRAINT workflow_recovery_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_controls workflow_recovery_policy_controls_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_controls
+    ADD CONSTRAINT workflow_recovery_policy_controls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_execution_charges workflow_recovery_policy_execution_charges_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_execution_charges
+    ADD CONSTRAINT workflow_recovery_policy_execution_charges_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_executions workflow_recovery_policy_executions_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_executions
+    ADD CONSTRAINT workflow_recovery_policy_executions_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_reviews workflow_recovery_policy_reviews_job_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_reviews
+    ADD CONSTRAINT workflow_recovery_policy_reviews_job_id_fkey FOREIGN KEY (job_id) REFERENCES public.event_recovery_jobs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_policy_targets workflow_recovery_policy_targets_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_policy_targets
+    ADD CONSTRAINT workflow_recovery_policy_targets_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_recovery_review_notifications workflow_recovery_review_notifications_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_recovery_review_notifications
+    ADD CONSTRAINT workflow_recovery_review_notifications_review_id_fkey FOREIGN KEY (review_id) REFERENCES public.workflow_recovery_policy_reviews(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workflow_run_resumes workflow_run_resumes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53662,3 +55780,1130 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 --
 
 
+
+-- ADR-590: original successful release authority, independent of mutable source configuration.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_releases (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK (jsonb_typeof(plan)='object'),
+ receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt)='object'),
+ adoption_sha256 text NOT NULL CHECK (adoption_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'planned' CHECK (state IN ('planned','requested','released')),
+ requested_at timestamptz,
+ observation_sha256 text CHECK (observation_sha256 ~ '^[a-f0-9]{64}$'),
+ released_at timestamptz,
+ CHECK ((state='planned' AND requested_at IS NULL AND observation_sha256 IS NULL AND released_at IS NULL)
+  OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND released_at IS NULL)
+  OR (state='released' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND released_at IS NOT NULL))
+);
+
+-- ADR-590: preserve once-only native creation authority for original private targets.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_targets (
+ operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ source_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
+ target_bucket_id uuid NOT NULL UNIQUE REFERENCES object_buckets(id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK (jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK (state IN ('planned','requested','ready')),
+ requested_at timestamptz,
+ observation_sha256 text CHECK (observation_sha256 ~ '^[a-f0-9]{64}$'),
+ ready_at timestamptz,
+ PRIMARY KEY(operation_id,source_bucket_id),
+ CHECK (source_bucket_id<>target_bucket_id),
+ CHECK ((state='planned' AND requested_at IS NULL AND observation_sha256 IS NULL AND ready_at IS NULL)
+  OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND ready_at IS NULL)
+  OR (state='ready' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND ready_at IS NOT NULL))
+);
+
+-- ADR-590: original fork SQL closure and private catalogue adoption authority.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_isolation (
+ operation_id uuid NOT NULL,
+ source_database_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','adopted')),
+ requested_at timestamptz,
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ adopted_database_id uuid REFERENCES managed_postgres_databases(id) ON DELETE RESTRICT,
+ adopted_at timestamptz,
+ PRIMARY KEY(operation_id,source_database_id),
+ FOREIGN KEY(operation_id,source_database_id) REFERENCES project_environment_clone_postgres_snapshot_restores(operation_id,source_database_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation_sha256 IS NULL AND adopted_database_id IS NULL AND adopted_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND adopted_database_id IS NULL AND adopted_at IS NULL)
+ OR (state='adopted' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND adopted_database_id IS NOT NULL AND adopted_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_verification (
+ operation_id uuid NOT NULL,
+ source_database_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','verified')),
+ requested_at timestamptz,
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ verified_at timestamptz,
+ PRIMARY KEY(operation_id,source_database_id),
+ FOREIGN KEY(operation_id,source_database_id) REFERENCES project_environment_clone_checkpoint_postgres_isolation(operation_id,source_database_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation_sha256 IS NULL AND verified_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND verified_at IS NULL)
+ OR (state='verified' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND verified_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_runtime (
+ operation_id uuid NOT NULL,
+ source_database_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','ready')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object'),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ data_resource_id text CHECK(length(data_resource_id) BETWEEN 1 AND 255),
+ ready_at timestamptz,
+ PRIMARY KEY(operation_id,source_database_id),
+ FOREIGN KEY(operation_id,source_database_id) REFERENCES project_environment_clone_checkpoint_postgres_verification(operation_id,source_database_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND data_resource_id IS NULL AND ready_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND data_resource_id IS NULL AND ready_at IS NULL)
+ OR (state='ready' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND data_resource_id IS NOT NULL AND ready_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_postgres_credentials (
+ operation_id uuid NOT NULL,
+ source_binding_id uuid NOT NULL,
+ source_database_id uuid NOT NULL,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+ target_binding_id uuid NOT NULL UNIQUE,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','sealed','requested','prepared')),
+ ciphertext bytea CHECK(octet_length(ciphertext) BETWEEN 1 AND 4096),
+ key_id text CHECK(length(key_id) BETWEEN 1 AND 255),
+ ciphertext_sha256 text CHECK(ciphertext_sha256 ~ '^[a-f0-9]{64}$'),
+ requested_at timestamptz,
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ prepared_at timestamptz,
+ PRIMARY KEY(operation_id,source_binding_id),
+ FOREIGN KEY(operation_id,source_database_id) REFERENCES project_environment_clone_checkpoint_postgres_runtime(operation_id,source_database_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND ciphertext IS NULL AND key_id IS NULL AND ciphertext_sha256 IS NULL AND requested_at IS NULL AND observation_sha256 IS NULL AND prepared_at IS NULL)
+ OR (state='sealed' AND ciphertext IS NOT NULL AND key_id IS NOT NULL AND ciphertext_sha256 IS NOT NULL AND requested_at IS NULL AND observation_sha256 IS NULL AND prepared_at IS NULL)
+ OR (state='requested' AND ciphertext IS NOT NULL AND key_id IS NOT NULL AND ciphertext_sha256 IS NOT NULL AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND prepared_at IS NULL)
+ OR (state='prepared' AND ciphertext IS NOT NULL AND key_id IS NOT NULL AND ciphertext_sha256 IS NOT NULL AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND prepared_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_credential_retirements (
+ operation_id uuid NOT NULL,
+ source_binding_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object'),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz,
+ PRIMARY KEY(operation_id,source_binding_id),
+ FOREIGN KEY(operation_id,source_binding_id) REFERENCES project_environment_clone_checkpoint_postgres_credentials(operation_id,source_binding_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_connection_values (
+ operation_id uuid NOT NULL,
+ source_binding_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','sealed')),
+ ciphertext bytea CHECK(octet_length(ciphertext) BETWEEN 1 AND 4096),
+ key_id text CHECK(length(key_id) BETWEEN 1 AND 255),
+ ciphertext_sha256 text CHECK(ciphertext_sha256 ~ '^[a-f0-9]{64}$'),
+ sealed_at timestamptz,
+ PRIMARY KEY(operation_id,source_binding_id),
+ FOREIGN KEY(operation_id,source_binding_id) REFERENCES project_environment_clone_checkpoint_postgres_credentials(operation_id,source_binding_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND ciphertext IS NULL AND key_id IS NULL AND ciphertext_sha256 IS NULL AND sealed_at IS NULL)
+ OR (state='sealed' AND ciphertext IS NOT NULL AND key_id IS NOT NULL AND ciphertext_sha256 IS NOT NULL AND sealed_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_activations (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','active')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object'),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ activated_at timestamptz,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND activated_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND activated_at IS NULL)
+ OR (state='active' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND activated_at IS NOT NULL))
+);
+ALTER TABLE project_environment_clone_checkpoint_pg_connection_values ADD COLUMN IF NOT EXISTS activation_operation_id uuid REFERENCES project_environment_clone_checkpoint_pg_activations(operation_id) ON DELETE RESTRICT;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_pg_connection_values'::regclass AND conname='clone_checkpoint_pg_connection_activation_owner') THEN
+  ALTER TABLE project_environment_clone_checkpoint_pg_connection_values ADD CONSTRAINT clone_checkpoint_pg_connection_activation_owner CHECK(activation_operation_id IS NULL OR activation_operation_id=operation_id);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_publications (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_pg_activations(operation_id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=25165824),
+ plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL CHECK(state IN ('published','withdrawn')),
+ published_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ withdrawn_at timestamptz,
+ CHECK((state='published' AND withdrawn_at IS NULL) OR (state='withdrawn' AND withdrawn_at IS NOT NULL))
+);
+
+-- ADR-590: bounded read-only retained-object/private-target comparison authority.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_verification (
+ operation_id uuid NOT NULL,
+ source_bucket_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','verified')),
+ requested_at timestamptz,
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ verified_at timestamptz,
+ PRIMARY KEY(operation_id,source_bucket_id),
+ FOREIGN KEY(operation_id,source_bucket_id) REFERENCES project_environment_clone_checkpoint_object_targets(operation_id,source_bucket_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation_sha256 IS NULL AND verified_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND verified_at IS NULL)
+ OR (state='verified' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND verified_at IS NOT NULL))
+);
+
+-- ADR-590: bounded once-only retained-object/private-target copy authority.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_copies (
+ operation_id uuid NOT NULL,
+ source_bucket_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','copied')),
+ requested_at timestamptz,
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ copied_at timestamptz,
+ PRIMARY KEY(operation_id,source_bucket_id),
+ FOREIGN KEY(operation_id,source_bucket_id) REFERENCES project_environment_clone_checkpoint_object_targets(operation_id,source_bucket_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation_sha256 IS NULL AND copied_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation_sha256 IS NULL AND copied_at IS NULL)
+ OR (state='copied' AND requested_at IS NOT NULL AND observation_sha256 IS NOT NULL AND copied_at IS NOT NULL))
+);
+
+-- ADR-590: immutable fresh credential identities for the complete verified object graph.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_credential_ids (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'planned' CHECK(state='planned')
+);
+
+-- ADR-590: private sealed gateway credentials and runtime values, without publication.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_values (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_object_credential_ids(operation_id) ON DELETE RESTRICT,
+ payload jsonb NOT NULL CHECK(jsonb_typeof(payload)='object' AND octet_length(payload::text)<=16777216),
+ payload_sha256 text NOT NULL CHECK(payload_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'sealed' CHECK(state='sealed')
+);
+
+-- ADR-590: atomic private gateway metadata publication, still hidden until ready.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_publications (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_object_values(operation_id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ plan_sha256 text NOT NULL CHECK(plan_sha256 ~ '^[a-f0-9]{64}$'),
+ state text NOT NULL DEFAULT 'published' CHECK(state='published')
+);
+
+-- ADR-590: permanently retire owned private gateway metadata during compensation.
+ALTER TABLE project_environment_clone_checkpoint_object_publications DROP CONSTRAINT IF EXISTS project_environment_clone_checkpoint_object_publica_state_check;
+ALTER TABLE project_environment_clone_checkpoint_object_publications ADD COLUMN IF NOT EXISTS withdrawn_at timestamptz;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_object_publications'::regclass AND conname='clone_checkpoint_object_publications_state_shape') THEN
+  ALTER TABLE project_environment_clone_checkpoint_object_publications ADD CONSTRAINT clone_checkpoint_object_publications_state_shape CHECK (
+  (state='published' AND withdrawn_at IS NULL) OR
+  (state='withdrawn' AND withdrawn_at IS NOT NULL)
+ );
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+
+
+-- ADR-590: preserve once-only permanent native cleanup authority and evidence.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_object_retirements (
+ operation_id uuid NOT NULL,
+ source_bucket_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=17825792),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object'),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz,
+ PRIMARY KEY(operation_id,source_bucket_id),
+ FOREIGN KEY(operation_id,source_bucket_id) REFERENCES project_environment_clone_checkpoint_object_targets(operation_id,source_bucket_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
+);
+
+-- ADR-590: local completion evidence, never a native absence receipt.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_unused_object_reservations (
+ operation_id uuid NOT NULL REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ source_bucket_id uuid NOT NULL,
+ target_bucket_id uuid NOT NULL REFERENCES object_buckets(id) ON DELETE RESTRICT,
+ reservation jsonb NOT NULL CHECK(jsonb_typeof(reservation)='object'),
+ completed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(operation_id,source_bucket_id),
+ UNIQUE(target_bucket_id)
+);
+
+CREATE OR REPLACE FUNCTION guard_clone_configuration_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    before_row jsonb := CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) ELSE '{}'::jsonb END;
+    after_row jsonb := CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) ELSE '{}'::jsonb END;
+    before_id uuid := nullif(before_row ->> TG_ARGV[1], '')::uuid;
+    after_id uuid := nullif(after_row ->> TG_ARGV[1], '')::uuid;
+    project uuid;
+BEGIN
+    -- Protection intents are frozen customer configuration. Only the original
+    -- journal's operational progress may change during a capture hold.
+    IF TG_TABLE_NAME = 'object_version_protection' AND TG_OP = 'UPDATE' THEN
+        IF (before_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            IS DISTINCT FROM (after_row - ARRAY['state','lease_token','lease_until','retry_at','dispatched','last_error_code','updated_at','event_hold_baseline'])
+            OR ((before_row ->> 'dispatched')::boolean AND NOT (after_row ->> 'dispatched')::boolean)
+            OR ((before_row ->> 'state') IN ('ready','failed') AND before_row IS DISTINCT FROM after_row)
+            OR (nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS NOT NULL AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((before_row ->> 'dispatched')::boolean AND nullif(before_row -> 'event_hold_baseline', 'null'::jsonb) IS DISTINCT FROM nullif(after_row -> 'event_hold_baseline', 'null'::jsonb))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'last_error_code') NOT IN ('preparation_failed','provider_rejected'))
+            OR ((after_row ->> 'state') = 'failed' AND (after_row ->> 'dispatched')::boolean AND (after_row ->> 'last_error_code') <> 'provider_rejected') THEN
+            RAISE EXCEPTION 'original protection intent and settled evidence are immutable'
+                USING ERRCODE = '23514', CONSTRAINT = 'object_protection_original_immutable';
+        END IF;
+        RETURN NEW;
+    END IF;
+    PERFORM generation FROM project_environment_clone_configuration_clock WHERE singleton FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'configuration synchronization clock is missing'
+            USING ERRCODE = '55000', CONSTRAINT = 'clone_configuration_guard_missing';
+    END IF;
+    -- Only an original complete manifest can admit a private target INSERT.
+    -- Existing rows, source configuration, credentials and policy mutations
+    -- retain the project-wide guard. No caller-set session bypass exists.
+    IF TG_TABLE_NAME = 'object_buckets' AND TG_OP = 'INSERT' THEN
+        IF EXISTS (
+            SELECT 1
+            FROM project_environment_clone_operations o
+            JOIN apps a ON a.id = NEW.app_id AND a.project_id = o.project_id AND a.account_id = o.account_id
+            JOIN project_environment_clone_configuration_guards g ON g.project_id = o.project_id
+            JOIN object_buckets source ON source.id = NEW.environment_clone_source_bucket_id
+            JOIN object_bucket_write_fences f ON f.bucket_id = source.id AND f.clone_operation_id = o.id AND f.token = o.id
+            JOIN project_environment_clone_object_manifests m ON m.operation_id = o.id AND m.source_bucket_id = source.id
+            WHERE o.id = NEW.environment_clone_operation_id AND o.status = 'capturing' AND o.lease_until > clock_timestamp()
+                AND g.state = 'held' AND g.operation_id = o.id AND g.account_id = o.account_id
+                AND g.source_environment = o.source_environment AND g.source_revision_hash = o.source_revision_hash
+                AND jsonb_array_length(o.resources) = 2
+                AND o.resources->0->>'kind' = 'data_checkpoint' AND o.resources->0->>'status' = 'captured'
+                AND o.resources->0->>'source_id' = o.id::text AND o.resources->0->>'name' = o.source_environment
+                AND o.resources->1->>'kind' = 'data_checkpoint_receipt' AND o.resources->1->>'status' = 'captured'
+                AND o.resources->1->>'source_id' = o.resources->0->>'target_id'
+                AND o.resources->1->>'capture_point' = o.resources->0->>'capture_point'
+                AND NEW.account_id = o.account_id AND NEW.scope = o.target_environment AND NEW.scope <> source.scope
+                AND source.account_id = o.account_id AND source.app_id = NEW.app_id AND source.state = 'ready'
+                AND f.backend_id = source.backend_id AND f.backend_fingerprint = source.backend_fingerprint AND f.physical_name = source.physical_name
+                AND NEW.backend_id = source.backend_id AND NEW.backend_fingerprint = source.backend_fingerprint AND NEW.region = source.region
+                AND NEW.state = 'provisioning' AND NOT NEW.public_read AND coalesce(NEW.serve_at, '') = ''
+                AND NEW.physical_name = 'gregale-' || replace(NEW.id::text, '-', '') AND NEW.physical_name <> source.physical_name
+                AND left(NEW.name, length('env-' || o.target_environment || '-')) = 'env-' || o.target_environment || '-'
+                AND right(NEW.name, 12) ~ '^[a-f0-9]{12}$' AND length(NEW.name) = length('env-' || o.target_environment || '-') + 12
+                AND m.target_bucket_id = NEW.id AND m.captured_at_exact = o.resources->0->>'capture_point'
+                AND m.captured_at >= g.held_at
+                AND m.object_count = (SELECT count(*) FROM project_environment_clone_object_entries e
+                    WHERE e.operation_id = m.operation_id AND e.source_bucket_id = m.source_bucket_id)
+            FOR SHARE OF o, g, f, source
+        ) THEN RETURN NEW; END IF;
+    END IF;
+    -- Only journal-backed UNUSED reservation completion can change an
+    -- existing target under its OWN source hold. No session bypass exists.
+    IF TG_TABLE_NAME = 'object_buckets' AND TG_OP = 'UPDATE' THEN
+        IF OLD.state = 'provisioning' AND NEW.state = 'deleted'
+            AND OLD.lease_token IS NULL AND OLD.lease_until IS NULL
+            AND NOT OLD.public_read AND OLD.serve_at IS NULL
+            AND NEW.attempt_count = 0 AND NEW.last_error_code = ''
+            AND (before_row - ARRAY['state','attempt_count','last_error_code','retry_at','updated_at'])
+                = (after_row - ARRAY['state','attempt_count','last_error_code','retry_at','updated_at'])
+            AND EXISTS (
+                SELECT 1 FROM project_environment_clone_operations o
+                JOIN apps a ON a.id = OLD.app_id AND a.project_id = o.project_id AND a.account_id = o.account_id
+                JOIN project_environment_clone_configuration_guards g ON g.project_id = o.project_id
+                JOIN project_environment_clone_checkpoint_unused_object_reservations u ON u.operation_id = o.id
+                    AND u.source_bucket_id = OLD.environment_clone_source_bucket_id AND u.target_bucket_id = OLD.id
+                JOIN project_environment_clone_object_manifests m ON m.operation_id = o.id
+                    AND m.source_bucket_id = u.source_bucket_id AND m.target_bucket_id = OLD.id
+                WHERE o.id = OLD.environment_clone_operation_id AND o.status = 'compensating'
+                    AND o.lease_token IS NOT NULL AND o.lease_until > clock_timestamp()
+                    AND g.state = 'held' AND g.operation_id = o.id AND g.account_id = o.account_id
+                    AND g.source_environment = o.source_environment AND g.source_revision_hash = o.source_revision_hash
+                    AND OLD.account_id = o.account_id AND OLD.scope = o.target_environment
+                    AND OLD.id <> OLD.environment_clone_source_bucket_id
+                    AND OLD.physical_name = 'gregale-' || replace(OLD.id::text, '-', '')
+                    AND u.reservation->>'ID' = OLD.id::text AND u.reservation->>'AppID' = OLD.app_id::text
+                    AND u.reservation->>'AccountID' = OLD.account_id::text AND u.reservation->>'Scope' = OLD.scope
+                    AND u.reservation->>'PhysicalName' = OLD.physical_name
+                    AND u.reservation->>'EnvironmentCloneOperationID' = o.id::text
+                    AND u.reservation->>'EnvironmentCloneSourceBucketID' = u.source_bucket_id::text
+                    AND o.resources->0->>'kind' = 'data_checkpoint' AND o.resources->0->>'status' = 'captured'
+                    AND o.resources->(jsonb_array_length(o.resources)-1)->>'kind' = 'data_checkpoint_adoption'
+                    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_object_targets t
+                        WHERE t.operation_id = o.id AND t.source_bucket_id = u.source_bucket_id)
+                    AND NOT EXISTS(SELECT 1 FROM object_storage_s3_credentials c WHERE c.bucket_id = OLD.id)
+                    AND NOT EXISTS(SELECT 1 FROM object_storage_access_grants r WHERE r.bucket_id = OLD.id)
+                FOR SHARE OF o, g, u, m
+            ) THEN RETURN NEW; END IF;
+    END IF;
+    FOR project IN
+        SELECT DISTINCT p.project_id FROM (
+            SELECT before_id AS project_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT after_id WHERE TG_ARGV[0] = 'project'
+            UNION ALL SELECT a.project_id FROM apps a
+                WHERE TG_ARGV[0] = 'app' AND a.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM deployments d JOIN apps a ON a.id = d.app_id
+                WHERE TG_ARGV[0] = 'deployment' AND d.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM object_buckets b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'bucket' AND b.id IN (before_id, after_id)
+            UNION ALL SELECT a.project_id FROM managed_postgres_bindings b JOIN apps a ON a.id = b.app_id
+                WHERE TG_ARGV[0] = 'database' AND b.database_id IN (before_id, after_id)
+        ) p WHERE p.project_id IS NOT NULL ORDER BY p.project_id
+    LOOP
+        PERFORM assert_clone_configuration_mutable(project);
+    END LOOP;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- ADR-590: once-only original source cleanup authority survives source reopening.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_source_compensations (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_operations(id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','compensated')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object' AND octet_length(observation::text)<=16777216),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ compensated_at timestamptz,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND compensated_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND compensated_at IS NULL)
+ OR (state='compensated' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND compensated_at IS NOT NULL AND compensated_at>=requested_at))
+);
+
+-- ADR-590: permanent native request fencing, not deletion/not-found alone,
+-- authorizes retirement of the original PostgreSQL checkpoint target.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_target_compensations (
+ operation_id uuid NOT NULL,
+ source_database_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=1048576),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','compensated')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object' AND octet_length(observation::text)<=1048576),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ compensated_at timestamptz,
+ PRIMARY KEY(operation_id,source_database_id),
+ UNIQUE(operation_id,source_database_id,observation_sha256),
+ FOREIGN KEY(operation_id,source_database_id) REFERENCES project_environment_clone_postgres_snapshot_restores(operation_id,source_database_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND compensated_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND compensated_at IS NULL)
+ OR (state='compensated' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND compensated_at IS NOT NULL AND compensated_at>=requested_at))
+);
+ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD COLUMN IF NOT EXISTS checkpoint_compensation_observation_sha256 text;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_snapshot_restores'::regclass AND conname='clone_checkpoint_pg_target_terminal_proof_fk') THEN
+  ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD CONSTRAINT clone_checkpoint_pg_target_terminal_proof_fk
+ FOREIGN KEY(operation_id,source_database_id,checkpoint_compensation_observation_sha256)
+ REFERENCES project_environment_clone_checkpoint_pg_target_compensations(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT;
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_snapshot_restores'::regclass AND conname='clone_checkpoint_pg_target_terminal_proof_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD CONSTRAINT clone_checkpoint_pg_target_terminal_proof_shape
+ CHECK(checkpoint_compensation_observation_sha256 IS NULL OR state='deleted');
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_snapshot_restores DROP CONSTRAINT IF EXISTS project_environment_clone_postgres_snapshot_restores_check6;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_snapshot_restores'::regclass AND conname='project_environment_clone_postgres_snapshot_restores_check6') THEN
+  ALTER TABLE project_environment_clone_postgres_snapshot_restores ADD CONSTRAINT project_environment_clone_postgres_snapshot_restores_check6
+ CHECK(state<>'deleted' OR request_started_at IS NULL
+ OR (target_provider_resource_id IS NOT NULL AND jsonb_array_length(delete_operation_ids)>0)
+ OR checkpoint_compensation_observation_sha256 IS NOT NULL);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+
+-- ADR-590: retained native capture cleanup authority survives unknown outcomes.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_capture_retirements (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_source_compensations(operation_id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=16777216),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object' AND octet_length(observation::text)<=16777216),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
+);
+
+-- ADR-590: retained catalogue retirement keeps original ownership evidence.
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_checkpoint_capture_retirements'::regclass AND conname='clone_checkpoint_capture_retirement_proof_key') THEN
+  ALTER TABLE project_environment_clone_checkpoint_capture_retirements ADD CONSTRAINT clone_checkpoint_capture_retirement_proof_key UNIQUE(operation_id,observation_sha256);
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_capture_catalogues (
+ operation_id uuid NOT NULL,
+ source_kind text NOT NULL CHECK(source_kind IN ('managed_postgres','object_storage')),
+ source_id uuid NOT NULL,
+ capture_identity text NOT NULL CHECK(capture_identity<>''),
+ source_resource_id text NOT NULL CHECK(source_resource_id<>''),
+ observation_sha256 text NOT NULL CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz NOT NULL,
+ PRIMARY KEY(operation_id,source_kind,source_id),
+ FOREIGN KEY(operation_id,observation_sha256) REFERENCES project_environment_clone_checkpoint_capture_retirements(operation_id,observation_sha256) ON DELETE RESTRICT
+);
+
+-- ADR-590: permanent native PostgreSQL copy dependency retirement.
+-- +goose Up
+-- ADR-590: native owner-wide fencing closes unknown create/cleanup/writer outcomes.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_pg_copy_retirements (
+ operation_id uuid NOT NULL,
+ source_database_id uuid NOT NULL,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=2097152),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object' AND octet_length(observation::text)<=2097152),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz,
+ PRIMARY KEY(operation_id,source_database_id),
+ UNIQUE(operation_id,source_database_id,observation_sha256),
+ FOREIGN KEY(operation_id,source_database_id) REFERENCES project_environment_clone_postgres_snapshot_restores(operation_id,source_database_id) ON DELETE RESTRICT,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
+);
+ALTER TABLE project_environment_clone_postgres_copy_readers ADD COLUMN IF NOT EXISTS checkpoint_retirement_observation_sha256 text;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_readers'::regclass AND conname='clone_checkpoint_pg_copy_readers_proof_fk') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_readers ADD CONSTRAINT clone_checkpoint_pg_copy_readers_proof_fk
+ FOREIGN KEY(operation_id,source_database_id,checkpoint_retirement_observation_sha256)
+ REFERENCES project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT;
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_readers'::regclass AND conname='clone_checkpoint_pg_copy_readers_proof_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_readers ADD CONSTRAINT clone_checkpoint_pg_copy_readers_proof_shape
+ CHECK(checkpoint_retirement_observation_sha256 IS NULL OR state='retired');
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_copy_readers DROP CONSTRAINT IF EXISTS project_environment_clone_postgres_copy_readers_check8;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_readers'::regclass AND conname='project_environment_clone_postgres_copy_readers_check8') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_readers ADD CONSTRAINT project_environment_clone_postgres_copy_readers_check8 CHECK(((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'observed'::text) AND (request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND (cleanup_requested_at IS NULL) AND (retired_at IS NULL)) OR ((state = 'deleting'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NULL)) OR ((state = 'retired'::text) AND (cleanup_requested_at IS NOT NULL) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (endpoint_id IS NULL) AND (cleanup_dispatched_at IS NULL) AND (delete_operation_ids = '[]'::jsonb) AND (capture_operation_ids = '[]'::jsonb)) OR ((request_started_at IS NOT NULL) AND (endpoint_id IS NOT NULL) AND ((delete_operation_ids <> '[]'::jsonb) OR (capture_operation_ids <> '[]'::jsonb))))))) OR (state='retired' AND retired_at IS NOT NULL AND checkpoint_retirement_observation_sha256 IS NOT NULL AND cleanup_requested_at IS NOT NULL));
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_copy_targets ADD COLUMN IF NOT EXISTS checkpoint_retirement_observation_sha256 text;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_targets'::regclass AND conname='clone_checkpoint_pg_copy_targets_proof_fk') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_targets ADD CONSTRAINT clone_checkpoint_pg_copy_targets_proof_fk
+ FOREIGN KEY(operation_id,source_database_id,checkpoint_retirement_observation_sha256)
+ REFERENCES project_environment_clone_checkpoint_pg_copy_retirements(operation_id,source_database_id,observation_sha256) ON DELETE RESTRICT;
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_targets'::regclass AND conname='clone_checkpoint_pg_copy_targets_proof_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_targets ADD CONSTRAINT clone_checkpoint_pg_copy_targets_proof_shape
+ CHECK(checkpoint_retirement_observation_sha256 IS NULL OR state='retired');
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+ALTER TABLE project_environment_clone_postgres_copy_targets DROP CONSTRAINT IF EXISTS clone_copy_target_lifecycle_shape;
+-- +goose StatementBegin
+DO $clone_replay$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='project_environment_clone_postgres_copy_targets'::regclass AND conname='clone_copy_target_lifecycle_shape') THEN
+  ALTER TABLE project_environment_clone_postgres_copy_targets ADD CONSTRAINT clone_copy_target_lifecycle_shape CHECK(((((state = 'reserved'::text) AND (request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'requested'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'preparing'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'prepared'::text) AND (request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (prepared_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((state = 'deleting'::text) AND (request_started_at IS NOT NULL) AND (retired_at IS NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NULL) AND (((provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL)) OR ((provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL)))) OR ((state = 'retired'::text) AND (retired_at IS NOT NULL) AND (((request_started_at IS NULL) AND (provider_resource_id IS NULL) AND (provider_created_at IS NULL) AND (observed_at IS NULL) AND (prepared_at IS NULL) AND (deletion_started_at IS NULL) AND (deletion_observed_at IS NULL)) OR ((request_started_at IS NOT NULL) AND (provider_resource_id IS NOT NULL) AND (provider_created_at IS NOT NULL) AND (observed_at IS NOT NULL) AND (deletion_started_at IS NOT NULL) AND (deletion_observed_at IS NOT NULL)))))) OR (state='retired' AND retired_at IS NOT NULL AND checkpoint_retirement_observation_sha256 IS NOT NULL AND ((provider_resource_id IS NULL AND provider_created_at IS NULL AND observed_at IS NULL AND prepared_at IS NULL) OR (provider_resource_id IS NOT NULL AND provider_created_at IS NOT NULL AND observed_at IS NOT NULL AND request_started_at IS NOT NULL))));
+ END IF;
+END $clone_replay$;
+-- +goose StatementEnd
+
+-- ADR-590: original workload retirement authority survives worker handoff.
+CREATE TABLE IF NOT EXISTS project_environment_clone_checkpoint_workload_retirements (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_source_compensations(operation_id) ON DELETE RESTRICT,
+ plan jsonb NOT NULL CHECK(jsonb_typeof(plan)='object' AND octet_length(plan::text)<=2097152),
+ state text NOT NULL DEFAULT 'planned' CHECK(state IN ('planned','requested','retired')),
+ requested_at timestamptz,
+ observation jsonb CHECK(jsonb_typeof(observation)='object' AND octet_length(observation::text)<=2097152),
+ observation_sha256 text CHECK(observation_sha256 ~ '^[a-f0-9]{64}$'),
+ retired_at timestamptz,
+ CHECK((state='planned' AND requested_at IS NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='requested' AND requested_at IS NOT NULL AND observation IS NULL AND observation_sha256 IS NULL AND retired_at IS NULL)
+ OR (state='retired' AND requested_at IS NOT NULL AND observation IS NOT NULL AND observation_sha256 IS NOT NULL AND retired_at IS NOT NULL AND retired_at>=requested_at))
+);
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_ownership (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_materializations(operation_id) ON DELETE RESTRICT,
+ environment_id uuid NOT NULL CHECK(environment_id<>'00000000-0000-0000-0000-000000000000'::uuid),
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+-- ADR-590: private copied-configuration cleanup, retaining workload ownership.
+CREATE TABLE IF NOT EXISTS project_environment_clone_configuration_cleanups (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
+ FOREIGN KEY(operation_id) REFERENCES project_environment_clone_checkpoint_workload_retirements(operation_id) ON DELETE RESTRICT,
+ ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
+ native_plan_sha256 text NOT NULL CHECK(native_plan_sha256 ~ '^[a-f0-9]{64}$'),
+ native_observation_sha256 text NOT NULL CHECK(native_observation_sha256 ~ '^[a-f0-9]{64}$'),
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_workload_cleanups (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_cleanups(operation_id) ON DELETE RESTRICT,
+ configuration_cleanup_sha256 text NOT NULL CHECK(configuration_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+-- filename: 20261011232006402_clone_postgres_secret_withdrawal_receipts.sql
+
+-- ADR-590: original ownership survives atomic PostgreSQL envelope withdrawal.
+CREATE TABLE IF NOT EXISTS project_environment_clone_postgres_secret_withdrawals (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
+ ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
+ publication_plan_sha256 text NOT NULL CHECK(publication_plan_sha256 ~ '^[a-f0-9]{64}$'),
+ publication_withdrawn_at timestamptz NOT NULL,
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(recorded_at>=publication_withdrawn_at)
+);
+
+-- ADR-590: original ownership survives atomic Object-storage envelope withdrawal.
+CREATE TABLE IF NOT EXISTS project_environment_clone_object_secret_withdrawals (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_configuration_ownership(operation_id) ON DELETE RESTRICT,
+ ownership_sha256 text NOT NULL CHECK(ownership_sha256 ~ '^[a-f0-9]{64}$'),
+ postgres_withdrawal_sha256 text NOT NULL CHECK(postgres_withdrawal_sha256='' OR postgres_withdrawal_sha256 ~ '^[a-f0-9]{64}$'),
+ prior_manifest_sha256 text NOT NULL CHECK(prior_manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ publication_plan_sha256 text NOT NULL CHECK(publication_plan_sha256 ~ '^[a-f0-9]{64}$'),
+ publication_withdrawn_at timestamptz NOT NULL,
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ CHECK(recorded_at>=publication_withdrawn_at)
+);
+
+-- filename: 20261011232006408_clone_environment_metadata_cleanups.sql
+
+-- ADR-590: atomic removal of unborrowed original environment metadata.
+CREATE TABLE IF NOT EXISTS project_environment_clone_environment_cleanups (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_workload_cleanups(operation_id) ON DELETE RESTRICT,
+ environment_id uuid NOT NULL,
+ workload_cleanup_sha256 text NOT NULL CHECK(workload_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
+ manifest jsonb NOT NULL CHECK(jsonb_typeof(manifest)='object' AND octet_length(manifest::text)<=32768),
+ manifest_sha256 text NOT NULL CHECK(manifest_sha256 ~ '^[a-f0-9]{64}$'),
+ cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE OR REPLACE FUNCTION lock_clone_environment_cleanup_scope_borrowers() RETURNS void
+LANGUAGE plpgsql AS $$ BEGIN
+ LOCK TABLE app_binding_release_policies,app_environment_secret_ref_suppressions,app_environment_secret_refs,app_envs,app_issues,app_secret_runtime_reload_observations,app_secrets,app_tasks,app_webhooks,customer_operation_definitions,customer_operation_workflow_states,customer_workflow_readiness_subscriptions,data_upstreams,deployment_openapi_snapshots,deployment_rollback_operations,deployment_route_policy_snapshots,deployment_runtime_environment_owners,deployments,environment_gitops_runtime_effects,environment_management_overrides,exclusive_work_keys,github_deploy_branches,instance_runtime_config_receipts,instances,issue_ingest_tokens,managed_postgres_bindings,managed_postgres_cutovers,managed_postgres_databases,object_buckets,object_storage_s3_credentials,project_environment_approvals,project_environment_cleanup_jobs,project_environment_clone_configuration_ownership,project_environment_clone_materializations,project_environment_clone_operations,project_environment_config_versions,project_environment_promotions,project_environment_workload_heads,queue_bindings,runtime_instance_config_proofs,snapshot_runtime_config_receipts,snapshots,triggers IN SHARE MODE;
+END $$;
+
+-- +goose Up
+-- ADR-590: retain original native proof across atomic artifact removal.
+CREATE TABLE IF NOT EXISTS project_environment_clone_deployment_cleanups (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_workload_cleanups(operation_id) ON DELETE RESTRICT,
+ environment_id uuid NOT NULL,
+ workload_cleanup_sha256 text NOT NULL CHECK(workload_cleanup_sha256 ~ '^[a-f0-9]{64}$'),
+ native_plan_sha256 text NOT NULL CHECK(native_plan_sha256 ~ '^[a-f0-9]{64}$'),
+ native_observation_sha256 text NOT NULL CHECK(native_observation_sha256 ~ '^[a-f0-9]{64}$'),
+ removed_deployments bigint NOT NULL CHECK(removed_deployments>=0),
+ cleaned_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_deployment_cleanup_borrower_writers() RETURNS void
+LANGUAGE plpgsql AS $$ BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE deployment_runtime_upgrade_acceptances,deployment_runtime_upgrade_baselines,deployment_runtime_upgrade_cutovers,environment_workload_serving_queue_acks,environment_workload_serving_routes,project_environment_clone_migration_adoptions,project_environment_clone_migration_resumes,project_environment_clone_wake_dispatches,route_probe_observations,runtime_upgrade_gateway_drains,runtime_upgrade_gateway_receipts,workflow_schedule_occurrences,app_issues,debug_regression_observations,deployment_audit,issue_events,issue_releases,issue_resolutions,log_events,mirror_invocation_results,org_activity,project_environment_clone_workloads,project_environment_promotion_workloads,request_audit_events,request_telemetry,upload_commit_outcomes,upload_sessions IN SHARE MODE;
+END $$;
+-- +goose StatementEnd
+
+-- +goose Up
+-- ADR-590: private terminal compensation preserves original inventory and proof.
+CREATE TABLE IF NOT EXISTS project_environment_clone_compensation_receipts (
+ operation_id uuid PRIMARY KEY REFERENCES project_environment_clone_checkpoint_capture_retirements(operation_id) ON DELETE RESTRICT
+  REFERENCES project_environment_clone_environment_cleanups(operation_id) ON DELETE RESTRICT
+  REFERENCES project_environment_clone_deployment_cleanups(operation_id) ON DELETE RESTRICT,
+ worker_token_sha256 text NOT NULL CHECK(worker_token_sha256 ~ '^[a-f0-9]{64}$'),
+ report jsonb NOT NULL CHECK(jsonb_typeof(report)='object' AND octet_length(report::text)<=4096),
+ receipt_sha256 text NOT NULL CHECK(receipt_sha256 ~ '^[a-f0-9]{64}$'),
+ completed_at timestamptz NOT NULL
+);
+
+-- ADR-590: requested native retirement permanently closes catalogue admission.
+-- +goose Up
+CREATE INDEX IF NOT EXISTS clone_checkpoint_scheduler_reason_fences
+ ON project_environment_clone_checkpoint_workload_retirements (('environment-clone:'||operation_id::text))
+ WHERE state IN ('requested','retired');
+CREATE INDEX IF NOT EXISTS clone_checkpoint_scheduler_target_fences
+ ON project_environment_clone_checkpoint_workload_retirements USING gin(plan jsonb_path_ops)
+ WHERE state IN ('requested','retired');
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
+END $$;
+
+CREATE OR REPLACE FUNCTION clone_checkpoint_deployment_fenced(deployment uuid, request_reason text)
+RETURNS boolean LANGUAGE sql VOLATILE AS $$
+ SELECT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_workload_retirements r
+ WHERE r.state IN ('requested','retired') AND
+ (request_reason='environment-clone:'||r.operation_id::text OR
+ r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',deployment::text)))))
+$$;
+
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_deployment_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.scope,NEW.reason) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.scope,OLD.reason))
+  AND current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'deployment admission requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ IF clone_checkpoint_deployment_fenced(NEW.id,NEW.reason) THEN
+  IF TG_OP='INSERT' THEN
+   RAISE EXCEPTION 'clone deployment request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  ELSIF (NEW.id,NEW.app_id,NEW.scope,NEW.reason) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.scope,OLD.reason) THEN
+   RAISE EXCEPTION 'clone deployment ownership permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  END IF;
+ ELSIF TG_OP='UPDATE' AND clone_checkpoint_deployment_fenced(OLD.id,OLD.reason) THEN
+  RAISE EXCEPTION 'clone deployment ownership permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_deployment_admission BEFORE INSERT OR UPDATE ON deployments
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_deployment_admission();
+
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_instance_admission() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE fenced boolean;
+BEGIN
+ IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode,NEW.state) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode,OLD.state))
+  AND current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'instance admission requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ SELECT clone_checkpoint_deployment_fenced(NEW.deployment_id,d.reason) INTO fenced
+ FROM (SELECT 1) x LEFT JOIN deployments d ON d.id=NEW.deployment_id;
+ IF TG_OP='UPDATE' AND NOT fenced THEN
+  SELECT clone_checkpoint_deployment_fenced(OLD.deployment_id,d.reason) INTO fenced
+  FROM (SELECT 1) x LEFT JOIN deployments d ON d.id=OLD.deployment_id;
+ END IF;
+ IF fenced THEN
+  IF TG_OP='INSERT' THEN
+   RAISE EXCEPTION 'clone instance request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  ELSIF (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode)
+    OR (NEW.state IS DISTINCT FROM OLD.state AND NEW.state NOT IN ('draining','parked','stopped','failed','evicting_account_deleting')) THEN
+   RAISE EXCEPTION 'clone instance restart permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_instance_admission BEFORE INSERT OR UPDATE ON instances
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_instance_admission();
+
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_scheduler_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='TRUNCATE' THEN
+  RAISE EXCEPTION 'clone scheduler fences cannot be truncated' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_fence_retained';
+ END IF;
+ IF TG_OP='DELETE' THEN
+  IF OLD.state IN ('requested','retired') THEN
+   RAISE EXCEPTION 'clone scheduler fence must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_fence_retained';
+  END IF;
+  RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' AND OLD.state IN ('requested','retired') AND
+  ((NEW.operation_id,NEW.plan,NEW.requested_at) IS DISTINCT FROM (OLD.operation_id,OLD.plan,OLD.requested_at)
+   OR NEW.state='planned' OR (OLD.state='retired' AND NEW.state<>'retired')) THEN
+  RAISE EXCEPTION 'clone scheduler fence is immutable' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_fence_retained';
+ END IF;
+ IF NEW.state IN ('requested','retired') THEN
+  PERFORM lock_clone_checkpoint_scheduler_admission();
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_scheduler_fence BEFORE INSERT OR UPDATE OR DELETE
+ ON project_environment_clone_checkpoint_workload_retirements
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_scheduler_fence();
+CREATE OR REPLACE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE
+ ON project_environment_clone_checkpoint_workload_retirements
+ FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_scheduler_fence();
+-- +goose StatementEnd
+
+-- ADR-590: close dispatch of previously admitted qualification executions.
+-- +goose Up
+CREATE INDEX IF NOT EXISTS clone_qualification_pending_deployment_idx ON environment_qualification_executions((frame->>'deployment_id')) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS clone_qualification_pending_environment_idx ON environment_qualification_executions((frame->>'environment_id')) WHERE retired_at IS NULL;
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE environment_qualification_executions IN SHARE ROW EXCLUSIVE MODE;
+END $$;
+
+-- Cleanup writes the frame before stopping its instance. Reserve instance
+-- writer intent first so it cannot hold a frame writer while waiting for a
+-- clone transaction that already owns the instance fence.
+CREATE OR REPLACE FUNCTION lock_environment_qualification_cleanup_writers() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE instances IN ROW EXCLUSIVE MODE;
+END $$;
+
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_qualification_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE fenced boolean;
+BEGIN
+ IF TG_OP='TRUNCATE' THEN
+  RAISE EXCEPTION 'qualification execution ownership must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_execution_retained';
+ END IF;
+ -- Retirement remains available with the original cleanup capability. Dispatch
+ -- after admission is a separate effect and needs a current retirement snapshot.
+ IF TG_OP='INSERT' OR (NOT OLD.dispatch_started AND NEW.dispatch_started) THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION 'qualification dispatch requires a current snapshot' USING ERRCODE='40001';
+  END IF;
+  SELECT EXISTS(SELECT 1 FROM project_environment_clone_checkpoint_workload_retirements r
+   WHERE r.state IN ('requested','retired') AND (
+    (coalesce(r.plan->>'EnvironmentID','')<>'' AND r.plan->>'EnvironmentID'=NEW.frame->>'environment_id') OR
+    r.plan @> jsonb_build_object('Workloads',jsonb_build_array(jsonb_build_object('TargetDeploymentID',NEW.frame->>'deployment_id'))) OR
+    EXISTS(SELECT 1 FROM deployments d WHERE d.id::text=NEW.frame->>'deployment_id' AND d.reason='environment-clone:'||r.operation_id::text))) INTO fenced;
+  IF fenced THEN
+   RAISE EXCEPTION 'clone qualification dispatch permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_qualification_dispatch BEFORE INSERT OR UPDATE ON environment_qualification_executions
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_qualification_dispatch();
+CREATE OR REPLACE TRIGGER clone_checkpoint_qualification_retention BEFORE TRUNCATE ON environment_qualification_executions
+ FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_qualification_dispatch();
+-- +goose StatementEnd
+
+-- ADR-590: retain unresolved original migration ownership after clone fencing.
+-- +goose Up
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE environment_qualification_executions IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
+END $$;
+
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_lease() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE identity uuid; fenced boolean;
+BEGIN
+ IF TG_OP='TRUNCATE' THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'migration retention requires a current snapshot' USING ERRCODE='40001'; END IF;
+  IF EXISTS(SELECT 1 FROM migration_leases m JOIN instances i ON i.id=m.instance_id LEFT JOIN deployments d ON d.id=i.deployment_id
+   WHERE clone_checkpoint_deployment_fenced(i.deployment_id,d.reason)) THEN
+   RAISE EXCEPTION 'original clone migration ownership must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_retained';
+  END IF;
+  RETURN NULL;
+ END IF;
+ IF TG_OP='INSERT' THEN identity:=NEW.instance_id; ELSE identity:=OLD.instance_id; END IF;
+ SELECT clone_checkpoint_deployment_fenced(i.deployment_id,d.reason) INTO fenced
+ FROM instances i LEFT JOIN deployments d ON d.id=i.deployment_id WHERE i.id=identity;
+ IF TG_OP IN ('INSERT','DELETE') OR TG_OP='UPDATE' AND NEW IS DISTINCT FROM OLD THEN
+  IF current_setting('transaction_isolation')<>'read committed' THEN
+   RAISE EXCEPTION 'migration admission requires a current snapshot' USING ERRCODE='40001';
+  END IF;
+ END IF;
+ IF NOT coalesce(fenced,false) AND TG_OP='UPDATE' AND NEW.instance_id IS DISTINCT FROM OLD.instance_id THEN
+  SELECT clone_checkpoint_deployment_fenced(i.deployment_id,d.reason) INTO fenced
+  FROM instances i LEFT JOIN deployments d ON d.id=i.deployment_id WHERE i.id=NEW.instance_id;
+ END IF;
+ IF fenced THEN
+  IF TG_OP='INSERT' THEN
+   RAISE EXCEPTION 'clone migration request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  ELSIF TG_OP='DELETE' THEN
+   RAISE EXCEPTION 'original clone migration ownership must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_retained';
+  ELSIF (NEW.instance_id,NEW.lease_token,NEW.source_node_id,NEW.created_at,NEW.lease_expires_at)
+   IS DISTINCT FROM (OLD.instance_id,OLD.lease_token,OLD.source_node_id,OLD.created_at,OLD.lease_expires_at)
+   OR (NOT OLD.pending AND NEW.pending)
+   OR (NOT OLD.pending AND (NEW.mem_storage_key,NEW.vmstate_storage_key) IS DISTINCT FROM (OLD.mem_storage_key,OLD.vmstate_storage_key)) THEN
+   RAISE EXCEPTION 'clone migration authority cannot be renewed or replaced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_lease BEFORE INSERT OR UPDATE OR DELETE ON migration_leases
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_lease();
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_retention BEFORE TRUNCATE ON migration_leases
+ FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_checkpoint_migration_lease();
+
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_instance() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'instance deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
+ IF EXISTS(SELECT 1 FROM migration_leases WHERE instance_id=OLD.id) AND clone_checkpoint_deployment_fenced(OLD.deployment_id,(SELECT reason FROM deployments WHERE id=OLD.deployment_id)) THEN
+  RAISE EXCEPTION 'clone instance retains original migration ownership' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_retained';
+ END IF;
+ RETURN OLD;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_instance BEFORE DELETE ON instances
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_instance();
+CREATE OR REPLACE FUNCTION guard_clone_checkpoint_migration_deployment() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'deployment deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
+ IF clone_checkpoint_deployment_fenced(OLD.id,OLD.reason) AND EXISTS(
+ SELECT 1 FROM instances i JOIN migration_leases m ON m.instance_id=i.id WHERE i.deployment_id=OLD.id) THEN
+  RAISE EXCEPTION 'clone deployment retains original migration ownership' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_retained';
+ END IF;
+ RETURN OLD;
+END $$;
+CREATE OR REPLACE TRIGGER clone_checkpoint_migration_deployment BEFORE DELETE ON deployments
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_checkpoint_migration_deployment();
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_wake_dispatches (
+ instance_id uuid PRIMARY KEY,
+ app_id uuid NOT NULL,
+ deployment_id uuid NOT NULL,
+ node_id uuid NOT NULL,
+ wake_id uuid NOT NULL,
+ request_reason text NOT NULL CHECK(request_reason LIKE 'environment-clone:%'),
+ method text NOT NULL CHECK(method IN ('cold_boot','restore')),
+ dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS clone_wake_dispatch_deployment ON project_environment_clone_wake_dispatches(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_wake_dispatch_reason ON project_environment_clone_wake_dispatches(request_reason);
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE environment_qualification_executions IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
+END $$;
+CREATE OR REPLACE FUNCTION guard_clone_wake_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'original clone wake dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_wake_dispatch_retained';
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'wake dispatch requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ IF clone_checkpoint_deployment_fenced(NEW.deployment_id,NEW.request_reason) THEN
+  RAISE EXCEPTION 'clone wake request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM instances i JOIN deployments d ON d.id=i.deployment_id
+ WHERE i.id=NEW.instance_id AND i.app_id=NEW.app_id AND i.deployment_id=NEW.deployment_id
+ AND i.node_id=NEW.node_id AND i.wake_id=NEW.wake_id AND d.reason=NEW.request_reason
+ AND i.state IN ('waking','cold_booting')) THEN
+  RAISE EXCEPTION 'wake dispatch ownership changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_wake_dispatch_owner';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_wake_dispatch BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_wake_dispatches
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_wake_dispatch();
+CREATE OR REPLACE TRIGGER clone_wake_dispatch_truncate BEFORE TRUNCATE ON project_environment_clone_wake_dispatches
+ FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_wake_dispatch();
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_wake_dispatch(instance uuid, app uuid, deployment uuid, node uuid, wake_method text)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE owner instances%ROWTYPE; reason text;
+BEGIN
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'wake dispatch requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ -- Match the retirement fence order before reading original ownership.
+ LOCK TABLE deployments IN ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN ROW EXCLUSIVE MODE;
+ SELECT * INTO owner FROM instances WHERE id=instance FOR UPDATE;
+ IF NOT FOUND OR (owner.app_id,owner.deployment_id,owner.node_id) IS DISTINCT FROM (app,deployment,node)
+ OR owner.state NOT IN ('waking','cold_booting') THEN
+  RAISE EXCEPTION 'wake dispatch ownership changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_wake_dispatch_owner';
+ END IF;
+ SELECT d.reason INTO reason FROM deployments d WHERE d.id=deployment;
+ IF clone_checkpoint_deployment_fenced(deployment,reason) THEN
+  RAISE EXCEPTION 'clone wake request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ IF reason LIKE 'environment-clone:%' THEN
+  INSERT INTO project_environment_clone_wake_dispatches(instance_id,app_id,deployment_id,node_id,wake_id,request_reason,method)
+  VALUES(instance,app,deployment,node,owner.wake_id,reason,wake_method);
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_migration_adoptions (
+ dispatch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ instance_id uuid NOT NULL,
+ app_id uuid NOT NULL,
+ deployment_id uuid NOT NULL,
+ wake_id uuid NOT NULL,
+ request_reason text NOT NULL CHECK(request_reason LIKE 'environment-clone:%'),
+ lease_token text NOT NULL CHECK(lease_token<>''),
+ source_node_id text NOT NULL CHECK(source_node_id<>''),
+ destination_node_id uuid NOT NULL,
+ lease_created_at timestamptz NOT NULL,
+ lease_expires_at timestamptz NOT NULL,
+ mem_storage_key text NOT NULL CHECK(mem_storage_key<>''),
+ vmstate_storage_key text NOT NULL CHECK(vmstate_storage_key<>''),
+ dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(instance_id,lease_token)
+);
+CREATE INDEX IF NOT EXISTS clone_migration_adoption_deployment ON project_environment_clone_migration_adoptions(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_migration_adoption_reason ON project_environment_clone_migration_adoptions(request_reason);
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE environment_qualification_executions IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
+END $$;
+CREATE OR REPLACE FUNCTION guard_clone_migration_adoption() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'original clone adoption dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_adoption_retained';
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'adoption dispatch requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ IF clone_checkpoint_deployment_fenced(NEW.deployment_id,NEW.request_reason) THEN
+  RAISE EXCEPTION 'clone adoption request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM instances i JOIN deployments d ON d.id=i.deployment_id JOIN migration_leases m ON m.instance_id=i.id
+ WHERE (i.id,i.app_id,i.deployment_id,i.wake_id,d.reason,i.lease_token,i.node_id::text,i.state)
+ = (NEW.instance_id,NEW.app_id,NEW.deployment_id,NEW.wake_id,NEW.request_reason,NEW.lease_token,NEW.source_node_id,'migrating')
+ AND NOT m.pending AND m.lease_expires_at>clock_timestamp()
+ AND (m.lease_token,m.source_node_id,m.created_at,m.lease_expires_at,m.mem_storage_key,m.vmstate_storage_key)
+ = (NEW.lease_token,NEW.source_node_id,NEW.lease_created_at,NEW.lease_expires_at,NEW.mem_storage_key,NEW.vmstate_storage_key)
+ AND NEW.destination_node_id::text<>NEW.source_node_id
+ AND EXISTS(SELECT 1 FROM compute_nodes n WHERE n.id=NEW.destination_node_id)) THEN
+  RAISE EXCEPTION 'original adoption ownership changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_adoption_owner';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_migration_adoption BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_adoptions
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_migration_adoption();
+CREATE OR REPLACE TRIGGER clone_migration_adoption_truncate BEFORE TRUNCATE ON project_environment_clone_migration_adoptions
+ FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_migration_adoption();
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_migration_adoption(instance uuid, app uuid, deployment uuid, destination uuid, mem_key text, state_key text, token text)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE owner instances%ROWTYPE; reason text; original migration_leases%ROWTYPE;
+BEGIN
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'adoption dispatch requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ LOCK TABLE deployments IN ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN ROW EXCLUSIVE MODE;
+ LOCK TABLE migration_leases IN ROW EXCLUSIVE MODE;
+ SELECT * INTO owner FROM instances WHERE id=instance FOR UPDATE;
+ IF NOT FOUND OR (owner.app_id,owner.deployment_id) IS DISTINCT FROM (app,deployment) OR owner.state<>'migrating' THEN
+  RAISE EXCEPTION 'adoption dispatch ownership changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_adoption_owner';
+ END IF;
+ SELECT d.reason INTO reason FROM deployments d WHERE d.id=deployment;
+ IF clone_checkpoint_deployment_fenced(deployment,reason) THEN
+  RAISE EXCEPTION 'clone adoption request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ IF reason LIKE 'environment-clone:%' THEN
+  SELECT * INTO original FROM migration_leases WHERE instance_id=instance FOR SHARE;
+  IF NOT FOUND OR original.pending OR original.lease_expires_at<=clock_timestamp()
+   OR (original.lease_token,original.mem_storage_key,original.vmstate_storage_key) IS DISTINCT FROM (token,mem_key,state_key) THEN
+   RAISE EXCEPTION 'original adoption lease changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_adoption_owner';
+  END IF;
+  INSERT INTO project_environment_clone_migration_adoptions(instance_id,app_id,deployment_id,wake_id,request_reason,lease_token,source_node_id,destination_node_id,lease_created_at,lease_expires_at,mem_storage_key,vmstate_storage_key)
+  VALUES(instance,app,deployment,owner.wake_id,reason,token,original.source_node_id,destination,original.created_at,original.lease_expires_at,mem_key,state_key);
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+CREATE TABLE IF NOT EXISTS project_environment_clone_migration_resumes (
+ dispatch_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ instance_id uuid NOT NULL, app_id uuid NOT NULL, deployment_id uuid NOT NULL,
+ wake_id uuid NOT NULL, request_reason text NOT NULL CHECK(request_reason LIKE 'environment-clone:%'),
+ lease_token text NOT NULL CHECK(lease_token<>''), source_node_id text NOT NULL CHECK(source_node_id<>''),
+ lease_created_at timestamptz NOT NULL, lease_expires_at timestamptz NOT NULL,
+ dispatched_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(instance_id,lease_token)
+);
+CREATE INDEX IF NOT EXISTS clone_migration_resume_deployment ON project_environment_clone_migration_resumes(deployment_id);
+CREATE INDEX IF NOT EXISTS clone_migration_resume_reason ON project_environment_clone_migration_resumes(request_reason);
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION lock_clone_checkpoint_scheduler_admission() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+ LOCK TABLE deployments IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE environment_qualification_executions IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE migration_leases IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
+ LOCK TABLE project_environment_clone_migration_resumes IN SHARE ROW EXCLUSIVE MODE;
+END $$;
+CREATE OR REPLACE FUNCTION guard_clone_migration_resume() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP<>'INSERT' THEN
+  RAISE EXCEPTION 'original clone resume dispatch must be retained' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_resume_retained';
+ END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'resume dispatch requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ IF clone_checkpoint_deployment_fenced(NEW.deployment_id,NEW.request_reason) THEN
+  RAISE EXCEPTION 'clone resume request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM instances i JOIN deployments d ON d.id=i.deployment_id JOIN migration_leases m ON m.instance_id=i.id
+ WHERE (i.id,i.app_id,i.deployment_id,i.wake_id,d.reason,i.node_id::text)
+ = (NEW.instance_id,NEW.app_id,NEW.deployment_id,NEW.wake_id,NEW.request_reason,NEW.source_node_id)
+ AND i.state IN ('running','migrating','parked')
+ AND (m.lease_token,m.source_node_id,m.created_at,m.lease_expires_at)
+ = (NEW.lease_token,NEW.source_node_id,NEW.lease_created_at,NEW.lease_expires_at)) THEN
+  RAISE EXCEPTION 'original resume ownership changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_resume_owner';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER clone_migration_resume BEFORE INSERT OR UPDATE OR DELETE ON project_environment_clone_migration_resumes
+ FOR EACH ROW EXECUTE FUNCTION guard_clone_migration_resume();
+CREATE OR REPLACE TRIGGER clone_migration_resume_truncate BEFORE TRUNCATE ON project_environment_clone_migration_resumes
+ FOR EACH STATEMENT EXECUTE FUNCTION guard_clone_migration_resume();
+CREATE OR REPLACE FUNCTION record_clone_checkpoint_migration_resume(instance uuid, source text, token text)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE owner instances%ROWTYPE; reason text; original migration_leases%ROWTYPE;
+BEGIN
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'resume dispatch requires a current snapshot' USING ERRCODE='40001';
+ END IF;
+ LOCK TABLE deployments IN ROW EXCLUSIVE MODE;
+ LOCK TABLE instances IN ROW EXCLUSIVE MODE;
+ LOCK TABLE migration_leases IN ROW EXCLUSIVE MODE;
+ SELECT * INTO owner FROM instances WHERE id=instance FOR UPDATE;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'resume dispatch ownership missing' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_resume_owner';
+ END IF;
+ SELECT d.reason INTO reason FROM deployments d WHERE d.id=owner.deployment_id;
+ IF clone_checkpoint_deployment_fenced(owner.deployment_id,reason) THEN
+  RAISE EXCEPTION 'clone resume request permanently fenced' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_scheduler_request_fenced';
+ END IF;
+ IF reason LIKE 'environment-clone:%' THEN
+  SELECT * INTO original FROM migration_leases WHERE instance_id=instance FOR SHARE;
+  IF NOT FOUND OR (original.lease_token,original.source_node_id) IS DISTINCT FROM (token,source) THEN
+   RAISE EXCEPTION 'original resume lease changed' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_resume_owner';
+  END IF;
+  INSERT INTO project_environment_clone_migration_resumes(instance_id,app_id,deployment_id,wake_id,request_reason,lease_token,source_node_id,lease_created_at,lease_expires_at)
+  VALUES(instance,owner.app_id,owner.deployment_id,owner.wake_id,reason,token,source,original.created_at,original.lease_expires_at);
+ END IF;
+END $$;
+-- +goose StatementEnd

@@ -25,6 +25,9 @@ func (m *Manager) acquire(ctx context.Context, id ID, ownerID string, existingOn
 	} else if err != nil {
 		return Claim{}, err
 	}
+	if value.Retirement != nil {
+		return Claim{}, ErrRetired
+	}
 	if existingOnly && value.Version == 0 {
 		return Claim{}, ErrNotFound
 	}
@@ -53,6 +56,9 @@ func (m *Manager) owned(ctx context.Context, claim Claim) (manifest, string, err
 	value, etag, err := m.readManifest(ctx, claim.ID)
 	if err != nil {
 		return manifest{}, "", err
+	}
+	if value.Retirement != nil {
+		return manifest{}, "", ErrRetired
 	}
 	if claim.Token == "" || value.Token != claim.Token || value.OwnerID != claim.OwnerID || value.Epoch != claim.Epoch || !m.now().Before(value.ExpiresAt) {
 		return manifest{}, "", ErrStaleOwner

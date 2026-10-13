@@ -26,5 +26,9 @@ export type WorkerScaling = {
    * Target backlog per worker instance. Custom metric targets use the custom gauge's units.
    */
   target: number;
+  /**
+   * Separate always-on worker app publishing MCP task metrics; required when mcp_tasks_outstanding scales this worker to zero.
+   */
+  observer_app_slug?: string;
 };
 

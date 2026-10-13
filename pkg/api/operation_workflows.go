@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -18,6 +19,8 @@ const OperationWorkflowStateStaleAfterMaxSeconds int64 = 10 * 365 * 24 * 60 * 60
 // name matches. Source manifests pin the milestone and instance ID pointer;
 // reads populate InstanceID from the retained public payload.
 type OperationWorkflowSpec struct {
+	Playbooks              []OperationWorkflowPlaybook                         `json:"playbooks,omitempty"`
+	DecisionConditions     []OperationBusinessConditionDefinition              `json:"decision_conditions,omitempty"`
 	StateSLAWarningPercent map[string]int64                                    `json:"state_sla_warning_percent,omitempty"`
 	StateSLABudgetSeconds  map[string]int64                                    `json:"state_sla_budget_seconds,omitempty"`
 	BlockerEscalations     map[string]OperationWorkflowBlockerEscalationPolicy `json:"blocker_escalations,omitempty"`
@@ -41,13 +44,17 @@ type OperationWorkflowSpec struct {
 // OperationWorkflowTransition is an app-declared allowed state edge. The
 // application still checks the current business row while holding its lock.
 type OperationWorkflowTransition struct {
-	From                        string                                  `json:"from"`
-	To                          string                                  `json:"to"`
-	RequiredDependencyWorkflows *[]string                               `json:"required_dependency_workflows,omitempty"`
-	RequiredEffects             []OperationWorkflowEffectRequirement    `json:"required_effects,omitempty"`
-	RequiredInvariants          []OperationWorkflowInvariantRequirement `json:"required_invariants,omitempty"`
-	RequiredPolicies            []OperationWorkflowPolicyRequirement    `json:"required_policies,omitempty"`
-	RequiredMilestones          []string                                `json:"required_milestones,omitempty"`
+	RetainedMilestoneGroups        []OperationWorkflowRetainedMilestoneGroup            `json:"retained_milestone_groups,omitempty"`
+	RetainedMilestoneFreshness     []OperationWorkflowRetainedMilestoneFreshnessRule    `json:"retained_milestone_freshness,omitempty"`
+	RetainedMilestoneInvalidations []OperationWorkflowRetainedMilestoneInvalidationRule `json:"retained_milestone_invalidations,omitempty"`
+	RequiredRetainedMilestones     []OperationWorkflowRetainedMilestoneRequirement      `json:"required_retained_milestones,omitempty"`
+	From                           string                                               `json:"from"`
+	To                             string                                               `json:"to"`
+	RequiredDependencyWorkflows    *[]string                                            `json:"required_dependency_workflows,omitempty"`
+	RequiredEffects                []OperationWorkflowEffectRequirement                 `json:"required_effects,omitempty"`
+	RequiredInvariants             []OperationWorkflowInvariantRequirement              `json:"required_invariants,omitempty"`
+	RequiredPolicies               []OperationWorkflowPolicyRequirement                 `json:"required_policies,omitempty"`
+	RequiredMilestones             []string                                             `json:"required_milestones,omitempty"`
 }
 
 var operationWorkflowStateName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
@@ -79,4 +86,117 @@ func ValidateOperationWorkflowInstanceID(value string) error {
 type OperationWorkflowBlockerEscalationPolicy struct {
 	AfterSeconds int64  `json:"after_seconds" yaml:"after_seconds" toml:"after_seconds"`
 	Owner        string `json:"owner" yaml:"owner" toml:"owner"`
+}
+
+type OperationWorkflowPlaybook struct {
+	ID               string   `json:"id" yaml:"id" toml:"id"`
+	Version          int      `json:"version" yaml:"version" toml:"version"`
+	MatchKind        string   `json:"match_kind" yaml:"match_kind" toml:"match_kind"`
+	MatchCode        string   `json:"match_code" yaml:"match_code" toml:"match_code"`
+	Summary          string   `json:"summary" yaml:"summary" toml:"summary"`
+	Owner            string   `json:"owner,omitempty" yaml:"owner,omitempty" toml:"owner"`
+	RequiredEvidence []string `json:"required_evidence,omitempty" yaml:"required_evidence,omitempty" toml:"required_evidence"`
+	RunbookURL       string   `json:"runbook_url,omitempty" yaml:"runbook_url,omitempty" toml:"runbook_url"`
+	ActionURL        string   `json:"action_url,omitempty" yaml:"action_url,omitempty" toml:"action_url"`
+}
+type OperationWorkflowPlaybookGuidance struct {
+	Playbook             OperationWorkflowPlaybook `json:"playbook" yaml:"playbook" toml:"playbook"`
+	ContractVersion      int                       `json:"contract_version" yaml:"contract_version" toml:"contract_version"`
+	ReportingOperationID string                    `json:"reporting_operation_id" yaml:"reporting_operation_id" toml:"reporting_operation_id"`
+}
+
+// OperationWorkflowPlaybookProgressStartRequest pins currently matched application guidance.
+type OperationWorkflowPlaybookProgressStartRequest struct {
+	PlaybookID           string `json:"playbook_id"`
+	PlaybookVersion      int    `json:"playbook_version"`
+	ContractVersion      int    `json:"contract_version"`
+	ReportingOperationID string `json:"reporting_operation_id"`
+}
+
+// OperationWorkflowPlaybookEvidence references scoped retained application evidence.
+type OperationWorkflowPlaybookEvidence struct {
+	OperationID string `json:"operation_id"`
+	MilestoneID string `json:"milestone_id,omitempty"`
+}
+
+// OperationWorkflowPlaybookProgressUpdateRequest replaces one checklist item under a revision fence.
+type OperationWorkflowPlaybookProgressUpdateRequest struct {
+	Revision  int64                               `json:"revision"`
+	ItemIndex int                                 `json:"item_index"`
+	Status    string                              `json:"status"`
+	Note      string                              `json:"note"`
+	Evidence  []OperationWorkflowPlaybookEvidence `json:"evidence"`
+}
+type OperationWorkflowPlaybookProgressItem struct {
+	Label      string                              `json:"label"`
+	Status     string                              `json:"status"`
+	Note       string                              `json:"note"`
+	Evidence   []OperationWorkflowPlaybookEvidence `json:"evidence"`
+	ReviewedBy string                              `json:"reviewed_by,omitempty"`
+	ReviewedAt *time.Time                          `json:"reviewed_at,omitempty"`
+}
+type OperationWorkflowPlaybookProgressChange struct {
+	Revision  int64                                 `json:"revision"`
+	ItemIndex int                                   `json:"item_index"`
+	Item      OperationWorkflowPlaybookProgressItem `json:"item"`
+	At        time.Time                             `json:"at"`
+	Actor     string                                `json:"actor"`
+}
+type OperationWorkflowPlaybookProgress struct {
+	Disposition         string                            `json:"disposition,omitempty"`
+	LatestReview        *OperationWorkflowPlaybookReview  `json:"latest_review,omitempty"`
+	Reviews             []OperationWorkflowPlaybookReview `json:"reviews,omitempty"`
+	ReviewsTruncated    bool                              `json:"reviews_truncated,omitempty"`
+	ReplacesProgressIDs []string                          `json:"replaces_progress_ids,omitempty"`
+
+	Applicability        *OperationWorkflowPlaybookApplicability   `json:"applicability,omitempty"`
+	ID                   string                                    `json:"id"`
+	Revision             int64                                     `json:"revision"`
+	Playbook             OperationWorkflowPlaybook                 `json:"playbook"`
+	ContractVersion      int                                       `json:"contract_version"`
+	DefinitionID         string                                    `json:"definition_id"`
+	ReportingOperationID string                                    `json:"reporting_operation_id"`
+	Items                []OperationWorkflowPlaybookProgressItem   `json:"items"`
+	CompletedCount       int                                       `json:"completed_count"`
+	ChecklistComplete    bool                                      `json:"checklist_complete"`
+	CreatedAt            time.Time                                 `json:"created_at"`
+	CreatedBy            string                                    `json:"created_by"`
+	UpdatedAt            time.Time                                 `json:"updated_at"`
+	History              []OperationWorkflowPlaybookProgressChange `json:"history"`
+	HistoryTruncated     bool                                      `json:"history_truncated"`
+}
+
+// OperationWorkflowPlaybookApplicability is an ephemeral exact-case check, never a checklist mutation.
+type OperationWorkflowPlaybookApplicability struct {
+	Status                 string    `json:"status"`
+	Summary                string    `json:"summary"`
+	SuggestedAction        string    `json:"suggested_action"`
+	CheckedAt              time.Time `json:"checked_at"`
+	CurrentContractVersion int       `json:"current_contract_version,omitempty"`
+	StateRevision          int64     `json:"state_revision,omitempty"`
+	ReportingOperationID   string    `json:"reporting_operation_id,omitempty"`
+	DefinitionID           string    `json:"definition_id,omitempty"`
+	DefinitionChanged      bool      `json:"definition_changed"`
+	TriggerMatched         bool      `json:"trigger_matched"`
+	EvidenceComplete       bool      `json:"evidence_complete"`
+	RemainingItemCount     int       `json:"remaining_item_count"`
+}
+
+// OperationWorkflowPlaybookReviewRequest records a human coordination decision.
+type OperationWorkflowPlaybookReviewRequest struct {
+	Revision              int64  `json:"revision"`
+	Decision              string `json:"decision"`
+	Reason                string `json:"reason"`
+	ReplacementProgressID string `json:"replacement_progress_id,omitempty"`
+	ReplacementRevision   int64  `json:"replacement_revision,omitempty"`
+}
+type OperationWorkflowPlaybookReview struct {
+	Revision              int64                                  `json:"revision"`
+	Decision              string                                 `json:"decision"`
+	Reason                string                                 `json:"reason"`
+	Actor                 string                                 `json:"actor"`
+	At                    time.Time                              `json:"at"`
+	Applicability         OperationWorkflowPlaybookApplicability `json:"applicability"`
+	ReplacementProgressID string                                 `json:"replacement_progress_id,omitempty"`
+	ReplacementRevision   int64                                  `json:"replacement_revision,omitempty"`
 }

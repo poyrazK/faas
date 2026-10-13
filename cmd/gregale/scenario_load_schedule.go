@@ -5,8 +5,88 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 	"time"
 )
+
+type testLoadPhaseWindow struct {
+	StartedAt  time.Time
+	FinishedAt time.Time
+}
+
+type testLoadPhaseClock struct {
+	mu      sync.RWMutex
+	windows []testLoadPhaseWindow
+}
+
+func newTestLoadPhaseClock(phases int) *testLoadPhaseClock {
+	return &testLoadPhaseClock{windows: make([]testLoadPhaseWindow, phases)}
+}
+
+func (c *testLoadPhaseClock) start(at time.Time) {
+	if c == nil || len(c.windows) == 0 {
+		return
+	}
+	c.mu.Lock()
+	c.windows[0].StartedAt = at
+	c.mu.Unlock()
+}
+
+func (c *testLoadPhaseClock) transition(index int, at time.Time) {
+	if c == nil || index <= 0 || index >= len(c.windows) {
+		return
+	}
+	c.mu.Lock()
+	c.windows[index-1].FinishedAt = at
+	c.windows[index].StartedAt = at
+	c.mu.Unlock()
+}
+
+func (c *testLoadPhaseClock) finish(at time.Time) {
+	if c == nil || len(c.windows) == 0 {
+		return
+	}
+	c.mu.Lock()
+	last := len(c.windows) - 1
+	if c.windows[last].StartedAt.IsZero() {
+		for i := last; i >= 0; i-- {
+			if !c.windows[i].StartedAt.IsZero() {
+				last = i
+				break
+			}
+		}
+	}
+	if last >= 0 && !c.windows[last].StartedAt.IsZero() && c.windows[last].FinishedAt.IsZero() {
+		c.windows[last].FinishedAt = at
+	}
+	c.mu.Unlock()
+}
+
+func (c *testLoadPhaseClock) phaseAt(at time.Time) int {
+	if c == nil {
+		return -1
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for i, window := range c.windows {
+		if window.StartedAt.IsZero() || at.Before(window.StartedAt) {
+			continue
+		}
+		if window.FinishedAt.IsZero() || at.Before(window.FinishedAt) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (c *testLoadPhaseClock) window(index int) testLoadPhaseWindow {
+	if c == nil || index < 0 || index >= len(c.windows) {
+		return testLoadPhaseWindow{}
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.windows[index]
+}
 
 type testLoadStageEvidence struct {
 	Index             int   `json:"index"`
@@ -28,6 +108,13 @@ type testLoadProgress struct {
 }
 
 func (cfg *testLoadConfig) maxVUs() int {
+	if len(cfg.Streams) > 0 {
+		total := 0
+		for _, stream := range cfg.Streams {
+			total += stream.VUs
+		}
+		return total
+	}
 	maximum := cfg.VUs
 	for _, stage := range cfg.Stages {
 		if stage.Target > maximum {

@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -151,18 +152,22 @@ type EventBacklogRecipient struct {
 }
 
 type EventBacklogConsumer struct {
-	OrderingWaitingRecipients int64     `json:"ordering_waiting_recipients"`
-	AppID                     string    `json:"app_id"`
-	AppSlug                   string    `json:"app_slug"`
-	TargetAvailable           bool      `json:"target_available"`
-	SubscriptionID            string    `json:"subscription_id"`
-	ConsumerKind              string    `json:"consumer_kind"`
-	WaitingRecipients         int64     `json:"waiting_recipients"`
-	PendingRecipients         int64     `json:"pending_recipients"`
-	ProcessingRecipients      int64     `json:"processing_recipients"`
-	CapacityWaitingRecipients int64     `json:"capacity_waiting_recipients"`
-	OldestAcceptedAt          time.Time `json:"oldest_accepted_at"`
-	OldestAgeSeconds          float64   `json:"oldest_age_seconds"`
+	PendingWaitingReasons             map[string]int64 `json:"pending_waiting_reasons,omitempty"`
+	CapacityConsumerWaitingRecipients int64            `json:"capacity_consumer_waiting_recipients"`
+	CapacityAppWaitingRecipients      int64            `json:"capacity_app_waiting_recipients"`
+	CapacityAccountWaitingRecipients  int64            `json:"capacity_account_waiting_recipients"`
+	OrderingWaitingRecipients         int64            `json:"ordering_waiting_recipients"`
+	AppID                             string           `json:"app_id"`
+	AppSlug                           string           `json:"app_slug"`
+	TargetAvailable                   bool             `json:"target_available"`
+	SubscriptionID                    string           `json:"subscription_id"`
+	ConsumerKind                      string           `json:"consumer_kind"`
+	WaitingRecipients                 int64            `json:"waiting_recipients"`
+	PendingRecipients                 int64            `json:"pending_recipients"`
+	ProcessingRecipients              int64            `json:"processing_recipients"`
+	CapacityWaitingRecipients         int64            `json:"capacity_waiting_recipients"`
+	OldestAcceptedAt                  time.Time        `json:"oldest_accepted_at"`
+	OldestAgeSeconds                  float64          `json:"oldest_age_seconds"`
 }
 
 // Counts cover matching live recipients, independently of the recipient page.
@@ -449,10 +454,13 @@ type EventDeliveryListResponse struct {
 // ReplayEventFanoutFailureRequest identifies one failed recipient by the
 // published event's scoped identity and its acceptance-time subscription.
 type ReplayEventFanoutFailureRequest struct {
-	AllowExpired   bool   `json:"allow_expired,omitempty"`
-	EventID        string `json:"event_id"`
-	EventSource    string `json:"event_source"`
-	SubscriptionID string `json:"subscription_id"`
+	RecoveryExpectation *EventRoutingRecoveryExpectation `json:"recovery_expectation,omitempty"`
+	ExpectedGeneration  *int64                           `json:"expected_generation,omitempty"`
+	ExpectedAcceptedAt  *time.Time                       `json:"expected_accepted_at,omitempty"`
+	AllowExpired        bool                             `json:"allow_expired,omitempty"`
+	EventID             string                           `json:"event_id"`
+	EventSource         string                           `json:"event_source"`
+	SubscriptionID      string                           `json:"subscription_id"`
 }
 
 // ReplayEventFanoutFailureResponse confirms that one recipient was returned
@@ -548,7 +556,7 @@ type CreateAppRequest struct {
 	// standalone bindings. Omitted preserves the legacy HTTP URL contract.
 	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
-	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313 for functions
+	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313|binary for functions
 	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
 	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
 	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
@@ -866,15 +874,15 @@ type ScenarioTestWorkload struct {
 	AppSlug  string `json:"app_slug"`
 }
 
-// InjectScenarioTestChaosRequest installs bounded HTTP and TCP faults on service
-// calls within one registered scenario run. The server supplies the expiry;
+// InjectScenarioTestChaosRequest installs bounded HTTP, DNS, and TCP faults on
+// service calls within one registered scenario run. The server supplies the expiry;
 // callers cannot choose an absolute timestamp or target an unregistered app.
 type InjectScenarioTestChaosRequest struct {
 	DurationMS int64                   `json:"duration_ms"`
 	Rules      []ScenarioTestChaosRule `json:"rules"`
 }
 
-// ScenarioTestChaosRule describes one bounded HTTP or TCP fault for scenario service calls.
+// ScenarioTestChaosRule describes one bounded HTTP, DNS, or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
 	From             string `json:"from,omitempty"`
 	To               string `json:"to"`
@@ -1224,7 +1232,7 @@ type UpdateAppRequest struct {
 	// targeting these) so an existing CLI SDK never sends them.
 	RootDir      *string `json:"-"`
 	WorkloadName *string `json:"-"`
-	StartCommand *string `json:""`
+	StartCommand *string `json:"-"`
 	// ScalingPolicy is the per-app autoscaling configuration
 	// (issue #462 / ADR-058). nil pointer = "don't touch the
 	// jsonb column"; non-nil with the Set bit set = "replace the
@@ -2265,6 +2273,10 @@ type Companions = Sidecars
 // variant is used for tarball/dockerfile deploys).
 type CreateDeploymentRequest struct {
 	Image string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
+	// MCPTaskMigrationOverride explicitly allows this deployment to replace
+	// the final worker for a queued MCP task handler version. The grant is
+	// one-use and consumed atomically with the stable cutover.
+	MCPTaskMigrationOverride bool `json:"mcp_task_migration_override,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -3049,7 +3061,31 @@ type ListDeploymentAuditResponse struct {
 }
 
 // DeploymentResponse is a deployment as returned by the API.
+type DeploymentPromotionHold struct {
+	Code                  string     `json:"code"`
+	Detail                string     `json:"detail"`
+	ObservedAt            time.Time  `json:"observed_at"`
+	HeldAt                time.Time  `json:"held_at"`
+	RecoveryAttempts      int        `json:"recovery_attempts"`
+	NextRetryAt           *time.Time `json:"next_retry_at,omitempty"`
+	RecoveryInProgress    bool       `json:"recovery_in_progress"`
+	LastRecoveryOutcome   string     `json:"last_recovery_outcome,omitempty"`
+	LastRecoveryAt        *time.Time `json:"last_recovery_at,omitempty"`
+	LastRecoveryErrorCode string     `json:"last_recovery_error_code,omitempty"`
+}
+
+type DeploymentWorkerDrainStatus struct {
+	Active    int        `json:"active"`
+	Completed int        `json:"completed"`
+	TimedOut  int        `json:"timed_out"`
+	Failed    int        `json:"failed"`
+	Overdue   int        `json:"overdue"`
+	Deadline  *time.Time `json:"deadline,omitempty"`
+}
+
 type DeploymentResponse struct {
+	WorkerDrain            *DeploymentWorkerDrainStatus          `json:"worker_drain,omitempty"`
+	PromotionHold          *DeploymentPromotionHold              `json:"promotion_hold,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
@@ -4320,6 +4356,53 @@ type InstanceResponse struct {
 	// the difference between 0 and unset; the JSON contract uses
 	// omitempty so absent and 0 are indistinguishable to clients.
 	MinInstancesTarget int `json:"min_instances_target,omitempty"`
+}
+
+// MCPInstanceHealthProbeResponse carries the bounded /healthz result from one
+// platform-selected instance. InstanceID, DeploymentID, and AppID are stamped
+// by the platform after it validates the requested target; they are not read
+// from workload-controlled response fields.
+type MCPInstanceHealthProbeResponse struct {
+	AppID              string `json:"app_id"`
+	DeploymentID       string `json:"deployment_id"`
+	InstanceID         string `json:"instance_id"`
+	HTTPStatus         int    `json:"http_status"`
+	HealthBody         string `json:"health_body"`
+	HealthBodyTooLarge bool   `json:"health_body_too_large,omitempty"`
+}
+
+// MCPProbeRPCRequest is the read-only JSON-RPC envelope accepted by an instance
+// protocol probe. IDs may be strings or numbers and are omitted for notifications.
+type MCPProbeRPCRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// MCPInstanceProtocolProbeRequest carries one bounded, read-only JSON-RPC
+// request to a fixed endpoint on one platform-selected running instance.
+type MCPInstanceProtocolProbeRequest struct {
+	Host            string          `json:"host"`
+	Endpoint        string          `json:"endpoint"`
+	ProtocolVersion string          `json:"protocol_version"`
+	RPCRequest      json.RawMessage `json:"rpc_request"`
+}
+
+// MCPInstanceProtocolProbeResponse carries one direct MCP HTTP response with
+// platform-stamped identity. Only protocol headers needed by stateless MCP
+// clients are forwarded; workload headers cannot replace the identity fields.
+type MCPInstanceProtocolProbeResponse struct {
+	AppID            string `json:"app_id"`
+	DeploymentID     string `json:"deployment_id"`
+	InstanceID       string `json:"instance_id"`
+	HTTPStatus       int    `json:"http_status"`
+	ContentType      string `json:"content_type,omitempty"`
+	ProtocolVersion  string `json:"protocol_version,omitempty"`
+	SessionID        string `json:"session_id,omitempty"`
+	SessionIDPresent bool   `json:"session_id_present,omitempty"`
+	Body             string `json:"body"`
+	BodyTooLarge     bool   `json:"body_too_large,omitempty"`
 }
 
 // ListInstancesResponse is the page shape for GET /v1/instances
@@ -6115,6 +6198,57 @@ type PreAuthObservationsResponse struct {
 	Source   string                     `json:"source"`
 	AsOf     string                     `json:"as_of"`
 	Policies []PreAuthPolicyObservation `json:"policies"`
+	// Suggestion is present only for an observe-mode guard with a healthy
+	// metrics source. It is advice; nothing is applied automatically.
+	Suggestion *PreAuthEnforcementSuggestion `json:"suggestion,omitempty"`
+}
+
+// PreAuthEnforcementSuggestion says whether an observe-mode guard looks safe
+// to switch to enforce, judged on the response range (ADR-829 amendment 1).
+type PreAuthEnforcementSuggestion struct {
+	Status string `json:"status"` // ready | review | insufficient_data
+	Reason string `json:"reason"`
+	// Requests is every gateway request to the app in the range.
+	Requests int64 `json:"requests"`
+	// WouldBlock and WouldBlockSucceeded sum the app and route policies;
+	// succeeded counts 2xx and 3xx final responses.
+	WouldBlock          int64 `json:"would_block"`
+	WouldBlockSucceeded int64 `json:"would_block_succeeded"`
+}
+
+const (
+	PreAuthSuggestionReady            = "ready"
+	PreAuthSuggestionReview           = "review"
+	PreAuthSuggestionInsufficientData = "insufficient_data"
+)
+
+// SuggestPreAuthEnforcement judges an observe-mode guard from one range of
+// observations. Enforce is "ready" only when the range is long enough, the app
+// saw enough traffic, and no request the guard would have blocked succeeded.
+func SuggestPreAuthEnforcement(rng string, requests int64, policies []PreAuthPolicyObservation) PreAuthEnforcementSuggestion {
+	s := PreAuthEnforcementSuggestion{Requests: requests}
+	for _, p := range policies {
+		if p.Kind != "app" && p.Kind != "route" {
+			continue
+		}
+		s.WouldBlock += p.WouldBlock
+		s.WouldBlockSucceeded += p.Result2xx + p.Result3xx
+	}
+	switch {
+	case !slices.Contains(PreAuthSuggestionRanges, rng):
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = "judge enforcement on a range of 24h or longer"
+	case requests < PreAuthSuggestionMinRequests:
+		s.Status = PreAuthSuggestionInsufficientData
+		s.Reason = fmt.Sprintf("only %d requests in %s; at least %d are needed", requests, rng, PreAuthSuggestionMinRequests)
+	case s.WouldBlockSucceeded > 0:
+		s.Status = PreAuthSuggestionReview
+		s.Reason = fmt.Sprintf("enforce would have rejected %d requests that succeeded; raise requests_per_second or burst, or add route overrides, before enforcing", s.WouldBlockSucceeded)
+	default:
+		s.Status = PreAuthSuggestionReady
+		s.Reason = fmt.Sprintf("enforce would have rejected %d of %d requests in %s, none of which succeeded", s.WouldBlock, requests, rng)
+	}
+	return s
 }
 
 type PreAuthPolicyObservation struct {
@@ -6782,15 +6916,16 @@ type SourceRefDeployRequest struct {
 	// defaults to ${{ github.event.pull_request.number }} on the
 	// Action side. All four are optional; the apid handler stamps
 	// them onto the deployment row + the audit data{} payload.
-	Reason                 string                 `json:"reason,omitempty"`
-	Tag                    string                 `json:"tag,omitempty"`
-	DeployedBy             string                 `json:"deployed_by,omitempty"`
-	PRNumber               int                    `json:"pr_number,omitempty"`
-	TrafficPercent         *int                   `json:"traffic_percent,omitempty"`
-	Canary                 *CanaryPresetSpec      `json:"canary,omitempty"`
-	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
-	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	Reason                   string                 `json:"reason,omitempty"`
+	Tag                      string                 `json:"tag,omitempty"`
+	DeployedBy               string                 `json:"deployed_by,omitempty"`
+	PRNumber                 int                    `json:"pr_number,omitempty"`
+	TrafficPercent           *int                   `json:"traffic_percent,omitempty"`
+	Canary                   *CanaryPresetSpec      `json:"canary,omitempty"`
+	MCPTaskMigrationOverride bool                   `json:"mcp_task_migration_override,omitempty"`
+	RollbackOn5xx            *bool                  `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost   *bool                  `json:"disable_startup_cpu_boost,omitempty"`
+	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -6804,7 +6939,8 @@ type SourceTarballDeployRequest struct {
 	Ref        string `json:"ref,omitempty"`
 	NoTriggers bool   `json:"no_triggers,omitempty"`
 	// Environment selects a registered project environment for this upload.
-	Environment string `json:"environment,omitempty"`
+	Environment              string `json:"environment,omitempty"`
+	MCPTaskMigrationOverride bool   `json:"mcp_task_migration_override,omitempty"`
 	// Annotation fields (issue #977 / ADR-116). All four are
 	// optional; the CLI's zero-config path auto-captures
 	// DeployedBy from `git config user.name` when in a repo (see
@@ -8629,12 +8765,17 @@ var edgeRuleValidateRefURLPattern = regexp.MustCompile(`"\s*(\$ref|\$id)\s*"\s*:
 //     decoders may still read it from a response. The field will
 //     be removed in the release after the deprecation notice.
 type EdgeRuleValidateAction struct {
-	Schema                json.RawMessage `json:"schema"`
+	// Schema validates the JSON request body. It may be omitted when
+	// Parameters is set, so a body-less operation can still be validated.
+	Schema                json.RawMessage `json:"schema,omitempty"`
 	ContentTypes          []string        `json:"content_types,omitempty"`
 	ApplyWhileStreaming   bool            `json:"apply_while_streaming,omitempty"`
 	RejectOnUnknownFields bool            `json:"reject_on_unknown_fields,omitempty"`
 	MaxBodyBytes          int             `json:"max_body_bytes,omitempty"`
 	ValidateMode          string          `json:"validate_mode,omitempty"`
+	// Parameters validates path, query, and header values before the body
+	// is read (ADR-091 amendment: request parameters).
+	Parameters *EdgeRuleValidateParameters `json:"parameters,omitempty"`
 }
 
 // EdgeRuleRetryAction is the wire shape for a kind=retry edge rule
@@ -8869,7 +9010,12 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 		return ErrValidation("validate action is required")
 	}
 	if len(a.Schema) == 0 {
-		return ErrValidation("validate action: schema is required")
+		if a.Parameters.Empty() {
+			return ErrValidation("validate action: schema or parameters is required")
+		}
+		// Parameter-only rule: the body checks below do not apply. The
+		// parameter schemas are checked against match_path by the caller.
+		return a.validateMode()
 	}
 	if len(a.Schema) > MaxEdgeRuleValidateSchemaBytes {
 		return ErrValidation(fmt.Sprintf(
@@ -8922,11 +9068,14 @@ func (a *EdgeRuleValidateAction) Validate() *Problem {
 			"validate action: max_body_bytes exceeds the platform cap (%d > %d)",
 			a.MaxBodyBytes, MaxRequestBodyBytes))
 	}
-	// ValidateMode: optional; empty == 'block' (the strictest mode,
-	// matches the NOT NULL DEFAULT 'block' the migration adds at
-	// 00293). Any non-empty value must be one of the three closed
-	// strings; an unknown value gets a 422 with the allowed list,
-	// not a 500.
+	return a.validateMode()
+}
+
+// validateMode checks the deprecated action-level validate_mode: empty ==
+// 'block' (the strictest mode, matching the NOT NULL DEFAULT 'block' added at
+// 00293). Any non-empty value must be one of the three closed strings; an
+// unknown value gets a 422 with the allowed list, not a 500.
+func (a *EdgeRuleValidateAction) validateMode() *Problem {
 	if a.ValidateMode != "" &&
 		a.ValidateMode != ValidateModeBlock &&
 		a.ValidateMode != ValidateModeObserve &&
@@ -9241,7 +9390,7 @@ func (a *EdgeRuleMaintenanceAction) Validate() *Problem {
 // fields default to zero-values that produce bit-identical behaviour
 // to PR #887's bucket key (appID+"\x00"+ruleID):
 //
-//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country"}.
+//   - KeyBy ∈ {"", "none", "api_key", "consumer_id", "jwt_subject", "jwt_claim", "country", "ip"}.
 //     Empty string and "none" are equivalent — the empty value is the
 //     pre-Phase-3 shape; "none" is the explicit Phase-3 opt-out. Both
 //     preserve back-compat (the bucket key is unchanged).
@@ -9582,13 +9731,12 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // Field-by-field:
 //
 //   - BudgetMs: required per-request budget in milliseconds. Must
-//     be > 0 and ≤ api.RequestBudgetMaxMs (30 s). 0 is rejected
-//     with 422 — a kind=budget rule with no budget is a silent
-//     no-op, worst shape for a safety feature. The hard upper bound
-//     matches api.RequestBudgetMaxMs so a kind=budget rule can
-//     never widen past the platform ceiling; if a customer wants a
-//     longer per-route budget they're mis-using this primitive
-//     (api.RequestBudgetMax is the absolute ceiling).
+//     be > 0 and ≤ api.RequestBudgetPlanMax (15 min, ADR-1150). 0 is
+//     rejected with 422 — a kind=budget rule with no budget is a
+//     silent no-op, worst shape for a safety feature. At request time
+//     the budget is further clamped to the plan's ceiling
+//     (Limits.RequestBudgetMaxDuration), so a rule never widens past
+//     what the account's plan allows.
 //   - AllowOverrideHeader: optional HTTP header name (default
 //     `x-faas-budget-ms`) whose numeric value, if present on the
 //     inbound request, overrides BudgetMs for that single request.
@@ -9618,10 +9766,10 @@ func (a *EdgeRuleBudgetAction) Validate() *Problem {
 			"budget action: budget_ms must be > 0 (got %d) — a kind=budget rule with no budget is a silent no-op; drop the rule if you want the platform default to apply",
 			a.BudgetMs))
 	}
-	if a.BudgetMs > int(RequestBudgetMax.Milliseconds()) {
+	if a.BudgetMs > int(RequestBudgetPlanMax.Milliseconds()) {
 		return ErrValidation(fmt.Sprintf(
 			"budget action: budget_ms (%d) exceeds the platform ceiling (%d ms = %s)",
-			a.BudgetMs, int(RequestBudgetMax.Milliseconds()), RequestBudgetMax))
+			a.BudgetMs, int(RequestBudgetPlanMax.Milliseconds()), RequestBudgetPlanMax))
 	}
 	if a.AllowOverrideHeader != "" {
 		if len(a.AllowOverrideHeader) > 128 {
@@ -10390,9 +10538,9 @@ type ThrottleSuggestionsResponse struct {
 
 // ThrottlePreviewRow is one row of the dry-run preview
 // (ADR-104 amendment 5, issue #881 Phase 4 D1). For each
-// non-collapsed route we report the count of sub-windows where the
-// observed rate exceeded the candidate rps — a count of "would-have-
-// rejected" requests over the window. WindowStart / WindowEnd echo
+// non-collapsed route we report the count of 1-minute sub-windows where
+// the observed average rate exceeded the candidate rps (not a request
+// count; burst is not modelled). WindowStart / WindowEnd echo
 // the window edges so dashboards can render "N of M sub-windows" /
 // "X of Y minutes" without re-deriving from Range.
 //
@@ -12832,4 +12980,16 @@ type EventRecoveryNotificationRetryBacklogTotals struct {
 	PendingCount            int `json:"pending_count"`
 	InconclusiveCount       int `json:"inconclusive_count"`
 	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+// EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.
+type EventRoutingRecoveryExpectation struct {
+	WorkflowName     string `json:"workflow_name"`
+	PublishedVersion int64  `json:"published_version"`
+	ReplayCount      int64  `json:"replay_count"`
+	Generation       *int64 `json:"generation,omitempty"`
+}
+
+func (e EventRoutingRecoveryExpectation) Valid() bool {
+	return strings.TrimSpace(e.WorkflowName) != "" && e.PublishedVersion > 0 && e.ReplayCount >= 0 && (e.Generation == nil || *e.Generation >= 0)
 }

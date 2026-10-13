@@ -119,7 +119,7 @@ func explainRunning(now time.Time, instances []InstanceInfo) map[string]runningR
 				configuredFloor:    in.ConfiguredMinInstances,
 				effectiveFloor:     in.MinInstances,
 				prewarmFloor:       in.PrewarmMinInstances,
-				idleTimeoutSeconds: EffectiveIdleTimeoutS(in.Plan, in.IdleTimeoutS),
+				idleTimeoutSeconds: EffectiveIdleTimeoutS(in.Plan, in.AppType, in.IdleTimeoutS),
 				workloadModes:      map[string]int{},
 				workloadClasses:    map[string]int{},
 			}

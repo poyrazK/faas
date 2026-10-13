@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,13 +10,19 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.commit_event_publication import CommitEventPublication
+
+
 T = TypeVar("T", bound="CommitReceiptResponse")
 
 
 @_attrs_define
 class CommitReceiptResponse:
     """Newly created sources return operation_id for a managed Gregale Operation. Retained legacy internal receipts return
-    invocation_id instead. Exactly one work identity is present.
+    invocation_id instead. Event destinations instead return publication. Exactly one invocation, operation or
+    publication identity is present. The publication receipt survives event retention and does not imply subscriber
+    success.
 
     """
 
@@ -24,9 +30,12 @@ class CommitReceiptResponse:
     source_id: UUID
     event_id: UUID
     accepted_at: datetime.datetime
-    operation_url: str
+    operation_url: str | Unset = UNSET
+    """Present for operation or legacy invocation destinations."""
     invocation_id: UUID | Unset = UNSET
     operation_id: UUID | Unset = UNSET
+    publication: CommitEventPublication | Unset = UNSET
+    """Retained event-publication acceptance and a guarded URL for subscriber delivery evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +57,10 @@ class CommitReceiptResponse:
         if not isinstance(self.operation_id, Unset):
             operation_id = str(self.operation_id)
 
+        publication: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.publication, Unset):
+            publication = self.publication.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -56,18 +69,23 @@ class CommitReceiptResponse:
                 "source_id": source_id,
                 "event_id": event_id,
                 "accepted_at": accepted_at,
-                "operation_url": operation_url,
             }
         )
+        if operation_url is not UNSET:
+            field_dict["operation_url"] = operation_url
         if invocation_id is not UNSET:
             field_dict["invocation_id"] = invocation_id
         if operation_id is not UNSET:
             field_dict["operation_id"] = operation_id
+        if publication is not UNSET:
+            field_dict["publication"] = publication
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.commit_event_publication import CommitEventPublication
+
         d = dict(src_dict)
         receipt_id = UUID(d.pop("receipt_id"))
 
@@ -77,7 +95,7 @@ class CommitReceiptResponse:
 
         accepted_at = datetime.datetime.fromisoformat(d.pop("accepted_at"))
 
-        operation_url = d.pop("operation_url")
+        operation_url = d.pop("operation_url", UNSET)
 
         _invocation_id = d.pop("invocation_id", UNSET)
         invocation_id: UUID | Unset
@@ -93,6 +111,13 @@ class CommitReceiptResponse:
         else:
             operation_id = UUID(_operation_id)
 
+        _publication = d.pop("publication", UNSET)
+        publication: CommitEventPublication | Unset
+        if isinstance(_publication, Unset):
+            publication = UNSET
+        else:
+            publication = CommitEventPublication.from_dict(_publication)
+
         commit_receipt_response = cls(
             receipt_id=receipt_id,
             source_id=source_id,
@@ -101,6 +126,7 @@ class CommitReceiptResponse:
             operation_url=operation_url,
             invocation_id=invocation_id,
             operation_id=operation_id,
+            publication=publication,
         )
 
         commit_receipt_response.additional_properties = d

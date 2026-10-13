@@ -77,6 +77,47 @@ export default {
 };
 ```
 
+### Streaming
+
+A Fetch handler streams when its `Response` body is still being produced
+(ADR-999); a body that is already complete is sent as one response, as
+before. An event handler streams by returning an async iterable `body`,
+such as an async generator or a Node stream:
+
+```js
+// Fetch API: server-sent events
+export default {
+  async fetch() {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      async start(controller) {
+        for (let i = 0; i < 3; i++) {
+          controller.enqueue(encoder.encode(`data: tick ${i}\n\n`));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        controller.close();
+      },
+    });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  },
+};
+
+// Event handler: an async generator body
+export async function handler() {
+  async function* tokens() { yield "hello "; yield "world"; }
+  return { statusCode: 200, headers: { "content-type": "text/plain" }, body: tokens() };
+}
+```
+
+An exception after streaming starts aborts the response; the client sees
+a truncated body.
+The whole invocation, the stream included, may run for the longer of the
+app's request timeout and 30 s (`gregale app APP --request-timeout SECONDS`,
+up to 1 min on Hobby, 5 min on Pro and 15 min on Scale; ADR-1150),
+and the gateway carries it to the client on Hobby, Pro and Scale (Free
+buffers it). Every `Set-Cookie` header is sent, and an event handler may
+give any header a list of values.
+
 ### Local smoke test
 
 The §4.9 envelope round-trips with bash and `base64` — the runner

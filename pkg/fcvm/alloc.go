@@ -112,6 +112,9 @@ type Lease struct {
 	// ephemeral builder VM. Builder memory must not be charged to vmmd's
 	// supervisor cgroup or to tenant RAM.
 	IsBuilder bool
+	// AccountID is the owning account of an app VM. A pmem base is cloned
+	// per account so that no two accounts map the same pages (ADR-908).
+	AccountID string
 	// BuildTimeoutSec is the guest build wall-clock budget carried from
 	// builderd. vmmd uses it to size builder teardown headroom; zero keeps
 	// the platform default for legacy callers and ordinary app VMs.

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net"
@@ -450,6 +451,8 @@ type InstanceStatsPoller interface {
 type InstanceActivity struct {
 	Inflight    int64
 	LastRequest time.Time
+	// ResidentMB is the instance's cgroup memory; 0 when unmeasured.
+	ResidentMB int
 }
 
 // InstanceActivityReader is the narrow reaper-facing view of VMMD activity.
@@ -2555,6 +2558,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 				LastRequest:  lastRequest,
 				Started:      ins.StartedAt,
 				IdleTimeoutS: a.IdleTimeoutS,
+				AppType:      string(a.Type),
 				NodeID:       ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           a.EffectiveMinInstances(),
@@ -2715,6 +2719,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.runReaperAggressive(ctx, apps, snapshot, instanceToApp, cooldownHeldByApp, now)
 	}
 
+	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
 		if err := l.engine.Evict(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
@@ -2841,14 +2846,15 @@ func (l *Loop) stopInstanceFromReaper(ctx context.Context, instanceID string) er
 // drainSupersededReaperRows repairs a superseded deployment's drain when the
 // deployment_changed notification was missed or its park failed (production-us
 // hunt #8: superseded instances stayed resident and billed until the idle
-// timeout). The rows leave the snapshot so the idle and pressure selectors do
-// not act on the same instances in this tick.
+// timeout). Instances of cancelled or failed deployments are evicted the same
+// way (hunt #9). The rows leave the snapshot so the idle and pressure
+// selectors do not act on the same instances in this tick.
 func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []InstanceInfo) []InstanceInfo {
 	kept := snapshot[:0]
 	drained := map[string]struct{}{}
 	for _, row := range snapshot {
 		switch {
-		case !row.DeploymentSuperseded:
+		case !row.DeploymentSuperseded && !row.DeploymentEnded:
 			kept = append(kept, row)
 			continue
 		case row.State != state.StateRunning && row.State != state.StateWaking && row.State != state.StateColdBooting:
@@ -2861,9 +2867,9 @@ func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []Instanc
 			continue
 		}
 		drained[row.DeploymentID] = struct{}{}
-		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID)
+		l.log.Info("reaper: drain superseded deployment", "app", row.AppID, "deployment", row.DeploymentID, "ended", row.DeploymentEnded)
 		drainCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
-		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, true)
+		l.engine.drainDeploymentInstances(drainCtx, row.DeploymentID, !row.DeploymentEnded)
 		cancel()
 	}
 	return kept
@@ -3299,7 +3305,7 @@ func DialGatewaySynth(socketPath string, log *slog.Logger) (GatewaySynth, error)
 			return net.Dial("unix", socketPath)
 		},
 	}
-	c := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	c := &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout}
 	return &httpGatewaySynth{
 		client:     c,
 		basePrefix: httpUnixBasePrefix,
@@ -3341,7 +3347,7 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			},
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: httpUnixBasePrefix,
 			log:        log,
 		}, nil
@@ -3352,10 +3358,10 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 		}
 		tr := &http.Transport{
 			TLSClientConfig:       tlsCfg,
-			ResponseHeaderTimeout: 30 * time.Second,
+			ResponseHeaderTimeout: api.GatewaySynthDispatchTimeout,
 		}
 		return &httpGatewaySynth{
-			client:     &http.Client{Transport: tr, Timeout: 30 * time.Second},
+			client:     &http.Client{Transport: tr, Timeout: api.GatewaySynthDispatchTimeout},
 			basePrefix: scheme + "://" + t.Address,
 			log:        log,
 		}, nil
@@ -3558,6 +3564,18 @@ func (h *httpGatewaySynth) ExecuteManagedOperationStep(ctx context.Context, appI
 }
 
 func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method string, headers map[string]string, body []byte, timeout time.Duration, operationID string, generation int64, identity WorkflowStepIdentity) (int, []byte, time.Time, error) {
+	// The step's own timeout (bounded per plan by WorkflowStepMaxTimeout) is
+	// the attempt deadline. The shared synth client's fixed Timeout used to
+	// cut every step at 30 s whatever it declared (production-us hunt #9,
+	// H9-151), so steps use a client bounded only by this context. A step
+	// without a timeout keeps that client's limit.
+	client := h.client
+	if timeout > 0 {
+		client = h.contextBoundClient()
+	} else if client != nil && client.Timeout > 0 {
+		timeout = client.Timeout
+		client = h.contextBoundClient()
+	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -3589,11 +3607,46 @@ func (h *httpGatewaySynth) executeStep(ctx context.Context, appID, path, method 
 		ManagedOperationGeneration: generation,
 		OperationResultVersion:     boolToProtocolVersion(operationID != ""),
 	}
-	out, statusCode, err := h.invokeWithStatus(ctx, appID, inv, nil)
+	out, statusCode, err := h.invokeWithStatusUsing(ctx, client, appID, inv, nil)
 	if err != nil {
 		return 0, nil, time.Time{}, err
 	}
 	return statusCode, out.Result, api.WorkflowRetryAfter(out.ResponseRetryAfter, time.Now().UTC()), nil
+}
+
+// invocationDoError keeps transport detail out of the invocation's
+// customer-visible last_error when an attempt simply ran out of time. The
+// HTTP client's error names the internal unix-socket URL ("Post
+// \"http://unix/v1/invocations:dispatch\": … Client.Timeout exceeded") and
+// says nothing about the limit (production-us hunt #9, H9-135). A caller whose
+// own context ended keeps the original error.
+func invocationDoError(ctx context.Context, err error) error {
+	var netErr net.Error
+	if ctx.Err() == nil && errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("%w: the invocation attempt exceeded the %s dispatch limit", ErrDispatchTimeout, api.GatewaySynthDispatchTimeout)
+	}
+	return fmt.Errorf("sched: invocation do: %w", err)
+}
+
+// dispatchProblemSuffix carries a customer-facing problem from a failed
+// gateway dispatch into the invocation's last_error, e.g. " (plan_limit_
+// concurrency: scale app max_concurrency is 2; 2 already live.)". Plain-text
+// bodies are internal and stay out of customer-visible errors.
+func dispatchProblemSuffix(resp *http.Response) string {
+	if !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/problem+json") {
+		return ""
+	}
+	var p struct {
+		Code   string `json:"code"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&p); err != nil || p.Code == "" {
+		return ""
+	}
+	if p.Detail == "" {
+		return " (" + safetext.Ellipsis(p.Code, invocationFailureDetailMaxBytes) + ")"
+	}
+	return " (" + safetext.Ellipsis(p.Code+": "+p.Detail, invocationFailureDetailMaxBytes) + ")"
 }
 
 func boolToProtocolVersion(enabled bool) int {
@@ -3628,6 +3681,21 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 }
 
 func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
+	return h.invokeWithStatusUsing(ctx, h.client, appID, inv, wake)
+}
+
+// contextBoundClient shares the synth transport but drops the client-wide
+// Timeout, leaving the request's context as the only deadline.
+func (h *httpGatewaySynth) contextBoundClient() *http.Client {
+	if h.client == nil {
+		return &http.Client{}
+	}
+	bound := *h.client
+	bound.Timeout = 0
+	return &bound
+}
+
+func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *http.Client, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
 	var headers map[string]string
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -3715,13 +3783,13 @@ func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, i
 			}
 		}
 	}
-	resp, err := h.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return inv, 0, fmt.Errorf("sched: invocation do: %w", err)
+		return inv, 0, invocationDoError(ctx, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("sched: invocation: gateway returned %d", resp.StatusCode)
+		err := fmt.Errorf("sched: invocation: gateway returned %d%s", resp.StatusCode, dispatchProblemSuffix(resp))
 		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
 		}
@@ -4983,4 +5051,43 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// evictForMeasuredMemory evicts on nodes whose measured memory exceeds their
+// ceiling (ADR-909). It runs only under measured admission: otherwise each
+// VM's memory.max keeps a node's memory under its reservations. A node
+// without a fresh vmmd capacity report is skipped.
+func (l *Loop) evictForMeasuredMemory(ctx context.Context, snapshot []InstanceInfo, activity map[string]InstanceActivity, now time.Time) {
+	ledger := l.engine.Ledger()
+	if !ledger.MeasuredAdmissionEnabled() {
+		return
+	}
+	used, ceiling := map[string]int{}, map[string]int{}
+	for _, in := range snapshot {
+		if _, seen := used[in.NodeID]; seen || in.NodeID == "" {
+			continue
+		}
+		report, ok := l.engine.CapacityTable().Lookup(in.NodeID, now)
+		if !ok {
+			continue
+		}
+		used[in.NodeID] = int(report.UsedMB)
+		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
+	}
+	resident := make(map[string]int, len(activity))
+	for id, a := range activity {
+		resident[id] = a.ResidentMB
+	}
+	for _, id := range SelectMemoryEvictions(now, snapshot, used, ceiling, resident) {
+		if err := l.engine.Evict(ctx, id); err != nil {
+			l.log.Warn("reaper: measured memory eviction", "instance", id, "err", err)
+			continue
+		}
+		l.log.Info("reaper: evicted under measured memory pressure", "instance", id)
+		if tier, ok := resolveTenantTier(snapshot, id); ok {
+			if counter := l.ops.EvictionFired(tier, "measured_memory"); counter != nil {
+				counter.Inc()
+			}
+		}
+	}
 }

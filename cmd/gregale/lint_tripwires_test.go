@@ -813,6 +813,7 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeAppRuntimeOOM,
 		api.CodeDepInstallFailed,
 		api.CodeAppStartupTimeout,
+		api.CodeAppStartupCrash,
 		api.CodeStatelessOnlyViolation,
 		// ADR-117 §Production-ready follow-on: per-stage failure
 		// codes. The renderer (pkg/dashboard/stages.StageFailureHTML)
@@ -910,6 +911,10 @@ func TestEveryPresetHasPresetwhyEntry(t *testing.T) {
 		"slo_burn_rate",
 		"login_target_pressure",
 		"login_target_signal_health",
+		"pre_auth_pressure",
+		"edge_validation_failures",
+		"edge_rejection_pressure",
+		"edge_waf_detections",
 	}
 
 	// Forward direction: every seed preset name must have a

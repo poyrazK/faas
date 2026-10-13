@@ -276,6 +276,7 @@ func (m *MemStore) resumeWorkflowRunLocked(opts WorkflowResumeOptions, operation
 		return nil, nil, active, ErrWorkflowRunQuotaExceeded
 	}
 	now := time.Now().UTC()
+	m.captureWorkflowRecoveryResultLocked(run, now)
 	record := WorkflowResume{RunID: run.ID, ResumeNumber: run.ResumeCount + 1, AccountID: account.ID, PreviousStatus: run.Status, PreviousError: cloneWorkflowString(run.LastError), ResumedSteps: names, CreatedAt: now}
 	for _, name := range names {
 		step := m.workflowSteps[run.ID][name]
@@ -292,6 +293,7 @@ func (m *MemStore) resumeWorkflowRunLocked(opts WorkflowResumeOptions, operation
 		m.workflowResumes = make(map[string][]WorkflowResume)
 	}
 	m.workflowResumes[run.ID] = append(m.workflowResumes[run.ID], record)
+	m.captureWorkflowRecoveryResultLocked(run, now)
 	run.Input = cloneWorkflowJSON(run.Input)
 	run.DefinitionSnapshot = cloneWorkflowJSON(run.DefinitionSnapshot)
 	record = cloneWorkflowResume(record)

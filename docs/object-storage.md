@@ -260,6 +260,12 @@ change. The workload receives the values through the existing secret staging
 path on its next deploy/wake; values are never returned by the binding API or
 stored in plaintext.
 
+The endpoint accepts Signature Version 4 only. boto3/botocore presigns S3 URLs
+with Signature Version 2 for a custom endpoint unless told otherwise, and those
+URLs fail with 403 `SignatureDoesNotMatch`; create the client with
+`botocore.config.Config(signature_version="s3v4", s3={"addressing_style": "path"})`
+before calling `generate_presigned_url`.
+
 List bindings with `GET .../compute-bindings`, rotate in place with
 `POST .../compute-bindings/{binding-id}/rotate`, and revoke with
 `DELETE .../compute-bindings/{binding-id}`. Rotation keeps the binding ID and
@@ -353,7 +359,10 @@ SHA-256 checksum headers before writing upstream. SigV4 `aws-chunked` PUT and
 UploadPart bodies support signed payload chunks, signed checksum trailers, and
 the unsigned-payload checksum trailer form used by current AWS SDKs. The
 gateway verifies every frame, decoded length, trailer signature, and checksum
-before allowing a complete object or part to reach the provider. Ordinary PUT
+before allowing a complete object or part to reach the provider. Multipart
+initiation accepts `x-amz-checksum-algorithm` (CRC32, CRC32C, CRC64NVME, SHA-1,
+SHA-256), which botocore sends by default; each part's checksum is verified on
+upload, and no composite object checksum is stored. Ordinary PUT
 and multipart initiation accept the standard HTTP metadata fields,
 `x-amz-meta-*`, and URL-encoded `x-amz-tagging`; multipart sessions persist this
 metadata so provider recovery and eventual completion retain it. GET/HEAD
@@ -490,7 +499,13 @@ Conditional GET/HEAD requests forward the standard validators and preserve S3
 `304 Not Modified` and `412 Precondition Failed` outcomes without exposing a
 provider response body. SigV4A/ECDSA authentication,
 ACLs, and bucket create/delete through the S3 protocol remain explicit
-`NotImplemented` gaps. Bucket provisioning and deletion use the authenticated
+`NotImplemented` gaps. Browser form uploads (presigned POST with a policy
+document) are not supported: the gateway treats them as anonymous requests and
+answers 403 `SignatureDoesNotMatch`, so browsers should upload with a presigned
+PUT URL instead. Keys containing `/./` or `/../` path segments cannot be used
+through `s3.gregale.dev`: the edge normalizes those segments before the gateway
+verifies the signature, so every request for such a key fails with 403
+`SignatureDoesNotMatch`. Bucket provisioning and deletion use the authenticated
 Gregale API so a customer credential cannot escape its assigned logical bucket.
 Ordinary deletion and mutable null-version deletion use durable receipts and
 marker admission; see the deletion recovery limitations below.
@@ -1659,7 +1674,9 @@ version listing for Enabled marker preparation and recovery. See the
 and [version listing permissions](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectVersions.html).
 
 S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
-invocation IDs are also used. Responses return `X-Gregale-Delete-Id`; ordinary
+invocation IDs are also used; botocore (boto3, the AWS CLI) adds its invocation
+ID after signing, so an unsigned one is ignored and that delete receives a
+generated ID. Responses return `X-Gregale-Delete-Id`; ordinary
 Enabled deletion returns an owned marker version ID. A dispatched uncertain
 intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact

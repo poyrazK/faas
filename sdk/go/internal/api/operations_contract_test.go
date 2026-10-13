@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,6 +83,7 @@ func operationDeclarations(t *testing.T, path string) map[string]string {
 		for _, spec := range general.Specs {
 			switch spec := spec.(type) {
 			case *ast.TypeSpec:
+				dropUnserializedFields(spec.Type)
 				var out bytes.Buffer
 				if err := format.Node(&out, fset, spec.Type); err != nil {
 					t.Fatal(err)
@@ -105,4 +107,22 @@ func operationDeclarations(t *testing.T, path string) map[string]string {
 		}
 	}
 	return result
+}
+
+// dropUnserializedFields removes `json:"-"` fields from a struct type. The
+// platform keeps server-side evidence on wire types (#4492), and the SDK
+// rightly does not copy fields that never cross the wire.
+func dropUnserializedFields(expr ast.Expr) {
+	structType, ok := expr.(*ast.StructType)
+	if !ok || structType.Fields == nil {
+		return
+	}
+	kept := structType.Fields.List[:0]
+	for _, field := range structType.Fields.List {
+		if field.Tag != nil && strings.Contains(field.Tag.Value, `json:"-"`) {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	structType.Fields.List = kept
 }

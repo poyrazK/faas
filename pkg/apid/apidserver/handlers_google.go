@@ -1,0 +1,425 @@
+package apidserver
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/oauthpkce"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+const (
+	googleAuthStateCookie = "faas_google_state"
+	googleAuthNonceCookie = "faas_google_nonce"
+	googleAuthPKCECookie  = "faas_google_pkce"
+	googleAuthPath        = "/v1/auth/google"
+	googleCallbackPath    = "/v1/auth/google/callback"
+	// schemeHTTP + schemeHTTPS are the URL schemes used in the OAuth
+	// redirect / domain helper. Lifted to package-level consts so
+	// goconst doesn't flag the repeated literals across the auth
+	// handlers (handlers_github.go, handlers_auth_login.go).
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+)
+
+// GoogleUserInfo represents the payload returned by Google's OAuth2 userinfo endpoint.
+type GoogleUserInfo struct {
+	ID            string `json:"sub"`
+	Email         string `json:"email"`
+	VerifiedEmail bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
+}
+
+// renderGoogleAuthRedirect (GET /v1/auth/google)
+// Redirects user to Google OAuth 2.0 consent screen.
+func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request) {
+	// Issue #419 / ADR-046: the boot-resolved SignInConfig is the
+	// only source of truth for whether Google OAuth is configured.
+	// Half-set configs fail to start at boot (cmd/apid/main.go); the
+	// Disabled case below is the operator-chose-not-to-ship-it path.
+	if !s.oauthConfig.Google.Enabled() {
+		s.disabledOAuthResponse(w, auth.GoogleProviderName,
+			"GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset",
+			"Google sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
+		return
+	}
+	clientID := s.oauthConfig.Google.ClientID
+
+	// Real Google OAuth 2.0 flow
+	stateTokenBytes := make([]byte, 16)
+	if _, err := rand.Read(stateTokenBytes); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to generate CSRF state"))
+		return
+	}
+	stateToken := hex.EncodeToString(stateTokenBytes)
+	nonceBytes := make([]byte, 32)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to generate OAuth nonce"))
+		return
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	codeVerifier, codeChallenge, err := oauthpkce.Generate()
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to generate OAuth PKCE verifier"))
+		return
+	}
+
+	// Set CSRF Cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleAuthStateCookie,
+		Value:    stateToken,
+		Path:     googleCallbackPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleAuthNonceCookie,
+		Value:    nonce,
+		Path:     googleCallbackPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     googleAuthPKCECookie,
+		Value:    codeVerifier,
+		Path:     googleCallbackPath,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300, // 5 minutes
+	})
+
+	redirectURI := s.oauthConfig.Google.RedirectURI
+	if redirectURI == "" {
+		host := r.Host
+		scheme := schemeHTTP
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+			scheme = schemeHTTPS
+		}
+		redirectURI = fmt.Sprintf("%s://%s%s", scheme, host, googleCallbackPath)
+	}
+
+	googleAuthURL := fmt.Sprintf(
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid%%20email%%20profile&state=%s&nonce=%s&code_challenge=%s&code_challenge_method=%s",
+		url.QueryEscape(clientID),
+		url.QueryEscape(redirectURI),
+		url.QueryEscape(stateToken),
+		url.QueryEscape(nonce),
+		url.QueryEscape(codeChallenge),
+		oauthpkce.MethodS256,
+	)
+
+	http.Redirect(w, r, googleAuthURL, http.StatusFound)
+}
+
+// handleGoogleOAuthCallback (GET /v1/auth/google/callback)
+// Verifies state and nonce, validates Google's ID token, exchanges the OAuth
+// code for the user profile, and signs the user in.
+func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	stateCookie, err := r.Cookie(googleAuthStateCookie)
+	if err != nil || stateCookie.Value == "" {
+		// Issue #286: the OAuth callback can fail before any
+		// identity is known — there is no customer-supplied email
+		// to hash, so the audit row carries email_hash="". The IP
+		// + user_agent discriminator still lets SOC 2 evidence
+		// correlate a credential-stuffing pattern of GETs against
+		// the callback URL.
+		s.audit.EmitFailedLogin(
+			middleware.ClientIP(r),
+			"", r.UserAgent())
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_state", "Invalid State", "missing CSRF state cookie"))
+		return
+	}
+
+	queryState := r.URL.Query().Get("state")
+	if queryState == "" || queryState != stateCookie.Value {
+		// Issue #286: see note above.
+		s.audit.EmitFailedLogin(
+			middleware.ClientIP(r),
+			"", r.UserAgent())
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "csrf_mismatch", "CSRF Error", "state token mismatch"))
+		return
+	}
+	// Issue #419 / ADR-046: the callback should never be reached if the
+	// provider is disabled, but a stale cookie or direct callback hit still
+	// gets the same operator-facing 503 as the consent redirect.
+	if !s.oauthConfig.Google.Enabled() {
+		s.disabledOAuthResponse(w, auth.GoogleProviderName,
+			"GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET unset",
+			"Google sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
+		return
+	}
+	nonceCookie, err := r.Cookie(googleAuthNonceCookie)
+	if err != nil || nonceCookie.Value == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_nonce", "Invalid OAuth Request", "missing OAuth nonce cookie"))
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		// Issue #286: see note above. The OAuth consent screen
+		// denial path lands here — `code` is empty because the
+		// user backed out before granting the scopes.
+		s.audit.EmitFailedLogin(
+			middleware.ClientIP(r),
+			"", r.UserAgent())
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "missing_code", "Authorization Error", "missing code parameter from Google"))
+		return
+	}
+	pkceCookie, err := r.Cookie(googleAuthPKCECookie)
+	if err != nil || !oauthpkce.ValidVerifier(pkceCookie.Value) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_pkce", "Invalid OAuth Request", "missing or invalid OAuth PKCE verifier cookie"))
+		return
+	}
+
+	clientID := s.oauthConfig.Google.ClientID
+	clientSecret := s.oauthConfig.Google.ClientSecret
+
+	redirectURI := s.oauthConfig.Google.RedirectURI
+	if redirectURI == "" {
+		host := r.Host
+		scheme := schemeHTTP
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS {
+			scheme = schemeHTTPS
+		}
+		redirectURI = fmt.Sprintf("%s://%s%s", scheme, host, googleCallbackPath)
+	}
+
+	// Exchange Code for Access Token. Use the request context so the provider
+	// cannot outlive the browser callback, and the bounded client so a stalled
+	// or oversized provider response cannot pin apid resources.
+	tokenReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		"https://oauth2.googleapis.com/token", strings.NewReader(url.Values{
+			"code":          {code},
+			"client_id":     {clientID},
+			"client_secret": {clientSecret},
+			"redirect_uri":  {redirectURI},
+			"grant_type":    {"authorization_code"},
+			"code_verifier": {pkceCookie.Value},
+		}.Encode()))
+	if err == nil {
+		tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if err != nil {
+		s.log.Error("google oauth token exchange failed", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "token exchange failed"))
+		return
+	}
+	tokenResp, err := oauthHTTPClient().Do(tokenReq)
+	if err != nil {
+		s.log.Error("google oauth token exchange failed", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "token exchange failed"))
+		return
+	}
+	defer func() { _ = tokenResp.Body.Close() }()
+
+	if tokenResp.StatusCode != http.StatusOK {
+		_, readErr := readOAuthBody(tokenResp.Body)
+		s.log.Error("google oauth token exchange non-200", "status", tokenResp.StatusCode, "read_err", readErr)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "oauth_exchange_failed", "OAuth Failed", "failed to obtain access token from Google"))
+		return
+	}
+
+	var tokenData struct {
+		AccessToken string `json:"access_token"`
+		IDToken     string `json:"id_token"`
+	}
+	tokenBody, err := readOAuthBody(tokenResp.Body)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to read Google token response"))
+		return
+	}
+	if err := json.Unmarshal(tokenBody, &tokenData); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "json_error", "Internal Error", "failed to parse Google token response"))
+		return
+	}
+	if tokenData.IDToken == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "google_id_token_missing", "OAuth Failed", "Google did not return an ID token"))
+		return
+	}
+	verifier := s.googleIDVerifier
+	if verifier == nil {
+		// Keep hand-built test servers safe while preserving the production
+		// constructor's process-wide verifier/cache. Use a local fallback so
+		// concurrent callbacks never race on server construction state.
+		verifier = newGoogleIDTokenVerifier(s.log)
+	}
+	idClaims, err := verifier.Verify(r.Context(), tokenData.IDToken, clientID, nonceCookie.Value)
+	if err != nil {
+		s.log.Warn("google oauth id token rejected", "err", err.Error())
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "google_id_token_invalid", "OAuth Failed", "Google ID token validation failed"))
+		return
+	}
+
+	// Fetch Google User Profile
+	userInfoReq, err := http.NewRequestWithContext(r.Context(), "GET", "https://www.googleapis.com/oauth2/v3/userinfo", nil)
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "build Google profile request",
+			"Gregale could not complete sign in with Google.",
+			"Return to sign in and try again.", err)
+		return
+	}
+	userInfoReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+
+	userInfoResp, err := oauthHTTPClient().Do(userInfoReq)
+	if err != nil {
+		s.log.Error("google userinfo fetch failed", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to fetch user info from Google"))
+		return
+	}
+	if userInfoResp.StatusCode != http.StatusOK {
+		_ = userInfoResp.Body.Close()
+		s.log.Error("google userinfo fetch failed", "status", userInfoResp.StatusCode)
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to fetch user info from Google"))
+		return
+	}
+	defer func() { _ = userInfoResp.Body.Close() }()
+
+	userInfoBody, err := readOAuthBody(userInfoResp.Body)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "google_unreachable", "Google Unreachable", "failed to read Google user info"))
+		return
+	}
+	var googleUser GoogleUserInfo
+	if err := json.Unmarshal(userInfoBody, &googleUser); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "json_error", "Internal Error", "failed to decode Google user info"))
+		return
+	}
+
+	if googleUser.Email == "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "email_missing", "Missing Email", "Google profile did not contain an email address"))
+		return
+	}
+	if googleUser.ID == "" || googleUser.ID != idClaims.Subject {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "google_identity_mismatch", "OAuth Failed", "Google identity did not match the validated ID token"))
+		return
+	}
+
+	// Enforce email_verified (issue #165 PR #2, ADR-032). The pre-#165
+	// handler parsed VerifiedEmail but never checked it; a Google
+	// account with an unverified primary email could mint a session.
+	// We never mint an unverified session — the customer can verify
+	// the email on Google's side and retry.
+	if !googleUser.VerifiedEmail {
+		api.WriteProblem(w, api.ErrEmailNotVerified("google"))
+		return
+	}
+
+	// Provision or fetch account. The full googleUser struct is
+	// passed so the helper can do a sub-first lookup against the
+	// oauth_links table — the §11 anti-takeover invariant
+	// (one OAuth subject binds to one account, period).
+	acct, err := s.provisionOrFetchGoogleAccount(r.Context(), googleUser)
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "complete Google sign-in",
+			"Gregale could not finish setting up your account.",
+			"Return to sign in and try connecting Google again.", err)
+		return
+	}
+
+	// Issue Session Cookie. IAM-2 mfa_pending stamp preserved;
+	// IAM-3 (ADR-039) mints a sid + creates the sessions row +
+	// emits auth.session.created via the unified helper.
+	cookie, _, err := s.issueDashboardSession(r.Context(), r, acct.ID, mfaSessionPending(acct), "google")
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "create Google dashboard session",
+			"Gregale could not start your dashboard session.",
+			"Return to sign in and try connecting Google again.", err)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    cookie,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(sessionCookieLifetime.Seconds()),
+	})
+
+	s.log.Info("google oauth sign-in successful", "email", logsanitize.Field(googleUser.Email), "account_id", acct.ID)
+
+	// IAM-4 (ADR-035): record the auth.login success. Mirrors the
+	// existing slog line: the audit row carries the same email so
+	// operators correlating slog and audit see one identifier.
+	s.audit.Emit(r.Context(), "auth.login", &acct.ID, map[string]any{
+		"method": "google",
+		"email":  googleUser.Email,
+	})
+
+	redirectTarget := os.Getenv("WEBSITE_URL")
+	if redirectTarget == "" {
+		redirectTarget = "/"
+	}
+	http.Redirect(w, r, redirectTarget, http.StatusFound)
+}
+
+func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleUserInfo) (state.Account, error) {
+	email := strings.TrimSpace(strings.ToLower(info.Email))
+
+	// Sub-first lookup (spec §11 anti-takeover invariant, issue #165
+	// PR #2). The (provider, sub) composite is the primary key on
+	// oauth_links; the first party to bind a sub owns the row.
+	// A later password-account with the same email cannot claim
+	// the link — see pkg/state/pgstore.go::UpsertOAuthLink.
+	if link, err := s.store.OAuthLinkByProviderSubject(ctx, "google", info.ID); err == nil {
+		acct, err := s.store.AccountByID(ctx, link.AccountID)
+		if err == nil {
+			return s.verifyOAuthAccountEmail(ctx, acct)
+		}
+		// Link references a missing account: fall through to
+		// email-based recovery. The link was created against a
+		// deleted account; the row stays orphaned or will be
+		// re-bound below.
+	}
+
+	// Sub not bound. Check email — if a legacy account (pre-#165,
+	// pre-OAuth) already exists at this email, we bind the link to
+	// it. This is the "user had a password account, then signs in
+	// with Google" case.
+	acct, err := s.store.AccountByEmail(ctx, email)
+	if err == nil {
+		// Bind the link to the existing account. UpsertOAuthLink
+		// returns ErrConflict on a different-account re-bind
+		// (handled by the sub-first lookup above), so this is
+		// safe.
+		if err := s.store.UpsertOAuthLink(ctx, acct.ID, "google", info.ID, email, info.VerifiedEmail); err != nil {
+			s.log.Error("google.upsert_link", "err", err)
+		}
+		return s.verifyOAuthAccountEmail(ctx, acct)
+	}
+
+	// Neither sub nor email is bound: create a fresh account on
+	// the Free plan and bind the link.
+	res, err := s.store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+		Email: email,
+		Plan:  api.PlanFree,
+	})
+	if err != nil {
+		return state.Account{}, err
+	}
+	if err := s.store.UpsertOAuthLink(ctx, res.Account.ID, "google", info.ID, email, info.VerifiedEmail); err != nil {
+		// The link is the §11 invariant. Log but don't fail the
+		// sign-in — the customer can re-trigger the bind on the
+		// next login.
+		s.log.Error("google.upsert_link", "err", err)
+	}
+	return res.Account, nil
+}

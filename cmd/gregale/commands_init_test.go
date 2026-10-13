@@ -21,12 +21,15 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
 
@@ -468,6 +471,9 @@ func TestValidateTemplateSecrets(t *testing.T) {
 		{tpl: "secret-reload-node", pairs: []secretsPair{{Key: "DATABASE_URL", Value: "postgres://host/db?sslmode=require"}}, noErr: true},
 		{tpl: "s3-uploader", pairs: []secretsPair{{Key: "S3_BUCKET", Value: "bucket"}, {Key: "S3_REGION", Value: "region"}, {Key: "S3_ACCESS_KEY_ID", Value: "access"}, {Key: "S3_SECRET_ACCESS_KEY", Value: "secret"}}, noErr: true},
 		{tpl: "ai-chat", pairs: []secretsPair{{Key: "OPENAI_API_KEY"}, {Key: "ANTHROPIC_API_KEY"}}, want: "exactly one"},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "anthropic"}}, noErr: true},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "gemini"}}, want: "GREGALE_AI_PROVIDER"},
+		{tpl: "ai-chat", pairs: []secretsPair{{Key: "GREGALE_AI_INTEGRATION_ID", Value: "6f0e"}, {Key: "GREGALE_AI_PROVIDER", Value: "openai"}, {Key: "OPENAI_API_KEY", Value: "sk"}}, want: "must not also set"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.tpl+tc.want, func(t *testing.T) {
@@ -581,7 +587,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	// CategoryFor mis-classification can't ship silently.
 	wantPerCat := map[string][]string{
 		"hello":              {"hello-node", "hello-python", "hello-go"},
-		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "cron-example"},
+		"function":           {"function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "cron-example"},
 		"event-driven":       {"event-worker", "queue-worker"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform"},
 		"ai":                 {"ai-chat"},
@@ -717,5 +723,56 @@ func TestCmdInit_PreservesStdoutBytes(t *testing.T) {
 	}
 	if throwaway.Len() != 0 {
 		t.Errorf("osStdout seam was written to (%d bytes); should be untouched when explicit stdout is passed", throwaway.Len())
+	}
+}
+
+type templateSecretsApps struct {
+	err   error
+	calls int
+}
+
+func (a *templateSecretsApps) GetApp(context.Context, string) (api.AppResponse, error) {
+	a.calls++
+	return api.AppResponse{}, a.err
+}
+
+// TestRequireTemplateSecretsBeforeFirstStart pins H9-164: a first deploy of a
+// template that cannot start without secrets is refused before the build
+// instead of failing after it (7.6 minutes for ai-chat on production-us).
+func TestRequireTemplateSecretsBeforeFirstStart(t *testing.T) {
+	notFound := &APIError{Problem: api.Problem{Status: http.StatusNotFound}}
+	unavailable := &APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable}}
+	cases := []struct {
+		name        string
+		tpl         string
+		secretsFile string
+		createOnly  bool
+		lookupErr   error
+		wantErr     bool
+		wantLookup  bool
+	}{
+		{name: "ai-chat first deploy without secrets", tpl: "ai-chat", lookupErr: notFound, wantErr: true, wantLookup: true},
+		{name: "rest-api-postgres first deploy without secrets", tpl: "rest-api-postgres", lookupErr: notFound, wantErr: true, wantLookup: true},
+		{name: "existing app may already hold secrets", tpl: "ai-chat", wantLookup: true},
+		{name: "lookup failure keeps the old behaviour", tpl: "ai-chat", lookupErr: unavailable, wantLookup: true},
+		{name: "secrets file supplied", tpl: "ai-chat", secretsFile: "/tmp/s", lookupErr: notFound},
+		{name: "create-only reserves the app", tpl: "ai-chat", createOnly: true, lookupErr: notFound},
+		{name: "template without required secrets", tpl: "hello-node", lookupErr: notFound},
+		{name: "not a template deploy", lookupErr: notFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			apps := &templateSecretsApps{err: tc.lookupErr}
+			err := requireTemplateSecretsBeforeFirstStart(context.Background(), apps, tc.tpl, tc.secretsFile, tc.createOnly, "demo")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if (apps.calls > 0) != tc.wantLookup {
+				t.Fatalf("app lookups = %d, want lookup %v", apps.calls, tc.wantLookup)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "--secrets-file") {
+				t.Fatalf("err = %v, want the --secrets-file remedy", err)
+			}
+		})
 	}
 }

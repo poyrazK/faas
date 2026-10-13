@@ -42,6 +42,8 @@ acceptance environments.
 ```
 cmd/{apid,gatewayd-public,gatewayd-internal,schedd,vmmd,builderd,imaged,meterd,gregale}   daemons + CLI (Go)
 pkg/{api,state,fcvm,netns,oci,rootfs,meter,billing,wire,apid}   shared libs
+pkg/apid/apidserver   the apid server (ADR-982); cmd/apid/main.go only calls apidserver.Main
+pkg/apid/<domain>     apid code lifted out of the server (ADR-982): httpkit, durable, object, receivers
 pkg/api/limits.go     EVERY plan quota/limit lives in this one table — never inline a limit
 guest/init            static Go PID1 inside every microVM
 guest/runners/{node22,python312}                              function runner shims
@@ -75,6 +77,8 @@ docs/adr/
    while a second deployment is coming up alongside the one already serving —
    a traffic split or canary overlap. Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).
+   Under measured admission (ADR-909, schedd's default) a node's measured memory
+   ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2× that, with eviction above the ceiling.
 3. An app always has a live snapshot OR a cold-bootable rootfs — never neither.
 4. A parked app consumes zero resident RAM (its cgroup must be gone).
 5. Two instances restored from one snapshot never share IP, netns, jail uid, or RNG stream.
@@ -103,7 +107,7 @@ docs/adr/
 Plans (deployed/concurrent/RAM MB/GB-h): Free 1/1/128/5 · Hobby 5/2/256/50 ·
 Pro 25/5/512/250 · Scale 100/20/1024/1500. Overage €0.01/GB-h. Source tarball ≤100 MB
 (≤250 MB Pro+). App layer ≤256 MB/512 MB/1 GB/2 GB by plan. Build VM: 2 vCPU, 2048 MB,
-15 min (ADR-791). Idle timeouts: 30/60/300/600 s. RAM admission ceiling: 47,600 MB.
+15 min (ADR-791). Idle timeouts: 30/60/300/600 s (functions default to 30 s, ADR-974). RAM admission ceiling: 47,600 MB.
 Fleet snapshot average target: 130 MB — `snapshot_fleet_avg_mb` alerts at 160.
 Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/app 500/acct (`cron_limit_per_app`, `cron_limit_per_account` in pkg/api/limits.go).
 
@@ -114,6 +118,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - Money: integer cents/millicents. Floats near money fail review.
 - SQL via sqlc only; no string-built queries. Every state column has a CHECK.
 - Handlers ≤ 50 lines — extract. Table-driven tests. No global state except wiring.
+- New apid code goes in a `pkg/apid/<domain>` package (ADR-982); `pkg/apid/apidserver`
+  keeps wiring, the route table and middleware.
 - Logs: `slog` JSON. Metrics: Prometheus, names as specced in §12 — dashboards depend
   on exact names (`gateway_wake_latency_seconds`, `snapshot_fleet_avg_mb`, …).
 - Never log secret values; env secrets are sealed at rest (gap G2 lean, §17).
@@ -156,3 +162,12 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   disappears on reboot and eats RAM until then.
 - The gateway holds requests during wake (queue cap 512/30 s). Load tests that fire
   before readiness are testing the queue, not the app.
+- apidserver's tests compile as two units: the package with its internal tests, and the
+  external `apidserver_test` package. Run them with `make test-apid [RUN='^TestX'] [RACE=1]`,
+  not a bare `go test`: it adds CI's `-c=1 -dwarf=false` for apidserver and
+  `GOMEMLIMIT=6GiB`, which holds a `-race` build near 7.5 GB RSS instead of ~13.5 GB.
+  Write new apid tests in `package apidserver_test` and reach internals through
+  `export_test.go`, because internal tests grow the larger of the two compiles. Run these builds
+  one at a time, type-check with `go vet ./pkg/apid/apidserver` while iterating, and keep
+  the default shared GOCACHE: per-job private caches grow to ~11 GB each and have filled
+  developer disks.

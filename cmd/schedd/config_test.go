@@ -40,6 +40,9 @@ func TestLoadConfig_MissingFileReturnsDefaults(t *testing.T) {
 	if cfg.OwnerUser != "faas-schedd" {
 		t.Errorf("OwnerUser = %q, want default", cfg.OwnerUser)
 	}
+	if !cfg.MeasuredAdmission {
+		t.Error("MeasuredAdmission = false, want on by default (ADR-909)")
+	}
 	// Issue #95: TLS/target fields all default empty.
 	if cfg.ListenAddr != "" || cfg.VMMTarget != "" ||
 		cfg.TLSCertPath != "" || cfg.TLSKeyPath != "" || cfg.TLSCAPath != "" ||
@@ -348,5 +351,21 @@ func TestConfig_MetricsListener_OverridesRespected(t *testing.T) {
 	read, write, idle, mhb := c.MetricsListener()
 	if read != 30*time.Second || write != 45*time.Second || idle != 120*time.Second || mhb != int64(4<<20) {
 		t.Errorf("override lost: read=%v write=%v idle=%v mhb=%v", read, write, idle, mhb)
+	}
+}
+
+// adr: 909 — measured admission is on by default and schedd.toml can turn it
+// off.
+func TestLoadConfig_MeasuredAdmissionOff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schedd.toml")
+	if err := os.WriteFile(path, []byte("measured_admission = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.MeasuredAdmission {
+		t.Fatal("measured_admission = false left measured admission on")
 	}
 }

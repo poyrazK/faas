@@ -2,6 +2,7 @@
 package faas
 
 const (
+	operationWorkflowPathSelections     = 8
 	operationUploadDefaultBytes         = 8388608
 	operationReportIdBytes              = 128
 	operationArtifactNameBytes          = 128

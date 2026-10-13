@@ -1,10 +1,23 @@
 from typing import Literal
 
-EventRecoveryExecutionJobHealthStatus = Literal["prolonged_wait", "retention_risk", "unknown", "waiting"]
-
-EVENT_RECOVERY_EXECUTION_JOB_HEALTH_STATUS_VALUES: set[EventRecoveryExecutionJobHealthStatus] = {
+EventRecoveryExecutionJobHealthStatus = Literal[
+    "capacity_wait",
+    "deadline_exceeded",
     "prolonged_wait",
     "retention_risk",
+    "scheduled_wait",
+    "stalled",
+    "unknown",
+    "waiting",
+]
+
+EVENT_RECOVERY_EXECUTION_JOB_HEALTH_STATUS_VALUES: set[EventRecoveryExecutionJobHealthStatus] = {
+    "capacity_wait",
+    "deadline_exceeded",
+    "prolonged_wait",
+    "retention_risk",
+    "scheduled_wait",
+    "stalled",
     "unknown",
     "waiting",
 }

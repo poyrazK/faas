@@ -96,7 +96,20 @@ func NewWorkloadIdentityVerifier(jwksJSON []byte, issuer string) (*WorkloadIdent
 }
 
 func (v *WorkloadIdentityVerifier) Verify(rawToken, integrationID string) (WorkloadIdentity, error) {
-	if v == nil || len(rawToken) == 0 || len(rawToken) > maxIdentityTokenBytes || integrationID == "" {
+	if integrationID == "" || identityAudiencePrefix+integrationID == workloadidentity.OutboundRelayAudience {
+		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
+	}
+	return v.verifyAppAudience(rawToken, identityAudiencePrefix+integrationID)
+}
+
+// VerifyRelay accepts only the connection-scoped assertion vmmd attaches to
+// an app relay connection (ADR-989). It is never valid for one integration.
+func (v *WorkloadIdentityVerifier) VerifyRelay(rawToken string) (WorkloadIdentity, error) {
+	return v.verifyAppAudience(rawToken, workloadidentity.OutboundRelayAudience)
+}
+
+func (v *WorkloadIdentityVerifier) verifyAppAudience(rawToken, audience string) (WorkloadIdentity, error) {
+	if v == nil || len(rawToken) == 0 || len(rawToken) > maxIdentityTokenBytes || audience == "" {
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	token, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{jose.RS256})
@@ -116,7 +129,6 @@ func (v *WorkloadIdentityVerifier) Verify(rawToken, integrationID string) (Workl
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	now := v.now()
-	audience := identityAudiencePrefix + integrationID
 	if len(claims.Audience) != 1 || claims.Audience[0] != audience || claims.AccountID == "" || claims.AppID == "" || claims.InstanceID == "" || claims.Subject != "app:"+claims.AppID || claims.ID == "" || claims.IssuedAt == nil || claims.NotBefore == nil || claims.Expiry == nil {
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
@@ -137,7 +149,20 @@ var _ IdentityVerifier = (*WorkloadIdentityVerifier)(nil)
 // VerifyExecution accepts only execution-subject assertions. App workload
 // tokens cannot be used as Run identities, even when signed by the same key.
 func (v *WorkloadIdentityVerifier) VerifyExecution(rawToken, integrationID string) (ExecutionIdentity, error) {
-	if v == nil || len(rawToken) == 0 || len(rawToken) > maxIdentityTokenBytes || integrationID == "" {
+	if integrationID == "" || identityAudiencePrefix+integrationID == workloadidentity.OutboundRelayAudience {
+		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
+	}
+	return v.verifyExecutionAudience(rawToken, identityAudiencePrefix+integrationID)
+}
+
+// VerifyExecutionRelay accepts only the connection-scoped assertion vmmd
+// attaches to a Run's relay connection (ADR-990).
+func (v *WorkloadIdentityVerifier) VerifyExecutionRelay(rawToken string) (ExecutionIdentity, error) {
+	return v.verifyExecutionAudience(rawToken, workloadidentity.OutboundRelayAudience)
+}
+
+func (v *WorkloadIdentityVerifier) verifyExecutionAudience(rawToken, audience string) (ExecutionIdentity, error) {
+	if v == nil || len(rawToken) == 0 || len(rawToken) > maxIdentityTokenBytes || audience == "" {
 		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	token, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{jose.RS256})
@@ -157,7 +182,6 @@ func (v *WorkloadIdentityVerifier) VerifyExecution(rawToken, integrationID strin
 		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	now := v.now()
-	audience := identityAudiencePrefix + integrationID
 	if len(claims.Audience) != 1 || claims.Audience[0] != audience || claims.AccountID == "" || claims.ExecutionID == "" || claims.LeaseToken == "" ||
 		claims.Subject != "execution:"+claims.ExecutionID || claims.ID == "" || claims.IssuedAt == nil || claims.NotBefore == nil || claims.Expiry == nil {
 		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity

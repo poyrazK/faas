@@ -38,6 +38,10 @@ const (
 	// DefaultTokenTTL bounds replay of a token copied from a running process.
 	DefaultTokenTTL = 5 * time.Minute
 	maxAudienceLen  = 512
+	// OutboundRelayAudience authenticates one vmmd-to-outboundd relay
+	// connection for an app instance (ADR-989). Only vmmd mints it; the guest
+	// identity endpoint refuses it so the audience stays host-internal.
+	OutboundRelayAudience = "gregale:outbound:relay"
 )
 
 // Claims is the stable Gregale workload identity contract. Standard OIDC

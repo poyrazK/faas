@@ -2060,6 +2060,7 @@ func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 		"function-go":        {"handler.go", "README.md"},
 		"function-node24":    {"handler.js", "package.json", "README.md"},
 		"function-python313": {"handler.py", "requirements.txt", "README.md"},
+		"function-rust":      {"Dockerfile", "Cargo.toml", "Cargo.lock", "src/main.rs", "gregale.yaml", "README.md"},
 		"mcp-go":             {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
 		"mcp-python":         {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
 		"secret-reload-node": {"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
@@ -2107,7 +2108,7 @@ func TestTemplates_NodeRuntimeFloor(t *testing.T) {
 			want := ">=22"
 			if name == "function-node24" {
 				want = ">=24"
-			} else if templates.CategoryFor(name) == "operations" {
+			} else if templates.CategoryFor(name) == "operations" || name == "durable-entity-node" {
 				// Match the installed SDK's Web Crypto/runtime compatibility floor.
 				want = ">=22.10.0"
 			}

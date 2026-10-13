@@ -71,10 +71,10 @@ for (const version of ['2026-07-28', '2025-11-25']) test(`${version}: caller-spe
     assert.equal(init.response.status, 200);
   }
   assert.deepEqual(await tools(endpoint, version, reader), ['greet']);
-  assert.deepEqual(await tools(endpoint, version, writer), ['greet', 'add']);
+  assert.deepEqual(await tools(endpoint, version, writer), ['add', 'greet']);
   // Alternating/concurrent callers must never share a cached permission set.
   const catalogs = await Promise.all(Array.from({ length: 8 }, (_, i) => tools(endpoint, version, i % 2 ? writer : reader)));
-  catalogs.forEach((catalog, i) => assert.deepEqual(catalog, i % 2 ? ['greet', 'add'] : ['greet']));
+  catalogs.forEach((catalog, i) => assert.deepEqual(catalog, i % 2 ? ['add', 'greet'] : ['greet']));
   assert.deepEqual((await catalog(endpoint, version, reader, 'resources/list', 'resources')).map(resource => resource.uri), ['greeting://welcome']);
   assert.deepEqual((await catalog(endpoint, version, reader, 'resources/templates/list', 'resourceTemplates')), []);
   assert.deepEqual((await catalog(endpoint, version, writer, 'resources/templates/list', 'resourceTemplates')).map(resource => resource.uriTemplate), ['customer://records/{recordId}']);

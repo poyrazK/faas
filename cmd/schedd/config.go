@@ -172,6 +172,15 @@ type Config struct {
 	// already drain at their own cadences.
 	ReaperAggressiveParkCap int `toml:"reaper_aggressive_park_cap"`
 
+	// MeasuredAdmission (ADR-909) admits RAM by each node's measured
+	// memory instead of Σ(ram_mb + 8). Reservations may then overcommit up
+	// to api.MeasuredAdmissionMaxOvercommitPercent of the ceiling, and the
+	// reaper evicts when measured memory crosses it. Default on (ADR-909
+	// accepted 2026-10-12); measured_admission = false restores reservation
+	// admission. A node without a fresh measurement keeps the reservation
+	// check either way.
+	MeasuredAdmission bool `toml:"measured_admission"`
+
 	// MigratingWatchdogTickLimit (ADR-067) caps the per-tick
 	// batch of state='migrating' rows the watchdog self-heals.
 	// Zero reverts to api.MigratingWatchdogTickLimit (= 50).
@@ -415,6 +424,8 @@ func LoadConfig(path string) (*Config, error) {
 		// can flip FAAS_REAPER_AGGRESSIVE=false to disable in-place
 		// without redeploying.
 		ReaperAggressive: true,
+		// ADR-909 (accepted 2026-10-12): admit by measured memory.
+		MeasuredAdmission: true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go

@@ -213,6 +213,8 @@ type InstanceStat struct {
 // once per 200 ms).
 type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
+	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
+	shadow atomic.Pointer[memoryShadowSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from
@@ -425,10 +427,14 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 		if row.InstanceID == "" || !freshSample(row.SampledAt, now) {
 			continue
 		}
-		out[row.InstanceID] = sched.InstanceActivity{
+		activity := sched.InstanceActivity{
 			Inflight:    row.InflightRequests,
 			LastRequest: row.LastRequestAt,
 		}
+		if row.RSSMB > 0 {
+			activity.ResidentMB = int(row.RSSMB)
+		}
+		out[row.InstanceID] = activity
 	}
 	return out
 }

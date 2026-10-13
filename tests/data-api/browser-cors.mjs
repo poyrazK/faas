@@ -20,7 +20,7 @@ export async function browserOrigins(root) {
   return { allowed: allowed.url, denied: denied.url, close: async () => { for (const item of [allowed, denied]) { item.server.closeAllConnections(); await new Promise(resolve => item.server.close(resolve)) } } }
 }
 
-export async function verifyBrowserCORS({ origins, url, token, expired, subject, gateway, expectedID }) {
+export async function verifyBrowserCORS({ origins, url, token, expired, subject, gateway, expectedID, expectedSchemaFingerprint }) {
   const profile = await mkdtemp(join(tmpdir(), 'gregale-cors-chromium-'))
   const requests = []
   const capture = req => requests.push({ path: req.url, method: req.method, origin: req.headers.origin, cookie: req.headers.cookie, authorization: Boolean(req.headers.authorization) })
@@ -37,7 +37,13 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     const deadline = Date.now() + 30000
     while (Date.now() < deadline) {
       if (spawnError || child.exitCode !== null || child.signalCode !== null) break
-      try { port = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break } catch {}
+      try {
+        // Chromium can create the file before writing its contents. Wait for
+        // a terminated port line rather than accepting an empty/partial read.
+        const contents = await readFile(join(profile, 'DevToolsActivePort'), 'utf8')
+        const match = /^([1-9]\d{0,4})\r?\n/.exec(contents)
+        if (match && Number(match[1]) <= 65535) { port = match[1]; break }
+      } catch {}
       await new Promise(resolve => setTimeout(resolve, 50))
     }
     assert.equal(spawnError, undefined, 'chromium_failed_to_start')
@@ -74,15 +80,17 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     }
     await navigate(origins.allowed)
     await evaluate("document.cookie='browser_cookie_sentinel=private; SameSite=Strict; path=/'")
-    const input = JSON.stringify({ url, subject, token, expired })
+    const input = JSON.stringify({ url, subject, token, expired, expectedSchemaFingerprint })
     const allowed = await evaluate(`(async () => {
       const input = ${input}; const { readBrowserNotes } = await import('/client.js');
       const diagnostics = [];
-      const result = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), onResponse: info => diagnostics.push(info) });
+      const result = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), onResponse: info => diagnostics.push(info), expectedSchemaFingerprint: input.expectedSchemaFingerprint });
       const raw = await fetch(input.url+'/rest/v1/notes?select=id', { headers: { Authorization:'Bearer '+input.token, 'Accept-Profile':'api', Prefer:'count=exact' }, credentials:'omit' });
       const health = await fetch(input.url+'/healthz', { credentials:'omit' });
       const invalid = await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.expired, signal: AbortSignal.timeout(5000) });
-      return { diagnostics, ids: result.data?.map(row => row.id), error: result.error?.code ?? null, count: result.count, requestID: raw.headers.get('X-Request-Id'), range: raw.headers.get('Content-Range'), preference: raw.headers.get('Preference-Applied'), health: health.status, invalidStatus: invalid.status, invalidCode: invalid.error?.code };
+      const different = input.expectedSchemaFingerprint && (input.expectedSchemaFingerprint[0] === 'a' ? 'b' : 'a') + input.expectedSchemaFingerprint.slice(1);
+      const mismatch = different && await readBrowserNotes({ url: input.url, subject: input.subject, accessToken: () => input.token, signal: AbortSignal.timeout(5000), expectedSchemaFingerprint: different });
+      return { diagnostics, ids: result.data?.map(row => row.id), error: result.error?.code ?? null, count: result.count, requestID: raw.headers.get('X-Request-Id'), range: raw.headers.get('Content-Range'), preference: raw.headers.get('Preference-Applied'), health: health.status, invalidStatus: invalid.status, invalidCode: invalid.error?.code, mismatchStatus: mismatch?.status, mismatchCode: mismatch?.error?.code };
     })()`)
     assert.equal(allowed.error, null)
     assert.equal(allowed.diagnostics.length, 1)
@@ -100,11 +108,78 @@ export async function verifyBrowserCORS({ origins, url, token, expired, subject,
     assert.ok(requests.some(req => req.path === '/healthz' && req.origin === origins.allowed && !req.authorization && !req.cookie), 'health_requires_no_credentials')
     assert.equal(allowed.invalidStatus, 401)
     assert.equal(allowed.invalidCode, 'token_invalid')
+    if (expectedSchemaFingerprint) {
+      assert.equal(allowed.mismatchStatus, 409)
+      assert.equal(allowed.mismatchCode, 'schema_contract_mismatch')
+    }
     assert.ok(requests.some(req => req.origin === origins.allowed && req.method === 'OPTIONS' && !req.authorization), 'preflight_not_observed')
     assert.ok(requests.filter(req => req.origin === origins.allowed).every(req => !req.cookie), 'browser_credentials_leaked')
+    const beforeForm = requests.length
+    const invalidForm = await evaluate(`(async () => {
+      const input = ${input};
+      document.querySelector('[name=url]').value = input.url;
+      document.querySelector('[name=subject]').value = input.subject;
+      document.querySelector('[name=token]').value = input.token;
+      document.querySelector('[name=body]').value = ' ';
+      document.querySelector('[name=tags]').value = 'one,,two';
+      document.querySelector('#note-form').requestSubmit();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return { body: document.querySelector('#body-error').textContent, tags: document.querySelector('#tags-error').textContent, tokenCleared: document.querySelector('[name=token]').value === '' };
+    })()`)
+    assert.equal(invalidForm.body, 'Enter a note body.')
+    assert.equal(invalidForm.tags, 'Enter a name for each tag; remove extra commas.')
+    assert.equal(invalidForm.tokenCleared, true)
+    assert.equal(requests.length, beforeForm, 'invalid_form_sent_request')
+    const savedForm = await evaluate(`(async () => {
+      const input = ${input};
+      document.querySelector('[name=token]').value = input.token;
+      document.querySelector('[name=body]').value = 'browser validated form';
+      document.querySelector('[name=tags]').value = '';
+      document.querySelector('#note-form').requestSubmit();
+      for (let i = 0; i < 200 && document.querySelector('#save-note').disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
+      return { message: document.querySelector('#note-result').textContent, tokenCleared: document.querySelector('[name=token]').value === '', body: document.querySelector('[name=body]').value, recoveryHidden: document.querySelector('#recover-note').hidden };
+    })()`)
+    assert.match(savedForm.message, /^Saved note \d+: browser validated form$/)
+    assert.equal(savedForm.tokenCleared, true)
+    assert.equal(savedForm.body, '')
+    assert.equal(savedForm.recoveryHidden, true)
+    assert.equal(requests.slice(beforeForm).filter(req => req.method === 'POST' && req.path.startsWith('/rest/v1/rpc/create_note_with_tags_once')).length, 1)
+    assert.ok(requests.slice(beforeForm).every(req => !req.cookie), 'form_credentials_leaked')
+    const recoveryForm = await evaluate(`(async () => {
+      const input = ${input}, originalFetch = globalThis.fetch, payloads = [];
+      let lose = true;
+      globalThis.fetch = async (url, init) => {
+        const response = await originalFetch(url, init);
+        if (String(url).includes('/rpc/create_note_with_tags_once')) {
+          payloads.push(init.body);
+          if (lose) { lose = false; await response.arrayBuffer(); throw new TypeError('test response lost after commit'); }
+        }
+        return response;
+      };
+      try {
+        document.querySelector('[name=token]').value = input.token;
+        document.querySelector('[name=body]').value = 'browser pending form';
+        document.querySelector('#note-form').requestSubmit();
+        for (let i = 0; i < 200 && !document.querySelector('#note-result').textContent.includes('No response'); i++) await new Promise(resolve => setTimeout(resolve, 20));
+        const pending = !document.querySelector('#recover-note').hidden && document.querySelector('#save-note').disabled && document.querySelector('[name=body]').disabled && document.querySelector('[name=url]').disabled && document.querySelector('[name=subject]').disabled;
+        const callsBeforeRecovery = payloads.length;
+        document.querySelector('[name=token]').value = input.token;
+        document.querySelector('[name=body]').value = 'must not change pending payload';
+        document.querySelector('#recover-note').click();
+        for (let i = 0; i < 200 && document.querySelector('#save-note').disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
+        return { pending, callsBeforeRecovery, calls: payloads.length, samePayload: payloads[0] === payloads[1], message: document.querySelector('#note-result').textContent, tokenCleared: document.querySelector('[name=token]').value === '', recoveryHidden: document.querySelector('#recover-note').hidden };
+      } finally { globalThis.fetch = originalFetch; }
+    })()`)
+    assert.equal(recoveryForm.pending, true)
+    assert.equal(recoveryForm.callsBeforeRecovery, 1)
+    assert.equal(recoveryForm.calls, 2)
+    assert.equal(recoveryForm.samePayload, true)
+    assert.match(recoveryForm.message, /^Saved note \d+: browser pending form$/)
+    assert.equal(recoveryForm.tokenCleared, true)
+    assert.equal(recoveryForm.recoveryHidden, true)
     const before = requests.length
     await navigate(origins.denied)
-    const denied = await evaluate(`(async () => { const input=${input}; const {readBrowserNotes}=await import('/client.js'); const result=await readBrowserNotes({url:input.url,subject:input.subject,accessToken:()=>input.token,signal:AbortSignal.timeout(5000)}); return {status:result.status,hasError:Boolean(result.error)} })()`)
+    const denied = await evaluate(`(async () => { const input=${input}; const {readBrowserNotes}=await import('/client.js'); const result=await readBrowserNotes({url:input.url,subject:input.subject,accessToken:()=>input.token,signal:AbortSignal.timeout(5000),expectedSchemaFingerprint:input.expectedSchemaFingerprint}); return {status:result.status,hasError:Boolean(result.error)} })()`)
     assert.equal(denied.status, 0)
     assert.equal(denied.hasError, true)
     assert.ok(requests.slice(before).some(req => req.method === 'OPTIONS' && req.origin === origins.denied))

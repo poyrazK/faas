@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -746,6 +747,9 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	// outboundRelayEnabled advertises vmmd's streaming relay to
+	// outbound-enabled Runs (ADR-990).
+	outboundRelayEnabled      atomic.Bool
 	alloc                     *Allocator
 	nativeRecoveryReady       bool // guarded by mu; precedes all native admission
 	nativeRecoveryFlight      *nativeRecoveryInitFlight
@@ -812,18 +816,19 @@ type Manager struct {
 	// ADR-472: observed restart survivors have no reconstructed lifecycle
 	// owner. Their slots and IDs stay quarantined; they are never live-map
 	// entries, cleanup identities or permission to replay a failure report.
-	restartQuarantine     map[string]struct{}
-	restartInventoryDone  bool
-	resourceJournal       *ResourceJournal
-	resourceLinks         map[string]ownedResourceLink
-	linkProbe             func(string, int) (*resourceLinkIdentity, error)
-	linkContext           func() (*resourceMountIdentity, error)
-	linkDelete            func(int) error
-	resourceNetworks      map[string]resourceAsset             // observed by this running owner only
-	namespaceProbe        func(string) (*resourceAsset, error) // tests inject kernel observations
-	namespaceContext      func() (*resourceMountIdentity, error)
-	processGenerations    map[string]uint64
-	nextProcessGeneration uint64
+	restartQuarantine          map[string]struct{}
+	restartInventoryDone       bool
+	resourceJournal            *ResourceJournal
+	resourceLinks              map[string]ownedResourceLink
+	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
+	linkContext                func() (*resourceMountIdentity, error)
+	linkDelete                 func(int) error
+	resourceNetworks           map[string]resourceAsset             // observed by this running owner only
+	namespaceProbe             func(string) (*resourceAsset, error) // tests inject kernel observations
+	namespaceContext           func() (*resourceMountIdentity, error)
+	processGenerations         map[string]uint64
+	nextProcessGeneration      uint64
+	managedPostgresDrainNodeID string // configured local compute identity, before serving
 	// waking marks leases between acquisition and live-map publication.
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
@@ -2772,6 +2777,31 @@ func (m *Manager) ExecutionOutboundIdentity(instance, integrationID string) (acc
 	return "", "", "", fmt.Errorf("fcvm: execution outbound identity %s: integration not granted", instance)
 }
 
+// SetOutboundRelayEnabled records whether vmmd serves the ADR-989 relay, so
+// outbound-enabled Runs are told to stream through it (ADR-990).
+func (m *Manager) SetOutboundRelayEnabled(enabled bool) {
+	if m != nil {
+		m.outboundRelayEnabled.Store(enabled)
+	}
+}
+
+// ExecutionRelayIdentity returns the lease-fenced Runs principal and the
+// Run's granted integrations for a relay connection (ADR-990). Unlike
+// ExecutionOutboundIdentity the integration is not known yet, so the grant
+// list travels with the connection and outboundd checks every request.
+func (m *Manager) ExecutionRelayIdentity(instance string) (accountID, executionID, leaseToken string, integrationIDs []string, err error) {
+	if m == nil {
+		return "", "", "", nil, fmt.Errorf("fcvm: execution relay identity %s: not authorized", instance)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.ExecutionOnly || inst.ExecutionID == "" || inst.ExecutionLeaseToken == "" || len(inst.ExecutionOutboundIntegrationIDs) == 0 {
+		return "", "", "", nil, fmt.Errorf("fcvm: execution relay identity %s: not authorized", instance)
+	}
+	return inst.AccountID, inst.ExecutionID, inst.ExecutionLeaseToken, append([]string(nil), inst.ExecutionOutboundIntegrationIDs...), nil
+}
+
 // InstanceRuntimeSecretIdentity resolves the deployment, app, and account
 // principal for a live guest stream under one lock. Keeping the tuple atomic
 // prevents a park/reuse race from mixing identities during runtime secret
@@ -4165,6 +4195,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// Plan is allocator-side state and must follow the lease's
 	// lifetime.
 	lease.Plan = req.Plan
+	lease.AccountID = req.AccountID
 	lease.Networkless = req.ExecutionOnly
 	lease.IsBuilder = req.ExportDir != ""
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
@@ -5767,6 +5798,11 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 		return flight.exitCode, flight.err
 	}
 	defer func() { m.finishInstanceTeardown(instance, flight, exitCode, false, false, err) }()
+	return m.destroyWithReservation(ctx, context.WithoutCancel(ctx), instance, exportDir)
+}
+
+// The caller retains the teardown reservation through all physical checks.
+func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instance, exportDir string) (exitCode int, err error) {
 	joinedOperation := m.hasInstanceOperation(instance)
 	if err = m.joinForTeardown(ctx, instance); err != nil {
 		return 0, err
@@ -5783,7 +5819,7 @@ func (m *Manager) DestroyWithExport(ctx context.Context, instance, exportDir str
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
-	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
 		return exitCode, err
 	}
@@ -5819,6 +5855,25 @@ func (m *Manager) LiveInstances() map[string]*Instance {
 		out[id] = inst
 	}
 	return out
+}
+
+// AppInstanceIDs returns the ids of the ordinary app VMs this Manager runs.
+// Builder, execution, app-task, qualification, job and warm-pool VMs settle
+// through their own lifecycles and are left out. vmmd's live-VM reap uses it
+// to find VMs that outlived their instance row (production-us hunt #9,
+// H9-171).
+func (m *Manager) AppInstanceIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.live))
+	for id, inst := range m.live {
+		if inst == nil || inst.Lease.IsBuilder || inst.ExecutionOnly || inst.AppTaskOnly ||
+			inst.QualificationOnly || inst.IsJob || inst.Paused {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // LastLivenessDestroyAtForDeployment (issue #554 closure /

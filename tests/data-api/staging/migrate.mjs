@@ -13,13 +13,13 @@ export async function migrate(connectionString, version = readFileSync(new URL('
     await client.query(`CREATE SCHEMA IF NOT EXISTS api;
       CREATE TABLE IF NOT EXISTS api.notes (
         id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        subject text NOT NULL, body text NOT NULL
+        subject text NOT NULL, body text NOT NULL, tenant text NOT NULL DEFAULT 'canary'
       );
       ALTER TABLE api.notes ENABLE ROW LEVEL SECURITY;
       DROP POLICY IF EXISTS own_notes ON api.notes;
       CREATE POLICY own_notes ON api.notes
-        USING (subject = current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
-        WITH CHECK (subject = current_setting('request.jwt.claims', true)::jsonb ->> 'sub');
+        USING (subject = current_setting('request.jwt.claims', true)::jsonb ->> 'sub' AND tenant = current_setting('request.jwt.claims', true)::jsonb ->> 'tenant')
+        WITH CHECK (subject = current_setting('request.jwt.claims', true)::jsonb ->> 'sub' AND tenant = current_setting('request.jwt.claims', true)::jsonb ->> 'tenant');
       CREATE OR REPLACE FUNCTION api.create_note(note_body text) RETURNS SETOF api.notes
         LANGUAGE sql SECURITY INVOKER SET search_path=pg_catalog AS
         'INSERT INTO api.notes(subject,body) VALUES (current_setting(''request.jwt.claims'',true)::jsonb->>''sub'',note_body) RETURNING *';

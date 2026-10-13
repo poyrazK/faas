@@ -504,6 +504,7 @@ var validAppWebhookEvents = map[string]struct{}{
 	"job.finished":                     {},
 	"usage_statement.finalized":        {},
 	"consumer.usage_threshold":         {},
+	"outbound.ai_budget.threshold":     {},
 	"app.health.changed":               {},
 }
 
@@ -513,7 +514,7 @@ var webhookEventVocab = []string{
 	"app.parked", "app.woken", "deployment.live", "deployment.failed",
 	"app.health.changed",
 	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
-	"consumer.usage_threshold",
+	"consumer.usage_threshold", "outbound.ai_budget.threshold",
 }
 
 func validAppWebhookEvent(s string) bool {

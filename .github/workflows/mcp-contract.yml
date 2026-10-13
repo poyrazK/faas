@@ -7,12 +7,14 @@ on:
       - 'pkg/mcphosting/**'
       - 'pkg/gateway/mcp_policy*'
       - 'pkg/api/mcp_policy*'
-      - 'cmd/apid/handlers_mcp_policy*'
+      - 'pkg/apid/apidserver/handlers_mcp_policy*'
       - 'scripts/ci/mcp-qualification-check.py'
+      - 'scripts/ci/test_mcp_qualification*.py'
       - 'scripts/ops/mcp-qualification.py'
+      - 'scripts/ops/mcp-sdk-client/**'
       - 'pkg/secretscan/**'
-      - 'cmd/apid/secretscan*.go'
-      - 'cmd/apid/handlers_templates*.go'
+      - 'pkg/apid/apidserver/secretscan*.go'
+      - 'pkg/apid/apidserver/handlers_templates*.go'
       - 'pkg/apihostingscorecard/**'
       - 'pkg/productcap/**'
       - 'cmd/gregale/**'
@@ -42,12 +44,14 @@ permissions:
   contents: read
 
 env:
-  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+  GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
 
 jobs:
   go-contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold race compilation takes about 19 minutes; allow cache finalization
+    # after the complete package suite rather than cancelling a passing run.
+    timeout-minutes: 30
     services:
       postgres:
         # Match the shared CI cache to avoid Docker Hub pull limits.
@@ -66,13 +70,18 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Portable MCP and secret-scanner contracts
+        env:
+          GOMEMLIMIT: 2GiB
+          GOGC: 10
+          GOMAXPROCS: 2
         run: go test -race -p=1 ./pkg/mcphosting ./pkg/gateway ./pkg/api ./pkg/state ./pkg/secretscan ./pkg/apihostingscorecard ./cmd/gregale -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
 
   starter:
     needs: go-contracts
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Cold race builds of the API package precede all three runtime qualifiers.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -109,9 +118,17 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
+          cache-dependency-path: |
+            cmd/gregale/templates/mcp-node/package-lock.json
+            scripts/ops/mcp-sdk-client/package-lock.json
+      - name: Portable MCP and secret-scanner contracts
+        env:
+          GOMEMLIMIT: 2GiB
+          GOGC: 30
+          GOMAXPROCS: 2
+        run: go test -race -p=1 ./pkg/mcphosting ./pkg/gateway ./pkg/api ./pkg/state ./pkg/secretscan ./pkg/apihostingscorecard ./cmd/gregale ./pkg/apid/apidserver -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
       - name: Validate the release evidence gate
-        run: python3 -m unittest discover -s scripts/ci -p test_mcp_qualification_check.py
+        run: python3 -m unittest discover -s scripts/ci -p 'test_mcp_qualification*.py'
       - name: Gate supplied native and provider qualification evidence
         if: github.event_name == 'workflow_dispatch' && inputs.qualification-manifest != ''
         env:
@@ -122,15 +139,30 @@ jobs:
         run: |
           go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
           "$RUNNER_TEMP/gregale" mcp init --path "$RUNNER_TEMP/mcp-starter"
+          "$RUNNER_TEMP/gregale" mcp init --runtime go --path "$RUNNER_TEMP/mcp-go"
+          "$RUNNER_TEMP/gregale" mcp init --runtime python --path "$RUNNER_TEMP/mcp-python"
+          python3 -m venv "$RUNNER_TEMP/mcp-python-venv"
+          "$RUNNER_TEMP/mcp-python-venv/bin/python" -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/mcp-python/requirements.txt"
+          cd "$RUNNER_TEMP/mcp-go"
+          go test ./...
+          cd "$RUNNER_TEMP/mcp-python"
+          "$RUNNER_TEMP/mcp-python-venv/bin/python" -m unittest discover -s . -p 'test_*.py'
           cd "$RUNNER_TEMP/mcp-starter"
           npm ci --ignore-scripts
           MCP_TASKS_TEST_DATABASE_URL='postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp' MCP_TASKS_REQUIRE_POSTGRES=1 npm test
+      - name: Qualify task restart and replica recovery
+        env:
+          MCP_TASKS_TEST_DATABASE_URL: postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp
+        run: |
+          node "$RUNNER_TEMP/mcp-starter/test/tasks-restart-qualification.mjs" \
+            --target "MCP contract workflow / $GITHUB_SHA" \
+            --confirm-disposable-database
       - name: Gate reader and writer catalogs without executing tools
         shell: bash
         run: |
           cp scripts/ci/mcp-catalog-contract.mjs "$RUNNER_TEMP/mcp-starter/mcp-catalog-contract.mjs"
           node "$RUNNER_TEMP/mcp-starter/mcp-catalog-contract.mjs" "$RUNNER_TEMP/gregale" "$GITHUB_WORKSPACE/testdata/mcp-catalog" "$GITHUB_WORKSPACE/scripts/ci/mcp-catalog-check.sh"
-      - name: Exercise the official SDK through the CLI
+      - name: Exercise the Gregale MCP CLI
         shell: bash
         run: |
           cd "$RUNNER_TEMP/mcp-starter"
@@ -148,6 +180,45 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --out "$RUNNER_TEMP/mcp-candidate.json" --json
           "$RUNNER_TEMP/gregale" mcp diff --before "$RUNNER_TEMP/mcp-baseline.json" --after "$RUNNER_TEMP/mcp-candidate.json" --check --json
           "$RUNNER_TEMP/gregale" mcp lock --url http://127.0.0.1:18808/mcp --legacy --out "$RUNNER_TEMP/mcp-legacy.json" --json
+      - name: Install the pinned official MCP client
+        run: npm ci --prefix scripts/ops/mcp-sdk-client --ignore-scripts
+      - name: Qualify all starter runtimes with the official MCP SDK
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/mcp-go"
+          go build -o "$RUNNER_TEMP/mcp-go-server" .
+          PORT=18809 "$RUNNER_TEMP/mcp-go-server" > "$RUNNER_TEMP/mcp-go-server.log" 2>&1 &
+          mcp_go_pid=$!
+          cd "$RUNNER_TEMP/mcp-python"
+          PORT=18810 "$RUNNER_TEMP/mcp-python-venv/bin/python" server.py > "$RUNNER_TEMP/mcp-python-server.log" 2>&1 &
+          mcp_python_pid=$!
+          cd "$RUNNER_TEMP/mcp-starter"
+          PORT=18808 node server.js > "$RUNNER_TEMP/mcp-node-sdk-server.log" 2>&1 &
+          mcp_node_pid=$!
+          cleanup() {
+            kill "$mcp_node_pid" "$mcp_go_pid" "$mcp_python_pid" 2>/dev/null || true
+            wait "$mcp_node_pid" "$mcp_go_pid" "$mcp_python_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for health in \
+            http://127.0.0.1:18808/healthz \
+            http://127.0.0.1:18809/healthz \
+            http://127.0.0.1:18810/healthz; do
+            ready=0
+            for _ in {1..80}; do
+              if curl -fsS "$health" > /dev/null; then ready=1; break; fi
+              sleep 0.25
+            done
+            if [[ "$ready" != 1 ]]; then
+              echo "MCP starter failed to become ready: $health" >&2
+              exit 1
+            fi
+          done
+          node "$GITHUB_WORKSPACE/scripts/ops/mcp-sdk-client/interop.mjs" \
+            --node-url http://127.0.0.1:18808/mcp \
+            --go-url http://127.0.0.1:18809/mcp \
+            --python-url http://127.0.0.1:18810/mcp \
+            --target "MCP contract workflow / $GITHUB_SHA"
 
   apid-contract:
     if: github.event.pull_request.draft != true
@@ -191,8 +262,8 @@ jobs:
         # runner is shut down (exit 143). Mirror ci.yml unit-tests-pg-1: omit
         # test DWARF, serialize the apid backend and bound the Go heap.
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/apid=-dwarf=false -c=1"'
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOMEMLIMIT: 2GiB
-          GOGC: 10
+          GOGC: 30
           GOMAXPROCS: 2
-        run: go test -race -v -p=1 ./cmd/apid -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+        run: go test -race -v -p=1 ./pkg/apid/apidserver -run 'TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1

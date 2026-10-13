@@ -63,7 +63,12 @@ func resourceLeaseMatches(a, b Lease) bool {
 	// Process generations fence callbacks within one Manager lifetime. They
 	// are private, absent from JSON and cannot be durable resource identity.
 	// Restart provenance uses the separately recorded PID/start ticks/boot ID.
+	// profileStartedAt is per-attempt profiling metadata with the same
+	// properties: beginProcessAttempt restamps it for the ADR-005 cold-boot
+	// fallback, which made every fallback fail with "launch lease mismatch"
+	// (production-us hunt #9, H9-83).
 	b.processGeneration = a.processGeneration
+	b.profileStartedAt = a.profileStartedAt
 	b.CPUMillicores = a.CPUMillicores
 	return a == b
 }

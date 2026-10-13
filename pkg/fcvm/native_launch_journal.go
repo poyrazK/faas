@@ -543,14 +543,12 @@ func validateNativeJournalLease(l Lease) error {
 	return nil
 }
 
-// sameNativePhysicalLease compares every durable field. The callback generation
-// and profiling start time are process-local, deliberately absent from disk and
-// native authority.
+// sameNativePhysicalLease compares every durable field. processGeneration is
+// a local callback fence, deliberately absent from disk and native authority.
 func sameNativePhysicalLease(a, b Lease) bool {
-	a.profileStartedAt = time.Time{}
-	b.profileStartedAt = time.Time{}
-	a.processGeneration = 0
-	b.processGeneration = 0
+	// Per-attempt fields are not physical identity (see resourceLeaseMatches).
+	a.processGeneration, a.profileStartedAt = 0, time.Time{}
+	b.processGeneration, b.profileStartedAt = 0, time.Time{}
 	return a == b
 }
 

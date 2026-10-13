@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventRecoveryPreflightState = Literal["cancelled", "completed", "paused", "running"]
+EventRecoveryPreflightState = Literal["cancelled", "completed", "expired", "paused", "running"]
 
 EVENT_RECOVERY_PREFLIGHT_STATE_VALUES: set[EventRecoveryPreflightState] = {
     "cancelled",
     "completed",
+    "expired",
     "paused",
     "running",
 }

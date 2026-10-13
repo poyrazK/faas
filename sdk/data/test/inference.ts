@@ -1,7 +1,8 @@
 import { createDataClient, type QueryData, type QueryResult, type QueryError } from '../src/index.js'
 import type { Database, Tables, TablesInsert, TablesUpdate, Enums } from './database.types.js'
+import { schemaFingerprint } from './database.types.js'
 
-const client = createDataClient<Database>({ url:'https://data.example', accessToken:async ()=>'jwt' }).schema('api')
+const client = createDataClient<Database>({ url:'https://data.example', accessToken:async ()=>'jwt', expectedSchemaFingerprint: schemaFingerprint }).schema('api')
 client.from('notes').insert({subject:'alice',body:'hello',state:'open'})
 client.from('notes').insert({subject:'alice',body:'hello',tags:[null,'example'],payload:{valid:true}})
 // @ts-expect-error PostgreSQL text arrays cannot contain numbers.
@@ -78,3 +79,41 @@ const view: Tables<"note_bodies"> = {id:null,body:null};
 // @ts-expect-error Generated IDs remain read only in helper types.
 const wrongInput: TablesInsert<"notes"> = {id:42,subject:"alice",body:"hello"};
 void [input,update,state,view,wrongInput];
+
+import { cursorPage, cursorFrom } from '../src/index.js'
+const cursorOrder = [{ column: 'body' }, { column: 'id', unique: true }] as const
+const previous = await cursorPage(client.from('notes').select('id,body'), { order: cursorOrder, size: 10, before: cursorFrom({ body: 'hello', id: 42 }, cursorOrder) })
+if (previous.data) { const body: string = previous.data[0].body; void body }
+// @ts-expect-error Backward cursor values must match their column types.
+cursorPage(client.from('notes').select('id,body'), { order: cursorOrder, size: 10, before: ['hello', 'wrong'] })
+// @ts-expect-error Cursor columns must exist in the relation.
+cursorPage(client.from('notes').select(), { order: [{ column: 'missing', unique: true }], size: 10, before: ['hello'] })
+
+import { dataRequest } from '../src/index.js'
+const bounded = await dataRequest(client.from('notes').select('id,body'), { timeoutMs: 5000 })
+if (bounded.data) { const body: string = bounded.data[0].body; void body }
+// @ts-expect-error Deadlines preserve projection types.
+const wrongBounded: { id: string }[] | null = bounded.data
+void wrongBounded
+
+import { optimisticMutation } from '../src/index.js'
+const optimistic = await optimisticMutation(client.from('notes').update({ body: 'edited' }).eq('id', 42).select('id,body'))
+if (optimistic.outcome === 'applied') {
+  const body: string = optimistic.row.body
+  // @ts-expect-error Conditional mutations preserve selected field types.
+  const wrong: number = optimistic.row.body
+  void [body,wrong]
+}
+// @ts-expect-error Mutation helpers require a selected array of rows.
+optimisticMutation(client.from('notes').update({body:'edited'}))
+
+import { bulkMutations } from '../src/index.js'
+const bulk = await bulkMutations([{id:42,body:'edited'}], item => client.from('notes').update({body:item.body}).eq('id',item.id).select('id,body'))
+if (bulk[0].outcome === 'applied') {
+  const body: string = bulk[0].rows[0].body
+  // @ts-expect-error Bulk results preserve selected field types.
+  const wrong: number = bulk[0].rows[0].body
+  void [body,wrong]
+}
+// @ts-expect-error Bulk mutations require selected rows.
+bulkMutations([1], id => client.from('notes').delete().eq('id',id))

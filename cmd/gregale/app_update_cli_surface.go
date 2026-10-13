@@ -46,7 +46,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"robots_txt":                      {KnownGap: "no customer CLI setter; API-only today"},
 	"head_wakes":                      {Path: "gregale app <slug> --head-wakes", AppFlags: []string{"head-wakes"}},
 	"crawler_policy":                  {Path: "gregale app <slug> --crawler-policy", AppFlags: []string{"crawler-policy"}},
-	"pre_auth_rate_limit":             {KnownGap: "no customer CLI setter for pre-auth ingress throttling; API-only today"},
+	"pre_auth_rate_limit":             {Path: "gregale app <slug> --pre-auth / --pre-auth-rps / --pre-auth-burst (route overrides stay API-only)", AppFlags: []string{"pre-auth", "pre-auth-rps", "pre-auth-burst"}},
 	"health_path":                     {Path: "gregale app <slug> --health-path", AppFlags: []string{"health-path"}},
 	"health_path_wakes":               {Path: "gregale app <slug> --health-path-wakes / --no-health-path-wakes", AppFlags: []string{"health-path-wakes", "no-health-path-wakes"}},
 	"session_affinity":                {KnownGap: "no customer CLI setter; API-only today"},
@@ -78,8 +78,5 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"overflow_node":                   {Path: "gregale app <slug> --overflow-node", AppFlags: []string{"overflow-node"}},
 	"cors_default_enabled":            {KnownGap: "no customer CLI setter; API-only today"},
 	"cors_default_origins":            {KnownGap: "no customer CLI setter; API-only today"},
-	// The customer PATCH handler ignores this legacy internal field. It is
-	// intentionally recorded as a gap so a DTO change forces an explicit review.
-	"StartCommand":   {KnownGap: "internal reconciliation field; ignored by customer PATCH"},
-	"scaling_policy": {Path: "gregale app <slug> --min / --autoscale-target-rps / --autoscale-target-cpu-pct", AppFlags: []string{"min", "autoscale-target-rps", "autoscale-target-cpu-pct"}},
+	"scaling_policy":                  {Path: "gregale app <slug> --min / --autoscale-target-rps / --autoscale-target-cpu-pct", AppFlags: []string{"min", "autoscale-target-rps", "autoscale-target-cpu-pct"}},
 }

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationSubject } from './OperationSubject.js';
+import type { OperationWorkflowPathSelection } from './OperationWorkflowPathSelection.js';
 import type { OperationWorkflowPlannedDecision } from './OperationWorkflowPlannedDecision.js';
 import type { OperationWorkflowPlannedEffect } from './OperationWorkflowPlannedEffect.js';
 import type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlannedInvariant.js';
@@ -10,6 +11,7 @@ import type { OperationWorkflowPlannedInvariant } from './OperationWorkflowPlann
  * Proposed workflow edge and evidence plan to evaluate against retained reports without executing it.
  */
 export type OperationWorkflowReadinessRequest = {
+  selected_paths?: Array<OperationWorkflowPathSelection>;
   effects?: Array<OperationWorkflowPlannedEffect>;
   invariants?: Array<OperationWorkflowPlannedInvariant>;
   decisions?: Array<OperationWorkflowPlannedDecision>;

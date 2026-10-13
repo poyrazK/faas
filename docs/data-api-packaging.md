@@ -155,5 +155,49 @@ check. It uses no staging or management credentials.
 The Data API acceptance workflow runs this gate and saves its tested files as a
 GitHub Actions artifact; it does not upload a public release or publish to npm.
 
-This gate proves packaging and client installation. Live provider/native fleet
+The gate also creates old/current schema snapshots with the shipped CLI, adds a
+compatible migration, generates an acceptance policy, and replays pinned clients.
+It imports the installed SDK tarball to verify old-client writes and RPCs,
+current-client RLS isolation, and rejection of unapproved writes/RPCs before they
+change rows. Separate runs verify revocation and stale-policy startup rejection
+without overwriting accepted contracts or generated types. Local service and
+volume cleanup is checked before a success report is written.
+
+The same rollout driver also qualifies a fresh orders project with its own
+migration directory, seed, generated output and buyer/other identities. Its
+project-owned SQL RPC and RLS policy use both subject and tenant claims; a third
+identity with the same subject and a different tenant must remain isolated.
+The custom project installs and restores its CLI/SDK from the bundle, compiles
+both old and current generated types against the installed SDK with library
+checking enabled, exercises CRUD
+and RPCs, and repeats policy acceptance, revocation and stale-policy rejection.
+It has no notes table or dependency on starter identity names. Changes to the
+orders fixtures trigger the existing packaging CI job.
+
+The gate also executes pagination, deadline, optimistic mutation and bulk tests
+against the installed SDK. It installs each concurrency, idempotency, outbox,
+bulk and import-preview example as a fresh project, generates its database
+contract, compiles its client with strict library checks, and runs its required
+local scenarios using the shipped CLI/runtime. Their fingerprints are included
+in the verification report. The full acceptance gate separately exercises
+PostgreSQL races, crash recovery, cancellation and rollback for these workflows.
+
+A successful run adds `data-api-verification.json` and
+`DATA-API-VERIFICATION-SHA256SUMS` alongside the immutable bundle. The report binds
+all 22 required passing checks, including both projects’ old/current contract
+fingerprints, to the source commit, actual archive checksums,
+manifest checksum and original checksum-list checksum. It identifies the host
+CLI target actually executed; other target archives receive integrity checks,
+not execution qualification. The report contains fixed check names and schema
+fingerprints, not credentials, application responses, temporary paths or child
+logs. Verify its sidecar checksum before retaining or sharing the report.
+
+Starting a new verification removes previous reports. A failed run exits nonzero
+and leaves no success report. Reports are written only after installation,
+rollout checks and cleanup succeed, with artifact bytes checked again afterward.
+The original `DATA-API-SHA256SUMS` remains unchanged, so build reproducibility
+checks continue to cover only the deterministic bundle. CI uploads the bundle
+and report together.
+
+This gate records local packaged-runtime evidence. Live provider/native fleet
 qualification and the isolated staging canary remain separate acceptance gates.

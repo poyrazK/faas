@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/redact"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -191,6 +192,7 @@ func (r *appErrorsRecorder) Middleware(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		dropInboundIdentityClaims(req.Header)
+		req, _ = gateway.WithObservedRouteCarrier(req)
 		sr := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sr, req)
 		// After the handler returns, fire the recorder on the
@@ -229,6 +231,14 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 		// Out-of-range status; recorder ignores.
 		return
 	}
+	// A response the gateway produced before resolving an app (unknown host,
+	// edge deny) has no owner to file it under. apid rejects such rows as
+	// invalid, which surfaced as the redaction_failed tripwire (production-us
+	// hunt #9, H9-154), so they are not recorded.
+	accountID, appID := resolveAccountID(req), resolveAppID(req)
+	if accountID == "" || appID == "" {
+		return
+	}
 
 	// Resolve the route TEMPLATE (Go-mux pattern), never the
 	// expanded URL. Load-bearing for cardinality. The
@@ -236,9 +246,6 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// context under a well-known key (see the auth +
 	// routing middleware chain).
 	route := routeTemplate(req)
-	if route == "" {
-		route = req.URL.Path
-	}
 
 	// Derive the error_class. This is the closed vocabulary
 	// the schema CHECK enforces; an unknown value falls
@@ -258,7 +265,13 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// headers_sample + no redactions on the merge path (which is
 	// the correct behaviour — the drill-down view shows the FIRST
 	// sample only).
-	cacheHit := r.cacheHit(fp)
+	// The fingerprint (route|status|class) is the same for every app, so the
+	// cache is keyed per app. A shared key made one app's first error on a
+	// route another app had already failed on look like a repeat: it was
+	// stored without its sample message and headers, and the sample is frozen
+	// at the first insert, so that error group never got one (H9-154).
+	cacheKey := appID + "\x00" + fp
+	cacheHit := r.cacheHit(cacheKey)
 	if cacheHit {
 		if r.ops != nil {
 			r.ops.ObserveAppErrorsFingerprintCacheHit()
@@ -267,7 +280,7 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 
 	// Cardinality backstop: past the LRU cap, drop + emit
 	// rate_limited.
-	if !r.cacheAdmit(fp) {
+	if !r.cacheAdmit(cacheKey) {
 		if r.ops != nil {
 			r.ops.ObserveAppErrorsRecorded("rate_limited")
 		}
@@ -302,8 +315,8 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	// the request context with a derived copy.
 	identity := resolvePlatformIdentity(req)
 	row := appErrorRow{
-		AccountID:           resolveAccountID(req),
-		AppID:               resolveAppID(req),
+		AccountID:           accountID,
+		AppID:               appID,
 		DeploymentID:        firstNonEmpty(resolveDeploymentID(req), identity.DeploymentID),
 		Fingerprint:         fp,
 		Route:               route,
@@ -331,11 +344,11 @@ func (r *appErrorsRecorder) record(status int, req *http.Request) {
 	}
 }
 
-// cacheHit reports whether fp is in the LRU. Bumps last_seen.
-func (r *appErrorsRecorder) cacheHit(fp string) bool {
+// cacheHit reports whether key (app + fingerprint) is in the LRU. Bumps last_seen.
+func (r *appErrorsRecorder) cacheHit(key string) bool {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
-	row, ok := r.cache[fp]
+	row, ok := r.cache[key]
 	if !ok {
 		return false
 	}
@@ -343,14 +356,14 @@ func (r *appErrorsRecorder) cacheHit(fp string) bool {
 	return true
 }
 
-// cacheAdmit inserts fp into the LRU, evicting the oldest
+// cacheAdmit inserts key (app + fingerprint) into the LRU, evicting the oldest
 // entry past CardinalityLimit. Returns false when the
 // admission was rate_limited (the LRU was already full and
 // fp was not present).
-func (r *appErrorsRecorder) cacheAdmit(fp string) bool {
+func (r *appErrorsRecorder) cacheAdmit(key string) bool {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
-	if _, ok := r.cache[fp]; ok {
+	if _, ok := r.cache[key]; ok {
 		return true
 	}
 	if len(r.cache) >= r.cfg.CardinalityLimit {
@@ -378,7 +391,7 @@ func (r *appErrorsRecorder) cacheAdmit(fp string) bool {
 			return false
 		}
 	}
-	r.cache[fp] = &appErrorRow{
+	r.cache[key] = &appErrorRow{
 		LastSeen: r.cfg.Now().UTC(),
 	}
 	return true
@@ -556,10 +569,9 @@ func firstNonEmpty(values ...string) string {
 // constants rather than re-importing pkg/middleware to keep
 // the recorder self-contained.
 const (
-	ctxKeyAccountID     = "gregale.account_id"
-	ctxKeyAppID         = "gregale.app_id"
-	ctxKeyDeploymentID  = "gregale.deployment_id"
-	ctxKeyRouteTemplate = "gregale.route_template"
+	ctxKeyAccountID    = "gregale.account_id"
+	ctxKeyAppID        = "gregale.app_id"
+	ctxKeyDeploymentID = "gregale.deployment_id"
 )
 
 // ctxKey is the typed key the recorder uses to read values
@@ -567,13 +579,12 @@ const (
 // value lookup is type-safe.
 type ctxKey string
 
-// accountIDKey, appIDKey, deploymentIDKey, routeTemplateKey
-// are the typed keys for context.Value.
+// accountIDKey, appIDKey and deploymentIDKey are the typed keys for
+// context.Value.
 var (
-	accountIDKey     = ctxKey(ctxKeyAccountID)
-	appIDKey         = ctxKey(ctxKeyAppID)
-	deploymentIDKey  = ctxKey(ctxKeyDeploymentID)
-	routeTemplateKey = ctxKey(ctxKeyRouteTemplate)
+	accountIDKey    = ctxKey(ctxKeyAccountID)
+	appIDKey        = ctxKey(ctxKeyAppID)
+	deploymentIDKey = ctxKey(ctxKeyDeploymentID)
 )
 
 // reqContextString is a tiny ctx helper.
@@ -587,11 +598,15 @@ func reqContextString(req *http.Request, key ctxKey) string {
 	return ""
 }
 
-// routeTemplate reads the matched Go-mux pattern off the
-// request context. The gateway's routing middleware sets
-// this key before the recorder's middleware sees the request.
+// routeTemplate is the bounded route the gateway handler recorded on the
+// request's carrier (declared template or identifier-inferred path), or the
+// same inference for a request it never labelled. Never the raw URL: that
+// made every distinct path its own issue (production-us hunt #9).
 func routeTemplate(req *http.Request) string {
-	return reqContextString(req, routeTemplateKey)
+	if route := gateway.ObservedRouteCarrierFrom(req.Context()).Route(); route != "" {
+		return route
+	}
+	return gateway.ObservedRouteLabel(req.Method, req.URL.Path)
 }
 
 // mapToJSON marshals h into a compact JSON string. Returns

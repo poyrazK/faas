@@ -95,12 +95,13 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceRequest,
 ) -> Response[CommitSourceResponse | Problem]:
-    """Bind an internal PostgreSQL outbox source to managed Operations.
+    """Bind an internal PostgreSQL outbox source to Operations or event publication.
 
     Args:
         slug (str):
-        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
-            app operation policy and routing contract.
+        body (CreateCommitSourceRequest): Register an immutable database source bound to managed
+            Operations or application-event publication. Event destinations require version 3, no
+            operation policy and no customer selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,12 +129,13 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceRequest,
 ) -> CommitSourceResponse | Problem | None:
-    """Bind an internal PostgreSQL outbox source to managed Operations.
+    """Bind an internal PostgreSQL outbox source to Operations or event publication.
 
     Args:
         slug (str):
-        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
-            app operation policy and routing contract.
+        body (CreateCommitSourceRequest): Register an immutable database source bound to managed
+            Operations or application-event publication. Event destinations require version 3, no
+            operation policy and no customer selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,12 +158,13 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceRequest,
 ) -> Response[CommitSourceResponse | Problem]:
-    """Bind an internal PostgreSQL outbox source to managed Operations.
+    """Bind an internal PostgreSQL outbox source to Operations or event publication.
 
     Args:
         slug (str):
-        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
-            app operation policy and routing contract.
+        body (CreateCommitSourceRequest): Register an immutable database source bound to managed
+            Operations or application-event publication. Event destinations require version 3, no
+            operation policy and no customer selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -187,12 +190,13 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CreateCommitSourceRequest,
 ) -> CommitSourceResponse | Problem | None:
-    """Bind an internal PostgreSQL outbox source to managed Operations.
+    """Bind an internal PostgreSQL outbox source to Operations or event publication.
 
     Args:
         slug (str):
-        body (CreateCommitSourceRequest): Register an immutable database source bound to a managed
-            app operation policy and routing contract.
+        body (CreateCommitSourceRequest): Register an immutable database source bound to managed
+            Operations or application-event publication. Event destinations require version 3, no
+            operation policy and no customer selection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

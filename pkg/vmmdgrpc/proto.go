@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -278,6 +279,11 @@ func withIncomingCorrelation(ctx context.Context) context.Context {
 // toWakeRequest flattens CreateFromSnapshotRequest into an fcvm.WakeRequest.
 // The caller resolves (app) here; vmmd stores none of it (ADR-014).
 func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (fcvm.WakeRequest, error) {
+	if wakeownershipwire.IncomingPresent(ctx) {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.FailedPrecondition), api.CodeEnvironmentQualificationUnconfirmed,
+			"Native wake ownership unavailable", "Durable native incoming wake ownership is not implemented")
+	}
+
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").
@@ -452,6 +458,11 @@ func toMigrationWakeRequest(ctx context.Context, req *vmmdpb.AdoptMigratedInstan
 // toColdBootRequest flattens CreateColdBootRequest into an fcvm.WakeRequest
 // with no snapshot. Same validations as toWakeRequest minus snapshot.
 func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (fcvm.WakeRequest, error) {
+	if wakeownershipwire.IncomingPresent(ctx) {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.FailedPrecondition), api.CodeEnvironmentQualificationUnconfirmed,
+			"Native wake ownership unavailable", "Durable native incoming wake ownership is not implemented")
+	}
+
 	if req.GetInstance() == "" {
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument),
 			api.CodeValidation, "Missing instance", "instance is required").

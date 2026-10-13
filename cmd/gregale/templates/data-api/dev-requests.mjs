@@ -18,12 +18,13 @@ export function validateRequests(value, { identities = ['alice', 'bob'] } = {}) 
     if (count > 100) throw new Error('Use at most 100 requests across all scenarios.')
     const names = new Set()
     for (const request of group.requests) {
-      if (!fields(request, ['name', 'method', 'path', 'identity', 'body', 'expect', 'capture']) || typeof request.name !== 'string' || !request.name.trim() || request.name.length > 100 || names.has(request.name)) throw new Error('Requests need unique names of 1–100 characters.')
+      if (!fields(request, ['name', 'method', 'path', 'identity', 'body', 'expect', 'capture', 'expectedSchemaFingerprint']) || typeof request.name !== 'string' || !request.name.trim() || request.name.length > 100 || names.has(request.name)) throw new Error('Requests need unique names of 1–100 characters.')
       names.add(request.name)
       if (!['GET', 'POST', 'PATCH', 'DELETE'].includes(request.method) || !identities.includes(request.identity)) throw new Error('Use a supported method and a configured test identity.')
       if (typeof request.path !== 'string' || request.path.length > 4096 || !request.path.startsWith('/rest/v1/') || /[\\\s#]/.test(request.path)) throw new Error('Use a relative /rest/v1/ path without fragments or whitespace.')
       const target = new URL(request.path, 'http://127.0.0.1')
       if (target.origin !== 'http://127.0.0.1' || !target.pathname.startsWith('/rest/v1/')) throw new Error('Use a local API path.')
+      if ('expectedSchemaFingerprint' in request && (typeof request.expectedSchemaFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(request.expectedSchemaFingerprint))) throw new Error('Use a 64-character lowercase schema fingerprint.')
       if ('capture' in request) {
         if (!fields(request.capture, Object.keys(request.capture ?? {})) || Object.keys(request.capture).length > 32) throw new Error('Use at most 32 named captures per request.')
         for (const [name, pointer] of Object.entries(request.capture)) {
