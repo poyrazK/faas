@@ -26,6 +26,7 @@ func gitLabCookieSecure(r *http.Request) bool {
 }
 
 func (s *server) startGitLabOAuth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Unauthorized", "Sign in to connect GitLab."))
@@ -50,11 +51,11 @@ func (s *server) startGitLabOAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: gitLabOAuthStateCookie, Value: value, Path: gitLabOAuthCallbackPath,
 		HttpOnly: true, Secure: gitLabCookieSecure(r), SameSite: http.SameSiteLaxMode, MaxAge: int(gitlabsource.OAuthStateLifetime.Seconds())})
-	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, authorize, http.StatusSeeOther)
 }
 
 func (s *server) finishGitLabOAuth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Unauthorized", "Sign in to connect GitLab."))
@@ -84,25 +85,26 @@ func (s *server) finishGitLabOAuth(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrSourceRefUnavailable("GitLab OAuth identity could not be verified."))
 		return
 	}
-	sealed, err := sealGitLabTokens(tokens)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("Could not seal GitLab credentials."))
-		return
-	}
-	store, ok := s.store.(state.GitLabOAuthStore)
-	if !ok {
-		api.WriteProblem(w, api.ErrCapacity("GitLab OAuth storage is unavailable."))
-		return
-	}
-	_, err = store.PutGitLabOAuthConnection(r.Context(), state.GitLabOAuthConnection{AccountID: acct.ID,
-		GitLabUserID: user.ID, Username: user.Username, CredentialsSealed: sealed, ExpiresAt: tokens.Expires})
-	if err != nil {
+	if err := s.saveGitLabOAuthConnection(r, acct.ID, user, tokens); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("Could not save GitLab connection."))
 		return
 	}
 	s.audit.Emit(r.Context(), "gitlab.oauth.connected", &acct.ID, map[string]any{"gitlab_user_id": user.ID})
-	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, "/dashboard/account?gitlab=connected", http.StatusSeeOther)
+}
+
+func (s *server) saveGitLabOAuthConnection(r *http.Request, accountID string, user gitlabsource.User, tokens gitlabsource.Tokens) error {
+	sealed, err := sealGitLabTokens(tokens)
+	if err != nil {
+		return err
+	}
+	store, ok := s.store.(state.GitLabOAuthStore)
+	if !ok {
+		return state.ErrInvalidArgument
+	}
+	_, err = store.PutGitLabOAuthConnection(r.Context(), state.GitLabOAuthConnection{AccountID: accountID,
+		GitLabUserID: user.ID, Username: user.Username, CredentialsSealed: sealed, ExpiresAt: tokens.Expires})
+	return err
 }
 
 func (s *server) getGitLabOAuthConnection(w http.ResponseWriter, r *http.Request) {
