@@ -112,6 +112,11 @@ func fetchRouteStatusInputs(ctx context.Context, client *api.Client, slug, deplo
 		}
 	}
 	fetchRouteStatusProduction(ctx, client, slug, &in, unavailable)
+	if advice, err := client.GetRouteAdvice(ctx, slug, api.RouteAdviceOptions{Since: since}); err != nil {
+		unavailable("advice", err)
+	} else {
+		in.Advice = &advice
+	}
 	if saved, err := client.GetSavedRouteRequirements(ctx, slug); err != nil {
 		if !isNotFound(err) {
 			unavailable("requirements", err)
@@ -182,6 +187,9 @@ func renderRouteStatus(w io.Writer, s routestatus.Status) {
 			_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\n", r.Method, previewReportText(r.Path), r.Tenants, r.Requests, routeStatusCanary(r.Canary), routeStatusProduction(r.Production), contract, gaps)
 		}
 		_ = tw.Flush()
+	}
+	if s.Summary.Advice > 0 {
+		_, _ = fmt.Fprintf(w, "\n%d route advisor suggestions: run `gregale routes advise %s`.\n", s.Summary.Advice, s.App)
 	}
 	if i := s.LatestIncident; i != nil {
 		_, _ = fmt.Fprintf(w, "\nLatest production incident %s: %s, opened %s", i.ID, i.Status, i.OpenedAt)

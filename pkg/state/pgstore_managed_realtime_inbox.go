@@ -165,7 +165,13 @@ func (s *PgStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpoin
 			where endpoint_id = $1 and channel = $2 and target_message_id = $3 order by sequence desc limit 1
 		`, endpointID, channel, idempotencyKey).Scan(&existing.Sequence, &existing.Data, &existing.Binary, &existing.CreatedAt, &existing.FallbackAfterSeconds, &existing.NotificationCategory, &existing.NotificationGroupKey, &existing.NotificationGroupLabel, &existing.NotificationPriority, &existing.NotificationTTLSeconds, &existing.NotificationCollapseKey, &existing.NotificationNotBefore, &existing.TargetMessageID, &existing.Version, &existing.MessageEvent, &existing.Deleted)
 		if err == nil {
-			if existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) || existing.FallbackAfterSeconds != fallbackAfter || existing.NotificationCategory != category || existing.NotificationGroupKey != groupKey || existing.NotificationGroupLabel != groupLabel || existing.NotificationPriority != priority || existing.NotificationTTLSeconds != ttl || existing.NotificationCollapseKey != collapseKey || existing.NotificationNotBefore != notBeforeRaw {
+			existing.EndpointID, existing.Channel = endpointID, channel
+			expirations := []ManagedRealtimeChannelMessage{existing}
+			if err := loadRealtimeInboxExpirations(ctx, tx, endpointID, channel, expirations); err != nil {
+				return ManagedRealtimeChannelMessage{}, err
+			}
+			existing = expirations[0]
+			if existing.TTLSeconds != realtimeMessageTTL(ctx) || existing.Version > 1 || existing.Deleted || existing.Binary != binary || !bytes.Equal(existing.Data, data) || existing.FallbackAfterSeconds != fallbackAfter || existing.NotificationCategory != category || existing.NotificationGroupKey != groupKey || existing.NotificationGroupLabel != groupLabel || existing.NotificationPriority != priority || existing.NotificationTTLSeconds != ttl || existing.NotificationCollapseKey != collapseKey || existing.NotificationNotBefore != notBeforeRaw {
 				return ManagedRealtimeChannelMessage{}, ErrConflict
 			}
 			existing.EndpointID, existing.Channel, existing.IdempotencyKey = endpointID, channel, idempotencyKey
@@ -212,6 +218,10 @@ func (s *PgStore) appendManagedRealtimeInboxMessage(ctx context.Context, endpoin
 		values ($1, $2, $3, $4, $5, $6, clock_timestamp(), $7,$8,$9,$10,$11,$12,$13,$14) returning created_at
 	`, endpointID, channel, next, data, binary, key, fallbackAfter, category, groupKey, groupLabel, priority, ttl, collapseKey, notBeforeRaw).Scan(&message.CreatedAt); err != nil {
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: insert realtime channel message: %w", err)
+	}
+	message.TTLSeconds = realtimeMessageTTL(ctx)
+	if err := saveRealtimeInboxExpiration(ctx, tx, &message); err != nil {
+		return ManagedRealtimeChannelMessage{}, err
 	}
 	if fallbackAfter > 0 {
 		if _, err := tx.Exec(ctx, `insert into managed_realtime_inbox_fallbacks(endpoint_id, principal, sequence, message_id, deadline,category,group_key,group_label,priority,expires_at,collapse_key,not_before) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, endpointID, channel, next, idempotencyKey, message.CreatedAt.Add(time.Duration(fallbackAfter)*time.Second), category, groupKey, groupLabel, priority, notificationDeadline(message.CreatedAt, ttl), collapseKey, notBefore); err != nil {
@@ -324,6 +334,9 @@ func (s *PgStore) readManagedRealtimeInbox(ctx context.Context, endpointID, chan
 	rows.Close()
 	if err != nil {
 		return ManagedRealtimeChannelHistory{}, fmt.Errorf("state: iterate realtime channel history: %w", err)
+	}
+	if err := loadRealtimeInboxExpirations(ctx, tx, endpointID, channel, history.Messages); err != nil {
+		return ManagedRealtimeChannelHistory{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ManagedRealtimeChannelHistory{}, fmt.Errorf("state: commit realtime history read: %w", err)

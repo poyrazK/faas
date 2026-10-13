@@ -293,6 +293,12 @@ func printTestRunResult(receipt testRunReceipt, repeat int) {
 		printTestLoadSummary(osStdout, receipt.Load)
 	}
 	for _, step := range receipt.Steps {
+		if r := step.Restart; r != nil {
+			_, _ = fmt.Fprintf(osStdout, "  staged restart %q: %s (workload %s, wake %s, processing %s, %d readiness attempts, storage %d before/%d after, %.3fs)\n", step.Name, r.Status, r.Workload, r.WakeID, r.ProcessingStatus, r.ReadinessAttempts, len(r.Before), len(r.After), float64(r.DurationMS)/1000)
+			if f := r.InFlight; f != nil {
+				_, _ = fmt.Fprintf(osStdout, "    in-flight %q: pending at submission %t, restart verified %t, joined %t, outcome %s (%d checkpoint attempts)\n", f.Name, f.PendingAtRestart, f.RestartCompleted, f.Joined, f.Outcome, f.CheckpointAttempts)
+			}
+		}
 		if step.Load != nil {
 			_, _ = fmt.Fprintf(osStdout, "  staged step %q SLO:\n", step.Name)
 			printTestLoadSummary(osStdout, step.Load)

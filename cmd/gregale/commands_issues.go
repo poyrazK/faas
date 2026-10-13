@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|impact-alert|ownership-rules|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|ownership-rules|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -54,6 +54,8 @@ func cmdIssues(args []string) int {
 	activityCursor := fs.String("activity-cursor", "", "activity history cursor")
 	since := fs.String("since", "", "impact window start (RFC3339)")
 	deployment := fs.String("deployment", "", "fixed or token-bound deployment UUID")
+	targetIssue := fs.String("target", "", "merge destination issue UUID")
+	memberIssue := fs.String("member", "", "original group UUID to split out")
 	assignee := fs.String("assignee", "", "list filter: me, unassigned, or account UUID; assignment owner UUID (empty unassigns)")
 	sortBy := fs.String("sort", "", "list order: recent (default) or impact by verified customers in 24h")
 	minCustomers := fs.Int64("min-customers", 0, "list filter: minimum verified customers affected in 24h")
@@ -61,7 +63,7 @@ func cmdIssues(args []string) int {
 	name := fs.String("name", "issues", "ingest token name")
 	expires := fs.Duration("expires-in", 24*time.Hour, "ingest token lifetime (max 90 days)")
 	rulesFile := fs.String("rules-file", "", "JSON policy file for ownership-rules; omit to read the current policy")
-	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
+	flags, positionals := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "state": true, "environment": true, "cursor": true, "release-cursor": true, "activity-cursor": true, "since": true, "deployment": true, "target": true, "member": true, "assignee": true, "sort": true, "min-customers": true, "until": true, "name": true, "expires-in": true, "rules-file": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -211,7 +213,7 @@ func cmdIssues(args []string) int {
 			}
 		}
 		return 0
-	case "assign", "resolve", "reopen", "ignore":
+	case "assign", "resolve", "reopen", "ignore", "merge", "split":
 		if len(positionals) != 1 {
 			return issueCLIUsage()
 		}
@@ -221,7 +223,10 @@ func cmdIssues(args []string) int {
 		if action == "resolve" && strings.TrimSpace(*deployment) == "" {
 			return printErr("Invalid issue resolution", errors.New("--deployment <uuid> is required: name the deployment that fixed the issue"))
 		}
-		in := api.IssueActionRequest{Action: action, AssigneeAccountID: *assignee, FixedDeploymentID: *deployment}
+		if action == "merge" && strings.TrimSpace(*targetIssue) == "" || action == "split" && strings.TrimSpace(*memberIssue) == "" {
+			return printErr("Invalid issue regrouping", errors.New("merge requires --target <uuid>; split requires --member <uuid>"))
+		}
+		in := api.IssueActionRequest{Action: action, AssigneeAccountID: *assignee, FixedDeploymentID: *deployment, TargetIssueID: *targetIssue, MemberIssueID: *memberIssue}
 		if *until != "" {
 			v, err := time.Parse(time.RFC3339, *until)
 			if err != nil {
@@ -236,7 +241,11 @@ func cmdIssues(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
 		}
-		PrintOK(osStdout, "Issue %s is %s.", out.ID, out.State)
+		if action == "merge" || action == "split" {
+			PrintOK(osStdout, "Grouping updated. Issue %s has %d observed events.", out.ID, out.EventCount)
+		} else {
+			PrintOK(osStdout, "Issue %s is %s.", out.ID, out.State)
+		}
 		return 0
 	case "create-token":
 		if len(positionals) != 0 || *deployment == "" || *expires <= 0 || *expires > api.IssueMaxTokenLifetime {

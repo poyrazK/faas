@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointPgPublicationFailureStore struct {
@@ -55,7 +56,7 @@ func checkpointPgPublicationFixture(t *testing.T) (*cloneCoordinatorFixture, *ch
 	hostHMACKey = func() []byte { return []byte("checkpoint-publication-test-key") }
 	t.Cleanup(func() { hostHMACKey = oldHMAC })
 	s := &checkpointPgPublicationFailureStore{checkpointPgActivationFailureStore: store}
-	f.srv.store = s
+	f.srv.store = statetest.NewPg(s)
 	return f, s, d, id
 }
 func assertCheckpointPgPublication(t *testing.T, f *cloneCoordinatorFixture, s *checkpointPgPublicationFailureStore, want string) state.ProjectEnvironmentCloneCheckpointPgPublication {
@@ -68,7 +69,7 @@ func assertCheckpointPgPublication(t *testing.T, f *cloneCoordinatorFixture, s *
 	var plan state.ProjectEnvironmentCloneCheckpointPgPublicationPlan
 	// Use the typed read while capturing; compensation replay is checked by withdrawal.
 	if want == "published" {
-		inputs, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+		inputs, err := s.PgStore.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
 		if err != nil || inputs.Publication == nil {
 			t.Fatal("publication replay", err)
 		}
@@ -100,7 +101,7 @@ func TestPGCloneCheckpointPgPublicationLostReplyAndKeylessRecovery(t *testing.T)
 		t.Fatal("expected lost publication reply", err)
 	}
 	before := assertCheckpointPgPublication(t, f, s, "published")
-	inputs, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+	inputs, err := s.PgStore.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
 	if err != nil || len(inputs.Preparations) != len(before.Plan.Secrets) || len(inputs.Credentials) != 0 || len(inputs.Connections) != 0 {
 		t.Fatal("committed workload preparations", err)
 	}
@@ -142,7 +143,7 @@ from managed_postgres_bindings b join managed_postgres_databases d on d.id=b.dat
 		t.Fatal("keyless publication recovery", err)
 	}
 	after := assertCheckpointPgPublication(t, f, s, "published")
-	recovered, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+	recovered, err := s.PgStore.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
 	if err != nil || !reflect.DeepEqual(inputs.Preparations, recovered.Preparations) || !reflect.DeepEqual(inputs.BindingGraph, recovered.BindingGraph) {
 		t.Fatal("keyless handoff changed workload preparations", err)
 	}
@@ -157,7 +158,7 @@ func TestPGCloneCheckpointPgPublicationRollsBackCompleteSet(t *testing.T) {
 	for _, kind := range []string{"second-owner", "quota", "collision", "late-journal", "health", "retention", "worker"} {
 		t.Run(kind, func(t *testing.T) {
 			f, s, d, _ := checkpointPgPublicationFixture(t)
-			inputs, err := s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
+			inputs, err := s.PgStore.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -174,7 +175,7 @@ func TestPGCloneCheckpointPgPublicationRollsBackCompleteSet(t *testing.T) {
 			case "second-owner":
 				secrets[1].ManagedCredentialGeneration = 2
 			case "quota":
-				account, err := s.AccountByID(t.Context(), f.lease.Operation.AccountID)
+				account, err := s.PgStore.AccountByID(t.Context(), f.lease.Operation.AccountID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -306,7 +307,7 @@ func TestPGCloneCheckpointPgPublicationRejectsChangedOwnedRows(t *testing.T) {
 			if _, err = f.srv.publishCheckpointPgBindings(t.Context(), f.lease, d); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("changed publication replay accepted", err)
 			}
-			if _, err = s.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
+			if _, err = s.PgStore.ProjectEnvironmentCloneCheckpointPgPublicationInputs(t.Context(), f.lease); !errors.Is(err, state.ErrConflict) {
 				t.Fatal("changed publication supplied workload preparations", err)
 			}
 			compensateCheckpointCredentialFixture(t, f, s.checkpointCredentialFailureStore)

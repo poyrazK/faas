@@ -30,6 +30,13 @@ func TestLegalTransitions(t *testing.T) {
 		{StateRunning, StateParked},
 		{StateColdBooting, StateParked},
 		{StateWaking, StateParked},
+		// ADR-1151: an idle instance freezes in place and thaws for a
+		// request; TTL, pressure and failed thaws park it.
+		{StateRunning, StateFrozen},
+		{StateFrozen, StateRunning},
+		{StateFrozen, StateParked},
+		{StateFrozen, StateStopped},
+		{StateFrozen, StateEvictingAccountDeleting},
 	}
 	for _, e := range legal {
 		if !CanTransition(e[0], e[1]) {
@@ -45,6 +52,10 @@ func TestIllegalTransitions(t *testing.T) {
 		{StateRunning, StateColdBooting}, // can't re-boot a running vm
 		{StateFailed, StateRunning},      // failed re-parks, not resumes
 		{StateStopped, StateWaking},      // stopped has no snapshot to restore
+		{StateParked, StateFrozen},       // only a running VM can freeze
+		{StateWarm, StateFrozen},         // warm VMs are already paused and billed
+		{StateSnapshotting, StateFrozen}, // freeze needs an existing snapshot
+		{StateFrozen, StateSnapshotting}, // a frozen VM is destroyed, not snapshotted
 	}
 	for _, e := range illegal {
 		if CanTransition(e[0], e[1]) {
@@ -96,6 +107,7 @@ func TestRAMAccounting(t *testing.T) {
 		StateRunning: true, StateSnapshotting: true,
 		StateMigrating: true,
 		StateWarm:      true, StateDraining: true,
+		StateFrozen: true,
 	}
 	for _, s := range States {
 		if got := s.CountsForRAM(); got != want[s] {
@@ -138,6 +150,7 @@ func TestIsLive(t *testing.T) {
 		StateSnapshotting:            true,
 		StateMigrating:               true,
 		StateWarm:                    true,
+		StateFrozen:                  true,
 		StateParked:                  false,
 		StateStopped:                 false,
 		StateFailed:                  false,
@@ -160,5 +173,22 @@ func TestIsLive(t *testing.T) {
 					s, gotState, want[s])
 			}
 		})
+	}
+}
+
+// TestBillable: §4.7 bills plan RAM + 8 MB per resident second, except a
+// frozen instance, which is resident but unbilled (ADR-1151).
+func TestBillable(t *testing.T) {
+	for _, s := range States {
+		want := s.CountsForRAM() && s != StateFrozen
+		if got := s.Billable(); got != want {
+			t.Errorf("%s.Billable() = %v, want %v", s, got, want)
+		}
+	}
+	if StateFrozen.Billable() {
+		t.Error("frozen instances must not be billed")
+	}
+	if !StateWarm.Billable() {
+		t.Error("warm instances stay billed: they reserve full capacity")
 	}
 }

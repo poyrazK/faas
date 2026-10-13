@@ -1631,10 +1631,9 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 }
 
 // buildSafeDeployOrchestrator (issue #976 / ADR-122 / SAFE-RELEASES-F)
-// wires the safedeploy orchestrator meterd tick driver. Returns
-// nil when FAAS_SAFEDEPLOY_TOKEN is unset (default OFF — the
-// cluster outline's rollout gate flips the token generation ON in
-// a follow-up operator-config PR). When ON:
+// wires the safedeploy orchestrator meterd tick driver. Without
+// FAAS_SAFEDEPLOY_TOKEN the tick runs in completion-only mode (#1926):
+// finished rollouts reach "complete", nothing else changes. When ON:
 //
 //   - FAAS_SAFEDEPLOY_TOKEN is the action-class service secret that
 //     enables the rollout state machine and automatic recovery.
@@ -1643,10 +1642,6 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 //     client is used for idempotent automatic aborts when a rollout
 //     remains stuck beyond the configured safety window.
 //
-// Returns nil when the token is missing — the call sites
-// nil-check the orchestrator and skip the goroutine, preserving
-// the pre-PR meterd behaviour exactly.
-//
 // ActionDispatcher wiring: the alert evaluator's SetActionExec
 // method is called on the Evaluator instance built upstream
 // (the Evaluator doesn't know about pkg/safedeploy; pkg/safedeploy
@@ -1654,10 +1649,6 @@ func buildCanaryProgression(deps runDeps, store state.Store, ops *wire.OpsMetric
 // alerts.Evaluator.SetActionExec).
 func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsMetrics, log *slog.Logger, apidClient *api.InternalSafeDeployClient, evaluator *alerts.Evaluator) *safedeploy.Orchestrator {
 	token := safeDeployToken(deps.getenv, "FAAS_SAFEDEPLOY_TOKEN")
-	if token == "" {
-		log.Info("meterd: safedeploy disabled — FAAS_SAFEDEPLOY_TOKEN unset; running without safedeploy tick")
-		return nil
-	}
 	// The orchestrator's Store surface is narrower than the
 	// canary store adapter's — SafedeployListPendingRollouts +
 	// SafedeployStampRollout + AppendDeploymentAudit all exist
@@ -1666,6 +1657,17 @@ func buildSafeDeployOrchestrator(deps runDeps, store state.Store, ops *wire.OpsM
 	storeAdapter := &safedeployStoreAdapter{store: store}
 	const actorSentinel = "meterd:safedeploy"
 	orchestrator := safedeploy.NewOrchestrator(storeAdapter, log, actorSentinel, actorSentinel)
+	if token == "" {
+		// #1926: without the safe-release tokens nothing advances a canary
+		// ladder, but a deployment with no ladder (or one already at its last
+		// step) is finished and must not stay "pending" forever. Run the
+		// tick in completion-only mode: no ladder starts, no stuck detection,
+		// no APID recovery and no alert actions.
+		log.Info("meterd: safedeploy tokens unset; completing finished rollouts only")
+		orchestrator.CompleteOnly = true
+		orchestrator.Ops = ops
+		return orchestrator
+	}
 	// SAFE-RELEASES GitHub lifecycle follow-up: give the orchestrator the
 	// same APID recovery client used by alert actions. Stuck canaries are
 	// aborted through APID's atomic transaction so traffic redistribution,

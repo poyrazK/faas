@@ -1272,6 +1272,10 @@ func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
 
+// Issues acceptance tests share the original PostgreSQL fixture and evidence setup.
+var IssueSeedRequestAttribution = issueSeedRequestAttribution
+var PrepareIssueOTLP = prepareIssueOTLP
+
 // Storage integration tests compile in the external unit (ADR-982).
 var SetupSecrets = setupSecrets
 var SelectedObjectStorageVerification = selectedObjectStorageVerification

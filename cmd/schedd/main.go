@@ -1625,6 +1625,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
 	}
+	if cfg.QuietPauseAdmission {
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return reader.QuietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
+	}
 	// The local Reader above deliberately contains only instances physically
 	// resident on this node: scheddgrpc.ListInstanceStats and meterd rely on
 	// that non-overlapping partition. Scaling policy has a different ownership

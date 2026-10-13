@@ -18,7 +18,9 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 			t.Errorf("%s has %d catalog models", provider, len(models))
 		}
 		for _, entry := range models {
-			if entry.Price.Input == 0 && entry.Price.Output == 0 {
+			price := entry.Price
+			media := price.OutputImage != nil || price.Image != nil || price.AudioMinute != nil || price.Characters != nil
+			if price.Input == 0 && price.Output == 0 && !media {
 				t.Errorf("%s %s is free in the catalog", provider, entry.Model)
 			}
 		}
@@ -31,7 +33,7 @@ func TestDefaultCatalogCoversEveryProvider(t *testing.T) {
 func TestLookup(t *testing.T) {
 	catalog, err := Parse([]byte(`{
 		"source": "test", "generated": "2026-10-12", "usd_per_eur": "1", "fx_source": "test",
-		"fields": ["input", "cached_input", "cache_write", "output"],
+		"fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters"],
 		"providers": {
 			"openai": {"gpt-4o": [1, 1, 1, 4], "gpt-4o-mini": [2, 2, 2, 8], "o1": [3, 3, 3, 12]},
 			"bedrock": {"anthropic.claude-3-5-sonnet-20241022-v2:0": [5, 5, 5, 20], "anthropic.claude-3-5-haiku": [6, 6, 6, 24]},
@@ -64,16 +66,40 @@ func TestLookup(t *testing.T) {
 }
 
 func TestParseRejectsInvalidCatalogs(t *testing.T) {
-	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output"]`
+	header := `"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters"]`
 	for name, body := range map[string]string{
 		"unknown provider": `{` + header + `, "providers": {"mistral": {"m": [1, 1, 1, 1]}}}`,
 		"negative price":   `{` + header + `, "providers": {"openai": {"m": [-1, 1, 1, 1]}}}`,
 		"missing price":    `{` + header + `, "providers": {"openai": {"m": [1, 1, 1]}}}`,
 		"too dear":         `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1000000001]}}}`,
+		"image too dear":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, 10000001]}}}`,
+		"negative media":   `{` + header + `, "providers": {"openai": {"m": [1, 1, 1, 1, null, null, null, -1]}}}`,
 		"field order":      `{"source": "s", "generated": "g", "usd_per_eur": "1", "fx_source": "f", "fields": ["output"], "providers": {}}`,
 	} {
 		if _, err := Parse([]byte(body)); err == nil {
 			t.Errorf("%s: Parse accepted %s", name, body)
+		}
+	}
+}
+
+// adr: 997 — the catalog carries media prices for image, transcription and
+// speech models.
+func TestCatalogMediaPrices(t *testing.T) {
+	catalog := Default()
+	for _, tc := range []struct {
+		provider, model string
+		check           func(Price) bool
+	}{
+		{"openai", "gpt-image-1", func(p Price) bool { return p.OutputImage != nil && *p.OutputImage > 0 && p.InputImage != nil }},
+		{"openai", "whisper-1", func(p Price) bool { return p.AudioMinute != nil && *p.AudioMinute > 0 }},
+		{"openai", "tts-1", func(p Price) bool { return p.Characters != nil && *p.Characters > 0 }},
+		{"gemini", "imagen-3.0-generate-001", func(p Price) bool { return p.Image != nil && *p.Image > 0 }},
+		{"gemini", "gemini-2.5-flash-image", func(p Price) bool { return p.OutputImage != nil && *p.OutputImage > p.Output }},
+		{"openai", "gpt-4o", func(p Price) bool { return p.OutputImage == nil && p.Image == nil && p.AudioMinute == nil }},
+	} {
+		entry, ok := catalog.Lookup(tc.provider, tc.model)
+		if !ok || !tc.check(entry.Price) {
+			t.Errorf("%s %s = %+v, %v", tc.provider, tc.model, entry.Price, ok)
 		}
 	}
 }

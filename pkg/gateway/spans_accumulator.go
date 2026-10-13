@@ -78,6 +78,9 @@ type summarizedSpan struct {
 	// PR-C's prose synthesis can quote SQL without parsing the
 	// attributes map.
 	DBStatement string `json:"db_statement,omitempty"`
+	// ErrorType is the failure class of an error span (error.type or the
+	// first exception.type); sanitized and bounded on the debugger read path.
+	ErrorType string `json:"error_type,omitempty"`
 }
 
 // add merges a new batch of spans into this accumulator. The

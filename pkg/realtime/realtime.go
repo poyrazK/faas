@@ -88,11 +88,14 @@ type pendingSignalKey struct{ channel, member, name string }
 type pendingSignal struct{ message Message }
 
 type Message struct {
+	accessChannel string
 	signalKey     pendingSignalKey
 	signalToken   *pendingSignal
 	signalUpdated time.Time
 	signalExpires *time.Time
 
+	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
+	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
 	ExpectedSequence *int64            `json:"-"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	Data             []byte
@@ -237,8 +240,12 @@ type Config struct {
 	// JWTAuthorizer verifies endpoint policies using oidc_jwt. A nil authorizer
 	// deliberately fails closed for JWT-configured endpoints.
 	JWTAuthorizer JWTAuthorizer
+	TicketPreview bool
+	TicketReader  SubscriptionTicketReader
 	// ResumePreview admits the opt-in v2 protocol only when a private history
 	// reader and synchronous channel authorizer are available.
+	AccessPreview      bool
+	AccessReader       ManagedRealtimeAccessReader
 	ResumePreview      bool
 	HistoryReader      ManagedRealtimeHistoryReader
 	ResumePollInterval time.Duration
@@ -345,6 +352,10 @@ type EndpointInventory struct {
 // Stats is a point-in-time view of the bounded realtime data plane. Counters
 // are process-local; operators should aggregate them across realtimed nodes.
 type Stats struct {
+	ExpiredInboxCheckpoints            uint64  `json:"expired_inbox_checkpoints"`
+	ExpiredWebSocketCheckpoints        uint64  `json:"expired_websocket_checkpoints"`
+	ExpiredSSECheckpoints              uint64  `json:"expired_sse_checkpoints"`
+	ExpiredOutboundDrops               uint64  `json:"expired_outbound_drops"`
 	CurrentConnections                 uint64  `json:"current_connections"`
 	CurrentResumeSubscriptions         uint64  `json:"current_resume_subscriptions"`
 	AcceptedConnections                uint64  `json:"accepted_connections"`
@@ -379,7 +390,14 @@ type Stats struct {
 }
 
 type connection struct {
-	info ConnectionInfo
+	issuedAt      time.Time
+	ticketToken   string
+	ticketClaims  state.RealtimeSubscriptionTicket
+	ticketChecked time.Time
+	accessMu      sync.Mutex
+	access        state.ManagedRealtimeAccess
+	accessChecked time.Time
+	info          ConnectionInfo
 	// presenceID is a per-connection candidate member ID. Principal-scoped
 	// subscriptions may receive a shared opaque member ID from the lease store.
 	presenceID string
@@ -479,6 +497,10 @@ type Manager struct {
 	sentMessages                  atomic.Uint64
 	sentBytes                     atomic.Uint64
 	droppedMessages               atomic.Uint64
+	expiredWebSocketCheckpoints   atomic.Uint64
+	expiredInboxCheckpoints       atomic.Uint64
+	expiredSSECheckpoints         atomic.Uint64
+	expiredOutboundDrops          atomic.Uint64
 	outboundPendingBytes          atomic.Int64
 	outboundQueueCountDrops       atomic.Uint64
 	outboundQueueByteDrops        atomic.Uint64
@@ -700,6 +722,10 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "realtime service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	if r.URL.Query().Get("transport") == "sse" {
+		m.serveSSE(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -749,58 +775,86 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.Header.Set("Sec-WebSocket-Protocol", strings.Join(remainingProtocols, ", "))
 		}
 	}
+	ticketToken, _ := bearerToken(r)
+	if browserCredential {
+		ticketToken = browserToken
+	}
+	usesTicket := isTicket(ticketToken)
+	if usesTicket && (!wantsResume || !m.cfg.TicketPreview || m.cfg.TicketReader == nil) {
+		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
+		return
+	}
 	if wantsResume {
 		if !m.cfg.ResumePreview || m.cfg.HistoryReader == nil {
 			http.Error(w, "realtime resume unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
+		if !usesTicket && endpoint.ClientAuth.Mode != AuthModeOIDCJWT {
 			http.Error(w, "realtime resume requires OIDC authentication", http.StatusForbidden)
 			return
 		}
-		if _, ok := m.hooks.(ChannelAuthorizer); !ok {
+		if _, ok := m.hooks.(ChannelAuthorizer); !ok && !usesTicket {
 			http.Error(w, "realtime channel authorization unavailable", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	authMetricMode := authMetricModeForEndpoint(endpoint)
 	principal := ""
-	switch endpoint.ClientAuth.Mode {
-	case AuthModeStaticBearer:
-		token, ok := bearerToken(r)
-		valid := ok && subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) == 1
-		if !valid && ok && endpoint.AuthTokenPrevious != "" &&
-			(endpoint.AuthTokenPreviousExpiresAt.IsZero() || time.Now().Before(endpoint.AuthTokenPreviousExpiresAt)) {
-			valid = subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthTokenPrevious)) == 1
-		}
-		if !valid {
-			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
-			m.rejectedConnections.Add(1)
+	var issuedAt time.Time
+	if usesTicket {
+		claims, err := m.readTicket(r.Context(), endpoint.ID, ticketToken)
+		if err != nil {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		principal = "token"
-	case AuthModeOIDCJWT:
-		token, ok := bearerToken(r)
-		if browserCredential {
-			token, ok = browserToken, true
-		}
-		if !ok || m.cfg.JWTAuthorizer == nil {
-			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
-			m.rejectedConnections.Add(1)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		var err error
-		principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
-		if err != nil || strings.TrimSpace(principal) == "" {
-			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
-			m.rejectedConnections.Add(1)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		principal, issuedAt = claims.Principal, claims.IssuedAt
+	} else {
+		switch endpoint.ClientAuth.Mode {
+		case AuthModeStaticBearer:
+			token, ok := bearerToken(r)
+			valid := ok && subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthToken)) == 1
+			if !valid && ok && endpoint.AuthTokenPrevious != "" &&
+				(endpoint.AuthTokenPreviousExpiresAt.IsZero() || time.Now().Before(endpoint.AuthTokenPreviousExpiresAt)) {
+				valid = subtle.ConstantTimeCompare([]byte(token), []byte(endpoint.AuthTokenPrevious)) == 1
+			}
+			if !valid {
+				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+				m.rejectedConnections.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			principal = "token"
+		case AuthModeOIDCJWT:
+			token, ok := bearerToken(r)
+			if browserCredential {
+				token, ok = browserToken, true
+			}
+			if !ok || m.cfg.JWTAuthorizer == nil {
+				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+				m.rejectedConnections.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			var err error
+			principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+			if err != nil || strings.TrimSpace(principal) == "" {
+				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+				m.rejectedConnections.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if m.cfg.AccessPreview {
+				issuedAt, err = verifiedTokenIssuedAt(token)
+				if err != nil {
+					m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+					m.rejectedConnections.Add(1)
+					http.Error(w, "token issued-at required", http.StatusUnauthorized)
+					return
+				}
+			}
 		}
 	}
-	if endpoint.Authorize != nil {
+	if endpoint.Authorize != nil && !usesTicket {
 		var err error
 		principal, err = endpoint.Authorize(r.Context(), r)
 		if err != nil {
@@ -815,6 +869,29 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.rejectedConnections.Add(1)
 		http.Error(w, "realtime resume requires a stable principal", http.StatusUnauthorized)
 		return
+	}
+	if !usesTicket && m.cfg.AccessPreview && endpoint.ClientAuth.Mode == AuthModeOIDCJWT {
+		if m.cfg.AccessReader == nil {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "realtime access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		accessCtx, cancel := context.WithTimeout(r.Context(), realtimeAccessReadTimeout)
+		access, err := m.cfg.AccessReader.ReadRealtimeAccess(accessCtx, endpoint.ID, principal)
+		cancel()
+		if err != nil {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "realtime access unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if sessionRevoked(access, issuedAt) {
+			m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
+			m.rejectedConnections.Add(1)
+			http.Error(w, "session revoked", http.StatusUnauthorized)
+			return
+		}
 	}
 	m.recordAuthOutcome(authMetricMode, authMetricOutcomeAccepted)
 	upgrader := m.upgrader
@@ -843,7 +920,12 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = ws.Close()
 		return
 	}
-	conn := m.addConnectionWithProtocol(state, endpoint, principal, ws, wantsResume)
+	conn := m.addAuthenticatedConnection(state, endpoint, principal, ws, wantsResume, issuedAt, func() string {
+		if usesTicket {
+			return ticketToken
+		}
+		return ""
+	}())
 	state.gate.Unlock()
 	m.runConnection(r.Context(), conn)
 }
@@ -919,10 +1001,20 @@ func (m *Manager) addConnection(state *endpointState, endpoint Endpoint, princip
 	return m.addConnectionWithProtocol(state, endpoint, principal, ws, false)
 }
 
-func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool) *connection {
+func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool, issuedAts ...time.Time) *connection {
+	var issuedAt time.Time
+	if len(issuedAts) > 0 {
+		issuedAt = issuedAts[0]
+	}
+	return m.addAuthenticatedConnection(state, endpoint, principal, ws, v2, issuedAt, "")
+}
+
+func (m *Manager) addAuthenticatedConnection(state *endpointState, endpoint Endpoint, principal string, ws *websocket.Conn, v2 bool, issuedAt time.Time, ticket string) *connection {
 	now := time.Now().UTC()
 	id := "rt_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	conn := &connection{
+		issuedAt:    issuedAt,
+		ticketToken: ticket,
 		info: ConnectionInfo{
 			ID:         id,
 			EndpointID: endpoint.ID,
@@ -959,6 +1051,18 @@ func (m *Manager) addConnectionWithProtocol(state *endpointState, endpoint Endpo
 func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	defer m.removeConnection(ctx, c)
 
+	if c.accessEnabled() {
+		if !c.accessAllows(ctx, "") {
+			return
+		}
+		go c.monitorAccess()
+	}
+	if c.ticketToken != "" {
+		if !c.ticketAllows(ctx, "") {
+			return
+		}
+		go c.monitorTicket()
+	}
 	go c.writePump()
 
 	connect := Event{
@@ -974,7 +1078,10 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 	connect.CallbackURL = c.endpoint.CallbackURL
 	connect.CallbackPath = c.endpoint.ConnectPath
 	connect.CallbackAuthToken = c.currentCallbackAuthToken()
-	accepted, err := m.callConnect(ctx, connect)
+	accepted, err := true, error(nil)
+	if c.ticketToken == "" {
+		accepted, err = m.callConnect(ctx, connect)
+	}
 	if err != nil {
 		m.callbackErrors.Add(1)
 	}
@@ -1010,6 +1117,9 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 			if errors.As(err, &closeErr) {
 				c.recordClose(closeErr.Code, closeErr.Text)
 			}
+			return
+		}
+		if !c.accessAllows(ctx, "") {
 			return
 		}
 		lastSeen := time.Now().UTC()
@@ -1073,7 +1183,16 @@ func (c *connection) writePump() {
 			c.outboundMu.Lock()
 			msg = c.resolvePendingSignalLocked(msg)
 			c.outboundMu.Unlock()
+			if msg.ExpiresAt != nil && !time.Now().Before(*msg.ExpiresAt) {
+				c.m.expiredOutboundDrops.Add(1)
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
 			if msg.signalExpires != nil && msg.signalExpires.After(msg.signalUpdated) && !msg.signalExpires.After(time.Now()) {
+				c.releaseOutboundBytes(int64(len(msg.Data)))
+				continue
+			}
+			if !c.accessAllows(c.m.ctx, msg.accessChannel) {
 				c.releaseOutboundBytes(int64(len(msg.Data)))
 				continue
 			}
@@ -1223,6 +1342,9 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	disconnect.CallbackAuthToken = callbackAuthToken
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.cfg.CallbackTimeout)
 	defer cancel()
+	if c.ticketToken != "" {
+		return
+	}
 	if err := m.hooks.Disconnect(ctx, disconnect); err != nil {
 		m.callbackErrors.Add(1)
 		if errors.Is(err, ErrCallbackNotPersisted) {
@@ -1438,6 +1560,10 @@ func (m *Manager) queueOutbound(ctx context.Context, c *connection, msg Message)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if msg.ExpiresAt != nil {
+		expiry := *msg.ExpiresAt
+		msg.ExpiresAt = &expiry
+	}
 	size := int64(len(msg.Data))
 	c.outboundMu.Lock()
 	defer c.outboundMu.Unlock()
@@ -1568,6 +1694,13 @@ func (m *Manager) Subscribe(connectionID, channel string) error {
 	if !validChannel(channel) {
 		return ErrInvalidChannel
 	}
+	m.mu.RLock()
+	candidate := m.conns[connectionID]
+	m.mu.RUnlock()
+	if candidate != nil && !candidate.accessAllows(m.ctx, channel) {
+		return ErrUnauthorized
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.conns[connectionID]
@@ -1652,6 +1785,7 @@ func (m *Manager) Publish(ctx context.Context, endpointID, channel string, msg M
 // PublishWithStatus reports per-connection queue admission and failures for
 // the local endpoint owner. It does not wait for clients to read the messages.
 func (m *Manager) PublishWithStatus(ctx context.Context, endpointID, channel string, msg Message) (PublishStatus, error) {
+	msg.accessChannel = channel
 	if !validChannel(channel) {
 		return PublishStatus{}, ErrInvalidChannel
 	}
@@ -1892,6 +2026,10 @@ func (m *Manager) Stats() Stats {
 		SentMessages:                  m.sentMessages.Load(),
 		SentBytes:                     m.sentBytes.Load(),
 		DroppedMessages:               m.droppedMessages.Load(),
+		ExpiredWebSocketCheckpoints:   m.expiredWebSocketCheckpoints.Load(),
+		ExpiredInboxCheckpoints:       m.expiredInboxCheckpoints.Load(),
+		ExpiredSSECheckpoints:         m.expiredSSECheckpoints.Load(),
+		ExpiredOutboundDrops:          m.expiredOutboundDrops.Load(),
 		OutboundPendingBytes:          uint64(maxInt64(m.outboundPendingBytes.Load(), 0)),
 		OutboundQueueBytesLimit:       uint64(m.cfg.OutboundQueueBytes),
 		OutboundQueueCountDrops:       m.outboundQueueCountDrops.Load(),

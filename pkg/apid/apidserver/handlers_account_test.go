@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -559,8 +560,8 @@ func TestScheduleDeletion_EmitsAccountDeletionPending(t *testing.T) {
 // regression test (Bug 3 fix). Only the methods we override actually
 // fail; everything else delegates to the embedded store.
 type errorStore struct {
-	*state.MemStore
-	failOn map[string]error
+	MemStore *state.MemStore
+	failOn   map[string]error
 }
 
 func (s *errorStore) ListInstancesForAccount(ctx context.Context, accountID string) ([]state.Instance, error) {
@@ -585,7 +586,7 @@ func TestExportAccount_PartialFailure_Returns500(t *testing.T) {
 	}}
 	notif := &spyNotifier{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServerWithDeps(wrap, log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
+	srv := newServerWithDeps(statetest.NewMem(wrap), log, "gregale.dev", notif, "", noopMailer{}, stubGithubdClient{}, nil, nil, 0, "").handler()
 	req := httptest.NewRequest("GET", "/v1/account/export", nil)
 	req.Header.Set("Authorization", "Bearer "+e.key)
 	rec := httptest.NewRecorder()

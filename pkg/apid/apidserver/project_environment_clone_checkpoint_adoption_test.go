@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type checkpointAdoptionTestDriver struct {
@@ -78,8 +79,8 @@ func TestPGCloneCheckpointAdoptionRecoversOriginalJournals(t *testing.T) {
 	f, base, provider, _ := cloneCaptureBarrierFixture(t)
 	provider.drained = true
 	store := &checkpointAdoptionLostReplyStore{cloneCaptureBarrierFailureStore: base, lose: true}
-	f.srv.store = store
-	driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: store}}
+	f.srv.store = statetest.NewPg(store)
+	driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}}
 	var err error
 	f.lease, err = f.srv.adoptProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
 	if !errors.Is(err, objectstorage.ErrUnavailable) || driver.captures != 1 {
@@ -95,18 +96,18 @@ func TestPGCloneCheckpointAdoptionRecoversOriginalJournals(t *testing.T) {
 		t.Fatal("replay replaced original capture", err)
 	}
 	for _, snapshot := range driver.adoption.Snapshots {
-		imported, err := store.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, snapshot.SourceDatabaseID)
+		imported, err := store.PgStore.ProjectEnvironmentClonePostgresSnapshotForLease(t.Context(), f.lease, snapshot.SourceDatabaseID)
 		if err != nil || imported.State != "retained" || imported.ProviderSnapshotID != snapshot.Observation.ProviderSnapshotID {
 			t.Fatal("original snapshot not adopted", imported, err)
 		}
 		// The existing capture worker cannot acquire another dispatch claim.
-		_, dispatch, err := store.ClaimProjectEnvironmentClonePostgresSnapshotRequest(t.Context(), f.lease, snapshot.SourceDatabaseID)
+		_, dispatch, err := store.PgStore.ClaimProjectEnvironmentClonePostgresSnapshotRequest(t.Context(), f.lease, snapshot.SourceDatabaseID)
 		if err != nil || dispatch {
 			t.Fatal("adoption authorized recapture", err)
 		}
 	}
 	for _, captured := range driver.adoption.Manifests {
-		imported, err := store.ProjectEnvironmentCloneObjectManifest(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID, captured.SourceBucketID)
+		imported, err := store.PgStore.ProjectEnvironmentCloneObjectManifest(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID, captured.SourceBucketID)
 		if err != nil || imported.Hash != captured.Hash || len(imported.Objects) != len(captured.Objects) {
 			t.Fatal("original manifest not adopted", err)
 		}
@@ -120,10 +121,10 @@ func TestPGCloneCheckpointAdoptionRecoversOriginalJournals(t *testing.T) {
 			t.Fatal("adoption provisioned a bucket", err)
 		}
 	}
-	if _, err := store.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
+	if _, err := store.PgStore.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
 		t.Fatal("adoption released source configuration", err)
 	}
-	if _, err := store.AdvanceProjectEnvironmentCloneOperation(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
+	if _, err := store.PgStore.AdvanceProjectEnvironmentCloneOperation(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID,
 		state.CloneOperationCapturing, state.CloneOperationCopying, f.lease.Operation.Revision, resources, ""); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("private adoption enabled publication", err)
 	}
@@ -165,7 +166,7 @@ func TestPGCloneCheckpointAdoptionRejectsReplacementEvidence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f, store, provider, _ := cloneCaptureBarrierFixture(t)
 			provider.drained = true
-			driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: store}, edit: tc.edit}
+			driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}, edit: tc.edit}
 			var err error
 			f.lease, err = f.srv.adoptProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
 			if !errors.Is(err, state.ErrConflict) || driver.captures != 1 || len(f.lease.Operation.Resources) != 2 {
@@ -195,7 +196,7 @@ func assertNoCheckpointAdoptionJournals(t *testing.T, f cloneCoordinatorFixture)
 func TestPGCloneCheckpointAdoptionRollsBackPrivateReservations(t *testing.T) {
 	f, store, provider, _ := cloneCaptureBarrierFixture(t)
 	provider.drained = true
-	driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: store}}
+	driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}}
 	var err error
 	f.lease, err = f.srv.adoptProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 1)
 	if err == nil || driver.captures != 1 || len(f.lease.Operation.Resources) != 2 {
@@ -214,7 +215,7 @@ func TestPGCloneCheckpointAdoptionMissingJournalsCannotRecapture(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f, store, provider, _ := cloneCaptureBarrierFixture(t)
 			provider.drained = true
-			driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: store}}
+			driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}}
 			var err error
 			f.lease, err = f.srv.adoptProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
 			if err != nil {
@@ -225,24 +226,24 @@ func TestPGCloneCheckpointAdoptionMissingJournalsCannotRecapture(t *testing.T) {
 				if _, err := f.pool.Exec(t.Context(), "delete from project_environment_clone_postgres_snapshots where operation_id=$1 and source_database_id=$2", f.lease.Operation.ID, sourceID); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.ReserveProjectEnvironmentClonePostgresSnapshot(t.Context(), f.lease, sourceID); !errors.Is(err, state.ErrConflict) {
+				if _, err := store.PgStore.ReserveProjectEnvironmentClonePostgresSnapshot(t.Context(), f.lease, sourceID); !errors.Is(err, state.ErrConflict) {
 					t.Fatal("missing snapshot authorized new intent", err)
 				}
 			} else {
 				captured := driver.adoption.Manifests[0]
-				original, err := store.ProjectEnvironmentCloneObjectManifest(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID, captured.SourceBucketID)
+				original, err := store.PgStore.ProjectEnvironmentCloneObjectManifest(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID, captured.SourceBucketID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if _, err := f.pool.Exec(t.Context(), "delete from project_environment_clone_object_manifests where operation_id=$1 and source_bucket_id=$2", f.lease.Operation.ID, captured.SourceBucketID); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := store.PutProjectEnvironmentCloneObjectManifestForLease(t.Context(), f.lease, original); !errors.Is(err, state.ErrConflict) {
+				if _, err := store.PgStore.PutProjectEnvironmentCloneObjectManifestForLease(t.Context(), f.lease, original); !errors.Is(err, state.ErrConflict) {
 					t.Fatal("legacy writer replaced adopted manifest", err)
 				}
 				// A nil provider proves the leased capture helper rejects missing adopted
 				// evidence before considering a fresh provider listing.
-				if _, err := captureProjectEnvironmentObjectStorageSnapshotForLease(t.Context(), store, nil, f.lease, captured.SourceBucketID, original.TargetBucketID, "pinned-source", captured.CapturedAt); !errors.Is(err, state.ErrConflict) {
+				if _, err := captureProjectEnvironmentObjectStorageSnapshotForLease(t.Context(), statetest.NewPg(store), nil, f.lease, captured.SourceBucketID, original.TargetBucketID, "pinned-source", captured.CapturedAt); !errors.Is(err, state.ErrConflict) {
 					t.Fatal("missing manifest reached capture path", err)
 				}
 			}
@@ -257,7 +258,7 @@ func TestPGCloneCheckpointAdoptionMissingJournalsCannotRecapture(t *testing.T) {
 func TestPGCloneCheckpointAdoptionKeepsConfigurationGuardClosed(t *testing.T) {
 	f, store, provider, _ := cloneCaptureBarrierFixture(t)
 	provider.drained = true
-	driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: store}}
+	driver := &checkpointAdoptionTestDriver{commonCheckpointTestDriver: &commonCheckpointTestDriver{t: t, store: statetest.NewPg(store)}}
 	var err error
 	f.lease, _, err = f.srv.prepareProjectEnvironmentCloneCommonCheckpoint(t.Context(), f.lease, driver)
 	if err != nil {
@@ -269,14 +270,14 @@ func TestPGCloneCheckpointAdoptionKeepsConfigurationGuardClosed(t *testing.T) {
 	}
 	// A live operation and source fence alone cannot bypass the guard: the
 	// complete original manifest must precede a private target reservation.
-	if _, _, err := store.ReserveProjectEnvironmentCloneObjectBucket(t.Context(), f.lease, plans[0].appID, plans[0].source.ID, 10); !errors.Is(err, state.ErrProjectEnvironmentCloneConfigurationFenced) {
+	if _, _, err := store.PgStore.ReserveProjectEnvironmentCloneObjectBucket(t.Context(), f.lease, plans[0].appID, plans[0].source.ID, 10); !errors.Is(err, state.ErrProjectEnvironmentCloneConfigurationFenced) {
 		t.Fatal("unbacked target bypassed held configuration", err)
 	}
 	f.lease, err = f.srv.adoptProjectEnvironmentCloneCheckpoint(t.Context(), f.lease, driver, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := store.ProjectEnvironmentCloneObjectManifest(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID, plans[0].source.ID)
+	manifest, err := store.PgStore.ProjectEnvironmentCloneObjectManifest(t.Context(), f.lease.Operation.AccountID, f.lease.Operation.ProjectID, f.lease.Operation.ID, plans[0].source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +287,7 @@ func TestPGCloneCheckpointAdoptionKeepsConfigurationGuardClosed(t *testing.T) {
 			t.Fatal("held configuration allowed bucket policy mutation")
 		}
 	}
-	if _, err := store.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
+	if _, err := store.PgStore.ProjectEnvironmentCloneConfigurationFenceForLease(t.Context(), f.lease); err != nil {
 		t.Fatal("target admission reopened configuration", err)
 	}
 }

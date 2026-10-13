@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func TestStageAdmissionKeepsIndependentScaleOutHistory(t *testing.T) {
@@ -102,8 +103,8 @@ func TestReaperUsesEnvironmentScaleInAndScaleOutHistory(t *testing.T) {
 }
 
 type invalidScalingStateStore struct {
-	*state.MemStore
-	foreign bool
+	MemStore *state.MemStore
+	foreign  bool
 }
 
 func (s invalidScalingStateStore) RuntimeScalingStateForDeployment(ctx context.Context, accountID, appID, deploymentID string) (state.RuntimeScalingState, error) {
@@ -120,7 +121,7 @@ func TestStageScalingHistoryReadFailureHoldsAdmissionAndReaping(t *testing.T) {
 		t.Run(map[bool]string{false: "read-failure", true: "foreign-owner"}[foreign], func(t *testing.T) {
 			f := seedStageSnapshotPolicy(t, 0, false)
 			store := invalidScalingStateStore{MemStore: f.store, foreign: foreign}
-			engine := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+			engine := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 			result, err := engine.AdmitInstance(t.Context(), f.app.ID, f.stage.ID, "stage", "")
 			if !errors.Is(err, state.ErrConflict) || result.InstanceID != "" {
 				t.Fatalf("unowned clocks authorized admission: %+v %v", result, err)

@@ -61,5 +61,5 @@ func validRuntimePublicationTransition(from, to string) bool {
 	if to == string(StateWarm) {
 		return from == string(StateWaking)
 	}
-	return to == string(StateRunning) && (from == string(StateColdBooting) || from == string(StateWaking) || from == string(StateWarm))
+	return to == string(StateRunning) && (from == string(StateColdBooting) || from == string(StateWaking) || from == string(StateWarm) || from == string(StateFrozen))
 }

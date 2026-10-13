@@ -235,7 +235,7 @@ func (l *livenessProbeLoop) runOne(ctx context.Context, timeoutMs int) bool {
 	if ctx.Err() != nil {
 		return true
 	}
-	// ADR-957: a quiet-paused guest cannot answer, and its silence says
+	// ADR-1151: a quiet-paused guest cannot answer, and its silence says
 	// nothing about its health. Skip the probe while it is paused.
 	pausedBefore, epochBefore := l.quietGate()
 	if pausedBefore {
@@ -612,7 +612,7 @@ func writeLivenessAll(conn net.Conn, b []byte) error {
 	return nil
 }
 
-// quietGate reads the instance's ADR-957 quiet pause state.
+// quietGate reads the instance's ADR-1151 quiet pause state.
 func (l *livenessProbeLoop) quietGate() (paused bool, epoch uint64) {
 	if l.mgr == nil {
 		return false, 0

@@ -781,6 +781,9 @@ var cliCommands = []cliCommand{
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
+			"gregale ai logs show <integration-id> <request-id>",
+			"gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'",
+			"gregale ai replay <integration-id> <request-id> --target <anthropic-id>:claude-sonnet-4-5 --target <openai-id>:gpt-4o-mini",
 		},
 		Subcommands: []cliSub{
 			{Name: "policy", Short: "Set the AI provider and token or cost limits (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
@@ -789,8 +792,17 @@ var cliCommands = []cliCommand{
 				{Name: "daily-cost", Short: "UTC-day cost limit in EUR, or none", Value: "EUR"},
 				{Name: "monthly-cost", Short: "calendar-month cost limit in EUR, or none", Value: "EUR"},
 				{Name: "request-log", Short: "log per-call metadata for 7 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
+				{Name: "request-log-content", Short: "also keep the first 32 KiB of each logged call's bodies for 3 days", Value: "on|off", ClosedSet: []string{"on", "off"}},
 				{Name: "user-daily-tokens", Short: "each end user's UTC-day token limit (X-Gregale-AI-User), or none", Value: "N"},
 				{Name: "user-daily-cost", Short: "each end user's UTC-day cost limit in EUR, or none", Value: "EUR"},
+			}},
+			{Name: "content-policy", Short: "Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets, and block terms (unchanged flags keep their values)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+				{Name: "email", Short: "e-mail addresses", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "payment-card", Short: "payment card numbers", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "iban", Short: "IBANs", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "secrets", Short: "API keys, tokens and private keys", Value: "ACTION", ClosedSet: []string{"off", "redact", "block"}},
+				{Name: "block-term", Short: "block requests containing this term, ignoring case (repeat)", Value: "TERM"},
+				{Name: "clear-terms", Short: "remove every blocked term first", Bool: true},
 			}},
 			{Name: "app-limit", Short: "Set or clear one app's own daily AI token limit", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "bound app slug", Req: true, Value: "slug"},
@@ -804,7 +816,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
 			{Name: "prices", Short: "Show the price list, or replace it with: prices set <integration-id> --price ...", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
-				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
+				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears)", Value: "SPEC"},
 			}},
 			{Name: "catalog", Short: "Show the built-in prices that apply to models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
 				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},
@@ -832,7 +844,12 @@ var cliCommands = []cliCommand{
 			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
-			{Name: "logs", Short: "Page the opt-in AI request log, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
+			{Name: "replay", Short: "Resend a captured call to other integrations or models and compare status, tokens, cost, latency and output, or show a replay", Positionals: []string{"[show]", "<integration-id|replay-id>", "[<request-id>]"}, Flags: []cliFlag{
+				{Name: "target", Short: "<integration-id>[:<model>] to replay on (repeat, at most 5)", Value: "TARGET"},
+				{Name: "no-wait", Short: "print the replay without waiting for results", Bool: true},
+				{Name: "timeout", Short: "how long to wait for results (default 3m)", Value: "duration"},
+			}},
+			{Name: "logs", Short: "Page the opt-in AI request log, newest first, or show one call's captured bodies", Positionals: []string{"[show]", "<integration-id>", "[<request-id>]"}, Flags: []cliFlag{
 				{Name: "limit", Short: "calls to show, 1 to 200", Value: "N"},
 				{Name: "before", Short: "show calls before this RFC 3339 time", Value: "TIME"},
 			}},
@@ -1223,6 +1240,8 @@ var cliCommands = []cliCommand{
 				{Name: "json", Short: "print the last observed restart receipt"},
 			}}}},
 			{Name: subExec, Short: "Run a one-off command against the live deployment", Flags: []cliFlag{
+				{Name: "interactive", Short: "attach stdin and stream output live (-i; default command /bin/sh)"},
+				{Name: "tty", Short: "allocate a remote terminal (-t; use -it)"},
 				{Name: "shell", Short: "interpret one command string through the app shell"},
 				{Name: "detach", Short: "return after the task is queued"},
 				{Name: "timeout-seconds", Short: "server-side command timeout", Value: "N"},
@@ -1233,6 +1252,13 @@ var cliCommands = []cliCommand{
 				{Name: "idempotency-key", Short: "stable retry identity for this submission", Value: "KEY"},
 				{Name: "poll-interval", Short: "status polling interval while attached", Value: "D"},
 				{Name: "wait-timeout", Short: "maximum attached wait", Value: "D"},
+			}},
+			{Name: "cp", Short: "Copy a path out of a fresh VM of the live deployment", Positionals: []string{"<remote-path>", "<local-path|->"}, Flags: []cliFlag{
+				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
+			}},
+			{Name: "port-forward", Short: "Forward a local port to HOST:PORT reached from inside the app's network", Positionals: []string{"[LOCAL_PORT:]HOST:PORT"}, Flags: []cliFlag{
+				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
+				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
 			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement", Flags: []cliFlag{
 				{Name: "posture", Short: "show the read-only security posture"},
@@ -2809,6 +2835,7 @@ var cliCommands = []cliCommand{
 				{Name: "client-ip", Short: "simulated client IP for kind=ip rules", Value: "IP"},
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
 				{Name: "asn", Short: "simulated client autonomous system for asn conditions (e.g. AS13335)", Value: "AS"},
+				{Name: "verified-bot", Short: "simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims)", Bool: true},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 				{Name: "proposal", Short: "compare against a proposed change: JSON {add,update,remove} file or - for stdin", Value: "file|-"},

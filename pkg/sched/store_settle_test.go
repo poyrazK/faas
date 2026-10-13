@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // adr: 1152
@@ -60,8 +61,8 @@ func backdateSettle(s *storeSettle, t time.Time) {
 // deadNodeListFailStore fails ListRunningInstancesOnDeadNodes while fail is
 // set, standing in for a Postgres outage seen by the dead-node sweep.
 type deadNodeListFailStore struct {
-	*state.MemStore
-	fail bool
+	MemStore *state.MemStore
+	fail     bool
 }
 
 func (s *deadNodeListFailStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold time.Time, limit int) ([]state.Instance, error) {
@@ -79,7 +80,7 @@ func (s *deadNodeListFailStore) ListRunningInstancesOnDeadNodes(ctx context.Cont
 func TestReconcileDeadNodeInstances_WaitsForStoreToSettle(t *testing.T) {
 	mem := state.NewMemStore()
 	store := &deadNodeListFailStore{MemStore: mem}
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	nodeID := seedStaleComputeNodeForReconcile(t, mem)
 	_, insID := seedRunningInstance(t, mem, nodeID)
 
@@ -146,8 +147,8 @@ func TestReconcileDeadNodeInstances_StartupHoldNeedsAnOutage(t *testing.T) {
 // nodeListFailStore fails NodeList while fail is set, standing in for a
 // Postgres outage seen by the stale-peer observer.
 type nodeListFailStore struct {
-	*state.MemStore
-	fail bool
+	MemStore *state.MemStore
+	fail     bool
 }
 
 func (s *nodeListFailStore) NodeList(ctx context.Context, lifecycle state.NodeLifecycle) ([]state.ComputeNode, error) {
@@ -181,7 +182,7 @@ func TestHeartbeat_StalePeerObserverWaitsForStoreToSettle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComputeNode peer: %v", err)
 	}
-	h := NewHeartbeat(store, &heartbeatFakeDialer{}, nil, nil).
+	h := NewHeartbeat(statetest.NewMem(store), &heartbeatFakeDialer{}, nil, nil).
 		WithOwnerNodeID(owner.ID).
 		WithStalePeerObserver(true)
 	h.Staleness = time.Minute

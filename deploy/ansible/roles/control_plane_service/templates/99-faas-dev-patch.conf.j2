@@ -1,0 +1,2 @@
+[Service]
+Environment=FAAS_DEV_PATCH_DELIVERY={{ (faas_dev_patch_delivery_enabled | bool) | ternary('1', '0') }}

@@ -1,3 +1,4 @@
+import {writePackedSDKRuntimeLock} from './packed-sdk-runtime-lock.mjs';
 import assert from 'node:assert/strict';
 import {cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -36,8 +37,9 @@ export async function browserStarter(t, template = 'customer-operation-workflow-
   const filename = execFileSync('npm', ['pack', '--ignore-scripts', '--loglevel=error', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
   assert.match(filename, /^[A-Za-z0-9_.-]+\.tgz$/);
   cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;
-  execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000, stdio: 'pipe'});
+  execFileSync('npm', ['ci', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000, stdio: 'pipe'});
   const config = {apiURL: 'https://api.example.test', appID, definitionID, scope: 'default'};
   const {createExportServer} = await import(pathToFileURL(join(dest, 'server.mjs')));
   const server = createExportServer({config});

@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/routeprobe"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type probeChallengeNotifier struct {
@@ -71,7 +72,7 @@ func (f *fakeProbeSender) Probe(_ context.Context, _ string, deploymentID, token
 // sparseReportStore reports the probed route as unknown only for lack of
 // requests; MemStore itself has no telemetry.
 type sparseReportStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 	stableID string
 }
 
@@ -102,7 +103,7 @@ func TestRouteProbeWorkerProbesSparseSelectorsOncePerMinute(t *testing.T) {
 	}
 	notifier := &probeChallengeNotifier{}
 	sender := &fakeProbeSender{notifier: notifier, outcomes: map[string]routeprobe.Outcome{canary.ID: routeprobe.ServerError, stable.ID: routeprobe.Success}}
-	e.s.store = &sparseReportStore{MemStore: e.store, stableID: stable.ID}
+	e.s.store = statetest.NewMem(&sparseReportStore{MemStore: e.store, stableID: stable.ID})
 	e.s.notif = notifier
 	e.s.WithRouteProbes(sender)
 

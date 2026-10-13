@@ -52,7 +52,7 @@ func verificationAttemptFirstFailure(t *testing.T, v *verificationWorkerFixture)
 	owner := uuid.MustParse(original.VerificationID)
 	imported := uuid.MustParse(original.ImportID)
 	authorize := func(ctx context.Context, target copyarchive.RestoreTarget) error {
-		fresh, err := v.store.ProjectEnvironmentClonePostgresVerificationForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		fresh, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 		if err == nil && (target != x.target || !reflect.DeepEqual(fresh, original)) {
 			err = managedpostgres.ErrConflict
 		}
@@ -70,14 +70,14 @@ func verificationAttemptFirstFailure(t *testing.T, v *verificationWorkerFixture)
 	}
 	zero := proof
 	zero.Closure = copydatabases.VerificationClosure{}
-	if _, err := v.store.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, original.VerificationID, zero); !errors.Is(err, state.ErrConflict) {
+	if _, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, original.VerificationID, zero); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("synthetic closure authorized retry", err)
 	}
-	failed, err := v.store.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, original.VerificationID, proof)
+	failed, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, original.VerificationID, proof)
 	if err != nil || failed.State != "failed" || failed.Attempt != 1 || !failed.WindowOpenedAt.Equal(closure.OpenedAt()) || !failed.NativeClosedAt.Equal(closure.ClosedAt()) {
 		t.Fatal("actual failure not retained", err)
 	}
-	replay, err := v.store.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, original.VerificationID, proof)
+	replay, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, original.VerificationID, proof)
 	if err != nil || !reflect.DeepEqual(replay, failed) {
 		t.Fatal("lost failure response replaced evidence", err)
 	}
@@ -90,7 +90,7 @@ func verificationAttemptFirstFailure(t *testing.T, v *verificationWorkerFixture)
 func verificationAttemptAuthorize(v *verificationWorkerFixture, held *state.ProjectEnvironmentClonePostgresVerificationAttempt) func(context.Context, copyarchive.RestoreTarget) error {
 	return func(ctx context.Context, target copyarchive.RestoreTarget) error {
 		f, x := v.f, v.f.db.x
-		history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
+		history, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(ctx, x.f.lease, x.source.source.ID, f.sourceOID)
 		if err == nil && (target != x.target || len(history) != int(held.Attempt) || !reflect.DeepEqual(history[len(history)-1], *held)) {
 			err = managedpostgres.ErrConflict
 		}
@@ -100,23 +100,23 @@ func verificationAttemptAuthorize(v *verificationWorkerFixture, held *state.Proj
 func reserveClaimVerificationAttempt(t *testing.T, v *verificationWorkerFixture, r state.ProjectEnvironmentClonePostgresVerificationRetryRequest) state.ProjectEnvironmentClonePostgresVerificationAttempt {
 	t.Helper()
 	x := v.f.db.x
-	a, first, err := v.store.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r)
+	a, first, err := v.store.PgStore.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r)
 	if err != nil || !first || a.State != "reserved" {
 		t.Fatal("retry intent", err)
 	}
-	replay, first, err := v.store.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r)
+	replay, first, err := v.store.PgStore.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r)
 	if err != nil || first || !reflect.DeepEqual(a, replay) {
 		t.Fatal("lost reserve reply changed owner", err)
 	}
-	a, first, err = v.store.ClaimProjectEnvironmentClonePostgresVerificationAttempt(t.Context(), x.f.lease, r.Scope.SourceDatabaseID, r.DatabaseOID, a.VerificationID)
+	a, first, err = v.store.PgStore.ClaimProjectEnvironmentClonePostgresVerificationAttempt(t.Context(), x.f.lease, r.Scope.SourceDatabaseID, r.DatabaseOID, a.VerificationID)
 	if err != nil || !first || a.State != "verifying" {
 		t.Fatal("retry dispatch", err)
 	}
-	replay, first, err = v.store.ClaimProjectEnvironmentClonePostgresVerificationAttempt(t.Context(), x.f.lease, r.Scope.SourceDatabaseID, r.DatabaseOID, a.VerificationID)
+	replay, first, err = v.store.PgStore.ClaimProjectEnvironmentClonePostgresVerificationAttempt(t.Context(), x.f.lease, r.Scope.SourceDatabaseID, r.DatabaseOID, a.VerificationID)
 	if err != nil || first || !reflect.DeepEqual(a, replay) {
 		t.Fatal("lost claim reply changed dispatch", err)
 	}
-	if _, _, err := v.store.AllocateProjectEnvironmentClonePostgresVerificationRead(t.Context(), x.f.lease, state.ProjectEnvironmentClonePostgresVerificationReadRequest{
+	if _, _, err := v.store.PgStore.AllocateProjectEnvironmentClonePostgresVerificationRead(t.Context(), x.f.lease, state.ProjectEnvironmentClonePostgresVerificationReadRequest{
 		SourceDatabaseID: r.Scope.SourceDatabaseID, DatabaseOID: r.DatabaseOID, VerificationID: a.VerificationID, Attempt: a.Attempt, ReadBytes: v.cfg.MaxBytes, SortMemoryBytes: int64(v.cfg.SortMemoryBytes), SortDiskBytes: v.cfg.SortDiskBytes}); err != nil {
 		t.Fatal("manual native composition read debit", err)
 	}
@@ -155,19 +155,19 @@ func TestPGClonePostgresVerificationAttemptsRealClosedFailuresBoundNewOwners(t *
 		}); err != nil {
 			t.Fatal("close-only retry recovery", err)
 		}
-		failed, err := v.store.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, proof)
+		failed, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, proof)
 		if err != nil || failed.Attempt != attempt || failed.State != "failed" {
 			t.Fatal("opaque retry failure admission", err)
 		}
-		if _, err := v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, copycontents.SealedMatch{}); err == nil {
+		if _, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, copycontents.SealedMatch{}); err == nil {
 			t.Fatal("failed owner acquired proof")
 		}
 		r.PreviousVerificationID = a.VerificationID
 	}
-	if _, _, err := v.store.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r); !errors.Is(err, state.ErrQuotaExceeded) {
+	if _, _, err := v.store.PgStore.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatal("fourth attempt admitted", err)
 	}
-	history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+	history, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 	if err != nil || len(history) != 3 || !reflect.DeepEqual(history[0], original) {
 		t.Fatal("first history replaced", err)
 	}
@@ -239,7 +239,7 @@ func TestPGClonePostgresVerificationAttemptsRealRetryMatchAndExactClosure(t *tes
 				if e != nil {
 					return e
 				}
-				a, e = v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx, x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, sealed)
+				a, e = v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx, x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, sealed)
 				if e != nil {
 					return e
 				}
@@ -254,26 +254,26 @@ func TestPGClonePostgresVerificationAttemptsRealRetryMatchAndExactClosure(t *tes
 	completed.Closure = closure
 	forged := completed
 	forged.Closure = previous
-	if _, err = v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, forged); !errors.Is(err, state.ErrConflict) {
+	if _, err = v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, forged); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("predecessor closed current proof", err)
 	}
 	failure := state.ProjectEnvironmentClonePostgresVerificationFailure{Target: f.target, Preparation: completed.Preparation, Closure: closure}
-	if _, err = v.store.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, failure); !errors.Is(err, state.ErrConflict) {
+	if _, err = v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationFailure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, failure); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("actual compared closure granted failure", err)
 	}
-	verified, err := v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, completed)
+	verified, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, completed)
 	if err != nil || verified.State != "verified" || !verified.NativeClosedAt.Equal(closure.ClosedAt()) {
 		t.Fatal("real retained match did not close", err)
 	}
-	replay, err := v.store.RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, completed)
+	replay, err := v.store.PgStore.RecordProjectEnvironmentClonePostgresVerificationAttemptClosure(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID, a.VerificationID, completed)
 	if err != nil || !reflect.DeepEqual(replay, verified) {
 		t.Fatal("lost closure response replaced first times", err)
 	}
 	r.PreviousVerificationID = a.VerificationID
-	if _, _, err = v.store.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r); !errors.Is(err, state.ErrConflict) {
+	if _, _, err = v.store.PgStore.ReserveProjectEnvironmentClonePostgresVerificationRetry(t.Context(), x.f.lease, r); !errors.Is(err, state.ErrConflict) {
 		t.Fatal("verified owner retried", err)
 	}
-	history, err := v.store.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
+	history, err := v.store.PgStore.ProjectEnvironmentClonePostgresVerificationAttemptsForLease(t.Context(), x.f.lease, x.source.source.ID, f.sourceOID)
 	if err != nil || len(history) != 2 || !reflect.DeepEqual(history[0], original) {
 		t.Fatal("verified retry damaged original failure", err)
 	}

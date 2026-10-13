@@ -40,6 +40,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
@@ -1157,7 +1158,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
+		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
+		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
@@ -1361,10 +1365,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
-			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) {
-				// invokeApp applies the plan-specific 5s/30s wait, and a
-				// deploy commit scans its source archive (H9-157); both
-				// get the platform ceiling instead of the 5 s default.
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+				// invokeApp applies the plan-specific 5s/30s wait, a deploy
+				// commit scans its source archive (H9-157), and realtime
+				// group claims may long-poll; all get the platform ceiling
+				// instead of the 5 s default.
 				return api.RequestBudgetMax
 			}
 			return 0

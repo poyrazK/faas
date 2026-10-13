@@ -310,10 +310,10 @@ func newMultipartCopyIntegrationConfigured(t *testing.T, st multipartCopyIntegra
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(h)
+	server := httptest.NewUnstartedServer(h)
+	h.host = server.Listener.Addr().String()
+	server.Start()
 	t.Cleanup(server.Close)
-	endpoint, _ := url.Parse(server.URL)
-	h.host = endpoint.Host
 	client := awss3.NewFromConfig(aws.Config{Region: "us-east-1", Credentials: credentials.NewStaticCredentialsProvider(testAccess, testSecret, ""), HTTPClient: server.Client()}, func(o *awss3.Options) {
 		o.BaseEndpoint = aws.String(server.URL)
 		o.UsePathStyle = true

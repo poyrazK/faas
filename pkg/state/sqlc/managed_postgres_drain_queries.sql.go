@@ -235,7 +235,7 @@ FROM apps a JOIN managed_postgres_cutovers c ON c.app_id=a.id JOIN instances i O
 WHERE c.id=$1::text::uuid AND i.id=$2::text::uuid
  AND a.node_id=$3::text::uuid AND a.managed_postgres_admission_cutover_id=c.id
  AND a.status IN ('active','evicted_cold') AND c.state IN ('verified','verifying','cancelling')
- AND i.kind='wake' AND i.state IN ('waking','cold_booting','running','draining','snapshotting','warm','failed','stopped')
+ AND i.kind='wake' AND i.state IN ('waking','cold_booting','running','draining','snapshotting','warm','frozen','failed','stopped')
  AND i.migrated_from_node_id IS NULL
  AND NOT EXISTS (SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=i.id AND e.retired_at IS NULL)
 FOR UPDATE OF a,c,i

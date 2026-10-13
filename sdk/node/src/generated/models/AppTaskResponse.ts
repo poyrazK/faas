@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppTaskAttachInfo } from './AppTaskAttachInfo.js';
 import type { AppTaskFailure } from './AppTaskFailure.js';
 import type { WorkDecision } from './WorkDecision.js';
 /**
@@ -42,5 +43,10 @@ export type AppTaskResponse = {
   finished_at?: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Present on the create response of an interactive session.
+   */
+  interactive?: boolean;
+  attach?: AppTaskAttachInfo;
 };
 
