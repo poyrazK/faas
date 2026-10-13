@@ -889,6 +889,7 @@ from .dev_sync_history_summary import DevSyncHistorySummary
 from .dev_sync_phase import DevSyncPhase
 from .dev_sync_phase_phase import DevSyncPhasePhase
 from .dev_sync_phase_status import DevSyncPhaseStatus
+from .dev_watch import DevWatch
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
@@ -4948,6 +4949,7 @@ __all__ = (
     "DevSyncPhase",
     "DevSyncPhasePhase",
     "DevSyncPhaseStatus",
+    "DevWatch",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
