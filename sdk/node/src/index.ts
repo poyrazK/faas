@@ -414,3 +414,6 @@ export type { EventExecutionLineageRetryJobAttentionPage } from './generated/mod
 export type { EventExecutionLineageRetryJobHealth } from './generated/models/EventExecutionLineageRetryJobHealth.js';
 export type { EventExecutionLineageRetryJobHealthSample } from './generated/models/EventExecutionLineageRetryJobHealthSample.js';
 export type { EventExecutionLineageRetryJobControlFilters } from './generated/models/EventExecutionLineageRetryJobControlFilters.js';
+
+export { eventConsumerDeliveryContextFromHeaders, EventConsumerDeliveryContextUnavailableError,
+  type EventConsumerDeliveryContext } from './event-consumer-delivery-context.js';

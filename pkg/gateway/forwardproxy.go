@@ -76,7 +76,7 @@ func isSyntheticInvocation(ctx context.Context) bool {
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
 	return isTrustedServiceCallerAssertion(ctx, name) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
-		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsWorkflowStepHeader(name))) ||
+		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
 		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)

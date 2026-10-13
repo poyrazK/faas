@@ -908,6 +908,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	applyInvocationAttemptHeaders(req.Header, inv)
 	if state.InvocationHasOperation(inv) {
 		var proof map[string]string
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {

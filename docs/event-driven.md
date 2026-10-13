@@ -3350,3 +3350,24 @@ Add `--confirmation-progress` to a receipt-budget watch to print live text detai
 Each selected receipt-budget condition shows its phase: pending warning, firing, pending recovery, waiting for fresh confirmation after resume, clear, unknown, or blocked by a full alert outbox. Active windows include fresh sample counts, elapsed and required duration, and remaining confirmation seconds. Required sample count zero means no active confirmation window. The elapsed duration ends at the latest accepted observation; it does not advance just because output is read later. Remaining seconds are not a promised recovery time and the next observation can reset confirmation.
 
 The most recent local confirmation loss includes its time and a reason such as stale or future evidence, a repeated or out-of-order observation, unavailable evidence, or a sample gap. This diagnostic history is distinct from the current phase. Unknown evidence never reports a successful recovery. Diagnostics and timer counts are not stored in checkpoint conditions; resume starts with fresh sample count zero and never credits old progress or downtime. Existing version-1/version-2 checkpoint and acknowledgment behavior remains unchanged.
+
+### Inspect an application event execution attempt
+
+Authenticated application event handlers can read dispatcher-authored context:
+
+| Header | Meaning |
+| --- | --- |
+| `X-Faas-Invocation-Id` | Current execution invocation UUID. A child replay has a new UUID. |
+| `X-Faas-Invocation-Source` | `async_invoke` for ordinary application-event work or `replay` for a child replay. |
+| `X-Faas-Invocation-Attempt` | Positive execution attempt within the current retry budget; signed-int32 range. |
+| `X-Faas-Invocation-Replay-Generation` | Nonnegative signed-int64 retry-budget reset generation. Zero is explicitly sent. |
+| `X-Faas-Invocation-Replayed-From` | Immediate parent invocation UUID, when available. |
+| `X-Faas-Invocation-Replay-Root` | Replay root invocation UUID, when available. |
+
+Use Go `EventConsumerDeliveryContextFromHTTP(request, originalBody, accountID, appID)`, Node `eventConsumerDeliveryContextFromHeaders(headers, originalBody, accountId, appId)`, or Python `event_consumer_delivery_context_from_headers(headers, original_body, account_id, app_id)`. Each validates the existing stable event identity and body before returning diagnostic counters, invocation source/ID and optional lineage. Node preserves replay generation as a decimal string rather than a floating-point number. Duplicate/empty headers, partial counter context, noncanonical or out-of-range numbers, invalid source/UUIDs and immediate lineage cycles are rejected. Completely absent attempt metadata raises the SDK's unavailable-context error; upgrade scheduler and gateway rather than guessing values.
+
+Execution attempts differ from routing attempts before admission. An ordinary retry retains its invocation ID; an in-place retry-budget reset increases generation. A new child replay has a new invocation ID and can start at generation **zero**, so zero alone does not prove an original delivery. Parent/root IDs can clarify lineage when available; absence is not proof that no replay occurred.
+
+The gateway overrides producer-supplied counter/lineage headers using private dispatch fields and forwards them only for scheduler-marked synthetic work. Public HTTP requests cannot forward these reserved headers to guests. Upgrade gateways before the scheduler for rollout; older components do not guarantee the new context. Headers are still not signatures: authenticate delivery and supply trusted owner scope before using any SDK helper.
+
+Continue deduplicating by the existing owned event acceptance and subscription consumer identity. Keep attempt, invocation ID, generation and lineage out of the business receipt key and input digest; the existing transactional helpers remain unchanged. The new metadata adds no ordering or exactly-once guarantee and does not change retry, replay, capacity or retention policies.
