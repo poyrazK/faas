@@ -75,6 +75,10 @@ type RuntimeConfig struct {
 	Leases         Leaser
 	BootTimeout    time.Duration
 	StopTimeout    time.Duration
+	// ArchiveSocket is dbbackupd's unix socket. When set, each VM archives
+	// its WAL: the runtime relays the guest's archive streams there, after
+	// a header naming the database it booted (ADR-1027 durability).
+	ArchiveSocket string
 }
 
 // BootRequest starts one database VM.
@@ -84,6 +88,9 @@ type BootRequest struct {
 	VcpuCount         int
 	MemSizeMiB        int
 	VolumeRateLimiter *fcvm.RateLimiter
+	// RestoreSource names the database whose archive this one recovers
+	// from; the relay stamps it so restore_command reads that archive.
+	RestoreSource string
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.
@@ -103,6 +110,8 @@ type databaseVM struct {
 	exited chan struct{}
 	binds  []string
 	volume string
+	// archive is the relay listener for guest archive streams.
+	archive net.Listener
 }
 
 // NewRuntime validates cfg and resolves the Firecracker binary, whose real
@@ -124,7 +133,9 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 		cfg.BootTimeout = 30 * time.Second
 	}
 	if cfg.StopTimeout <= 0 {
-		cfg.StopTimeout = 60 * time.Second
+		// Covers guest-init's archive drain (15 s) plus PostgreSQL's fast
+		// shutdown (60 s) before the VM is killed.
+		cfg.StopTimeout = 90 * time.Second
 	}
 	fc, err := exec.LookPath(cfg.FirecrackerBin)
 	if err != nil {
@@ -251,6 +262,9 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if err = r.writeConfig(vm, req); err != nil {
 		return err
 	}
+	if err = r.startArchiveRelay(vm, req.ID, req); err != nil {
+		return err
+	}
 	if err = r.launch(vm, req); err != nil {
 		return err
 	}
@@ -297,7 +311,7 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		KernelPath: jailKernel, BasePath: jailBase, VolumePath: jailVolume, Major: req.Major,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
-		VolumeRateLimiter: req.VolumeRateLimiter,
+		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
 	})
 	if err != nil {
 		return err
@@ -411,6 +425,9 @@ func (r *Runtime) Stop(ctx context.Context, id string) error {
 // teardown releases everything Start acquired. It is safe on a partially
 // started VM.
 func (r *Runtime) teardown(id string, vm *databaseVM) {
+	if vm.archive != nil {
+		_ = vm.archive.Close()
+	}
 	if vm.cmd != nil && vm.cmd.Process != nil {
 		select {
 		case <-vm.exited:

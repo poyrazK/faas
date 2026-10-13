@@ -36,6 +36,8 @@ const (
 	databaseReadyPoll       = 5 * time.Millisecond
 	databaseFastStopWait    = 60 * time.Second
 	databaseQuitStopWait    = 10 * time.Second
+	// databaseArchiveDrainWait bounds the pre-stop archive drain.
+	databaseArchiveDrainWait = 15 * time.Second
 	databaseAdminSQLTimeout = 60 * time.Second
 )
 
@@ -52,6 +54,8 @@ type databaseGuest struct {
 	log    *slog.Logger
 	major  int
 	memKiB int64
+	// archive ships WAL to the host (ADR-1027 durability).
+	archive bool
 	uid    int
 	gid    int
 
@@ -64,11 +68,11 @@ type databaseGuest struct {
 	stopOnce   sync.Once
 }
 
-func runDatabaseGuest(log *slog.Logger, major int) error {
+func runDatabaseGuest(log *slog.Logger, major int, archive bool) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &databaseGuest{log: log, major: major, exited: make(chan struct{}), done: make(chan struct{})}
+	g := &databaseGuest{log: log, major: major, archive: archive, exited: make(chan struct{}), done: make(chan struct{})}
 	g.prepare()
 	control, err := listenGuestVsockBacklog(dbguest.ControlPort, 8)
 	if err != nil {
@@ -299,7 +303,7 @@ func (g *databaseGuest) asDatabaseUser(cmd *exec.Cmd) *exec.Cmd {
 }
 
 func (g *databaseGuest) startPostgres() {
-	args := databaseServerArgs(g.major, g.memKiB)
+	args := databaseServerArgs(g.major, g.memKiB, g.archive)
 	cmd := g.asDatabaseUser(exec.Command(args[0], args[1:]...))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -361,6 +365,9 @@ func (g *databaseGuest) stop() {
 
 func (g *databaseGuest) shutdown(postmaster *os.Process) {
 	defer close(g.done)
+	if postmaster != nil && g.archive {
+		g.drainArchive()
+	}
 	if postmaster != nil {
 		_ = postmaster.Signal(syscall.SIGINT)
 		select {
@@ -378,6 +385,42 @@ func (g *databaseGuest) shutdown(postmaster *os.Process) {
 	if err := unix.Unmount(databaseMountPoint, 0); err != nil && !errors.Is(err, unix.EINVAL) {
 		g.log.Warn("database volume unmount failed", "err", err)
 	}
+}
+
+// drainArchive switches to a new WAL segment and waits for the archiver to
+// ship everything before a clean stop, so parking loses no committed work
+// off the node. It gives up after databaseArchiveDrainWait: a stalled
+// archive must not block the park, and the volume still holds the WAL.
+func (g *databaseGuest) drainArchive() {
+	ctx, cancel := context.WithTimeout(context.Background(), databaseArchiveDrainWait)
+	defer cancel()
+	target, err := g.query(ctx, "SELECT pg_walfile_name(pg_switch_wal())")
+	if err != nil || target == "" {
+		g.log.Warn("database archive drain: switch failed", "err", err)
+		return
+	}
+	for {
+		archived, err := g.query(ctx, "SELECT coalesce(last_archived_wal, '') FROM pg_stat_archiver")
+		if err == nil && len(archived) >= 24 && archived[:24] >= target {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			g.log.Warn("database archive drain timed out", "target", target, "archived", archived)
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// query runs one read-only statement as the superuser and returns its
+// single value.
+func (g *databaseGuest) query(ctx context.Context, sql string) (string, error) {
+	args := databasePsqlArgs(g.major)
+	args = append(args[:len(args)-2], "-tA", "-c", sql)
+	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
 }
 
 // serveData bridges each vsock session to PostgreSQL's local socket.

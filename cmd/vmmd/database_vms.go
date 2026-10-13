@@ -37,6 +37,10 @@ type DatabaseVMConfig struct {
 	BaseDir      string            `toml:"base_dir"`
 	GuestInit    string            `toml:"guest_init"`
 	ParentCgroup string            `toml:"parent_cgroup"`
+	// ArchiveSocket is dbbackupd's socket. When set, every database VM
+	// archives its WAL there through vmmd's relay; empty leaves archiving
+	// off.
+	ArchiveSocket string `toml:"archive_socket"`
 }
 
 const (
@@ -93,12 +97,13 @@ func (c DatabaseVMConfig) runtimeConfig(leases dbvm.Leaser) (dbvm.RuntimeConfig,
 	}
 	slices.SortFunc(images, func(a, b databaseImage) int { return a.major - b.major })
 	return dbvm.RuntimeConfig{
-		JailBase:     orDefault(c.JailBase, defaultDatabaseJailBase),
-		VolumeRoot:   orDefault(c.VolumeRoot, defaultDatabaseVolumeRoot),
-		KernelPath:   c.KernelPath,
-		Bases:        bases,
-		ParentCgroup: orDefault(c.ParentCgroup, defaultDatabaseParentCgroup),
-		Leases:       leases,
+		JailBase:      orDefault(c.JailBase, defaultDatabaseJailBase),
+		VolumeRoot:    orDefault(c.VolumeRoot, defaultDatabaseVolumeRoot),
+		KernelPath:    c.KernelPath,
+		Bases:         bases,
+		ParentCgroup:  orDefault(c.ParentCgroup, defaultDatabaseParentCgroup),
+		Leases:        leases,
+		ArchiveSocket: c.ArchiveSocket,
 	}, images, nil
 }
 

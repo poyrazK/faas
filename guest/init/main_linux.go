@@ -69,6 +69,11 @@ const (
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	// PostgreSQL's archive_command and restore_command run guest-init as an
+	// ordinary process (ADR-1027); only PID 1 boots.
+	if os.Getpid() != 1 && len(os.Args) > 1 && os.Args[1] == "archive-wal" {
+		os.Exit(runArchiveWAL(os.Args[2:]))
+	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
 		os.Exit(1)
@@ -91,7 +96,7 @@ func boot() error {
 		}
 		if database {
 			guestStage("mode-database")
-			return runDatabaseGuest(slog.Default(), major)
+			return runDatabaseGuest(slog.Default(), major, dbguest.ArchiveEnabled(string(cmdline)))
 		}
 	}
 	root, err := assembleOverlay()

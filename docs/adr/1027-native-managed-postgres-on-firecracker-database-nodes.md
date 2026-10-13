@@ -309,6 +309,40 @@ it as files); schedd's `[database_scheduler]` and gatewayd's
 `database_route_upstreams` on the control plane and compute nodes; and
 database hosts are not yet a manifest role.
 
+### Durability: WAL archiving, base backups, point-in-time restore
+
+Database VMs have no network, so WAL leaves and returns over vsock, and
+storage is owned by an unprivileged daemon on the database node:
+
+```
+guest PostgreSQL --archive_command--> guest-init archive-wal --vsock 5434-->
+  vmmd relay (stamps the database id it booted) --unix socket-->
+  dbbackupd: fsync to the node-local archive, then upload to object storage
+```
+
+- **Identity comes from the host.** vmmd prefixes every relayed stream with
+  the database id of the VM it started, plus the restore source when it
+  started one. A guest cannot name another database's archive.
+- **WAL archiving.** PostgreSQL runs with `archive_mode = on` and
+  `archive_timeout = 60s`. `archive_command` is guest-init's `archive-wal`.
+  It reports success only after dbbackupd has fsynced the segment on the
+  node, so PostgreSQL keeps (and retries) anything not yet durable.
+  dbbackupd uploads to object storage afterwards. The upload lag is the
+  off-node recovery point, and it is exported as a metric.
+- **Base backups.** guest-init's `basebackup` control op runs
+  `pg_basebackup -Ft -X none` against the local socket and streams the tar
+  to dbbackupd over the same vsock path. schedd schedules them per
+  database.
+- **Point-in-time restore** always creates a new database, never an
+  overwrite (the portable contract). schedd places a new VM. guest-init,
+  booting in restore mode, pulls the newest base backup before the target
+  time from dbbackupd, then recovers with
+  `restore_command = archive-wal get` (segments fetched lazily from the
+  source's archive) and `recovery_target_time`, then promotes.
+- **vmmd stays a relay.** It holds no storage credentials and parses no
+  backup data. dbbackupd holds the object-storage credentials, the catalog
+  and retention.
+
 ### Driver
 
 `pkg/managedpostgres/firecracker` is the `managedpostgres.Provider` for this

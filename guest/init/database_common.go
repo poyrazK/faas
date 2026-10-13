@@ -63,7 +63,15 @@ func databaseSharedBuffersMB(memTotalKiB int64) int64 {
 // hold for every database VM are passed as -c flags so a tenant's
 // postgresql.conf cannot weaken them: no TCP listener, the socket in
 // /run, no JIT.
-func databaseServerArgs(major int, memTotalKiB int64) []string {
+// databaseArchiveCommand ships each completed WAL file to the host through
+// guest-init itself (pkg/dbarchive); PostgreSQL retries until it succeeds.
+const databaseArchiveCommand = "/sbin/init archive-wal put %p %f"
+
+// databaseArchiveTimeout bounds how long committed work can sit in an
+// unarchived segment: a quiet database still ships every minute.
+const databaseArchiveTimeout = "60s"
+
+func databaseServerArgs(major int, memTotalKiB int64, archive bool) []string {
 	settings := []string{
 		"listen_addresses=",
 		"unix_socket_directories=" + databaseSocketDir,
@@ -74,6 +82,13 @@ func databaseServerArgs(major int, memTotalKiB int64) []string {
 		"jit=off",
 		"dynamic_shared_memory_type=posix",
 		"password_encryption=scram-sha-256",
+	}
+	if archive {
+		settings = append(settings,
+			"archive_mode=on",
+			"archive_command="+databaseArchiveCommand,
+			"archive_timeout="+databaseArchiveTimeout,
+		)
 	}
 	args := []string{databaseBinDir(major) + "/postgres", "-D", databasePGData}
 	for _, s := range settings {

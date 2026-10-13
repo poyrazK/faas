@@ -25,6 +25,14 @@ const (
 	DataPort uint32 = 5432
 	// ControlPort serves the newline-delimited JSON control protocol.
 	ControlPort uint32 = 5433
+	// ArchivePort is the host vsock port guest-initiated archive streams
+	// (WAL and base backups, pkg/dbarchive) reach; vmmd relays them to
+	// dbbackupd.
+	ArchivePort uint32 = 5434
+	// ArchiveArg on the kernel command line turns WAL archiving on. vmmd
+	// sets it only when it relays archive streams: archiving into nothing
+	// would grow pg_wal without bound.
+	ArchiveArg = "gregale.archive=1"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -123,6 +131,17 @@ func BootArgs(major int) (string, error) {
 		return "", fmt.Errorf("unsupported postgres major %d", major)
 	}
 	return ModeArg + " " + MajorArgKey + "=" + strconv.Itoa(major), nil
+}
+
+// ArchiveEnabled reports whether the kernel command line turns WAL
+// archiving on.
+func ArchiveEnabled(cmdline string) bool {
+	for _, field := range strings.Fields(cmdline) {
+		if field == ArchiveArg {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseCmdline reports whether the kernel command line selects database

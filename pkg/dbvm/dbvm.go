@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/onebox-faas/faas/pkg/dbguest"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
@@ -42,6 +43,9 @@ type Spec struct {
 	VsockUDS string
 	// VolumeRateLimiter caps the volume's bandwidth and IOPS per class.
 	VolumeRateLimiter *fcvm.RateLimiter
+	// Archive turns WAL archiving on in the guest; set only when the host
+	// relays archive streams (pkg/dbarchive).
+	Archive bool
 }
 
 // Validate rejects a spec that would not boot a database VM.
@@ -68,6 +72,9 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 		return fcvm.VMConfig{}, err
 	}
 	bootArgs, err := fcvm.DatabaseBootArgs(s.Major)
+	if err == nil && s.Archive {
+		bootArgs += " " + dbguest.ArchiveArg
+	}
 	if err != nil {
 		return fcvm.VMConfig{}, fmt.Errorf("dbvm: %w", err)
 	}

@@ -50,7 +50,7 @@ func TestDatabaseSharedBuffersMB(t *testing.T) {
 // TestDatabaseServerArgsPinSafetySettings pins the settings that must hold
 // in every database VM regardless of the tenant's postgresql.conf.
 func TestDatabaseServerArgsPinSafetySettings(t *testing.T) {
-	args := databaseServerArgs(17, 384*1024)
+	args := databaseServerArgs(17, 384*1024, false)
 	if args[0] != "/usr/lib/postgresql/17/bin/postgres" || args[1] != "-D" || args[2] != databasePGData {
 		t.Fatalf("unexpected binary or data dir: %v", args[:3])
 	}
@@ -68,6 +68,21 @@ func TestDatabaseServerArgsPinSafetySettings(t *testing.T) {
 	} {
 		if !strings.Contains(joined+" ", want) {
 			t.Errorf("server args missing %q in %q", want, joined)
+		}
+	}
+}
+
+// adr: 1027 — archiving is on only when the host relays it; otherwise
+// archive_mode would grow pg_wal without bound.
+func TestDatabaseServerArgsArchiveOnlyWhenRelayed(t *testing.T) {
+	off := strings.Join(databaseServerArgs(17, 384*1024, false), " ")
+	if strings.Contains(off, "archive_") {
+		t.Fatalf("archiving configured without a relay: %s", off)
+	}
+	on := strings.Join(databaseServerArgs(17, 384*1024, true), " ")
+	for _, want := range []string{"-c archive_mode=on", "-c archive_command=/sbin/init archive-wal put %p %f", "-c archive_timeout=60s"} {
+		if !strings.Contains(on, want) {
+			t.Errorf("archiving args missing %q in %q", want, on)
 		}
 	}
 }
