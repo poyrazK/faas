@@ -119,6 +119,9 @@ type OperationWorkflowReadinessNotificationCheck struct {
 
 // Follow-up queues aggregate retained coordination, not application execution tasks.
 type OperationWorkflowReadinessFollowUpOptions struct {
+	View           string `json:"view,omitempty"`
+	ActionKind     string `json:"action_kind,omitempty"`
+	ActionTrigger  string `json:"action_trigger,omitempty"`
 	ImpactPriority string `json:"impact_priority,omitempty"`
 	ImpactKind     string `json:"impact_kind,omitempty"`
 	ImpactCode     string `json:"impact_code,omitempty"`
@@ -160,6 +163,8 @@ type OperationWorkflowReadinessFollowUp struct {
 	Overdue              bool                                         `json:"overdue"`
 }
 type OperationWorkflowReadinessFollowUpsResponse struct {
+	View                  string                                    `json:"view,omitempty"`
+	NextActions           []OperationWorkflowNextActionQueueItem    `json:"next_actions,omitempty"`
 	BusinessImpactSummary []OperationWorkflowReadinessImpactSummary `json:"business_impact_summary,omitempty"`
 	DueReminderCount      int                                       `json:"due_reminder_count"`
 	Items                 []OperationWorkflowReadinessFollowUp      `json:"items"`
@@ -838,4 +843,17 @@ type OperationWorkflowCaseNextAction struct {
 	Sequence       int64                                 `json:"sequence"`
 	Evidence       []OperationWorkflowReviewResponseLink `json:"evidence,omitempty"`
 	SharedPlan     bool                                  `json:"shared_plan,omitempty"`
+}
+
+type OperationWorkflowNextActionCase struct {
+	Subject          OperationSubject `json:"subject"`
+	Workflow         string           `json:"workflow"`
+	InstanceID       string           `json:"instance_id"`
+	PlatformTenantID string           `json:"platform_tenant_id,omitempty"`
+}
+type OperationWorkflowNextActionQueueItem struct {
+	Action               OperationWorkflowCaseNextAction   `json:"action"`
+	Cases                []OperationWorkflowNextActionCase `json:"cases"`
+	Scope                string                            `json:"scope"`
+	SubscriptionTenantID string                            `json:"subscription_tenant_id,omitempty"`
 }

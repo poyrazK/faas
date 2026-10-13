@@ -380,3 +380,5 @@ export type { OperationWorkflowReviewResponseScheduledReviewCancellationRequest,
 export type { OperationWorkflowReviewResponseScheduledReviewRescheduleRequest, OperationWorkflowReviewResponseScheduledReviewReschedule } from './customer-operations.js';
 
 export type { OperationWorkflowCaseNextAction } from './customer-operations.js';
+
+export type { OperationWorkflowNextActionQueueItem, OperationWorkflowNextActionCase } from './customer-operations.js';

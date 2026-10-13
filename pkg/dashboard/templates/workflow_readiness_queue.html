@@ -93,15 +93,18 @@
 </section>
 
 <section class="card" id="readiness-followups" data-url="{{.Data.FollowUpsURL}}" data-subscriptions-url="{{.Data.SubscriptionsURL}}" data-queue-url="{{.Data.QueueURL}}" data-list-url="{{.Data.ListURL}}">
-<h2>Follow-up work queue</h2>
+<h2>Next-action work queue</h2>
 <p role="status" aria-live="polite">Due reminders for these filters: <strong id="readiness-due-reminder-count">Checking…</strong></p>
 <button type="button" id="readiness-show-reminders">Show due reminders</button>
 <p>Due reminders are published periodically and stay with their original notification. Reschedule or clear the follow-up to retire its reminder.</p>
-<p>Pending follow-ups across this application's readiness inboxes, ordered by due time with overdue items first by default. Choose business priority ordering to triage unresolved reviews across workflow cases. Follow-up ownership tracks coordination; current readiness must be checked against application evidence.</p>
+<p>Find current next actions across workflow cases by responsible team, workflow, action type and deadline. Shared actions appear once with their matching cases. Switch to follow-ups for business-priority triage and due reminders; current readiness still requires application evidence.</p>
 <form id="readiness-work-form">
+<label>View <select name="view"><option value="next_actions">Next actions across workflow cases</option><option value="follow_ups">Follow-ups and reminders</option></select></label>
+<label>Action type <select name="action_kind"><option value="">All actions</option><option value="response_check_in">response check in</option><option value="decision_revalidation">decision revalidation</option><option value="handoff_acceptance">handoff acceptance</option><option value="handoff_reassignment">handoff reassignment</option><option value="escalation_acknowledgment">escalation acknowledgment</option><option value="coordinator_completion">coordinator completion</option><option value="scheduled_evidence_check">scheduled evidence check</option><option value="coordinator_evidence_review">coordinator evidence review</option><option value="coordinator_revision">coordinator revision</option><option value="dependency_review">dependency review</option><option value="follow_up">follow up</option></select></label>
+<label>Action trigger <select name="action_trigger"><option value="">All triggers</option><option value="human">Human obligations</option><option value="automatic">Scheduled checks</option><option value="suggested">Optional suggestions</option></select></label>
 <label>Environment <input name="scope" required maxlength="40" value="{{.Data.Options.Scope}}"></label>
 <label>Customer <input name="tenant_id" value="{{.Data.Options.TenantID}}" placeholder="All customers"></label>
-<label>Follow-up owner <input name="owner" maxlength="256" placeholder="All owners"></label>
+<label>Responsible owner or team <input name="owner" maxlength="256" placeholder="All owners"></label>
 <label>Workflow <input name="workflow" maxlength="63" value="{{.Data.Options.Workflow}}" placeholder="All workflows"></label>
 <label>Due <select name="due"><option value="all">All pending</option><option value="overdue">Overdue</option><option value="upcoming">Upcoming</option></select></label>
 <label>Review priority <select name="impact_priority"><option value="">All priorities</option><option value="critical">Critical</option><option value="high">High</option><option value="normal">Normal</option></select></label>
@@ -110,12 +113,12 @@
 <label>Order <select name="sort"><option value="due">Due time</option><option value="business_impact">Overdue, then business priority</option></select></label>
 <label><input type="checkbox" name="reminder_only" value="true" id="readiness-reminder-only"> Published due reminders only</label>
 <label>Page size <select name="limit"><option value="20">20</option><option value="50">50</option><option value="100">100</option></select></label>
-<button type="submit">Load follow-ups</button>
+<button type="submit">Load work queue</button>
 </form>
 <p id="readiness-work-message" role="status" aria-live="polite"></p>
 <div id="readiness-business-impact-summary"></div>
 <ol id="readiness-work-items" aria-live="polite"></ol>
-<button type="button" id="readiness-work-more" hidden>Load more follow-ups</button>
+<button type="button" id="readiness-work-more" hidden>Load more work</button>
 <p>Follow-ups share each inbox's latest-100 notification retention window. Pages are live and can move when work is edited; reload to rebuild the queue.</p>
 <noscript><p>The API and SDKs can list pending follow-ups across readiness inboxes.</p></noscript>
 </section>
@@ -725,6 +728,7 @@
  const count=document.getElementById('readiness-due-reminder-count'), showReminders=document.getElementById('readiness-show-reminders');
  const submit=form.querySelector('button');let generation=0, offset=0, loading=false, counting=false, refreshPending=false, applied;
  const formValues=()=>{const q=new URLSearchParams();for(const [k,v] of new FormData(form)){if(String(v).trim())q.set(k,String(v).trim());}return q;};
+ const syncView=()=>{const next=form.elements.namedItem('view').value==='next_actions';for(const name of ['impact_priority','impact_kind','impact_code','sort','reminder_only'])form.elements.namedItem(name).disabled=next;for(const name of ['action_kind','action_trigger'])form.elements.namedItem(name).disabled=!next;count.parentElement.hidden=next;showReminders.hidden=next;};form.elements.namedItem('view').addEventListener('change',syncView);syncView();
  const ids=new Set();
  const text=(parent,value)=>{const p=document.createElement('p');p.textContent=value;parent.append(p);return p;};
  const request=async(url,options={})=>{const response=await fetch(url,{credentials:'same-origin',redirect:'error',cache:'no-store',...options});if(!response.ok){let p;try{p=await response.json();}catch{}throw new Error(p?.detail || p?.title || 'Follow-up request failed ('+response.status+').');}return response.json();};
@@ -740,6 +744,7 @@
    summary.append(entry);
   }
  };
+ const drawAction=(row)=>{const action=row.action,key=action.subscription_id+'/'+action.sequence+'/'+action.kind;if(ids.has(key))return;ids.add(key);const li=document.createElement('li');text(li,action.kind.replace(/_/g,' ')+' · '+(action.owner||'Unassigned')+' · '+(action.trigger==='automatic'?'Scheduled worker check':action.trigger==='suggested'?'Optional suggestion':'Human obligation')+(action.due_at?' · '+(action.overdue?'Overdue':'Due')+' '+new Date(action.due_at).toLocaleString():' · No recorded deadline'));text(li,action.summary);for(const c of row.cases)text(li,c.workflow+' / '+c.instance_id+' · '+c.subject.type+': '+c.subject.id+(c.platform_tenant_id?' · Customer '+c.platform_tenant_id:''));if(action.shared_plan)text(li,'Shared record: source controls can affect additional cases.');const q=new URLSearchParams({scope:row.scope});if(row.subscription_tenant_id)q.set('tenant_id',row.subscription_tenant_id);const link=document.createElement('a');link.href=panel.dataset.queueUrl+'?'+q+'#readiness-subscriptions/'+encodeURIComponent(action.subscription_id)+'/'+action.sequence;link.textContent='Open action controls';li.append(link);for(const ref of action.evidence||[]){const evidence=document.createElement('a');evidence.href=panel.dataset.queueUrl+'?'+new URLSearchParams({scope:row.scope})+'#readiness-subscriptions/'+encodeURIComponent(ref.subscription_id)+'/'+ref.sequence;evidence.textContent='Linked review evidence · '+ref.workflow+' / '+ref.instance_id;li.append(document.createElement('br'),evidence);}list.append(li);};
  const draw=(row)=>{
   const key=row.subscription_id+'/'+row.sequence;if(ids.has(key))return;ids.add(key);
   const li=document.createElement('li');const c=row.coordination;const viewQuery=applied.toString();
@@ -781,23 +786,23 @@
  const read=async()=>{
   if(!applied || loading)return;loading=true;submit.disabled=true;more.disabled=true;const epoch=generation;
   const q=new URLSearchParams(applied);q.set('offset',String(offset));
-  try{const result=await request(panel.dataset.url+'?'+q);if(epoch!==generation)return;drawSummary(result.business_impact_summary);for(const row of result.items)draw(row);offset=result.next_offset;more.hidden=!result.has_more;count.textContent=String(result.due_reminder_count);message.textContent=result.total_count+' matching retained follow-ups; '+result.overdue_count+' overdue. Checked '+new Date(result.evaluated_at).toLocaleString()+'.'+(!result.items.length && !list.children.length ? ' No pending follow-ups match these filters.' : '')+(result.retention_limited ? ' Coordination is limited to retained notifications.' : '');}
+  try{const result=await request(panel.dataset.url+'?'+q);if(epoch!==generation)return;drawSummary(result.business_impact_summary);for(const row of result.next_actions||[])drawAction(row);for(const row of result.items)draw(row);offset=result.next_offset;more.hidden=!result.has_more;count.textContent=String(result.due_reminder_count);message.textContent=result.total_count+(result.view==='next_actions'?' matching retained actions; ':' matching retained follow-ups; ')+result.overdue_count+' overdue. Checked '+new Date(result.evaluated_at).toLocaleString()+'.'+(!(result.next_actions||[]).length && !result.items.length && !list.children.length ? ' No retained work matches these filters.' : '')+(result.retention_limited ? ' Coordination is limited to retained notifications.' : '');}
   catch(error){if(epoch===generation)message.textContent=error.message;}
   finally{loading=false;submit.disabled=false;more.disabled=false;if(refreshPending){refreshPending=false;void refresh();}}
  };
  const refresh=async()=>{if(loading){refreshPending=true;return;}generation++;offset=0;ids.clear();list.replaceChildren();summary.replaceChildren();more.hidden=true;await read();};
- form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;const selectors=formValues();if(selectors.has('impact_code')&&!selectors.has('impact_kind')){message.textContent='Choose Milestone or Outcome when filtering by a result code.';return;}applied=selectors;void refresh();});
+ form.addEventListener('submit',event=>{event.preventDefault();if(loading)return;syncView();const selectors=formValues();if(selectors.has('impact_code')&&!selectors.has('impact_kind')){message.textContent='Choose Milestone or Outcome when filtering by a result code.';return;}applied=selectors;void refresh();});
 
  more.addEventListener('click',()=>{void read();});
  const refreshCount=async()=>{
-  if(counting || document.hidden)return;counting=true;const epoch=generation;
+  if(counting || document.hidden || (applied||formValues()).get('view')==='next_actions')return;counting=true;const epoch=generation;
   const selectors=applied || formValues(), identity=selectors.toString(), q=new URLSearchParams(selectors);q.set('limit','1');q.set('offset','0');
   try{const result=await request(panel.dataset.url+'?'+q);if(epoch===generation && (applied || formValues()).toString()===identity){count.textContent=String(result.due_reminder_count);count.title='Checked '+new Date(result.evaluated_at).toLocaleString();}}
   catch(error){if(epoch===generation){count.textContent='Unavailable';count.title=error.message;}}
   finally{counting=false;}
  };
- showReminders.addEventListener('click',()=>{if(loading)return;form.elements.namedItem('reminder_only').checked=true;form.elements.namedItem('due').value='all';form.requestSubmit();});
- window.addEventListener('gregale-business-impact-queue',event=>{if(loading)return;for(const field of form.elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=false;else field.value=event.detail[field.name]||(field.name==='due'?'all':field.name==='sort'?'business_impact':field.name==='limit'?'20':'');}panel.scrollIntoView();form.requestSubmit();});
+ showReminders.addEventListener('click',()=>{if(loading)return;form.elements.namedItem('view').value='follow_ups';syncView();form.elements.namedItem('reminder_only').checked=true;form.elements.namedItem('due').value='all';form.requestSubmit();});
+ window.addEventListener('gregale-business-impact-queue',event=>{if(loading)return;for(const field of form.elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=false;else field.value=event.detail[field.name]||(field.name==='view'?'follow_ups':field.name==='due'?'all':field.name==='sort'?'business_impact':field.name==='limit'?'20':'');}panel.scrollIntoView();form.requestSubmit();});
  window.setInterval(()=>{void refreshCount();},30000);
  document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refreshCount();});
  void refreshCount();

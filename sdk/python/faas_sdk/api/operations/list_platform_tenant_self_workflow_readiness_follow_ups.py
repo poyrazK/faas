@@ -6,6 +6,12 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_action_kind import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind,
+)
+from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_action_trigger import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger,
+)
 from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_due import (
     ListPlatformTenantSelfWorkflowReadinessFollowUpsDue,
 )
@@ -18,6 +24,9 @@ from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_impact_pr
 from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_sort import (
     ListPlatformTenantSelfWorkflowReadinessFollowUpsSort,
 )
+from ...models.list_platform_tenant_self_workflow_readiness_follow_ups_view import (
+    ListPlatformTenantSelfWorkflowReadinessFollowUpsView,
+)
 from ...models.operation_workflow_readiness_follow_ups_response import OperationWorkflowReadinessFollowUpsResponse
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
@@ -25,6 +34,9 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    view: ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     app_id: UUID,
     owner: str | Unset = UNSET,
@@ -40,6 +52,24 @@ def _get_kwargs(
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
+
+    json_view: str | Unset = UNSET
+    if not isinstance(view, Unset):
+        json_view = view
+
+    params["view"] = json_view
+
+    json_action_kind: str | Unset = UNSET
+    if not isinstance(action_kind, Unset):
+        json_action_kind = action_kind
+
+    params["action_kind"] = json_action_kind
+
+    json_action_trigger: str | Unset = UNSET
+    if not isinstance(action_trigger, Unset):
+        json_action_trigger = action_trigger
+
+    params["action_trigger"] = json_action_trigger
 
     params["scope"] = scope
 
@@ -151,6 +181,9 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient,
+    view: ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     app_id: UUID,
     owner: str | Unset = UNSET,
@@ -172,6 +205,9 @@ def sync_detailed(
     reads require Operations read.
 
     Args:
+        view (ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         app_id (UUID):
         owner (str | Unset):
@@ -194,6 +230,9 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        view=view,
+        action_kind=action_kind,
+        action_trigger=action_trigger,
         scope=scope,
         app_id=app_id,
         owner=owner,
@@ -218,6 +257,9 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient,
+    view: ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     app_id: UUID,
     owner: str | Unset = UNSET,
@@ -239,6 +281,9 @@ def sync(
     reads require Operations read.
 
     Args:
+        view (ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         app_id (UUID):
         owner (str | Unset):
@@ -262,6 +307,9 @@ def sync(
 
     return sync_detailed(
         client=client,
+        view=view,
+        action_kind=action_kind,
+        action_trigger=action_trigger,
         scope=scope,
         app_id=app_id,
         owner=owner,
@@ -280,6 +328,9 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
+    view: ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     app_id: UUID,
     owner: str | Unset = UNSET,
@@ -301,6 +352,9 @@ async def asyncio_detailed(
     reads require Operations read.
 
     Args:
+        view (ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         app_id (UUID):
         owner (str | Unset):
@@ -323,6 +377,9 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        view=view,
+        action_kind=action_kind,
+        action_trigger=action_trigger,
         scope=scope,
         app_id=app_id,
         owner=owner,
@@ -345,6 +402,9 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient,
+    view: ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset = UNSET,
+    action_kind: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset = UNSET,
+    action_trigger: ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset = UNSET,
     scope: str,
     app_id: UUID,
     owner: str | Unset = UNSET,
@@ -366,6 +426,9 @@ async def asyncio(
     reads require Operations read.
 
     Args:
+        view (ListPlatformTenantSelfWorkflowReadinessFollowUpsView | Unset):
+        action_kind (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionKind | Unset):
+        action_trigger (ListPlatformTenantSelfWorkflowReadinessFollowUpsActionTrigger | Unset):
         scope (str):
         app_id (UUID):
         owner (str | Unset):
@@ -390,6 +453,9 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            view=view,
+            action_kind=action_kind,
+            action_trigger=action_trigger,
             scope=scope,
             app_id=app_id,
             owner=owner,

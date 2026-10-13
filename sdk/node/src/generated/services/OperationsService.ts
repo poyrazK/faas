@@ -5404,6 +5404,9 @@ export class OperationsService {
   public static listAccountWorkflowReadinessFollowUps({
     slug,
     scope,
+    view,
+    actionKind,
+    actionTrigger,
     tenantId,
     owner,
     workflow,
@@ -5424,6 +5427,18 @@ export class OperationsService {
      * ListAccountWorkflowReadinessFollowUps. Application environment scope.
      */
     scope: string,
+    /**
+     * ListAccountWorkflowReadinessFollowUps.view. Select follow-ups (default) or current cross-case next actions. Next-action view uses action ownership/deadlines; reminder and business-impact selectors are incompatible.
+     */
+    view?: 'follow_ups' | 'next_actions',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
+     */
+    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up',
+    /**
+     * ListAccountWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
+     */
+    actionTrigger?: 'human' | 'automatic' | 'suggested',
     /**
      * ListAccountWorkflowReadinessFollowUps.tenant_id. Optional customer selector matches notification evidence or a customer-specific subscription, including broader account watches.
      */
@@ -5476,6 +5491,9 @@ export class OperationsService {
         'slug': slug,
       },
       query: {
+        'view': view,
+        'action_kind': actionKind,
+        'action_trigger': actionTrigger,
         'scope': scope,
         'tenant_id': tenantId,
         'owner': owner,
@@ -5515,6 +5533,9 @@ export class OperationsService {
   public static listPlatformTenantSelfWorkflowReadinessFollowUps({
     scope,
     appId,
+    view,
+    actionKind,
+    actionTrigger,
     owner,
     workflow,
     due,
@@ -5534,6 +5555,18 @@ export class OperationsService {
      * ListPlatformTenantSelfWorkflowReadinessFollowUps. Application UUID.
      */
     appId: string,
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.view. Select follow-ups (default) or current cross-case next actions. Next-action view uses action ownership/deadlines; reminder and business-impact selectors are incompatible.
+     */
+    view?: 'follow_ups' | 'next_actions',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
+     */
+    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up',
+    /**
+     * ListPlatformTenantSelfWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
+     */
+    actionTrigger?: 'human' | 'automatic' | 'suggested',
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.owner. Exact coordination owner, distinct from application blocker ownership.
      */
@@ -5579,6 +5612,9 @@ export class OperationsService {
       method: 'GET',
       url: '/v1/platform-tenant-self/workflow-readiness/follow-ups',
       query: {
+        'view': view,
+        'action_kind': actionKind,
+        'action_trigger': actionTrigger,
         'scope': scope,
         'app_id': appId,
         'owner': owner,

@@ -6,6 +6,10 @@ from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_readiness_follow_up_options_action_trigger import (
+    OperationWorkflowReadinessFollowUpOptionsActionTrigger,
+    check_operation_workflow_readiness_follow_up_options_action_trigger,
+)
 from ..models.operation_workflow_readiness_follow_up_options_due import (
     OperationWorkflowReadinessFollowUpOptionsDue,
     check_operation_workflow_readiness_follow_up_options_due,
@@ -22,6 +26,10 @@ from ..models.operation_workflow_readiness_follow_up_options_sort import (
     OperationWorkflowReadinessFollowUpOptionsSort,
     check_operation_workflow_readiness_follow_up_options_sort,
 )
+from ..models.operation_workflow_readiness_follow_up_options_view import (
+    OperationWorkflowReadinessFollowUpOptionsView,
+    check_operation_workflow_readiness_follow_up_options_view,
+)
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OperationWorkflowReadinessFollowUpOptions")
@@ -34,6 +42,13 @@ class OperationWorkflowReadinessFollowUpOptions:
     scope: str
     """OperationWorkflowReadinessFollowUpOptions.scope. Follow-up queue selector; customer tenant derives from
     authentication."""
+    view: OperationWorkflowReadinessFollowUpOptionsView | Unset = UNSET
+    """Default follow-up view or cross-case next-action rows. Next-action view uses action owners and deadlines and
+    rejects reminder/business-impact selectors."""
+    action_kind: str | Unset = UNSET
+    """Exact next-action kind; requires view=next_actions."""
+    action_trigger: OperationWorkflowReadinessFollowUpOptionsActionTrigger | Unset = UNSET
+    """Action trigger selector; requires view=next_actions."""
     impact_priority: OperationWorkflowReadinessFollowUpOptionsImpactPriority | Unset = UNSET
     """OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter."""
     impact_kind: OperationWorkflowReadinessFollowUpOptionsImpactKind | Unset = UNSET
@@ -70,6 +85,16 @@ class OperationWorkflowReadinessFollowUpOptions:
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope
+
+        view: str | Unset = UNSET
+        if not isinstance(self.view, Unset):
+            view = self.view
+
+        action_kind = self.action_kind
+
+        action_trigger: str | Unset = UNSET
+        if not isinstance(self.action_trigger, Unset):
+            action_trigger = self.action_trigger
 
         impact_priority: str | Unset = UNSET
         if not isinstance(self.impact_priority, Unset):
@@ -114,6 +139,12 @@ class OperationWorkflowReadinessFollowUpOptions:
                 "scope": scope,
             }
         )
+        if view is not UNSET:
+            field_dict["view"] = view
+        if action_kind is not UNSET:
+            field_dict["action_kind"] = action_kind
+        if action_trigger is not UNSET:
+            field_dict["action_trigger"] = action_trigger
         if impact_priority is not UNSET:
             field_dict["impact_priority"] = impact_priority
         if impact_kind is not UNSET:
@@ -145,6 +176,22 @@ class OperationWorkflowReadinessFollowUpOptions:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         scope = d.pop("scope")
+
+        _view = d.pop("view", UNSET)
+        view: OperationWorkflowReadinessFollowUpOptionsView | Unset
+        if isinstance(_view, Unset):
+            view = UNSET
+        else:
+            view = check_operation_workflow_readiness_follow_up_options_view(_view)
+
+        action_kind = d.pop("action_kind", UNSET)
+
+        _action_trigger = d.pop("action_trigger", UNSET)
+        action_trigger: OperationWorkflowReadinessFollowUpOptionsActionTrigger | Unset
+        if isinstance(_action_trigger, Unset):
+            action_trigger = UNSET
+        else:
+            action_trigger = check_operation_workflow_readiness_follow_up_options_action_trigger(_action_trigger)
 
         _impact_priority = d.pop("impact_priority", UNSET)
         impact_priority: OperationWorkflowReadinessFollowUpOptionsImpactPriority | Unset
@@ -202,6 +249,9 @@ class OperationWorkflowReadinessFollowUpOptions:
 
         operation_workflow_readiness_follow_up_options = cls(
             scope=scope,
+            view=view,
+            action_kind=action_kind,
+            action_trigger=action_trigger,
             impact_priority=impact_priority,
             impact_kind=impact_kind,
             impact_code=impact_code,

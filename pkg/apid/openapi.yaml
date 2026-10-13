@@ -39198,6 +39198,27 @@ paths:
       security:
       - bearerAuth: []
       parameters:
+      - name: view
+        in: query
+        required: false
+        description: ListAccountWorkflowReadinessFollowUps.view. Select follow-ups (default) or current cross-case next actions. Next-action view uses action ownership/deadlines; reminder and business-impact selectors are incompatible.
+        schema:
+          type: string
+          enum: [follow_ups, next_actions]
+      - name: action_kind
+        in: query
+        required: false
+        description: ListAccountWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
+        schema:
+          type: string
+          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
+      - name: action_trigger
+        in: query
+        required: false
+        description: ListAccountWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
+        schema:
+          type: string
+          enum: [human, automatic, suggested]
       - name: slug
         in: path
         required: true
@@ -39247,7 +39268,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 2000
+          maximum: 22000
       - name: limit
         in: query
         description: ListAccountWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
@@ -39317,6 +39338,27 @@ paths:
       security:
       - bearerAuth: []
       parameters:
+      - name: view
+        in: query
+        required: false
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.view. Select follow-ups (default) or current cross-case next actions. Next-action view uses action ownership/deadlines; reminder and business-impact selectors are incompatible.
+        schema:
+          type: string
+          enum: [follow_ups, next_actions]
+      - name: action_kind
+        in: query
+        required: false
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
+        schema:
+          type: string
+          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
+      - name: action_trigger
+        in: query
+        required: false
+        description: ListPlatformTenantSelfWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
+        schema:
+          type: string
+          enum: [human, automatic, suggested]
       - name: scope
         in: query
         required: true
@@ -39360,7 +39402,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 2000
+          maximum: 22000
       - name: limit
         in: query
         description: ListPlatformTenantSelfWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
@@ -80413,6 +80455,17 @@ components:
       description: Selectors for the live retained follow-up queue; offset pages may move as coordination is edited.
       additionalProperties: false
       properties:
+        view:
+          type: string
+          enum: [follow_ups, next_actions]
+          description: Default follow-up view or cross-case next-action rows. Next-action view uses action owners and deadlines and rejects reminder/business-impact selectors.
+        action_kind:
+          type: string
+          description: Exact next-action kind; requires view=next_actions.
+        action_trigger:
+          type: string
+          enum: [human, automatic, suggested]
+          description: Action trigger selector; requires view=next_actions.
         impact_priority:
           type: string
           enum: [normal, high, critical]
@@ -80464,7 +80517,7 @@ components:
         offset:
           type: integer
           minimum: 0
-          maximum: 2000
+          maximum: 22000
           description: OperationWorkflowReadinessFollowUpOptions.offset. Follow-up queue selector; customer tenant derives
             from authentication.
         limit:
@@ -81948,6 +82001,15 @@ components:
         apply before pagination. No notification edits are performed by this read.
       additionalProperties: false
       properties:
+        view:
+          type: string
+          enum: [next_actions]
+          description: Present for the next-action view; items remains empty and pagination/counts describe next_actions.
+        next_actions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNextActionQueueItem'
         business_impact_summary:
           type: array
           maxItems: 2000
@@ -82328,6 +82390,42 @@ components:
           format: int64
           minimum: 1
           description: OperationWorkflowCaseAction.sequence. Retained source notification sequence.
+    OperationWorkflowNextActionCase:
+      type: object
+      description: Exact workflow case affected by a current source action.
+      additionalProperties: false
+      required: [subject, workflow, instance_id]
+      properties:
+        subject:
+          $ref: '#/components/schemas/OperationSubject'
+        workflow:
+          type: string
+        instance_id:
+          type: string
+        platform_tenant_id:
+          type: string
+          format: uuid
+          description: Included only for authorized account operator views; platform tenant scope is implicit.
+    OperationWorkflowNextActionQueueItem:
+      type: object
+      additionalProperties: false
+      description: Current source action shown once across its matching workflow cases. Owner and due filters apply to the action, not parent coordination. Shared record controls affect all covered cases; evidence and case lists respect the customer/workflow selector.
+      required: [action, cases, scope]
+      properties:
+        action:
+          $ref: '#/components/schemas/OperationWorkflowCaseNextAction'
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/OperationWorkflowNextActionCase'
+        scope:
+          type: string
+        subscription_tenant_id:
+          type: string
+          format: uuid
+          description: Source subscription customer selector for opening its controls, distinct from affected case customers.
     OperationWorkflowCaseNextAction:
       type: object
       additionalProperties: false

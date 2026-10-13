@@ -7,6 +7,18 @@
  */
 export type OperationWorkflowReadinessFollowUpOptions = {
   /**
+   * Default follow-up view or cross-case next-action rows. Next-action view uses action owners and deadlines and rejects reminder/business-impact selectors.
+   */
+  view?: 'follow_ups' | 'next_actions';
+  /**
+   * Exact next-action kind; requires view=next_actions.
+   */
+  action_kind?: string;
+  /**
+   * Action trigger selector; requires view=next_actions.
+   */
+  action_trigger?: 'human' | 'automatic' | 'suggested';
+  /**
    * OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter.
    */
   impact_priority?: 'normal' | 'high' | 'critical';

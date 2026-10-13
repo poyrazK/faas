@@ -427,3 +427,6 @@ type OperationWorkflowReviewResponseScheduledReviewRescheduleRequest = api.Opera
 type OperationWorkflowReviewResponseScheduledReviewReschedule = api.OperationWorkflowReviewResponseScheduledReviewReschedule
 
 type OperationWorkflowCaseNextAction = api.OperationWorkflowCaseNextAction
+
+type OperationWorkflowNextActionQueueItem = api.OperationWorkflowNextActionQueueItem
+type OperationWorkflowNextActionCase = api.OperationWorkflowNextActionCase

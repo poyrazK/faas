@@ -1194,6 +1194,8 @@ export type { OperationWorkflowNewMissingConditionProgress } from './models/Oper
 export type { OperationWorkflowNewMissingConditionProgressChange } from './models/OperationWorkflowNewMissingConditionProgressChange.js';
 export type { OperationWorkflowNewMissingConditionProgressCount } from './models/OperationWorkflowNewMissingConditionProgressCount.js';
 export type { OperationWorkflowNewMissingConditionProgressInstance } from './models/OperationWorkflowNewMissingConditionProgressInstance.js';
+export type { OperationWorkflowNextActionCase } from './models/OperationWorkflowNextActionCase.js';
+export type { OperationWorkflowNextActionQueueItem } from './models/OperationWorkflowNextActionQueueItem.js';
 export type { OperationWorkflowOutcomeEntry } from './models/OperationWorkflowOutcomeEntry.js';
 export type { OperationWorkflowOutcomeGroup } from './models/OperationWorkflowOutcomeGroup.js';
 export type { OperationWorkflowOutcomeLink } from './models/OperationWorkflowOutcomeLink.js';

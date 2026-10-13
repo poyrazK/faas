@@ -6,9 +6,14 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..models.operation_workflow_readiness_follow_ups_response_view import (
+    OperationWorkflowReadinessFollowUpsResponseView,
+    check_operation_workflow_readiness_follow_ups_response_view,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_workflow_next_action_queue_item import OperationWorkflowNextActionQueueItem
     from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
     from ..models.operation_workflow_readiness_impact_summary import OperationWorkflowReadinessImpactSummary
 
@@ -45,6 +50,9 @@ class OperationWorkflowReadinessFollowUpsResponse:
     due_reminder_count: int
     """OperationWorkflowReadinessFollowUpsResponse.due_reminder_count. Active published reminders across all
     matching retained rows, before pagination. Overdue work may await the next bounded publisher pass."""
+    view: OperationWorkflowReadinessFollowUpsResponseView | Unset = UNSET
+    """Present for the next-action view; items remains empty and pagination/counts describe next_actions."""
+    next_actions: list[OperationWorkflowNextActionQueueItem] | Unset = UNSET
     business_impact_summary: list[OperationWorkflowReadinessImpactSummary] | Unset = UNSET
     """OperationWorkflowReadinessFollowUpsResponse.business_impact_summary. Matching retained unresolved review
     tasks grouped by workflow and protected result before pagination. Unique obligations and cases are deduplicated
@@ -71,6 +79,17 @@ class OperationWorkflowReadinessFollowUpsResponse:
 
         due_reminder_count = self.due_reminder_count
 
+        view: str | Unset = UNSET
+        if not isinstance(self.view, Unset):
+            view = self.view
+
+        next_actions: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.next_actions, Unset):
+            next_actions = []
+            for next_actions_item_data in self.next_actions:
+                next_actions_item = next_actions_item_data.to_dict()
+                next_actions.append(next_actions_item)
+
         business_impact_summary: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.business_impact_summary, Unset):
             business_impact_summary = []
@@ -92,6 +111,10 @@ class OperationWorkflowReadinessFollowUpsResponse:
                 "due_reminder_count": due_reminder_count,
             }
         )
+        if view is not UNSET:
+            field_dict["view"] = view
+        if next_actions is not UNSET:
+            field_dict["next_actions"] = next_actions
         if business_impact_summary is not UNSET:
             field_dict["business_impact_summary"] = business_impact_summary
 
@@ -99,6 +122,7 @@ class OperationWorkflowReadinessFollowUpsResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_next_action_queue_item import OperationWorkflowNextActionQueueItem
         from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
         from ..models.operation_workflow_readiness_impact_summary import OperationWorkflowReadinessImpactSummary
 
@@ -124,6 +148,22 @@ class OperationWorkflowReadinessFollowUpsResponse:
 
         due_reminder_count = d.pop("due_reminder_count")
 
+        _view = d.pop("view", UNSET)
+        view: OperationWorkflowReadinessFollowUpsResponseView | Unset
+        if isinstance(_view, Unset):
+            view = UNSET
+        else:
+            view = check_operation_workflow_readiness_follow_ups_response_view(_view)
+
+        _next_actions = d.pop("next_actions", UNSET)
+        next_actions: list[OperationWorkflowNextActionQueueItem] | Unset = UNSET
+        if _next_actions is not UNSET:
+            next_actions = []
+            for next_actions_item_data in _next_actions:
+                next_actions_item = OperationWorkflowNextActionQueueItem.from_dict(next_actions_item_data)
+
+                next_actions.append(next_actions_item)
+
         _business_impact_summary = d.pop("business_impact_summary", UNSET)
         business_impact_summary: list[OperationWorkflowReadinessImpactSummary] | Unset = UNSET
         if _business_impact_summary is not UNSET:
@@ -144,6 +184,8 @@ class OperationWorkflowReadinessFollowUpsResponse:
             has_more=has_more,
             retention_limited=retention_limited,
             due_reminder_count=due_reminder_count,
+            view=view,
+            next_actions=next_actions,
             business_impact_summary=business_impact_summary,
         )
 

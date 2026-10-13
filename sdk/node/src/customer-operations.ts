@@ -322,6 +322,9 @@ export class GregaleOperationClient {
 
   workflowReadinessFollowUps(options: OperationWorkflowReadinessFollowUpOptions, signal?: AbortSignal): Promise<OperationWorkflowReadinessFollowUpsResponse> {
     const q = readinessSubscriptionQuery(options);
+    if (options.view !== undefined) q.set('view', options.view);
+    if (options.actionKind !== undefined) q.set('action_kind', options.actionKind);
+    if (options.actionTrigger !== undefined) q.set('action_trigger', options.actionTrigger);
     if (options.impactPriority !== undefined) q.set('impact_priority', options.impactPriority);
     if (options.impactKind !== undefined) q.set('impact_kind', options.impactKind);
     if (options.impactCode !== undefined) q.set('impact_code', options.impactCode);
@@ -331,7 +334,7 @@ export class GregaleOperationClient {
     if (options.workflow !== undefined) q.set('workflow', options.workflow);
     if (options.due !== undefined) q.set('due', options.due);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > 2000) throw new Error('Invalid follow-up offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > (options.view === 'next_actions' ? 22000 : 2000)) throw new Error('Invalid follow-up offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {
@@ -785,9 +788,9 @@ export interface OperationWorkflowReadinessCoordination extends Omit<OperationWo
 export interface OperationWorkflowReadinessHandoff { summary: string; baseline_evaluated_at?: string; comparable: boolean; limitations: string[] }
 export interface OperationWorkflowReadinessNotificationCheck { business_outcome?: OperationWorkflowReadinessBusinessOutcome; handoff: OperationWorkflowReadinessHandoff; notification: OperationWorkflowReadinessNotification; checked_at: string; status: string; change?: OperationWorkflowReadinessChange }
 
-export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { impactPriority?: 'normal' | 'high' | 'critical'; impactKind?: 'milestone' | 'outcome'; impactCode?: string; sort?: 'due' | 'business_impact'; reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
+export interface OperationWorkflowReadinessFollowUpOptions extends OperationWorkflowReadinessSubscriptionOptions { view?: 'follow_ups' | 'next_actions'; actionKind?: string; actionTrigger?: 'human' | 'automatic' | 'suggested'; impactPriority?: 'normal' | 'high' | 'critical'; impactKind?: 'milestone' | 'outcome'; impactCode?: string; sort?: 'due' | 'business_impact'; reminderOnly?: boolean; owner?: string; workflow?: string; due?: 'all' | 'overdue' | 'upcoming'; offset?: number; limit?: number }
 export interface OperationWorkflowReadinessFollowUp { attention_due_at?: string; review_response?: OperationWorkflowReviewResponse; business_impact?: OperationWorkflowReadinessImpactEvent; playbook_step?: OperationWorkflowPlaybookStepAssignment; playbook_escalation?: OperationWorkflowPlaybookOutcomeEscalation; outcome_escalation?: OperationWorkflowReadinessOutcomeEscalation; reminder?: OperationWorkflowReadinessDueReminder; subscription_id: string; subscription_name: string; subscription_tenant_id?: string; platform_tenant_id?: string; scope: string; notification_id: string; sequence: number; kind: string; created_at: string; coordination: OperationWorkflowReadinessCoordination; workflow?: string; instance_id?: string; subject?: OperationSubject; operation?: string; from_state?: string; to_state?: string; overdue: boolean }
-export interface OperationWorkflowReadinessFollowUpsResponse { business_impact_summary?: OperationWorkflowReadinessImpactSummary[]; due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
+export interface OperationWorkflowReadinessFollowUpsResponse { view?: 'next_actions'; next_actions?: OperationWorkflowNextActionQueueItem[]; business_impact_summary?: OperationWorkflowReadinessImpactSummary[]; due_reminder_count: number; items: OperationWorkflowReadinessFollowUp[]; evaluated_at: string; total_count: number; overdue_count: number; next_offset: number; has_more: boolean; retention_limited: boolean }
 
 export interface OperationWorkflowReadinessDueReminder { id: string; due_at: string; created_at: string }
 
@@ -934,3 +937,6 @@ export type OperationWorkflowReviewResponseScheduledReviewRescheduleRequest = im
 export type OperationWorkflowReviewResponseScheduledReviewReschedule = import('./generated/models/OperationWorkflowReviewResponseScheduledReviewReschedule.js').OperationWorkflowReviewResponseScheduledReviewReschedule;
 
 export type OperationWorkflowCaseNextAction = import('./generated/models/OperationWorkflowCaseNextAction.js').OperationWorkflowCaseNextAction;
+
+export type OperationWorkflowNextActionQueueItem = import('./generated/models/OperationWorkflowNextActionQueueItem.js').OperationWorkflowNextActionQueueItem;
+export type OperationWorkflowNextActionCase = import('./generated/models/OperationWorkflowNextActionCase.js').OperationWorkflowNextActionCase;

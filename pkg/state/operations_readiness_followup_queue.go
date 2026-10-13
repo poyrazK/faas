@@ -31,10 +31,20 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 	if err != nil {
 		return out, err
 	}
-	if len(opts.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(opts.Owner) || strings.TrimSpace(opts.Owner) != opts.Owner || strings.IndexFunc(opts.Owner, unicode.IsControl) >= 0 || opts.Workflow != "" && api.ValidateOperationWorkflowName(opts.Workflow) != nil || opts.Offset < 0 || opts.Offset > api.OperationWorkflowReadinessFollowUpCandidatesMax || opts.Due != "" && opts.Due != "all" && opts.Due != "overdue" && opts.Due != "upcoming" {
+	if len(opts.Owner) > api.OperationWorkflowReadinessFollowUpOwnerMaxBytes || !utf8.ValidString(opts.Owner) || strings.TrimSpace(opts.Owner) != opts.Owner || strings.IndexFunc(opts.Owner, unicode.IsControl) >= 0 || opts.Workflow != "" && api.ValidateOperationWorkflowName(opts.Workflow) != nil || opts.Offset < 0 || opts.Offset > readinessQueueOffsetMax(opts.View) || opts.Due != "" && opts.Due != "all" && opts.Due != "overdue" && opts.Due != "upcoming" {
 		return out, ErrInvalidArgument
 	}
 	if !slices.Contains([]string{"", "normal", "high", "critical"}, opts.ImpactPriority) || !slices.Contains([]string{"", "milestone", "outcome"}, opts.ImpactKind) || !slices.Contains([]string{"", "due", "business_impact"}, opts.Sort) || (opts.ImpactCode != "" && (opts.ImpactKind == "" || api.ValidateOperationWorkflowStateName(opts.ImpactCode) != nil)) {
+		return out, ErrInvalidArgument
+	}
+	if !slices.Contains([]string{"", "follow_ups", "next_actions"}, opts.View) || !slices.Contains([]string{"", "human", "automatic", "suggested"}, opts.ActionTrigger) || opts.ActionKind != "" && !slices.Contains(workflowNextActionKinds, opts.ActionKind) {
+		return out, ErrInvalidArgument
+	}
+	if opts.View == "next_actions" {
+		if opts.ImpactPriority != "" || opts.ImpactKind != "" || opts.ImpactCode != "" || opts.ReminderOnly || opts.Sort == "business_impact" {
+			return out, ErrInvalidArgument
+		}
+	} else if opts.ActionKind != "" || opts.ActionTrigger != "" {
 		return out, ErrInvalidArgument
 	}
 	rows, err := store.readReadinessFollowUps(ctx, account, tenant, normalized.AppID, opts.Scope, operator)
@@ -42,6 +52,9 @@ func listReadinessFollowUps(ctx context.Context, store readinessFollowUpBackend,
 		return out, err
 	}
 	out.EvaluatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	if opts.View == "next_actions" {
+		return nextActionWorkQueue(ctx, rows, tenant, opts, operator, normalized.Limit, out)
+	}
 	matched := []api.OperationWorkflowReadinessFollowUp{}
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
