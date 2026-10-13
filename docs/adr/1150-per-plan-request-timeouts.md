@@ -50,7 +50,7 @@ streams, report generation and large exports all run past 30 s.
 5. **Async invocations unchanged.** Async, queue and cron invocations
    carry no request budget, so the runner keeps its 30 s default for
    them. Lengthening those means extending invocation leases; it is a
-   follow-up. *Superseded by ADR-1151, which gives them the app's
+   follow-up. *Superseded by ADR-1180, which gives them the app's
    request timeout.*
 
 6. **A request in flight keeps its instance.** A function's idle timeout

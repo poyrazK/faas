@@ -1,4 +1,4 @@
-# ADR-1151: Long async, queue and cron invocations
+# ADR-1180: Long async, queue and cron invocations
 
 - **Status:** accepted
 - **Date:** 2026-10-12

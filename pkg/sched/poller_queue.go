@@ -181,7 +181,7 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 	}
 	store := state.NewPgStore(q.pool)
 	// A batch for a long-timeout app may hold one record for its whole run
-	// (ADR-1151); the claims must outlast it or they would be requeued
+	// (ADR-1180); the claims must outlast it or they would be requeued
 	// while the handler still ran.
 	leaseSeconds := 600
 	if timeout := appAsyncInvocationTimeout(ctx, store, t.AppID.String()); timeout > api.AsyncInvocationTimeoutFloor {

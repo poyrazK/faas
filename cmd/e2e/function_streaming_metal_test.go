@@ -104,7 +104,7 @@ func TestFunctionStreamingMetal(t *testing.T) {
 	}
 }
 
-// TestFunctionLongRequestMetal is the ADR-1150 and ADR-1151 acceptance: a Pro
+// TestFunctionLongRequestMetal is the ADR-1150 and ADR-1180 acceptance: a Pro
 // function with request_timeout_s=120 streams for about 36 s, past the
 // runner's old fixed 30 s, and its handler sees the gateway's deadline header.
 // An async invocation of the same function then runs for 40 s and completes
@@ -174,8 +174,8 @@ func TestFunctionLongRequestMetal(t *testing.T) {
 		t.Fatalf("handler saw X-Faas-Deadline-Ms=%d; want the gateway's budget (60–120 s), not the client's", deadline)
 	}
 
-	// ADR-1151: an async invocation of the same function may run for its
-	// request timeout too. /work runs for 40 s; before ADR-1151 the runner
+	// ADR-1180: an async invocation of the same function may run for its
+	// request timeout too. /work runs for 40 s; before ADR-1180 the runner
 	// cut every async invocation at 30 s.
 	body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+result.slug+"/invoke/async", api.InvokeRequest{Path: "/work"})
 	if status != http.StatusAccepted {
@@ -226,7 +226,7 @@ func deployBinaryFunctionWith(t *testing.T, h *e2etest.Harness, pool *pgxpool.Po
 
 // longStreamCHandlerSource streams four ticks 12 s apart on /long, each
 // carrying the X-Faas-Deadline-Ms value the handler received. /work runs for
-// 40 s and answers once with the deadline it received (ADR-1151). Other paths
+// 40 s and answers once with the deadline it received (ADR-1180). Other paths
 // answer at once so the deploy smoke check stays quick.
 func longStreamCHandlerSource(t *testing.T) []byte {
 	t.Helper()

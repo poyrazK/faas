@@ -229,7 +229,7 @@ func newAppAndCron(t *testing.T, store state.Store, accountID string, enabled bo
 	return app, c
 }
 
-// ADR-1151: a cron fire for a function whose invocations may run past 30 s
+// ADR-1180: a cron fire for a function whose invocations may run past 30 s
 // is persisted and left to the drain, so it cannot hold the cron loop.
 func TestCronDispatch_LongTimeoutFunctionHandsOffToDrain(t *testing.T) {
 	t.Parallel()

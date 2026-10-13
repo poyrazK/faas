@@ -97,7 +97,7 @@ func (f *fakeBatchDispatcher) blockAll() chan struct{} {
 }
 
 // spec: §4.10 — a trigger batch record is an async invocation of the bound
-// app, so it runs as long as that app's invocations may (ADR-1151).
+// app, so it runs as long as that app's invocations may (ADR-1180).
 func TestBatchRecordTimeoutFollowsTheAppsInvocationTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

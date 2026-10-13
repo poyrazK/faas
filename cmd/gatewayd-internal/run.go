@@ -835,7 +835,7 @@ func (a *synthAdapter) restoreDurableQueueIdentity(ctx context.Context, appID st
 // completes the invocation row, which is what makes sync invoke and async
 // polling return the function's actual response.
 // invocationTimeout is how long one synthetic invocation of appID may run:
-// the app's request timeout within its plan, at least 30 s (ADR-1151). A
+// the app's request timeout within its plan, at least 30 s (ADR-1180). A
 // failed lookup keeps the 30 s every invocation had before.
 func (a *synthAdapter) invocationTimeout(ctx context.Context, appID string) time.Duration {
 	if a.store == nil || appID == "" {
@@ -876,7 +876,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	// A synthetic invocation has no request budget of its own. Stamp the
 	// app's async timeout so the forwarder sends it as X-Faas-Deadline-Ms
-	// and the runner lets the handler run that long (ADR-1151).
+	// and the runner lets the handler run that long (ADR-1180).
 	timeout := a.invocationTimeout(ctx, inv.AppID)
 	ctx, cancelBudget, _ := reqbudget.WithRemaining(ctx, timeout, timeout, "synth", path)
 	defer cancelBudget()
@@ -1977,7 +1977,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return app.PublicAuthMode
 		}).
-		// ADR-1151: trigger batch records run as long as the app's
+		// ADR-1180: trigger batch records run as long as the app's
 		// invocations may.
 		WithInvocationTimeout(synth.invocationTimeout)
 	deps.synth.WithWorkflowAdmission(func(ctx context.Context, appID, runID, platformTenantID, stepName string, attempt int) error {

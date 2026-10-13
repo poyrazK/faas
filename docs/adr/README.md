@@ -493,7 +493,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1162 | [Billing delivery finality, a hard spend cap, and plan-history allowances](1162-billing-delivery-finality-spend-cap-and-plan-history.md) | accepted | `MeterUsageFinalAfter` gates provider delivery on final minutes; the spend cap bills up to the cap and parks capped accounts (`SpendCapJobDeferInterval` defers queued job tasks); app purge keeps usage; the month's allowance follows recorded plan activations |
 | 1235 | [Spec §12 operator alerts ship at warn](1235-spec12-operator-alerts-at-warn.md) | accepted | 26 §12 alerts that had no rule are implemented with fixtures, all warn and `public_status: internal` until paging is triaged; write-relay and safe-deploy names corrected to the exported `gatewayd_` / `meterd_` series |
 | 1236 | [Paging set: page only on symptoms that need a human now](1236-paging-set.md) | accepted | 96 page alerts become 27: 24 kept, 72 demoted to warn, near-expiry certificate pages and access-gating edge-rule compile errors added; every page alert has a firing fixture |
-| 1151 | [Long async, queue and cron invocations](1151-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases sized to the run; long runs leave the drain tick and cron loop |
+| 1180 | [Long async, queue and cron invocations](1180-long-async-invocations.md) | accepted | Background invocations run for the app's request timeout (≥30 s); leases renewed while the run lasts; long runs leave the drain tick and cron loop |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.

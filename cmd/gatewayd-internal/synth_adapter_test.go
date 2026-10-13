@@ -104,7 +104,7 @@ func TestSynthAdapterForwardInvocationStampsPlatformHeaders(t *testing.T) {
 	}
 }
 
-// ADR-1151: a synthetic invocation reaches the guest with the app's async
+// ADR-1180: a synthetic invocation reaches the guest with the app's async
 // timeout as its deadline, so the runner lets it run past 30 s.
 func TestSynthAdapterSendsTheAppsAsyncDeadline(t *testing.T) {
 	ctx := context.Background()

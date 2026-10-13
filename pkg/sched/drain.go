@@ -124,7 +124,7 @@ type Drain struct {
 	// dispatched in parallel for one drain tick. Queue-source rows stay
 	// serial per app so the FIFO contract is preserved.
 	dispatchConcurrency int
-	// longSlots bounds the invocations of long-timeout apps (ADR-1151)
+	// longSlots bounds the invocations of long-timeout apps (ADR-1180)
 	// this drain delivers in the background. A long invocation must not
 	// hold the tick, and with it every other tenant's due work.
 	longSlots chan struct{}
@@ -146,7 +146,7 @@ type Drain struct {
 const DefaultDrainDispatchConcurrency = 8
 
 // DefaultDrainLongDispatches bounds the invocations of long-timeout apps
-// (ADR-1151) one drain delivers in the background at once. A row beyond it
+// (ADR-1180) one drain delivers in the background at once. A row beyond it
 // stays pending for a later tick.
 const DefaultDrainLongDispatches = 256
 
@@ -817,7 +817,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 	// 3. Claim. An app whose invocations may run past 30 s holds a lease
 	// that outlasts the run; an expired lease would requeue the invocation
-	// while its handler still ran (ADR-1151). Its delivery runs in the
+	// while its handler still ran (ADR-1180). Its delivery runs in the
 	// background so it cannot hold this tick.
 	timeout := state.AsyncInvocationTimeout(ctx, d.store, app)
 	leaseSeconds := d.wakeLeaseSeconds
@@ -860,7 +860,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 }
 
 // acquireLongDispatch reserves a background delivery slot for an invocation
-// of a long-timeout app (ADR-1151). A FIFO queue message also takes its
+// of a long-timeout app (ADR-1180). A FIFO queue message also takes its
 // app's queue lane, so the app's next message waits for this one. It
 // returns false when no slot or lane is free; the row stays pending.
 func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
@@ -897,7 +897,7 @@ func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
 }
 
 // deliverClaimed wakes the app, delivers a claimed invocation and records
-// its outcome. timeout is how long the invocation may run (ADR-1151).
+// its outcome. timeout is how long the invocation may run (ADR-1180).
 func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeout time.Duration) {
 	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
 	defer stopClaim()

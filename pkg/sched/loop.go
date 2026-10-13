@@ -3361,7 +3361,7 @@ func DialGatewaySynthTarget(rawTarget string, tlsCfg *tls.Config, log *slog.Logg
 			TLSClientConfig: tlsCfg,
 			// The gateway answers a dispatch only when the invocation ends.
 			// The context-bound client shares this transport, so the header
-			// wait must cover the longest dispatch (ADR-1151); the client's
+			// wait must cover the longest dispatch (ADR-1180); the client's
 			// Timeout or the call's context bounds every other call.
 			ResponseHeaderTimeout: api.AsyncInvocationDispatchMax,
 		}
@@ -3438,7 +3438,7 @@ func (h *httpGatewaySynth) WithMintInternalSvcToken(mint func(appID string) (str
 }
 
 // triggerClientTimeout is the trigger client's outer bound: the longest
-// batch any app's invocations allow (ADR-1151). postBatch sets each call's
+// batch any app's invocations allow (ADR-1180). postBatch sets each call's
 // own deadline.
 const triggerClientTimeout = api.AsyncInvocationDispatchMax + api.AsyncInvocationLeaseMargin
 
@@ -3468,7 +3468,7 @@ func HTTPClientForGatewaySynthTarget(target string) (*http.Client, string, error
 
 type longDispatchKey struct{}
 
-// withLongDispatch marks an invocation of a long-timeout app (ADR-1151): the
+// withLongDispatch marks an invocation of a long-timeout app (ADR-1180): the
 // context's deadline, not the synth client's 30 s, bounds its dispatch.
 func withLongDispatch(ctx context.Context) context.Context {
 	return context.WithValue(ctx, longDispatchKey{}, true)
@@ -3705,7 +3705,7 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 
 func (h *httpGatewaySynth) invokeWithStatus(ctx context.Context, appID string, inv state.Invocation, wake *WakeResult) (state.Invocation, int, error) {
 	// A long-timeout app's invocation is bounded by its own dispatch
-	// deadline, not the client's 30 s (ADR-1151).
+	// deadline, not the client's 30 s (ADR-1180).
 	client := h.client
 	if isLongDispatch(ctx) {
 		client = h.contextBoundClient()
@@ -4664,7 +4664,7 @@ func nonZeroSchedTimePtr(value time.Time) *time.Time {
 
 // cronHandsOffToDrain reports whether a cron fire for appID is delivered by
 // the drain rather than inline: true when the app's invocations may run past
-// 30 s (ADR-1151). A failed lookup keeps the inline path.
+// 30 s (ADR-1180). A failed lookup keeps the inline path.
 func (l *Loop) cronHandsOffToDrain(ctx context.Context, appID string) bool {
 	store := l.engine.Store()
 	app, err := store.AppByID(ctx, appID)
@@ -4855,7 +4855,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 	// A function whose invocations may run past 30 s would hold this loop,
 	// and every cron behind it, for the whole run. Leave the persisted row to
 	// the drain, which delivers it in the background under a lease sized to
-	// the run (ADR-1151).
+	// the run (ADR-1180).
 	if enq.ID != "" && l.cronHandsOffToDrain(ctx, c.AppID) {
 		l.log.Debug("cron: long invocation handed to drain", "cron_id", c.ID, "invocation_id", enq.ID)
 		return CronRun{InvocationID: enq.ID}, true

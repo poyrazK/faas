@@ -98,7 +98,7 @@ func waitInvocationState(t *testing.T, store state.Store, id string, want state.
 	}
 }
 
-// ADR-1151: a long-timeout app's invocation holds a lease that outlasts its
+// ADR-1180: a long-timeout app's invocation holds a lease that outlasts its
 // run and is delivered in the background, so the tick does not wait for it.
 func TestDrain_LongTimeoutInvocationDeliversInTheBackground(t *testing.T) {
 	t.Parallel()
@@ -132,7 +132,7 @@ func TestDrain_LongTimeoutInvocationDeliversInTheBackground(t *testing.T) {
 	waitInvocationState(t, store, inv.ID, state.InvocationCompleted)
 }
 
-// ADR-1151: a long-timeout app's FIFO queue messages are delivered one at a
+// ADR-1180: a long-timeout app's FIFO queue messages are delivered one at a
 // time, in order, even though each runs in the background.
 func TestDrain_LongTimeoutQueueMessagesStayInOrder(t *testing.T) {
 	t.Parallel()
@@ -162,7 +162,7 @@ func TestDrain_LongTimeoutQueueMessagesStayInOrder(t *testing.T) {
 	}
 }
 
-// ADR-1151: an invocation of a long-timeout app is bounded by its own dispatch
+// ADR-1180: an invocation of a long-timeout app is bounded by its own dispatch
 // deadline, not the synth client's limit; an unmarked one keeps that limit.
 func TestLongDispatchOutlivesTheSynthClientLimit(t *testing.T) {
 	const handlerTime = 150 * time.Millisecond
@@ -191,7 +191,7 @@ func TestLongDispatchOutlivesTheSynthClientLimit(t *testing.T) {
 	}
 }
 
-// ADR-1151: schedd waits for a trigger batch as long as the gateway may
+// ADR-1180: schedd waits for a trigger batch as long as the gateway may
 // spend on it; an app at the default keeps the 60 s it always had.
 func TestTriggerBatchContextFollowsTheAppsInvocationTimeout(t *testing.T) {
 	t.Parallel()

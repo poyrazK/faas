@@ -13,7 +13,7 @@ type AccountReader interface {
 }
 
 // AsyncInvocationTimeout is how long one async, queue, cron or replay
-// invocation of app may run (ADR-1151): the app's request timeout within its
+// invocation of app may run (ADR-1180): the app's request timeout within its
 // plan's ceiling, never less than api.AsyncInvocationTimeoutFloor. Only an
 // app whose own timeout is above the floor costs an account lookup, and a
 // failed lookup keeps the floor every invocation had before.

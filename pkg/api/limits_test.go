@@ -177,7 +177,7 @@ func TestRequestBudgetPlanCeilings(t *testing.T) {
 	}
 }
 
-// ADR-1151: an async invocation runs for the app's request timeout, at least
+// ADR-1180: an async invocation runs for the app's request timeout, at least
 // 30 s and at most the plan's ceiling, and its lease outlasts the run.
 func TestAsyncInvocationTimeout(t *testing.T) {
 	for _, tc := range []struct {

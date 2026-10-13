@@ -1269,11 +1269,11 @@ func (l *Loop) admitExclusiveBrokerBatch(ctx context.Context, store storeLike, t
 }
 
 // triggerBatchDefaultWait bounds a batch for an app at the default
-// invocation timeout: the 60 s the trigger client enforced before ADR-1151.
+// invocation timeout: the 60 s the trigger client enforced before ADR-1180.
 const triggerBatchDefaultWait = 60 * time.Second
 
 // appAsyncInvocationTimeout is how long one invocation of appID may run
-// (ADR-1151). A failed lookup keeps the 30 s floor.
+// (ADR-1180). A failed lookup keeps the 30 s floor.
 func appAsyncInvocationTimeout(ctx context.Context, store interface {
 	state.AccountReader
 	AppByID(context.Context, string) (state.App, error)
@@ -1286,7 +1286,7 @@ func appAsyncInvocationTimeout(ctx context.Context, store interface {
 }
 
 // triggerBatchContext bounds one batch POST. The gateway may spend one whole
-// record of a long-timeout app on it (ADR-1151), so schedd waits that long;
+// record of a long-timeout app on it (ADR-1180), so schedd waits that long;
 // other apps keep the 60 s default.
 func (l *Loop) triggerBatchContext(ctx context.Context, appID string) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); ok {

@@ -20,7 +20,7 @@ func (c *countingAccounts) AccountByID(context.Context, string) (Account, error)
 	return Account{Plan: c.plan}, c.err
 }
 
-// ADR-1151: an app's async timeout follows its request timeout within its
+// ADR-1180: an app's async timeout follows its request timeout within its
 // plan, and an app at the default never pays for an account lookup.
 func TestAsyncInvocationTimeout(t *testing.T) {
 	for _, tc := range []struct {

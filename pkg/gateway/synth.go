@@ -179,7 +179,7 @@ type SynthServer struct {
 	// cancel chain) flows into the per-app store call.
 	appPublicAuthMode func(ctx context.Context, appID string) string
 	// invocationTimeout returns how long one invocation of an app may run
-	// (ADR-1151). nil keeps every batch record at the 30 s default.
+	// (ADR-1180). nil keeps every batch record at the 30 s default.
 	invocationTimeout func(ctx context.Context, appID string) time.Duration
 	// workflowAdmission authenticates and replay-checks workflow invocations
 	// before they reach the customer instance. Production wires this to the
@@ -374,7 +374,7 @@ func (s *SynthServer) WithAppModeLookup(lookup func(ctx context.Context, appID s
 }
 
 // WithInvocationTimeout wires the per-app async invocation timeout
-// (ADR-1151) that sizes trigger batch records.
+// (ADR-1180) that sizes trigger batch records.
 func (s *SynthServer) WithInvocationTimeout(lookup func(ctx context.Context, appID string) time.Duration) *SynthServer {
 	s.invocationTimeout = lookup
 	return s
@@ -382,7 +382,7 @@ func (s *SynthServer) WithInvocationTimeout(lookup func(ctx context.Context, app
 
 // batchRecordTimeout bounds one trigger batch record, wake included. An app
 // whose invocations may run past the 30 s default gets its own timeout plus
-// the wake allowance (ADR-1151); every other app keeps the 30 s default.
+// the wake allowance (ADR-1180); every other app keeps the 30 s default.
 func (s *SynthServer) batchRecordTimeout(ctx context.Context, appID string) time.Duration {
 	if s.invocationTimeout == nil {
 		return batchDispatchPerRecordTimeout
@@ -886,7 +886,7 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	// for hours. The ctx is derived from r.Context() so
 	// client-side disconnects still cancel the loop. A batch for an
 	// app with a long invocation timeout always has room for at least
-	// one whole record (ADR-1151).
+	// one whole record (ADR-1180).
 	recordTimeout := s.batchRecordTimeout(batchCtx, req.AppID)
 	totalTimeout := max(batchDispatchTotalTimeout, recordTimeout)
 	ctx, cancel := context.WithTimeout(batchCtx, totalTimeout)
@@ -954,7 +954,7 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 }
 
 // dispatchBatchRecordWithin is dispatchBatchRecord with the per-record
-// timeout already resolved for the batch's app (ADR-1151).
+// timeout already resolved for the batch's app (ADR-1180).
 func (s *SynthServer) dispatchBatchRecordWithin(ctx context.Context, req batchDispatchRequest, rec batchDispatchRecord, recordTimeout time.Duration) (result batchDispatchResult) {
 	invocationCtx, invocationSpan := otel.GetTracerProvider().Tracer("gregale/trigger").Start(ctx, "gregale.invocation",
 		oteltrace.WithSpanKind(oteltrace.SpanKindConsumer),
