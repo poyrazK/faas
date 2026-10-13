@@ -20,14 +20,14 @@ import (
 
 func TestAuthCreateDeploysRuntimeAfterConfiguration(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		resume bool
-	}{{name: "create"}, {name: "resume-keeps-keys", resume: true}} {
-		t.Run(tc.name, func(t *testing.T) { testAuthCreateDeploysRuntime(t, tc.resume) })
+		name              string
+		resume, workflows bool
+	}{{name: "create"}, {name: "resume-keeps-keys", resume: true}, {name: "workflows", workflows: true}, {name: "resume-keeps-events-key", resume: true, workflows: true}} {
+		t.Run(tc.name, func(t *testing.T) { testAuthCreateDeploysRuntime(t, tc.resume, tc.workflows) })
 	}
 }
 
-func testAuthCreateDeploysRuntime(t *testing.T, resume bool) {
+func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	resetJSONOut(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -38,7 +38,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume bool) {
 	base := zeroConfigDeployServer(t, "shop-auth", &dockerfile, &source, nil)
 	defer base.Close()
 	secrets := map[string]string{}
-	created, patched := 0, 0
+	created, patched, minted := 0, 0, 0
 	var bindingAccess string
 	app := map[string]any{"id": "app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,9 +57,17 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume bool) {
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth/secrets":
 			list := api.AppSecretListResponse{}
 			if resume {
-				list.Secrets = []api.AppSecretResponse{{Key: authSigningKeysName}, {Key: authJWTSecretName}}
+				list.Secrets = []api.AppSecretResponse{{Key: authSigningKeysName}, {Key: authJWTSecretName}, {Key: authEventsKeyName}}
 			}
 			writeJSONTest(w, list)
+		case r.Method == "POST" && r.URL.Path == "/v1/keys":
+			var body api.CreateKeyRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if len(body.Scopes) != 1 || body.Scopes[0] != api.ScopeEventsPublish {
+				t.Errorf("workflow key scopes = %v, want only events:publish", body.Scopes)
+			}
+			minted++
+			writeJSONTest(w, api.APIKeyResponse{ID: "key-1", Plaintext: "fp_live_events_only"})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/bindings"):
 			var body api.CreateManagedPostgresBindingRequest
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -92,6 +100,9 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume bool) {
 	if resume {
 		args = append(args, "--resume")
 	}
+	if workflows {
+		args = append(args, "--workflows")
+	}
 	if code := cmdAuth(args); code != 0 {
 		t.Fatal("create failed", code)
 	}
@@ -107,6 +118,19 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume bool) {
 	}
 	if secrets["AUTH_EXTERNAL_URL"] != "https://shop-auth.gregale.app" || secrets["AUTH_REDIRECT_URLS"] != "https://shop.example.com/cb,http://localhost:3000/cb" || secrets["AUTH_AUTOCONFIRM"] != "0" || secrets["AUTH_DISABLE_SIGNUP"] != "0" {
 		t.Fatalf("unexpected settings: %v", secrets)
+	}
+	if secrets["AUTH_APP_SLUG"] != "shop-auth" || secrets["AUTH_GREGALE_API_URL"] != strings.TrimRight(os.Getenv("FAAS_API"), "/") {
+		t.Fatalf("app identity not sealed: %q %q", secrets["AUTH_APP_SLUG"], secrets["AUTH_GREGALE_API_URL"])
+	}
+	wantMinted := 0
+	if workflows && !resume {
+		wantMinted = 1
+		if secrets[authEventsKeyName] != "fp_live_events_only" {
+			t.Fatal("workflow key not sealed in the Auth app")
+		}
+	}
+	if minted != wantMinted {
+		t.Fatalf("minted %d workflow keys, want %d", minted, wantMinted)
 	}
 	_, keys := secrets[authSigningKeysName]
 	_, secret := secrets[authJWTSecretName]
@@ -194,7 +218,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	for name, bound := range map[string]int{"accessTokenSeconds": api.AuthAccessTokenTTLSeconds, "pool": api.AuthMaxPoolConnections, "frontPool": api.AuthFrontPoolConnections,
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
-		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes} {
+		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -418,6 +442,68 @@ func TestAuthTemplateImageCopiesEveryRuntimeFile(t *testing.T) {
 	for _, dir := range []string{"sql/", "ui/"} {
 		if !strings.Contains(string(dockerfile), "COPY "+dir+" ./"+dir) {
 			t.Errorf("Dockerfile does not copy %s", dir)
+		}
+	}
+}
+
+func TestRealtimeCreateWithAuthWiresCallbackAndOIDC(t *testing.T) {
+	resetJSONEnv(t)
+	sealed := map[string]string{}
+	var endpoint api.CreateManagedRealtimeEndpointRequest
+	restarted, unset := 0, 0
+	fail := false
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/AUTH_REALTIME_CALLBACK_TOKEN_"):
+			var body api.PutAppSecretRequest
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			sealed[strings.TrimPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/")] = body.Value
+			writeJSONTest(w, map[string]any{})
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/v1/apps/shop-auth/secrets/AUTH_REALTIME_CALLBACK_TOKEN_"):
+			unset++
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == "POST" && r.URL.Path == "/v1/apps/shop/realtime/endpoints":
+			if fail {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				writeJSONTest(w, map[string]any{"code": "invalid"})
+				return true
+			}
+			_ = json.NewDecoder(r.Body).Decode(&endpoint)
+			writeJSONTest(w, map[string]any{"id": "ep1", "app_slug": "shop", "enabled": true})
+		case r.Method == "POST" && r.URL.Path == "/v1/apps/shop-auth/restart":
+			restarted++
+			writeJSONTest(w, map[string]any{"app_id": "auth-app", "wake_id": "w1"})
+		default:
+			return false
+		}
+		return true
+	})
+	if code := cmdRealtimeCreate([]string{"shop", "--auth", "shop-auth", "--allowed-origin", "https://shop.example.com"}); code != 0 {
+		t.Fatalf("create = %d", code)
+	}
+	if len(sealed) != 1 {
+		t.Fatalf("sealed %d callback tokens", len(sealed))
+	}
+	for name, token := range sealed {
+		if !regexp.MustCompile(`^AUTH_REALTIME_CALLBACK_TOKEN_[0-9A-F]{8}$`).MatchString(name) || len(token) != 64 || endpoint.CallbackAuthToken != token {
+			t.Fatalf("callback token %s not wired to the endpoint", name)
+		}
+	}
+	if endpoint.CallbackURL != "https://shop-auth.gregale.app" || endpoint.AuthMode != "oidc_jwt" || endpoint.AuthIssuer != "https://shop-auth.gregale.app/auth/v1" ||
+		endpoint.AuthJWKSURL != "https://shop-auth.gregale.app/auth/v1/.well-known/jwks.json" || strings.Join(endpoint.AuthAudience, ",") != "authenticated" || strings.Join(endpoint.AuthAlgorithms, ",") != "ES256" ||
+		endpoint.ConnectPath != "" || endpoint.MessagePath != "" || endpoint.DisconnectPath != "" {
+		t.Fatalf("unexpected endpoint request: %+v", endpoint)
+	}
+	if restarted != 1 {
+		t.Fatal("the Auth app was not restarted to load the token")
+	}
+	fail = true
+	if code := cmdRealtimeCreate([]string{"shop", "--auth", "shop-auth"}); code == 0 || unset != 1 {
+		t.Fatalf("failed create left the sealed token behind: code=%d unset=%d", code, unset)
+	}
+	for _, extra := range [][]string{{"--callback-url", "https://x.example"}, {"--auth-mode", "none"}, {"--message-path", "/m"}} {
+		if code := cmdRealtimeCreate(append([]string{"shop", "--auth", "shop-auth"}, extra...)); code == 0 {
+			t.Fatalf("--auth accepted with %v", extra)
 		}
 	}
 }

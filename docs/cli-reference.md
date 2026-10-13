@@ -11512,7 +11512,7 @@ Add sign-up, sessions and users to your application (application Auth, not your 
 
 Deploy a managed GoTrue Auth server bound to your database
 
-`gregale auth create --database <DATABASE> --site-url <URL> [--redirect-urls <URLS>] [--scope <SCOPE>] [--autoconfirm] [--disable-signup] [--authz <FILE>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--resume] <name>`
+`gregale auth create --database <DATABASE> --site-url <URL> [--redirect-urls <URLS>] [--scope <SCOPE>] [--autoconfirm] [--disable-signup] [--authz <FILE>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--workflows] [--resume] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -11526,6 +11526,7 @@ Deploy a managed GoTrue Auth server bound to your database
 | `--email-provider <PROVIDER>` | HTTPS email provider | one of `resend` · `postmark` |
 | `--email-from <SENDER>` | sender, &#34;Name &lt;address&gt;&#34; or an address |  |
 | `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |
+| `--workflows` | let authorized users start workflows (mints an events:publish key sealed in the app) |  |
 | `--resume` | resume configuration and deployment of an existing app |  |
 
 Examples:
@@ -12048,7 +12049,7 @@ Show one endpoint and safe auth-rotation status
 
 Create a managed realtime endpoint
 
-`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth <AUTH_APP>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12063,6 +12064,7 @@ Create a managed realtime endpoint
 | `--auth-token <TOKEN>` | client static bearer token (prefer --auth-token-stdin) |  |
 | `--auth-issuer <URL>` | OIDC issuer URL |  |
 | `--auth-jwks-url <URL>` | OIDC JWKS URL |  |
+| `--auth <AUTH_APP>` | Auth app that verifies clients and authorizes channels; replaces the callback and auth flags |  |
 | `--auth-audience <AUDIENCE>` | OIDC audience (repeatable) |  |
 | `--auth-algorithm <ALG>` | OIDC signing algorithm (repeatable) |  |
 | `--auth-claim <KEY=VALUE>` | required OIDC claim as KEY=VALUE (repeatable) |  |

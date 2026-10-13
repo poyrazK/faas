@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–4 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–5 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -192,10 +192,34 @@ Each surface reaches the same function:
 | Surface | Check |
 |---|---|
 | Database rows | RLS policies call the helpers through the Data API |
-| Object download or upload | The front checks `authorize('storage:read'/'storage:write', ...)` and returns a presigned URL valid for at most 60 seconds, signed with the app's object-storage binding |
-| Realtime channel | The front implements `/realtime/authorize-channel` with `authorize('realtime:read', ...)` and closes connections on sign-out or ban |
-| Workflow start | The front checks `authorize('workflow:start', ...)` and calls the runs API with a sealed key scoped to that app |
+| Object download or upload | `POST /authz/v1/storage/sign` checks `authorize('storage:read'/'storage:write', 'org/<org>/<bucket>/<path>')` and returns a SigV4 URL valid for 60 seconds, signed with a bucket bound to the Auth app |
+| Realtime channel | `/realtime/authorize-channel` checks `authorize_subject(subject, 'realtime:read', ...)` for channels named `org:<org>:<kind>:<name>` |
+| Workflow start | `POST /authz/v1/workflows/{name}/start` checks `authorize('workflow:start', 'org/<org>/workflow/<name>')` and publishes an app-scoped `auth.workflow.start` event |
 | Gateway route | An optional edge JWT rule gates routes coarsely, never as the only check on data |
+
+### Surface checks
+
+Object keys must start with `org/<uuid>/`, and the bucket binding's name is
+the policy resource kind. Signing happens inside the Auth app with the
+binding's credentials, which never leave it.
+
+Managed realtime passes only the token's subject to its channel callback, not
+its `session_id`. Channel checks therefore use an owner-only
+`authorize_subject()` that requires the user to be unbanned, undeleted and
+holding at least one live session, rather than a specific session. A ban,
+deletion or global sign-out stops new subscriptions at the next check. Grants
+last for the connection, as ADR-369 specifies; closing open connections on
+sign-out is left to the existing connection-close operation.
+`gregale realtime create APP --auth AUTH_APP` sets the endpoint's OIDC
+issuer, JWKS URL, audience and ES256, points its callback at the Auth app, and
+generates the callback token, sealing it only in the Auth app.
+
+Starting a workflow run requires `deploy:write`, which an end-user-facing app
+must not hold. The Auth app instead publishes an application-scoped event
+(ADR-929) with a key minted by `gregale auth create --workflows` that holds only
+`events:publish`. The customer's workflow subscribes to `auth.workflow.start`
+from the Auth app's source. The event key includes the user and the caller's
+idempotency key, so a retried start returns the original receipt.
 
 ### Email
 
@@ -311,7 +335,11 @@ declared policy, and lost access at the next check after sign-out (about
 calls reached the loopback listener and passed verification, sign-up and
 magic links reported `email_provider_unconfigured` without a provider, and the
 container logs held no user email addresses. Provider delivery is covered by
-request-shape tests; live Resend and Postmark sends are still owed. Native acceptance must show sign-up, Data
+request-shape tests; live Resend and Postmark sends are still owed. Phase 5
+is covered by PostgreSQL tests of `authorize_subject()` (member, non-member,
+ban, no live session, owner-only), a SigV4 test against AWS's published
+presigned-URL example, and Node and CLI tests; its run against the built image
+is still owed. Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits. This ADR alone
 changes no production gate.

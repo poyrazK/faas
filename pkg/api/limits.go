@@ -10253,6 +10253,9 @@ const (
 	AuthEmailTimeoutMs      = 10000
 	AuthHookBodyBytes       = 256 << 10
 	AuthEmailAPIKeyMaxBytes = 512
+	// AuthStorageURLSeconds is the lifetime of an object URL the Auth app
+	// signs after authorize() allows the read or write.
+	AuthStorageURLSeconds = 60
 )
 
 // A compatibility receipt is short-lived authorization for captured declarations.

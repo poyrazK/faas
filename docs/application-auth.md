@@ -163,10 +163,57 @@ await auth.sessionFromUrl()
 const token = await auth.getAccessToken()
 ```
 
+## Files, realtime channels and workflows
+
+Each check names a resource in an organization and goes through the same
+policies.
+
+**Files.** Bind a bucket to the Auth app, then declare who may read or write:
+
+```sh
+gregale add bucket uploads --app shop-auth --permission read_write
+```
+
+```json
+{ "policies": [
+  { "action": "storage:read", "resource": "uploads", "permission": "org:read" },
+  { "action": "storage:write", "resource": "uploads", "permission": "doc:write" }
+] }
+```
+
+`POST /authz/v1/storage/sign` with `{"bucket": "uploads", "key": "org/<org id>/reports/q3.pdf", "operation": "read"}`
+returns a URL valid for 60 seconds (`GET`, or `PUT` for `write`). Keys must start
+with `org/<org id>/`; the bucket name is the policy resource.
+
+**Realtime.** Create the endpoint through the Auth app; clients connect with
+their Auth access token:
+
+```sh
+gregale realtime create shop --auth shop-auth --allowed-origin https://shop.example.com
+```
+
+Name channels `org:<org id>:<kind>:<name>`, for example `org:…:room:lobby`, and
+add a policy such as `{"action": "realtime:read", "resource": "room", "permission": "org:read"}`.
+Subscriptions are checked when they start. A ban, deletion or global sign-out
+stops new subscriptions; an open connection keeps its grant until it closes.
+Do not set connect, message or disconnect callback paths on this endpoint; its
+callback URL is the Auth app.
+
+**Workflows.** Let users start workflows they are allowed to:
+
+```sh
+gregale auth create shop-auth --database shop-db --site-url https://shop.example.com --resume --workflows
+```
+
+This mints a key that can only publish events and seals it in the Auth app.
+`POST /authz/v1/workflows/{name}/start` with `{"org": "<org id>", "input": {...}, "idempotency_key": "req-1"}`
+checks `workflow:start` on `org/<org id>/workflow/<name>` and publishes an
+`auth.workflow.start` event with `data.workflow`, `data.org_id`, `data.user_id`
+and `data.input`. Subscribe your workflow to that event type from the Auth
+app's source (`app.<auth app id>`). Repeating a start with the same
+`idempotency_key` returns the original receipt.
+
 ## Current limits
 
-- Storage downloads, realtime channels and workflow starts call
-  `authorize()` in a later phase; today, call `POST /authz/v1/authorize` from
-  your backend.
 - The Auth app counts as an ordinary deployed app for plan quotas and RAM
   billing.

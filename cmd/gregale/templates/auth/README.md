@@ -25,6 +25,12 @@ schema. The `/authz/v1` API manages them and answers `authorize` checks;
 release task applies `sql/` after GoTrue's migrations, then the declarative
 `AUTH_AUTHZ` roles and policies.
 
+`POST /authz/v1/storage/sign` signs 60-second URLs for buckets bound to this
+app (`GREGALE_S3_<NAME>_*`); `POST /realtime/authorize-channel` serves managed
+realtime endpoints created with `gregale realtime create APP --auth`; and
+`POST /authz/v1/workflows/{name}/start` publishes an `auth.workflow.start`
+event with the `events:publish` key from `gregale auth create --workflows`.
+
 The create command seals these values: `AUTH_EXTERNAL_URL`, `AUTH_SITE_URL`,
 `AUTH_REDIRECT_URLS`, `AUTH_AUTOCONFIRM`, `AUTH_DISABLE_SIGNUP`, `AUTH_AUTHZ`,
 `AUTH_JWT_KEYS` (one ES256 signing key, generated once) and `AUTH_JWT_SECRET`.

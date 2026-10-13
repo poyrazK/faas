@@ -27,6 +27,7 @@ const (
 	authAudience        = "authenticated"
 	authSigningKeysName = "AUTH_JWT_KEYS"
 	authJWTSecretName   = "AUTH_JWT_SECRET"
+	authEventsKeyName   = "AUTH_EVENTS_KEY"
 )
 
 func cmdAuth(args []string) int {
@@ -52,7 +53,7 @@ type authCreateOptions struct {
 	database, scope, siteURL, authz       string
 	emailProvider, emailFrom, emailAPIKey string
 	redirectURLs                          []string
-	autoconfirm, noSignup                 bool
+	autoconfirm, noSignup, workflows      bool
 }
 
 func cmdAuthCreate(args []string) int {
@@ -68,10 +69,11 @@ func cmdAuthCreate(args []string) int {
 	emailProvider := fs.String("email-provider", "", "HTTPS email provider: resend or postmark")
 	emailFrom := fs.String("email-from", "", `sender, "Name <address>" or an address`)
 	emailKeyStdin := fs.Bool("email-api-key-stdin", false, "read the email provider API key from stdin (prompted on a terminal)")
+	workflows := fs.Bool("workflows", false, "let authorized users start workflows (mints an events:publish key sealed in the app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	opts := authCreateOptions{database: *database, scope: *scope, siteURL: *siteURL, autoconfirm: *autoconfirm, noSignup: *noSignup}
+	opts := authCreateOptions{database: *database, scope: *scope, siteURL: *siteURL, autoconfirm: *autoconfirm, noSignup: *noSignup, workflows: *workflows}
 	for _, value := range strings.Split(*redirects, ",") {
 		if value = strings.TrimSpace(value); value != "" {
 			opts.redirectURLs = append(opts.redirectURLs, value)
@@ -169,11 +171,14 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		return err
 	}
 	settings := map[string]string{
-		"AUTH_EXTERNAL_URL":   external,
-		"AUTH_SITE_URL":       opts.siteURL,
-		"AUTH_REDIRECT_URLS":  strings.Join(opts.redirectURLs, ","),
-		"AUTH_AUTOCONFIRM":    authFlag(opts.autoconfirm),
-		"AUTH_DISABLE_SIGNUP": authFlag(opts.noSignup),
+		// Workflow starts publish app-scoped events back through this API.
+		"AUTH_APP_SLUG":        app.Slug,
+		"AUTH_GREGALE_API_URL": strings.TrimRight(client.BaseURL(), "/"),
+		"AUTH_EXTERNAL_URL":    external,
+		"AUTH_SITE_URL":        opts.siteURL,
+		"AUTH_REDIRECT_URLS":   strings.Join(opts.redirectURLs, ","),
+		"AUTH_AUTOCONFIRM":     authFlag(opts.autoconfirm),
+		"AUTH_DISABLE_SIGNUP":  authFlag(opts.noSignup),
 	}
 	// AUTH_AUTHZ and the email settings are kept when the flags are left out.
 	if opts.authz != "" {
@@ -201,6 +206,18 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 		settings[authSigningKeysName] = keys
 	}
+	if opts.workflows && !present[authEventsKeyName] {
+		// The key can only publish events: a compromised Auth app cannot
+		// deploy, read secrets or administer the account with it.
+		key, err := client.CreateKey(ctx, "auth-"+app.Slug+"-events", []string{api.ScopeEventsPublish})
+		if err != nil {
+			return fmt.Errorf("mint the workflow events key: %w", err)
+		}
+		if err := client.SetSecretWithScope(ctx, app.Slug, authEventsKeyName, key.Plaintext, opts.scope); err != nil {
+			_ = client.DeleteKey(ctx, key.ID)
+			return err
+		}
+	}
 	if !present[authJWTSecretName] {
 		secret, err := randomAuthSecret()
 		if err != nil {
@@ -208,7 +225,7 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 		settings[authJWTSecretName] = secret
 	}
-	for _, key := range []string{"AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", "AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY", authSigningKeysName, authJWTSecretName} {
+	for _, key := range []string{"AUTH_APP_SLUG", "AUTH_GREGALE_API_URL", "AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", "AUTH_EMAIL_PROVIDER", "AUTH_EMAIL_FROM", "AUTH_EMAIL_API_KEY", authSigningKeysName, authJWTSecretName} {
 		value, ok := settings[key]
 		if !ok {
 			continue
