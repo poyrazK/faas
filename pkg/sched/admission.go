@@ -47,7 +47,7 @@ type NodeLedger struct {
 	// reservation check.
 	measured MeasuredMemory
 	// quietPaused, when set, lets the vCPU and CPU gates count only active
-	// instances (ADR-957, admission_quiet.go).
+	// instances (ADR-1151, admission_quiet.go).
 	quietPaused QuietPaused
 	now         func() time.Time // nil means time.Now; tests set it
 }

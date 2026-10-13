@@ -5,7 +5,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// quietPauseAfterMS is the ADR-957 quiet pause delay schedd asks vmmd for.
+// quietPauseAfterMS is the ADR-1151 quiet pause delay schedd asks vmmd for.
 // The first release covers function apps that serve HTTP, woken as
 // ordinary instances: their contract is request-driven, as on AWS Lambda,
 // so pausing between requests changes the least for them. Workers,

@@ -1219,7 +1219,9 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 					log.Warn("gatewayd: reconcile running instance", "app_id", p.AppID, "instance_id", p.InstanceID, "err", err)
 				}
 			}
-		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining":
+		case "stopped", "failed", "parked", "snapshotting", "migrating", "draining", "frozen":
+			// A frozen VM (ADR-1151) is paused: the next request must go
+			// through schedd, which thaws it, never straight to the guest.
 			inv.EvictInstance(p.AppID, p.InstanceID)
 		}
 	case db.NotifyAppChanged:

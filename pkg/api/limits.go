@@ -1062,6 +1062,10 @@ const (
 	// using the normal developer build.
 	DevPatchMaxEntries       = 200
 	DevPatchMaxBytes   int64 = 8 << 20
+	// DevWatchMinRAMMB is the smallest developer app RAM that may run watch
+	// mode (ADR-1170): development servers need far more memory than the
+	// production server of the same app.
+	DevWatchMinRAMMB = 512
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a
@@ -4587,7 +4591,7 @@ const (
 	MeasuredChargeHeadroomPercent = 25
 	// QuietPauseAfterMillis is how long an eligible function instance sits
 	// with nothing in flight before vmmd pauses its vCPUs until the next
-	// request (ADR-957). The instance stays RUNNING and billed. In the
+	// request (ADR-1151). The instance stays RUNNING and billed. In the
 	// ADR's simulation 2 s fit 2.5x the function apps per node.
 	QuietPauseAfterMillis = 2000
 	// The sample a measured charge starts from is the larger of an
@@ -4610,7 +4614,7 @@ const (
 	MeasuredEvictionTargetPercent = 90
 	// QuietPauseMaxVCPUOvercommitPercent caps a node's booked vCPU and CPU
 	// millicores, quiet-paused instances included, at this share of its
-	// budget under quiet pause admission (ADR-957); the gates otherwise
+	// budget under quiet pause admission (ADR-1151); the gates otherwise
 	// count only active instances. The ADR's simulation peaked at 265%.
 	QuietPauseMaxVCPUOvercommitPercent = 300
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
@@ -8653,6 +8657,17 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 const MeterCatchUpWindow = 24 * time.Hour
 const MeterCatchUpMinutesPerTick = 15
 
+// MeterUsageFinalAfter is how long after a minute starts meterd may still write
+// compute usage for it: the catch-up window, the sampler's newest-closed-minute
+// offset, and one tick of skew. The provider pusher delivers an hour only when
+// every minute up to its end is recorded compute-complete or older than this,
+// so late catch-up rows can never land in an hour already delivered (ADR-1162).
+const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
+
+// SpendCapJobDeferInterval is how long a queued job task of an account at its
+// monthly spend cap waits before the dispatcher re-checks the cap (ADR-1162).
+const SpendCapJobDeferInterval = time.Minute
+
 // IdleTimeoutBounds returns the [floor, ceiling] seconds a customer may configure
 // their idle timeout to for this plan (spec §4.3).
 func (l Limits) IdleTimeoutBounds() (floor, ceiling int) {
@@ -10490,3 +10505,10 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Bounded S3 checksum snapshots and object-attribute wire metadata.
+const MaxObjectMultipartChecksumSnapshotBytes = 2 << 20
+const MaxObjectChecksumValueBytes = 128
+const MaxObjectAttributesHeaderBytes = 128
+const MaxObjectStorageClassBytes = 64
+const MaxObjectAttributesSelections = 5

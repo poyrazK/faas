@@ -413,6 +413,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
+	devWatchCommands     map[string]string
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string
@@ -6633,13 +6634,8 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.objectNotifications, key)
 		}
 	}
-	filteredUsage := m.usage[:0]
-	for _, v := range m.usage {
-		if v.AppID != id {
-			filteredUsage = append(filteredUsage, v)
-		}
-	}
-	m.usage = filteredUsage
+	// m.usage (usage_minutes) is retained like PgStore: it is the
+	// account's billing evidence for the month (ADR-1162).
 	filteredLogEvents := m.logEvents[:0]
 	for _, event := range m.logEvents {
 		if event.AppID != id {
@@ -14715,7 +14711,7 @@ func (m *MemStore) ListAllInstances(_ context.Context) ([]Instance, error) {
 	var out []Instance
 	for _, ins := range m.instances {
 		switch ins.State {
-		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateDraining):
+		case string(StateRunning), string(StateWaking), string(StateColdBooting), string(StateSnapshotting), string(StateWarm), string(StateFrozen), string(StateDraining):
 			out = append(out, ins)
 		}
 	}
@@ -14792,7 +14788,7 @@ func (m *MemStore) ListInstancesForAccountPaged(_ context.Context, accountID str
 			continue
 		}
 		switch State(ins.State) {
-		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm:
+		case StateWaking, StateColdBooting, StateRunning, StateDraining, StateSnapshotting, StateWarm, StateFrozen:
 		default:
 			continue
 		}
@@ -18629,9 +18625,10 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 }
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
-// from the UTC month start, removes the account plan's included calendar-
-// month allowance, and converts the remainder to integer cents. Integer
-// math only — never float on money (CLAUDE.md).
+// from the UTC month start, removes the month's included allowance (the
+// largest plan grant recorded this month, ADR-1162), and converts the
+// remainder to integer cents. Integer math only — never float on money
+// (CLAUDE.md).
 //
 // Mirrors pgstore.CurrentMonthOverageCents: the scan is O(rows-in-month)
 // which on a one-box is bounded. The `now` argument is the caller's
@@ -18655,7 +18652,13 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 		}
 		mbSeconds += u.MBSeconds
 	}
-	return api.OverageCentsForMBSeconds(plan, mbSeconds), nil
+	var snapshots []FinancialPriceSnapshot
+	for _, p := range m.financialPrices {
+		if p.AccountID == accountID && p.PeriodStart.Equal(monthStart) {
+			snapshots = append(snapshots, p)
+		}
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for

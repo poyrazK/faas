@@ -1592,7 +1592,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
 			return reader.QuietPaused(nodeID, time.Now())
 		})
-		log.Info("quiet pause admission enabled (ADR-957)",
+		log.Info("quiet pause admission enabled (ADR-1151)",
 			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
 	}
 	// The local Reader above deliberately contains only instances physically

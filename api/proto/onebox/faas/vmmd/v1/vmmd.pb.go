@@ -280,7 +280,7 @@ type AppSpec struct {
 	// Empty keeps the plan defaults. production-us hunt #8: without this field
 	// apid stored the override and every VM still ran the plan defaults.
 	LivenessProbeJson string `protobuf:"bytes,31,opt,name=liveness_probe_json,json=livenessProbeJson,proto3" json:"liveness_probe_json,omitempty"`
-	// ADR-957 quiet pause: pause this instance's vCPUs after this many
+	// ADR-1151 quiet pause: pause this instance's vCPUs after this many
 	// milliseconds with no forwarded request, stream or tail task in flight,
 	// and resume it on the next one. schedd sets it only for eligible
 	// function apps; 0 keeps the instance running between requests. vmmd
@@ -4131,7 +4131,7 @@ type InstanceStats struct {
 	// the per-destination rate, and the plan's flood ceiling (0 = none).
 	EgressFloodDropsPerMin      *wrapperspb.Int64Value `protobuf:"bytes,19,opt,name=egress_flood_drops_per_min,json=egressFloodDropsPerMin,proto3" json:"egress_flood_drops_per_min,omitempty"`
 	EgressFloodDropsLimitPerMin int64                  `protobuf:"varint,20,opt,name=egress_flood_drops_limit_per_min,json=egressFloodDropsLimitPerMin,proto3" json:"egress_flood_drops_limit_per_min,omitempty"`
-	// ADR-957: true while vmmd holds the instance quiet-paused between
+	// ADR-1151: true while vmmd holds the instance quiet-paused between
 	// requests. The row stays RUNNING and billed; schedd stops counting a
 	// quiet-paused instance's vCPUs toward the node's active vCPU.
 	QuietPaused bool `protobuf:"varint,21,opt,name=quiet_paused,json=quietPaused,proto3" json:"quiet_paused,omitempty"`

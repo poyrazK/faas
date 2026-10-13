@@ -2488,7 +2488,7 @@ type InstanceTelemetry struct {
 	// ADR-361 decision 9 flood drops and ceiling. Mirrors vmmd InstanceStats.
 	EgressFloodDropsPerMin      *wrapperspb.Int64Value `protobuf:"bytes,17,opt,name=egress_flood_drops_per_min,json=egressFloodDropsPerMin,proto3" json:"egress_flood_drops_per_min,omitempty"`
 	EgressFloodDropsLimitPerMin int64                  `protobuf:"varint,18,opt,name=egress_flood_drops_limit_per_min,json=egressFloodDropsLimitPerMin,proto3" json:"egress_flood_drops_limit_per_min,omitempty"`
-	// ADR-957: vmmd holds the instance quiet-paused between requests. schedd's
+	// ADR-1151: vmmd holds the instance quiet-paused between requests. schedd's
 	// quiet pause admission leaves its vCPUs out of the node's active vCPU.
 	QuietPaused   bool `protobuf:"varint,19,opt,name=quiet_paused,json=quietPaused,proto3" json:"quiet_paused,omitempty"`
 	unknownFields protoimpl.UnknownFields

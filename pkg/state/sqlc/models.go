@@ -2316,6 +2316,12 @@ type DevSourcePatch struct {
 	ApplyError       pgtype.Text
 }
 
+type DevWatchSetting struct {
+	AppID     pgtype.UUID
+	Command   string
+	UpdatedAt pgtype.Timestamptz
+}
+
 type DeveloperSyncHistory struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -5458,6 +5464,8 @@ type ObjectStorageMultipartUpload struct {
 	ProtectionSnapshot         []byte
 	ProtectionLeaseToken       string
 	ProtectionVerified         bool
+	ChecksumSnapshot           []byte
+	ChecksumVerified           bool
 }
 
 type ObjectStorageRequestMetric struct {

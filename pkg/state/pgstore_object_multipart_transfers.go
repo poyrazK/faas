@@ -7,12 +7,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 var _ ObjectMultipartTransferStore = (*PgStore)(nil)
 
 type multipartCompletionPreparation struct {
+	checksum        objectchecksum.Snapshot
 	protection      ObjectWriteProtectionSnapshot
 	defaultRevision int64
 	encryption      ObjectEncryptionSnapshot
@@ -42,10 +44,10 @@ func (s *PgStore) SettleObjectMultipartPart(ctx context.Context, account, id str
 }
 
 func (s *PgStore) PrepareObjectMultipartCompletion(ctx context.Context, u ObjectMultipartUpload, token string, size int64, parts []api.ObjectMultipartCompletedPart, p api.ObjectStoragePolicy) (ObjectMultipartUpload, error) {
-	if !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || len(parts) > api.MaxMultipartParts || size < 1 || size > api.MaxObjectUploadBytes || len(parts) == 0 {
+	if !validMultipartChecksumCompletion(u, parts, size) || !u.CompletionConditions.Valid() || token == "" || len(token) > 128 || len(parts) > api.MaxMultipartParts || size < 1 || size > api.MaxObjectUploadBytes || len(parts) == 0 {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
-	prep := multipartCompletionPreparation{protection: u.Protection.Clone(), defaultRevision: u.EncryptionDefaultRevision, encryption: u.Encryption, token: token, revision: u.PartRevision, parts: parts, conditions: u.CompletionConditions}
+	prep := multipartCompletionPreparation{checksum: u.Checksum.Clone(), protection: u.Protection.Clone(), defaultRevision: u.EncryptionDefaultRevision, encryption: u.Encryption, token: token, revision: u.PartRevision, parts: parts, conditions: u.CompletionConditions}
 	err := s.admitMultipartCapacity(ctx, u.AccountID, u.BucketID, u.ID, u.Key, 0, size, 0, p, "", &prep, nil)
 	return prep.upload, err
 }

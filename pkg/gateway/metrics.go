@@ -1703,7 +1703,7 @@ func NewMetrics() *Metrics {
 	for _, outcome := range ServiceCallOutcomes {
 		m.serviceCallTotal.WithLabelValues(string(outcome))
 	}
-	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus} {
+	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus, chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody, chaos.KindHTTPResponseLost} {
 		m.serviceChaosInjected.WithLabelValues(kind)
 	}
 	// The sentinel keeps the metric family visible even when no workload has
@@ -3620,13 +3620,13 @@ func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
 }
 
 // ObserveServiceChaosInjection records one injected scenario fault. Only the
-// two validated rule kinds are admitted as labels.
+// validated HTTP fault kinds are admitted as labels.
 func (m *Metrics) ObserveServiceChaosInjection(kind string) {
 	if m == nil {
 		return
 	}
 	switch kind {
-	case chaos.KindLatency, chaos.KindHTTPStatus:
+	case chaos.KindLatency, chaos.KindHTTPStatus, chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody, chaos.KindHTTPResponseLost:
 		m.serviceChaosInjected.WithLabelValues(kind).Inc()
 	default:
 		return

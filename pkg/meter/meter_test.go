@@ -256,6 +256,29 @@ func TestSampler_SkipsParkedInstances(t *testing.T) {
 	}
 }
 
+// TestSampler_SkipsFrozenInstances: a frozen instance (ADR-1151) is resident
+// but unbilled, like a parked one, even though it counts for RAM.
+func TestSampler_SkipsFrozenInstances(t *testing.T) {
+	t.Parallel()
+	s := state.NewMemStore()
+	ctx := context.Background()
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+
+	acct := makeAccount(t, ctx, s, api.PlanHobby)
+	app := newApp(t, ctx, s, acct.ID)
+	_, _ = s.CreateInstance(ctx, app.ID, "dep1", string(state.StateFrozen), 256, state.DefaultLocalNodeName, "")
+
+	rows, err := meter.NewSampler(s, nil, func() time.Time { return now }).SampleAndRoll(ctx)
+	if err != nil {
+		t.Fatalf("sample: %v", err)
+	}
+	for _, row := range rows {
+		if row.MBSeconds != 0 {
+			t.Fatalf("frozen instance billed %d MB-seconds, want 0", row.MBSeconds)
+		}
+	}
+}
+
 // TestSampler_SkipsMirrorInstances is the issue #72 / ADR-125 mirror
 // carve-out guard: a mirror instance (mode='mirror') must not
 // accrue mb_seconds in meterd. The customer-facing response is

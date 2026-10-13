@@ -789,6 +789,7 @@ from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
 from .debug_suspected_dependency import DebugSuspectedDependency
+from .debug_suspected_dependency_reason import DebugSuspectedDependencyReason
 from .debug_suspected_dependency_type import DebugSuspectedDependencyType
 from .debug_telemetry_list_filters import DebugTelemetryListFilters
 from .debug_telemetry_list_response import DebugTelemetryListResponse
@@ -893,6 +894,7 @@ from .dev_sync_history_summary import DevSyncHistorySummary
 from .dev_sync_phase import DevSyncPhase
 from .dev_sync_phase_phase import DevSyncPhasePhase
 from .dev_sync_phase_status import DevSyncPhaseStatus
+from .dev_watch import DevWatch
 from .diff_app_config_patch import DiffAppConfigPatch
 from .diff_app_config_patch_app_protocol import DiffAppConfigPatchAppProtocol
 from .diff_app_config_patch_cpu_millicores import DiffAppConfigPatchCpuMillicores
@@ -3535,6 +3537,7 @@ from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesRespon
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
 from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
+from .scenario_test_chaos_rule_status_code_type_0 import ScenarioTestChaosRuleStatusCodeType0
 from .scenario_test_workload import ScenarioTestWorkload
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
@@ -4864,6 +4867,7 @@ __all__ = (
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",
     "DebugSuspectedDependency",
+    "DebugSuspectedDependencyReason",
     "DebugSuspectedDependencyType",
     "DebugTelemetryListFilters",
     "DebugTelemetryListResponse",
@@ -4968,6 +4972,7 @@ __all__ = (
     "DevSyncPhase",
     "DevSyncPhasePhase",
     "DevSyncPhaseStatus",
+    "DevWatch",
     "DiffAppConfigPatch",
     "DiffAppConfigPatchAppProtocol",
     "DiffAppConfigPatchCpuMillicores",
@@ -7450,6 +7455,7 @@ __all__ = (
     "ScenarioTestChaosRule",
     "ScenarioTestChaosRuleDirection",
     "ScenarioTestChaosRuleKind",
+    "ScenarioTestChaosRuleStatusCodeType0",
     "ScenarioTestWorkload",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",

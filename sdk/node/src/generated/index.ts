@@ -457,6 +457,7 @@ export type { DevSyncHistoryItem } from './models/DevSyncHistoryItem.js';
 export type { DevSyncHistoryResponse } from './models/DevSyncHistoryResponse.js';
 export type { DevSyncHistorySummary } from './models/DevSyncHistorySummary.js';
 export type { DevSyncPhase } from './models/DevSyncPhase.js';
+export type { DevWatch } from './models/DevWatch.js';
 export type { DiffAppConfigPatch } from './models/DiffAppConfigPatch.js';
 export type { DiffBreak } from './models/DiffBreak.js';
 export type { DiffChange } from './models/DiffChange.js';
