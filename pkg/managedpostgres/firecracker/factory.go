@@ -33,35 +33,42 @@ const (
 // through pool, the control-plane database apid already owns.
 func Factory(pool *pgxpool.Pool) managedpostgres.Factory {
 	return func(backend managedpostgres.BackendConfig, getenv func(string) string) (managedpostgres.Provider, error) {
-		if pool == nil {
-			return nil, errors.New("firecracker: the native backend needs the control-plane database")
-		}
-		cfg, err := ParseConfig(backend)
-		if err != nil {
-			return nil, err
-		}
-		s := backend.Settings
-		keyEnv := backend.SecretEnv[credentialKeySecret]
-		if keyEnv == "" || getenv == nil {
-			return nil, fmt.Errorf("firecracker: secret_env.%s must name the credential key variable", credentialKeySecret)
-		}
-		cfg.CredentialKey = []byte(getenv(keyEnv))
-		target := s[settingScheddTarget]
-		if target == "" {
-			target = "unix:///run/faas/schedd.sock"
-		}
-		tlsCfg, err := wire.LoadClientTLSConfigWithPrefix("schedd_client", s[settingScheddClientCert], s[settingScheddClientKey], s[settingScheddClientCA])
-		if err != nil {
-			return nil, err
-		}
-		conn, err := overlay.Dial(context.Background(), overlay.New(target), tlsCfg)
-		if err != nil {
-			return nil, fmt.Errorf("firecracker: dial schedd: %w", err)
-		}
-		store, err := dbcreds.NewVerifierStore(pool, 0)
-		if err != nil {
-			return nil, err
-		}
-		return New(cfg, scheddpb.NewScheddClient(conn), store)
+		return newFromBackend(pool, backend, getenv)
 	}
+}
+
+// newFromBackend builds the provider from its backend configuration.
+//
+//nolint:contextcheck // the schedd connection lives as long as the provider, past any caller's context; the dial is lazy.
+func newFromBackend(pool *pgxpool.Pool, backend managedpostgres.BackendConfig, getenv func(string) string) (managedpostgres.Provider, error) {
+	if pool == nil {
+		return nil, errors.New("firecracker: the native backend needs the control-plane database")
+	}
+	cfg, err := ParseConfig(backend)
+	if err != nil {
+		return nil, err
+	}
+	s := backend.Settings
+	keyEnv := backend.SecretEnv[credentialKeySecret]
+	if keyEnv == "" || getenv == nil {
+		return nil, fmt.Errorf("firecracker: secret_env.%s must name the credential key variable", credentialKeySecret)
+	}
+	cfg.CredentialKey = []byte(getenv(keyEnv))
+	target := s[settingScheddTarget]
+	if target == "" {
+		target = "unix:///run/faas/schedd.sock"
+	}
+	tlsCfg, err := wire.LoadClientTLSConfigWithPrefix("schedd_client", s[settingScheddClientCert], s[settingScheddClientKey], s[settingScheddClientCA])
+	if err != nil {
+		return nil, err
+	}
+	conn, err := overlay.Dial(context.Background(), overlay.New(target), tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("firecracker: dial schedd: %w", err)
+	}
+	store, err := dbcreds.NewVerifierStore(pool, 0)
+	if err != nil {
+		return nil, err
+	}
+	return New(cfg, scheddpb.NewScheddClient(conn), store)
 }
