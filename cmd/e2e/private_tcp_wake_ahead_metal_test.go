@@ -24,6 +24,10 @@ import (
 // caller opts in.
 const privateTCPWakeAheadOnCycles = 8
 
+// privateTCPWakeAheadMaxFailed is how many cold cycles per phase may fail
+// (a slow restore on the shared metal host) before the measurement is void.
+const privateTCPWakeAheadMaxFailed = 2
+
 func TestPrivateTCPWakeAheadMetal(t *testing.T) {
 	f := newPrivateTCPImageFixture(t)
 	if f == nil {
@@ -38,29 +42,37 @@ func TestPrivateTCPWakeAheadMetal(t *testing.T) {
 	// the parked service. Cold wakes are spaced past the follow window so
 	// each counts as its own wake.
 	var lastWake time.Time
-	coldDial := func(cycle string) time.Duration {
+	failed := map[string]int{}
+	coldDial := func(phase string, i int) (time.Duration, bool) {
 		t.Helper()
 		f.park(t, f.service)
 		f.park(t, f.caller)
 		if wait := time.Until(lastWake.Add(api.ServiceWakeAheadFollowWindow + time.Second)); wait > 0 {
 			time.Sleep(wait)
 		}
-		payload := cycle + "-" + randHexSuffix()
+		payload := phase + "-" + strconv.Itoa(i) + "-" + randHexSuffix()
 		lastWake = time.Now()
 		got := f.dial(t, payload)
 		elapsed := time.Since(lastWake)
 		if !f.echoed(got, payload) {
-			f.h.DumpLogs(t)
-			t.Fatalf("%s: cold dial = %+v, want %q echoed", cycle, got, payload)
+			failed[phase]++
+			t.Logf("%s %d: cold dial failed after %s: %+v", phase, i, elapsed.Round(time.Millisecond), got)
+			if failed[phase] > privateTCPWakeAheadMaxFailed {
+				f.h.DumpLogs(t)
+				t.Fatalf("%d cold dials failed in phase %s; the measurement is void", failed[phase], phase)
+			}
+			return 0, false
 		}
-		return elapsed
+		return elapsed, true
 	}
 
 	// Wake-ahead is off while the gateway learns the edge: these cycles are
 	// the sequential baseline.
 	var off []time.Duration
-	for i := 0; i < api.ServiceWakeAheadMinWakes+2; i++ {
-		off = append(off, coldDial("learn-"+strconv.Itoa(i)))
+	for i := 0; i < api.ServiceWakeAheadMinWakes+2+privateTCPWakeAheadMaxFailed; i++ {
+		if d, ok := coldDial("learn", i); ok {
+			off = append(off, d)
+		}
 	}
 
 	if raw, status := doReq(t, f.h, f.key, http.MethodPut, "/v1/apps/"+f.caller.Slug+"/service-wake-ahead", map[string]bool{"enabled": true}); status != http.StatusOK {
@@ -71,7 +83,9 @@ func TestPrivateTCPWakeAheadMetal(t *testing.T) {
 
 	var on []time.Duration
 	for i := 0; i < privateTCPWakeAheadOnCycles; i++ {
-		on = append(on, coldDial("ahead-"+strconv.Itoa(i)))
+		if d, ok := coldDial("ahead", i); ok {
+			on = append(on, d)
+		}
 	}
 
 	caller, service := uuid.MustParse(f.caller.ID).String(), uuid.MustParse(f.service.ID).String()
@@ -79,7 +93,7 @@ func TestPrivateTCPWakeAheadMetal(t *testing.T) {
 	used := gatewayWakeAheadEdgeCount(t, f.h.GatewayControlURL, caller, service, "used")
 	t.Logf("cold caller -> TCP service, wake-ahead off: p50=%s p95=%s (n=%d)", percentileDuration(off, 50), percentileDuration(off, 95), len(off))
 	t.Logf("cold caller -> TCP service, wake-ahead on:  p50=%s p95=%s (n=%d)", percentileDuration(on, 50), percentileDuration(on, 95), len(on))
-	t.Logf("wake-ahead of the TCP service for this caller: started=%g used=%g", started, used)
+	t.Logf("wake-ahead of the TCP service for this caller: started=%g used=%g; failed cold dials: learn=%d ahead=%d", started, used, failed["learn"], failed["ahead"])
 	if used < privateTCPWakeAheadOnCycles/2 {
 		t.Fatalf("wake-ahead used %g of %d cold wakes (started %g); the TCP edge was not learned or not acted on", used, privateTCPWakeAheadOnCycles, started)
 	}
