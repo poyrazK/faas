@@ -38,6 +38,9 @@ if TYPE_CHECKING:
         OperationWorkflowReviewResponseHandoffReassignmentRequest,
     )
     from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
+    from ..models.operation_workflow_review_response_scheduled_review_cancellation_request import (
+        OperationWorkflowReviewResponseScheduledReviewCancellationRequest,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseRequest")
@@ -59,6 +62,11 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellationRequest | Unset = UNSET
+    """Cancel the pending evidence check for the current completed coordinator action using exact episode,
+    completion and due timestamps. Preserve parent owner, plan and exact check-in, even if overdue; omit parent
+    reviews. Cannot combine with other response actions. Cancellation can win while an observation is in flight; a
+    published or already canceled check rejects cancellation. No source observation is required."""
     escalation_revision: OperationWorkflowReviewResponseEscalationRevisionRequest | Unset = UNSET
     """Explicit scoped review of the current completed coordinator action and creation of a revised commitment only
     while the handoff remains unaccepted and undeclined. Supply current episode timestamps and preserve parent
@@ -126,6 +134,10 @@ class OperationWorkflowReviewResponseRequest:
 
         status: str = self.status
 
+        scheduled_review_cancellation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduled_review_cancellation, Unset):
+            scheduled_review_cancellation = self.scheduled_review_cancellation.to_dict()
+
         escalation_revision: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_revision, Unset):
             escalation_revision = self.escalation_revision.to_dict()
@@ -188,6 +200,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if scheduled_review_cancellation is not UNSET:
+            field_dict["scheduled_review_cancellation"] = scheduled_review_cancellation
         if escalation_revision is not UNSET:
             field_dict["escalation_revision"] = escalation_revision
         if escalation_action_review is not UNSET:
@@ -248,6 +262,9 @@ class OperationWorkflowReviewResponseRequest:
             OperationWorkflowReviewResponseHandoffReassignmentRequest,
         )
         from ..models.operation_workflow_review_response_link_request import OperationWorkflowReviewResponseLinkRequest
+        from ..models.operation_workflow_review_response_scheduled_review_cancellation_request import (
+            OperationWorkflowReviewResponseScheduledReviewCancellationRequest,
+        )
 
         d = dict(src_dict)
         owner = d.pop("owner")
@@ -255,6 +272,15 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _scheduled_review_cancellation = d.pop("scheduled_review_cancellation", UNSET)
+        scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellationRequest | Unset
+        if isinstance(_scheduled_review_cancellation, Unset):
+            scheduled_review_cancellation = UNSET
+        else:
+            scheduled_review_cancellation = OperationWorkflowReviewResponseScheduledReviewCancellationRequest.from_dict(
+                _scheduled_review_cancellation
+            )
 
         _escalation_revision = d.pop("escalation_revision", UNSET)
         escalation_revision: OperationWorkflowReviewResponseEscalationRevisionRequest | Unset
@@ -352,6 +378,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            scheduled_review_cancellation=scheduled_review_cancellation,
             escalation_revision=escalation_revision,
             escalation_action_review=escalation_action_review,
             escalation_completion=escalation_completion,

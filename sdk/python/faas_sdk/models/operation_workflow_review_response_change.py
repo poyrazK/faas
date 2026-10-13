@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_handoff_reassignment import (
         OperationWorkflowReviewResponseHandoffReassignment,
     )
+    from ..models.operation_workflow_review_response_scheduled_review_cancellation import (
+        OperationWorkflowReviewResponseScheduledReviewCancellation,
+    )
 
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseChange")
@@ -58,6 +61,10 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange.at. Server change time."""
     actor: str
     """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset = UNSET
+    """Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
+    timestamps, server actor and time, and human reason. Does not change completion evidence, ownership or review
+    obligations."""
     escalation_action_review: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
     """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
     completion evidence order. A clear observation does not establish causality or business completion; observation
@@ -117,6 +124,10 @@ class OperationWorkflowReviewResponseChange:
 
         actor = self.actor
 
+        scheduled_review_cancellation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduled_review_cancellation, Unset):
+            scheduled_review_cancellation = self.scheduled_review_cancellation.to_dict()
+
         escalation_action_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_action_review, Unset):
             escalation_action_review = self.escalation_action_review.to_dict()
@@ -174,6 +185,8 @@ class OperationWorkflowReviewResponseChange:
                 "actor": actor,
             }
         )
+        if scheduled_review_cancellation is not UNSET:
+            field_dict["scheduled_review_cancellation"] = scheduled_review_cancellation
         if escalation_action_review is not UNSET:
             field_dict["escalation_action_review"] = escalation_action_review
         if escalation_completion is not UNSET:
@@ -226,6 +239,9 @@ class OperationWorkflowReviewResponseChange:
         from ..models.operation_workflow_review_response_handoff_reassignment import (
             OperationWorkflowReviewResponseHandoffReassignment,
         )
+        from ..models.operation_workflow_review_response_scheduled_review_cancellation import (
+            OperationWorkflowReviewResponseScheduledReviewCancellation,
+        )
 
         d = dict(src_dict)
         owner = d.pop("owner")
@@ -237,6 +253,15 @@ class OperationWorkflowReviewResponseChange:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _scheduled_review_cancellation = d.pop("scheduled_review_cancellation", UNSET)
+        scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset
+        if isinstance(_scheduled_review_cancellation, Unset):
+            scheduled_review_cancellation = UNSET
+        else:
+            scheduled_review_cancellation = OperationWorkflowReviewResponseScheduledReviewCancellation.from_dict(
+                _scheduled_review_cancellation
+            )
 
         _escalation_action_review = d.pop("escalation_action_review", UNSET)
         escalation_action_review: OperationWorkflowReviewResponseEscalationActionReview | Unset
@@ -323,6 +348,7 @@ class OperationWorkflowReviewResponseChange:
             status=status,
             at=at,
             actor=actor,
+            scheduled_review_cancellation=scheduled_review_cancellation,
             escalation_action_review=escalation_action_review,
             escalation_completion=escalation_completion,
             escalation_acknowledgment=escalation_acknowledgment,

@@ -91,6 +91,9 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		}
 	}
 	if req.ReviewResponse != nil {
+		if err := validateScheduledReviewCancellation(n, *req.ReviewResponse); err != nil {
+			return n, err
+		}
 		if err := validateEscalationActionReview(n, *req.ReviewResponse); err != nil {
 			return n, err
 		}
@@ -239,7 +242,27 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 				response.DecisionReview.EscalationAcknowledgment = acknowledgmentForHistory
 			}
 		}
+		var cancellationForHistory *api.OperationWorkflowReviewResponseScheduledReviewCancellation
+		if cancellation := req.ReviewResponse.ScheduledReviewCancellation; cancellation != nil {
+			ack := *response.DecisionReview.EscalationAcknowledgment
+			completion := *ack.Completion
+			cancellationForHistory = &api.OperationWorkflowReviewResponseScheduledReviewCancellation{CompletedAt: completion.At, DueAt: *completion.ReviewDueAt, Reason: cancellation.Reason, Actor: actor, At: now}
+			completion.ReviewCancellation = cancellationForHistory
+			ack.Completion = &completion
+			response.DecisionReview.EscalationAcknowledgment = &ack
+			for i, change := range response.History {
+				if previous := change.EscalationCompletion; previous != nil && previous.At.Equal(completion.At) {
+					response.History[i].EscalationCompletion = &completion
+				}
+				if previous := change.EscalationAcknowledgment; previous != nil && previous.At.Equal(ack.At) {
+					response.History[i].EscalationAcknowledgment = &ack
+				}
+			}
+		}
 		changeReason := "human_update"
+		if cancellationForHistory != nil {
+			changeReason = "scheduled_review_canceled"
+		}
 		if actionReviewForHistory != nil {
 			changeReason = "escalation_action_reviewed"
 		}
@@ -265,7 +288,7 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 		if req.ReviewResponse.Decision != nil {
 			decisionForHistory = response.Decision
 		}
-		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{EscalationActionReview: actionReviewForHistory, EscalationCompletion: completionForHistory, EscalationAcknowledgment: acknowledgmentForHistory, DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptanceEscalationOwner: response.HandoffAcceptanceEscalationOwner, HandoffAcceptAfterSeconds: response.HandoffAcceptAfterSeconds, HandoffReassignment: reassignmentForHistory, HandoffDecline: declineForHistory, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
+		response.History = append(response.History, api.OperationWorkflowReviewResponseChange{ScheduledReviewCancellation: cancellationForHistory, EscalationActionReview: actionReviewForHistory, EscalationCompletion: completionForHistory, EscalationAcknowledgment: acknowledgmentForHistory, DecisionReviewFallbackOwner: response.DecisionReviewFallbackOwner, DecisionReviewAfterSeconds: response.DecisionReviewAfterSeconds, Decision: decisionForHistory, HandoffAcceptanceEscalationOwner: response.HandoffAcceptanceEscalationOwner, HandoffAcceptAfterSeconds: response.HandoffAcceptAfterSeconds, HandoffReassignment: reassignmentForHistory, HandoffDecline: declineForHistory, HandoffAcceptance: acceptanceForHistory, Reason: changeReason, FallbackOwner: response.FallbackOwner, Owner: response.Owner, Plan: response.Plan, Status: response.Status, CheckInAt: response.CheckInAt, At: now, Actor: actor})
 		if len(response.History) > 16 {
 			response.History = response.History[len(response.History)-16:]
 			response.HistoryTruncated = true

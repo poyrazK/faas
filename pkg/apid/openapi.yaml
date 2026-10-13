@@ -80877,6 +80877,57 @@ components:
           type: string
         health:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
+    OperationWorkflowReviewResponseScheduledReviewCancellationRequest:
+      type: object
+      additionalProperties: false
+      description: Cancel the pending evidence check for the current completed coordinator action using exact episode, completion and due timestamps. Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with other response actions. Cancellation can win while an observation is in flight; a published or already canceled check rejects cancellation. No source observation is required.
+      required: [decision_at, required_at, handed_off_at, escalated_at, acknowledged_at, completed_at, due_at, reason]
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+        required_at:
+          type: string
+          format: date-time
+        handed_off_at:
+          type: string
+          format: date-time
+        escalated_at:
+          type: string
+          format: date-time
+        acknowledged_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          maxLength: 1024
+          description: Nonblank UTF-8 cancellation reason, at most 1024 bytes; line breaks and tabs allowed.
+    OperationWorkflowReviewResponseScheduledReviewCancellation:
+      type: object
+      additionalProperties: false
+      description: Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due timestamps, server actor and time, and human reason. Does not change completion evidence, ownership or review obligations.
+      required: [completed_at, due_at, reason, actor, at]
+      properties:
+        completed_at:
+          type: string
+          format: date-time
+        due_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          maxLength: 1024
+        actor:
+          type: string
+        at:
+          type: string
+          format: date-time
     OperationWorkflowReviewResponseEscalationCompletionRequest:
       type: object
       additionalProperties: false
@@ -80924,6 +80975,9 @@ components:
       description: Immutable human completion of escalation coordination work, with linked review references and server actor and time. Existing overdue markers remain historical.
       required: [acknowledged_at, summary, evidence, at, actor]
       properties:
+        review_cancellation:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewCancellation'
+          description: OperationWorkflowReviewResponseEscalationCompletion.review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
         review_due_at:
           type: string
           format: date-time
@@ -81221,6 +81275,9 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        scheduled_review_cancellation:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewCancellationRequest'
+          description: OperationWorkflowReviewResponseRequest.scheduled_review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
         escalation_revision:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationRevisionRequest'
           description: OperationWorkflowReviewResponseRequest.escalation_revision. Scoped evidence review for completed coordinator work, separate from business success.
@@ -81545,6 +81602,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        scheduled_review_cancellation:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseScheduledReviewCancellation'
+          description: OperationWorkflowReviewResponseChange.scheduled_review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
         escalation_action_review:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationActionReview'
           description: OperationWorkflowReviewResponseChange.escalation_action_review. Scoped evidence review for completed coordinator work, separate from business success.
@@ -81591,7 +81651,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged, escalation_commitment_completed, escalation_action_reviewed, escalation_commitment_revised]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged, escalation_commitment_completed, escalation_action_reviewed, escalation_commitment_revised, scheduled_review_canceled]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

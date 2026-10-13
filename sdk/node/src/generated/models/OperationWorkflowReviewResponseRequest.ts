@@ -11,10 +11,15 @@ import type { OperationWorkflowReviewResponseHandoffAcceptanceRequest } from './
 import type { OperationWorkflowReviewResponseHandoffDeclineRequest } from './OperationWorkflowReviewResponseHandoffDeclineRequest.js';
 import type { OperationWorkflowReviewResponseHandoffReassignmentRequest } from './OperationWorkflowReviewResponseHandoffReassignmentRequest.js';
 import type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
+import type { OperationWorkflowReviewResponseScheduledReviewCancellationRequest } from './OperationWorkflowReviewResponseScheduledReviewCancellationRequest.js';
 /**
  * OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
  */
 export type OperationWorkflowReviewResponseRequest = {
+  /**
+   * OperationWorkflowReviewResponseRequest.scheduled_review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
+   */
+  scheduled_review_cancellation?: OperationWorkflowReviewResponseScheduledReviewCancellationRequest;
   /**
    * OperationWorkflowReviewResponseRequest.escalation_revision. Scoped evidence review for completed coordinator work, separate from business success.
    */

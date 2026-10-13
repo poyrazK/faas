@@ -1328,6 +1328,8 @@ export type { OperationWorkflowReviewResponseHealth } from './OperationWorkflowR
 export type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 export type { OperationWorkflowReviewResponseLinkRequest } from './OperationWorkflowReviewResponseLinkRequest.js';
 export type { OperationWorkflowReviewResponseRequest } from './OperationWorkflowReviewResponseRequest.js';
+export type { OperationWorkflowReviewResponseScheduledReviewCancellation } from './OperationWorkflowReviewResponseScheduledReviewCancellation.js';
+export type { OperationWorkflowReviewResponseScheduledReviewCancellationRequest } from './OperationWorkflowReviewResponseScheduledReviewCancellationRequest.js';
 export type { OperationWorkflowReviewResponseSourceHealth } from './OperationWorkflowReviewResponseSourceHealth.js';
 export type { OperationWorkflowRevisionChange } from './OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './OperationWorkflowRevisionComparison.js';

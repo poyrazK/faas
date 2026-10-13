@@ -485,24 +485,25 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
-	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReviewRequest   `json:"escalation_action_review,omitempty"`
-	EscalationRevision               *OperationWorkflowReviewResponseEscalationRevisionRequest       `json:"escalation_revision,omitempty"`
-	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletionRequest     `json:"escalation_completion,omitempty"`
-	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgmentRequest `json:"escalation_acknowledgment,omitempty"`
-	HandoffAcceptanceEscalationOwner *string                                                         `json:"handoff_acceptance_escalation_owner,omitempty"`
-	HandoffReassignment              *OperationWorkflowReviewResponseHandoffReassignmentRequest      `json:"handoff_reassignment,omitempty"`
-	HandoffDecline                   *OperationWorkflowReviewResponseHandoffDeclineRequest           `json:"handoff_decline,omitempty"`
-	HandoffAcceptAfterSeconds        *int64                                                          `json:"handoff_accept_after_seconds,omitempty"`
-	HandoffAcceptance                *OperationWorkflowReviewResponseHandoffAcceptanceRequest        `json:"handoff_acceptance,omitempty"`
-	DecisionReviewFallbackOwner      *string                                                         `json:"decision_review_fallback_owner,omitempty"`
-	DecisionReviewAfterSeconds       *int64                                                          `json:"decision_review_after_seconds,omitempty"`
-	Decision                         *OperationWorkflowReviewResponseDecisionRequest                 `json:"decision,omitempty"`
-	FallbackOwner                    *string                                                         `json:"fallback_owner,omitempty"`
-	Owner                            string                                                          `json:"owner"`
-	Plan                             string                                                          `json:"plan"`
-	Status                           string                                                          `json:"status"`
-	CheckInAt                        *time.Time                                                      `json:"check_in_at,omitempty"`
-	Reviews                          []OperationWorkflowReviewResponseLinkRequest                    `json:"reviews,omitempty"`
+	ScheduledReviewCancellation      *OperationWorkflowReviewResponseScheduledReviewCancellationRequest `json:"scheduled_review_cancellation,omitempty"`
+	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReviewRequest      `json:"escalation_action_review,omitempty"`
+	EscalationRevision               *OperationWorkflowReviewResponseEscalationRevisionRequest          `json:"escalation_revision,omitempty"`
+	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletionRequest        `json:"escalation_completion,omitempty"`
+	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgmentRequest    `json:"escalation_acknowledgment,omitempty"`
+	HandoffAcceptanceEscalationOwner *string                                                            `json:"handoff_acceptance_escalation_owner,omitempty"`
+	HandoffReassignment              *OperationWorkflowReviewResponseHandoffReassignmentRequest         `json:"handoff_reassignment,omitempty"`
+	HandoffDecline                   *OperationWorkflowReviewResponseHandoffDeclineRequest              `json:"handoff_decline,omitempty"`
+	HandoffAcceptAfterSeconds        *int64                                                             `json:"handoff_accept_after_seconds,omitempty"`
+	HandoffAcceptance                *OperationWorkflowReviewResponseHandoffAcceptanceRequest           `json:"handoff_acceptance,omitempty"`
+	DecisionReviewFallbackOwner      *string                                                            `json:"decision_review_fallback_owner,omitempty"`
+	DecisionReviewAfterSeconds       *int64                                                             `json:"decision_review_after_seconds,omitempty"`
+	Decision                         *OperationWorkflowReviewResponseDecisionRequest                    `json:"decision,omitempty"`
+	FallbackOwner                    *string                                                            `json:"fallback_owner,omitempty"`
+	Owner                            string                                                             `json:"owner"`
+	Plan                             string                                                             `json:"plan"`
+	Status                           string                                                             `json:"status"`
+	CheckInAt                        *time.Time                                                         `json:"check_in_at,omitempty"`
+	Reviews                          []OperationWorkflowReviewResponseLinkRequest                       `json:"reviews,omitempty"`
 }
 type OperationWorkflowReviewResponseLinkRequest struct {
 	SubscriptionID string `json:"subscription_id"`
@@ -547,25 +548,26 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated                 bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
-	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReview   `json:"escalation_action_review,omitempty"`
-	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletion     `json:"escalation_completion,omitempty"`
-	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgment `json:"escalation_acknowledgment,omitempty"`
-	HandoffAcceptanceEscalationOwner string                                                   `json:"handoff_acceptance_escalation_owner,omitempty"`
-	HandoffReassignment              *OperationWorkflowReviewResponseHandoffReassignment      `json:"handoff_reassignment,omitempty"`
-	HandoffDecline                   *OperationWorkflowReviewResponseHandoffDecline           `json:"handoff_decline,omitempty"`
-	HandoffAcceptAfterSeconds        int64                                                    `json:"handoff_accept_after_seconds,omitempty"`
-	HandoffAcceptance                *OperationWorkflowReviewResponseHandoffAcceptance        `json:"handoff_acceptance,omitempty"`
-	DecisionReviewFallbackOwner      string                                                   `json:"decision_review_fallback_owner,omitempty"`
-	DecisionReviewAfterSeconds       int64                                                    `json:"decision_review_after_seconds,omitempty"`
-	Decision                         *OperationWorkflowReviewResponseDecision                 `json:"decision,omitempty"`
-	FallbackOwner                    string                                                   `json:"fallback_owner,omitempty"`
-	Reason                           string                                                   `json:"reason,omitempty"`
-	Owner                            string                                                   `json:"owner"`
-	Plan                             string                                                   `json:"plan"`
-	Status                           string                                                   `json:"status"`
-	CheckInAt                        *time.Time                                               `json:"check_in_at,omitempty"`
-	At                               time.Time                                                `json:"at"`
-	Actor                            string                                                   `json:"actor"`
+	ScheduledReviewCancellation      *OperationWorkflowReviewResponseScheduledReviewCancellation `json:"scheduled_review_cancellation,omitempty"`
+	EscalationActionReview           *OperationWorkflowReviewResponseEscalationActionReview      `json:"escalation_action_review,omitempty"`
+	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletion        `json:"escalation_completion,omitempty"`
+	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgment    `json:"escalation_acknowledgment,omitempty"`
+	HandoffAcceptanceEscalationOwner string                                                      `json:"handoff_acceptance_escalation_owner,omitempty"`
+	HandoffReassignment              *OperationWorkflowReviewResponseHandoffReassignment         `json:"handoff_reassignment,omitempty"`
+	HandoffDecline                   *OperationWorkflowReviewResponseHandoffDecline              `json:"handoff_decline,omitempty"`
+	HandoffAcceptAfterSeconds        int64                                                       `json:"handoff_accept_after_seconds,omitempty"`
+	HandoffAcceptance                *OperationWorkflowReviewResponseHandoffAcceptance           `json:"handoff_acceptance,omitempty"`
+	DecisionReviewFallbackOwner      string                                                      `json:"decision_review_fallback_owner,omitempty"`
+	DecisionReviewAfterSeconds       int64                                                       `json:"decision_review_after_seconds,omitempty"`
+	Decision                         *OperationWorkflowReviewResponseDecision                    `json:"decision,omitempty"`
+	FallbackOwner                    string                                                      `json:"fallback_owner,omitempty"`
+	Reason                           string                                                      `json:"reason,omitempty"`
+	Owner                            string                                                      `json:"owner"`
+	Plan                             string                                                      `json:"plan"`
+	Status                           string                                                      `json:"status"`
+	CheckInAt                        *time.Time                                                  `json:"check_in_at,omitempty"`
+	At                               time.Time                                                   `json:"at"`
+	Actor                            string                                                      `json:"actor"`
 }
 
 // Check-in events preserve the original deadline and response snapshot at escalation.
@@ -756,14 +758,15 @@ type OperationWorkflowReviewResponseEscalationCompletionRequest struct {
 	ReviewIndices      []int     `json:"review_indices"`
 }
 type OperationWorkflowReviewResponseEscalationCompletion struct {
-	ReviewDueAt       *time.Time                                             `json:"review_due_at,omitempty"`
-	ScheduledReviewAt *time.Time                                             `json:"scheduled_review_at,omitempty"`
-	Review            *OperationWorkflowReviewResponseEscalationActionReview `json:"review,omitempty"`
-	AcknowledgedAt    time.Time                                              `json:"acknowledged_at"`
-	Summary           string                                                 `json:"summary"`
-	Evidence          []OperationWorkflowReviewResponseLink                  `json:"evidence"`
-	At                time.Time                                              `json:"at"`
-	Actor             string                                                 `json:"actor"`
+	ReviewCancellation *OperationWorkflowReviewResponseScheduledReviewCancellation `json:"review_cancellation,omitempty"`
+	ReviewDueAt        *time.Time                                                  `json:"review_due_at,omitempty"`
+	ScheduledReviewAt  *time.Time                                                  `json:"scheduled_review_at,omitempty"`
+	Review             *OperationWorkflowReviewResponseEscalationActionReview      `json:"review,omitempty"`
+	AcknowledgedAt     time.Time                                                   `json:"acknowledged_at"`
+	Summary            string                                                      `json:"summary"`
+	Evidence           []OperationWorkflowReviewResponseLink                       `json:"evidence"`
+	At                 time.Time                                                   `json:"at"`
+	Actor              string                                                      `json:"actor"`
 }
 
 type OperationWorkflowReviewResponseEscalationActionReviewRequest struct {
@@ -786,4 +789,17 @@ type OperationWorkflowReviewResponseEscalationActionReview struct {
 	At          time.Time                             `json:"at"`
 	Actor       string                                `json:"actor"`
 	Health      OperationWorkflowReviewResponseHealth `json:"health"`
+}
+
+type OperationWorkflowReviewResponseScheduledReviewCancellationRequest struct {
+	OperationWorkflowReviewResponseEscalationActionReviewRequest
+	DueAt  time.Time `json:"due_at"`
+	Reason string    `json:"reason"`
+}
+type OperationWorkflowReviewResponseScheduledReviewCancellation struct {
+	CompletedAt time.Time `json:"completed_at"`
+	DueAt       time.Time `json:"due_at"`
+	Reason      string    `json:"reason"`
+	Actor       string    `json:"actor"`
+	At          time.Time `json:"at"`
 }

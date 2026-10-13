@@ -24,7 +24,7 @@ func pendingScheduledActionReview(n api.OperationWorkflowReadinessNotification) 
 	}
 	review := response.DecisionReview
 	ack := review.EscalationAcknowledgment
-	return ack != nil && ack.Completion != nil && ack.Completion.ReviewDueAt != nil && ack.Completion.ScheduledReviewAt == nil && len(ack.Completion.Evidence) > 0 && review.AcceptanceEscalatedAt != nil && reviewHandoffTime(review) != nil && response.Owner == review.Owner && n.Coordination.Owner == response.Owner && response.Decision.At.Equal(review.DecisionAt)
+	return ack != nil && ack.Completion != nil && ack.Completion.ReviewDueAt != nil && ack.Completion.ScheduledReviewAt == nil && ack.Completion.ReviewCancellation == nil && len(ack.Completion.Evidence) > 0 && review.AcceptanceEscalatedAt != nil && reviewHandoffTime(review) != nil && response.Owner == review.Owner && n.Coordination.Owner == response.Owner && response.Decision.At.Equal(review.DecisionAt)
 }
 
 func evaluateScheduledActionReviews(ctx context.Context, store readinessSubscriptionBackend, r *readinessSubscriptionRecord) ([]readinessWatchUpdate, error) {

@@ -11,6 +11,7 @@ OperationWorkflowReviewResponseChangeReason = Literal[
     "handoff_declined",
     "handoff_reassigned",
     "human_update",
+    "scheduled_review_canceled",
 ]
 
 OPERATION_WORKFLOW_REVIEW_RESPONSE_CHANGE_REASON_VALUES: set[OperationWorkflowReviewResponseChangeReason] = {
@@ -24,6 +25,7 @@ OPERATION_WORKFLOW_REVIEW_RESPONSE_CHANGE_REASON_VALUES: set[OperationWorkflowRe
     "handoff_declined",
     "handoff_reassigned",
     "human_update",
+    "scheduled_review_canceled",
 }
 
 

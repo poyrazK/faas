@@ -4,10 +4,15 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseEscalationActionReview } from './OperationWorkflowReviewResponseEscalationActionReview.js';
 import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
+import type { OperationWorkflowReviewResponseScheduledReviewCancellation } from './OperationWorkflowReviewResponseScheduledReviewCancellation.js';
 /**
  * Immutable human completion of escalation coordination work, with linked review references and server actor and time. Existing overdue markers remain historical.
  */
 export type OperationWorkflowReviewResponseEscalationCompletion = {
+  /**
+   * OperationWorkflowReviewResponseEscalationCompletion.review_cancellation. Explicit cancellation of a pending scheduled evidence check with immutable actor, time and reason; manual reviews remain available.
+   */
+  review_cancellation?: OperationWorkflowReviewResponseScheduledReviewCancellation;
   /**
    * One-shot evidence check time pinned at completion. Ordinary edits and manual evidence reviews do not postpone it.
    */

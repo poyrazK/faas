@@ -1334,6 +1334,8 @@ export type { OperationWorkflowReviewResponseHealth } from './models/OperationWo
 export type { OperationWorkflowReviewResponseLink } from './models/OperationWorkflowReviewResponseLink.js';
 export type { OperationWorkflowReviewResponseLinkRequest } from './models/OperationWorkflowReviewResponseLinkRequest.js';
 export type { OperationWorkflowReviewResponseRequest } from './models/OperationWorkflowReviewResponseRequest.js';
+export type { OperationWorkflowReviewResponseScheduledReviewCancellation } from './models/OperationWorkflowReviewResponseScheduledReviewCancellation.js';
+export type { OperationWorkflowReviewResponseScheduledReviewCancellationRequest } from './models/OperationWorkflowReviewResponseScheduledReviewCancellationRequest.js';
 export type { OperationWorkflowReviewResponseSourceHealth } from './models/OperationWorkflowReviewResponseSourceHealth.js';
 export type { OperationWorkflowRevisionChange } from './models/OperationWorkflowRevisionChange.js';
 export type { OperationWorkflowRevisionComparison } from './models/OperationWorkflowRevisionComparison.js';
