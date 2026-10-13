@@ -338,6 +338,14 @@ const QueueBindingMaxConcurrency = 10000
 // one binding can run, so a binding allowed thousands of concurrent records
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
+
+// Pull leases (ADR-1152). One call leases at most QueueLeaseMaxMessages and
+// takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
+// timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the
+// ceiling is the plan's MaxAsyncInvocationDeadlineSeconds.
+const QueueLeaseMaxMessages = 10
+const QueueLeaseMaxReceipts = 100
+const QueueLeaseDefaultVisibilitySeconds = 30
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 

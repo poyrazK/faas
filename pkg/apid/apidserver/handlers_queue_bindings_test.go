@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -292,11 +293,19 @@ func TestWorkerExecutionModeBindsWorkerQueue(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Push cannot reach a worker-mode instance (ADR-051); it leases instead.
 	rec := e.Do(t, http.MethodPost, "/v1/apps/mode-worker-binding/queue-bindings", api.CreateQueueBindingRequest{
 		Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: "worker", MaxConcurrency: 1,
 	}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	if !strings.Contains(rec.Body.String(), `use mode \"pull\"`) {
+		t.Fatalf("push rejection does not point to pull leases: %s", rec.Body.String())
+	}
+	rec = e.Do(t, http.MethodPost, "/v1/apps/mode-worker-binding/queue-bindings", api.CreateQueueBindingRequest{
+		Name: "jobs", QueueName: "jobs", Mode: "pull", WorkloadClass: "worker", MaxConcurrency: 1,
+	}, nil)
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("worker-mode binding = %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("worker-mode pull binding = %d: %s", rec.Code, rec.Body.String())
 	}
 	rec = e.Do(t, http.MethodPost, "/v1/apps/mode-worker-binding/queue-bindings", api.CreateQueueBindingRequest{
 		Name: "batch", QueueName: "batch", Mode: "pull", WorkloadClass: "job", MaxConcurrency: 1,
@@ -305,5 +314,9 @@ func TestWorkerExecutionModeBindsWorkerQueue(t *testing.T) {
 	rec = e.Do(t, http.MethodPut, "/v1/apps/mode-worker-setup/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
 	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 		t.Fatalf("worker-mode queue setup = %d: %s", rec.Code, rec.Body.String())
+	}
+	var profile api.QueueWorkloadProfileResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &profile); err != nil || profile.Binding.Mode != "pull" {
+		t.Fatalf("worker-mode queue setup created a %q binding (err=%v); it must lease, not push", profile.Binding.Mode, err)
 	}
 }

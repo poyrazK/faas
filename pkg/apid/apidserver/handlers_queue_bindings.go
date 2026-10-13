@@ -67,6 +67,10 @@ func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem 
 	if appClass := queueBindingAppClass(app); appClass != "" && string(appClass) != class {
 		return queueBindingProblem(fmt.Sprintf("workload_class %q does not match app workload class %q", class, appClass))
 	}
+	if mode == "push" && !state.QueueBindingPushReachable(app.Manifest.ExecutionMode) {
+		return queueBindingProblem(fmt.Sprintf(`push delivery cannot reach an app in %s execution mode; use mode "pull" and lease messages with POST /v1/apps/{slug}/queues/{queue}/leases`,
+			app.Manifest.ExecutionMode))
+	}
 	return nil
 }
 
