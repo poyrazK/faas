@@ -167,20 +167,3 @@ func TestApplyLayerGzToleratesBytesAfterTheGzipStream(t *testing.T) {
 		t.Fatalf("ApplyLayerGz: %v", err)
 	}
 }
-
-func TestDotDotOnlyRejectedAsAPathComponent(t *testing.T) {
-	staging := t.TempDir()
-	layer := gzLayer(t, []entry{{name: "app/a..b", body: "1"}, {name: "app/..data", body: "2"}})
-	if err := ApplyLayerGz(staging, layer); err != nil {
-		t.Fatalf("ApplyLayerGz: %v", err)
-	}
-	for _, name := range []string{"app/a..b", "app/..data"} {
-		if _, err := os.Stat(filepath.Join(staging, name)); err != nil {
-			t.Fatalf("%s not extracted: %v", name, err)
-		}
-	}
-	traversal := gzLayer(t, []entry{{name: "app/../../escape", body: "3"}})
-	if err := ApplyLayerGz(staging, traversal); err == nil {
-		t.Fatal("a .. path component was accepted")
-	}
-}

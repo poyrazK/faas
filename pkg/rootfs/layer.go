@@ -142,17 +142,6 @@ func (e *ErrLayerExtractionExceedsBudget) Error() string {
 		e.UsedBytes, e.EntryBytes, e.LimitBytes)
 }
 
-// hasDotDotComponent reports whether a slash-separated archive name has a
-// ".." path component.
-func hasDotDotComponent(name string) bool {
-	for _, part := range strings.Split(name, "/") {
-		if part == ".." {
-			return true
-		}
-	}
-	return false
-}
-
 func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 	for {
 		hdr, err := tr.Next()
@@ -185,9 +174,8 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		// Keep all filesystem operations inside the positive validation
 		// branch. resolveEntryPath performs the stronger containment and
 		// symlink-ancestor checks once the archive name has passed this
-		// traversal guard. Only a ".." component is traversal; a name such
-		// as "a..b" or "..data" is an ordinary file.
-		if !hasDotDotComponent(archiveName) {
+		// traversal guard.
+		if !strings.Contains(archiveName, "..") {
 			// codeql[go/path-injection] false-positive: resolveEntryPath rejects
 			// absolute names, then clamps every ancestor symlink inside dst.
 			target, err := resolveEntryPath(dst, archiveName)
