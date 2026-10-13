@@ -34,7 +34,7 @@ func TestWorkflowInvestigationLinksRespectOwnershipAndMetric(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rule := state.AlertRule{AccountID: tc.account, AppID: tc.app, Metric: tc.metric}
-			_, payload, err := buildPayload(rule, 1, evaluator.investigationPaths(context.Background(), rule))
+			_, payload, err := buildPayload(rule, 1, evaluator.investigationPaths(context.Background(), rule), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

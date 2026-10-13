@@ -105,6 +105,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_ADMIN_EMAILS", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
 	{Name: "FAAS_AI_GATEWAY_ENABLED", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Validate: EnvValidationInt, Note: "optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off)"},
 	{Name: "FAAS_ALERT_EVAL_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_ANOMALY_ALERTS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-744 operator gate for above_baseline/below_baseline alert comparisons; explicit 1 enables the internal preview"},
 	{Name: "FAAS_APID_ADVISORY_SOCK", Owners: []string{"apid", "vmmd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_APID_APP_ERRORS_SOCKET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_APP_ERRORS_TARGET", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDropin},

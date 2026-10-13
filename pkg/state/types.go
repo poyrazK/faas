@@ -3465,6 +3465,9 @@ const (
 	AlertGte AlertComparison = "gte"
 	AlertLt  AlertComparison = "lt"
 	AlertLte AlertComparison = "lte"
+	// ADR-744: threshold is a multiplier of the app's usual value.
+	AlertAboveBaseline AlertComparison = "above_baseline"
+	AlertBelowBaseline AlertComparison = "below_baseline"
 )
 
 // AlertWindowSpec is the closed window vocabulary; sharing it with the
