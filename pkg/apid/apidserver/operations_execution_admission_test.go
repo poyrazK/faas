@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 666 — HTTP qualification cannot grant native execution admission.
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -82,15 +83,16 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 				}
 				specs, defs = append(specs, spec), append(defs, def)
 			}
-			srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-			srv.operation.AdmissionEnabled = true // a configured gate overrides private fixtures
-			srv.operation.WorkloadVerifier = &workloadidentity.Verifier{}
-			srv.operation.ArtifactStorage, err = storage.NewLocalStorageBackend(t.TempDir())
+			srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+			(*srv.Operation()).AdmissionEnabled = true
+			(* // a configured gate overrides private fixtures
+			srv.Operation()).WorkloadVerifier = &workloadidentity.Verifier{}
+			(*srv.Operation()).ArtifactStorage, err = storage.NewLocalStorageBackend(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(t.TempDir(), "preview.json")
-			srv.operation.Preview, _ = operations.NewPreviewAdmission(path)
+			(*srv.Operation()).Preview, _ = operations.NewPreviewAdmission(path)
 			now := time.Now().UTC()
 			policy := operations.PreviewPolicy{Version: 1, Enabled: true, NotBefore: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), Cohorts: []operations.PreviewCohort{{AccountID: uuid.MustParse(account.ID).String(), AppID: uuid.MustParse(app.ID).String(), Scope: dep.Scope, PlatformTenantIDs: []string{tenant.ID}}}}
 			write := func(kinds []string) {
@@ -115,7 +117,7 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 			if _, err := store.CreateAPIKey(ctx, account.ID, hash, "admission", api.ScopesAdminOnly); err != nil {
 				t.Fatal(err)
 			}
-			httpServer := httptest.NewServer(srv.handler())
+			httpServer := httptest.NewServer(srv.Handler())
 			defer httpServer.Close()
 			owner := api.NewClient(httpServer.URL, key)
 			token, err := owner.CreatePlatformTenantAccessToken(ctx, tenant.ID, api.CreatePlatformTenantAccessTokenRequest{Name: "browser", Scopes: []string{api.ScopePlatformTenantOperationsRead, api.ScopePlatformTenantOperationsManage}})
@@ -123,7 +125,7 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			customer := api.NewClient(httpServer.URL, token.Token)
-			routes := gateway.DurableOperationRoutes{Store: store.(gateway.OperationRouteStore), Admission: srv.operation.Preview}
+			routes := gateway.DurableOperationRoutes{Store: store.(gateway.OperationRouteStore), Admission: (*srv.Operation()).Preview}
 			closed := func(err error) {
 				t.Helper()
 				problem := api.AsProblem(err)
@@ -155,13 +157,13 @@ func TestOperationsExecutionAdmission(t *testing.T) {
 				t.Fatal("closed requests created work", count, err)
 			}
 			manifest := &gregalemanifest.Manifest{ResolvedOperations: specs}
-			staged, problem := srv.applySourceRefManifest(ctx, account, app, manifest, dep.Scope, true)
-			if problem == nil || problem.Status != 503 || sourceRefManifestNeedsRollback(staged) {
+			staged, problem := srv.ApplySourceRefManifest(ctx, account, app, manifest, dep.Scope, true)
+			if problem == nil || problem.Status != 503 || apidserver.SourceRefManifestNeedsRollback(staged) {
 				t.Fatal("mixed source deployment reached mutations", problem)
 			}
-			_, err = srv.retryOperationDefinitions(ctx, app, dep)
+			_, err = srv.RetryOperationDefinitions(ctx, app, dep)
 			closed(err)
-			_, err = apidsource.Enqueue(ctx, store, noopNotifier{}, apidsource.EnqueueParams{OperationDefinitions: specs, OperationAdmissionEnabled: srv.operation.OperationDefinitionsAdmission(account.ID, app.ID, dep.Scope, specs)})
+			_, err = apidsource.Enqueue(ctx, store, apidserver.NoopNotifier{}, apidsource.EnqueueParams{OperationDefinitions: specs, OperationAdmissionEnabled: (*srv.Operation()).OperationDefinitionsAdmission(account.ID, app.ID, dep.Scope, specs)})
 			closed(err)
 			for _, def := range defs {
 				kind := operations.DefinitionExecutionKind(def.Spec)

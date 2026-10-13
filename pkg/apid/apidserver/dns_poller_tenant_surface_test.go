@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -93,14 +94,14 @@ func TestDNSPoller_TenantHostname_VerifiesOnTXTMatch(t *testing.T) {
 	// Inject a fake TXT resolver that returns the matching
 	// token. Restore on exit so other tests see the real
 	// net.Resolver.
-	prev := txtLookupFunc
-	txtLookupFunc = func(_ context.Context, target string) ([]string, error) {
+	prev := (*apidserver.TxtLookupFunc)
+	(*apidserver.TxtLookupFunc) = func(_ context.Context, target string) ([]string, error) {
 		if target != "_faas-verify.api.customer-a.com" {
 			t.Errorf("txtLookupFunc target = %q; want _faas-verify.api.customer-a.com", target)
 		}
 		return []string{token}, nil
 	}
-	defer func() { txtLookupFunc = prev }()
+	defer func() { (*apidserver.TxtLookupFunc) = prev }()
 
 	// Drive the poller directly. The runVerifyOnce method
 	// lives on *server; we invoke pendingUnverifiedHostnames
@@ -114,7 +115,7 @@ func TestDNSPoller_TenantHostname_VerifiesOnTXTMatch(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1", len(pending))
 	}
-	if !checkTXT(ctx, pending[0].Hostname, pending[0].ChallengeToken) {
+	if !apidserver.CheckTXT(ctx, pending[0].Hostname, pending[0].ChallengeToken) {
 		t.Fatal("checkTXT = false; want true")
 	}
 	if err := s.store.MarkTenantHostnameVerified(ctx, pending[0].Hostname); err != nil {
@@ -136,14 +137,14 @@ func TestDNSPoller_TenantHostname_VerifiesOnTXTMatch(t *testing.T) {
 // around the store call. Mirrors the production
 // s.pendingUnverifiedHostnames helper but takes the store
 // directly so the test harness doesn't need a *server.
-func pendingUnverifiedHostnamesForTest(ctx context.Context, store state.Store) ([]pendingHostnameRow, error) {
+func pendingUnverifiedHostnamesForTest(ctx context.Context, store state.Store) ([]apidserver.PendingHostnameRow, error) {
 	rows, err := store.ListPendingTenantHostnames(ctx, time.Now(), 50)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]pendingHostnameRow, len(rows))
+	out := make([]apidserver.PendingHostnameRow, len(rows))
 	for i, h := range rows {
-		out[i] = pendingHostnameRow{
+		out[i] = apidserver.PendingHostnameRow{
 			Hostname:       h.Hostname,
 			ChallengeToken: h.ChallengeToken,
 			SurfaceID:      h.SurfaceID,
@@ -174,17 +175,17 @@ func TestDNSPoller_TenantHostname_LeavesUnmatchedAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prev := txtLookupFunc
-	txtLookupFunc = func(_ context.Context, _ string) ([]string, error) {
+	prev := (*apidserver.TxtLookupFunc)
+	(*apidserver.TxtLookupFunc) = func(_ context.Context, _ string) ([]string, error) {
 		return []string{"different-token"}, nil
 	}
-	defer func() { txtLookupFunc = prev }()
+	defer func() { (*apidserver.TxtLookupFunc) = prev }()
 
 	pending, _ := pendingUnverifiedHostnamesForTest(ctx, s.store)
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1", len(pending))
 	}
-	if checkTXT(ctx, pending[0].Hostname, pending[0].ChallengeToken) {
+	if apidserver.CheckTXT(ctx, pending[0].Hostname, pending[0].ChallengeToken) {
 		t.Fatal("checkTXT = true; want false (record didn't match)")
 	}
 }
@@ -211,17 +212,17 @@ func TestDNSPoller_TenantHostname_LookupErrorStaysPending(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prev := txtLookupFunc
-	txtLookupFunc = func(_ context.Context, _ string) ([]string, error) {
+	prev := (*apidserver.TxtLookupFunc)
+	(*apidserver.TxtLookupFunc) = func(_ context.Context, _ string) ([]string, error) {
 		return nil, errors.New("dns timeout")
 	}
-	defer func() { txtLookupFunc = prev }()
+	defer func() { (*apidserver.TxtLookupFunc) = prev }()
 
 	pending, _ := pendingUnverifiedHostnamesForTest(ctx, s.store)
 	if len(pending) != 1 {
 		t.Fatalf("pending = %d, want 1 (lookup error keeps the host in the batch)", len(pending))
 	}
-	if checkTXT(ctx, pending[0].Hostname, pending[0].ChallengeToken) {
+	if apidserver.CheckTXT(ctx, pending[0].Hostname, pending[0].ChallengeToken) {
 		t.Fatal("checkTXT = true on DNS error; want false")
 	}
 }

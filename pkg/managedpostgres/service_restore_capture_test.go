@@ -24,7 +24,7 @@ func TestRestoreUsesCapturedSourceDefinition(t *testing.T) {
 	edited.Spec.Class, edited.Spec.StorageLimitBytes = ClassBurstable, 20<<30
 	store.databases[source.ID] = edited
 	store.mu.Unlock()
-	request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "captured", PointInTime: time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC), SourceDefinition: &definition}
+	request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "captured", PointInTime: source.CreatedAt, SourceDefinition: &definition}
 	target, created, err := service.RestoreWithResult(ctx, request)
 	if err != nil || !created || target.Spec != definition.Spec || provider.lastRestore.Spec != definition.Spec || provider.lastRestore.SourceResourceID != definition.ProviderResourceID {
 		t.Fatalf("restore did not use captured spec/identity: created=%v err=%v", created, err)
@@ -53,7 +53,7 @@ func TestRestoreCapturedDefinitionRejectsDriftBeforeProviderIO(t *testing.T) {
 				t.Fatal(err)
 			}
 			definition := RestoreSourceDefinition{Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID}
-			request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "captured", PointInTime: time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC), SourceDefinition: &definition}
+			request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "captured", PointInTime: source.CreatedAt, SourceDefinition: &definition}
 			var target Database
 			if fault == "target_spec" || fault == "target_origin" {
 				target, _, err = service.RestoreWithResult(ctx, request)
@@ -74,6 +74,8 @@ func TestRestoreCapturedDefinitionRejectsDriftBeforeProviderIO(t *testing.T) {
 				definition.Spec.PostgresMajor = 0
 			case "shortened_retention":
 				edited.Spec.RestoreWindowSeconds = 60
+				later := service.now().Add(2 * time.Minute) // the point now predates the shortened window
+				service.now = func() time.Time { return later }
 			case "target_spec":
 				target.Spec.Class = ClassBurstable
 				store.databases[target.ID] = target

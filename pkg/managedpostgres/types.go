@@ -6,7 +6,10 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +25,51 @@ var (
 	ErrQuotaExceeded = pgerrors.ErrQuotaExceeded
 	ErrUsageStale    = pgerrors.ErrUsageStale
 )
+
+// ErrProvisioningClosed reports that the operator rollout gate (canary
+// window, qualification or account allowlist) is closed for this account.
+// It wraps ErrUnavailable so retry semantics and existing errors.Is checks
+// hold, but it is not a provider outage: on production-us an expired canary
+// window answered "the configured provider is temporarily unavailable" with
+// outage advice (hunt #9, H9-P107).
+var ErrProvisioningClosed = fmt.Errorf("%w: provisioning is not open for this account", ErrUnavailable)
+
+// ErrNotInPlan refuses a compute target the account's plan does not include
+// (a class or always-on compute). It unwraps to ErrQuotaExceeded for existing
+// checks, but it is an entitlement, not a usage quota: on production-us
+// `compute-policy --scale-to-zero false` answered "quota exceeded" with a
+// hint about credentials (hunt #9, H9-P114).
+var ErrNotInPlan error = notInPlanError{}
+
+type notInPlanError struct{}
+
+func (notInPlanError) Error() string {
+	return "the requested service class or always-on compute is not included in this plan"
+}
+
+func (notInPlanError) Unwrap() error { return ErrQuotaExceeded }
+
+// QuotaProblem names an ErrQuotaExceeded refusal for API problems, telling a
+// plan entitlement apart from a usage quota.
+func QuotaProblem(err error) (status int, code, title string) {
+	if errors.Is(err, ErrNotInPlan) {
+		return 403, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	}
+	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
+}
+
+// ProvisioningClosedDetail and UnavailableDetail are the customer-facing
+// explanations for ErrProvisioningClosed and a real provider outage.
+const (
+	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
+	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+)
+
+// UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
+// deleted database holds the gate until its final usage correction lands, so
+// without it a timed wait reads like an outage (production-us hunt #9,
+// H9-P101).
+const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until its final usage correction is collected, up to a few hours. Existing databases keep running; retry later."
 
 type State string
 
@@ -61,19 +109,21 @@ type Spec struct {
 	RestoreWindowSeconds int64
 }
 
+// Validate wraps ErrInvalid with the offending field so API problems can
+// say what to change; the bare sentinel left customers guessing.
 func (s Spec) Validate() error {
 	validRegion := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	if !validRegion.MatchString(s.Region) || s.PostgresMajor < 12 || s.PostgresMajor > 99 {
-		return ErrInvalid
-	}
-	if s.Class != ClassDevelopment && s.Class != ClassBurstable && s.Class != ClassProduction {
-		return ErrInvalid
-	}
-	if s.Availability != AvailabilitySingleZone && s.Availability != AvailabilityHighlyAvailable {
-		return ErrInvalid
-	}
-	if s.StorageLimitBytes < 0 || s.RestoreWindowSeconds < 0 {
-		return ErrInvalid
+	switch {
+	case !validRegion.MatchString(s.Region):
+		return fmt.Errorf("%w: region must be lowercase letters, digits and hyphens", ErrInvalid)
+	case s.PostgresMajor < 12 || s.PostgresMajor > 99:
+		return fmt.Errorf("%w: postgres major %d is outside 12-99", ErrInvalid, s.PostgresMajor)
+	case s.Class != ClassDevelopment && s.Class != ClassBurstable && s.Class != ClassProduction:
+		return fmt.Errorf("%w: service class must be development, burstable or production", ErrInvalid)
+	case s.Availability != AvailabilitySingleZone && s.Availability != AvailabilityHighlyAvailable:
+		return fmt.Errorf("%w: availability must be single_zone or high_availability", ErrInvalid)
+	case s.StorageLimitBytes < 0 || s.RestoreWindowSeconds < 0:
+		return fmt.Errorf("%w: storage limit and restore window must not be negative", ErrInvalid)
 	}
 	return nil
 }
@@ -494,6 +544,10 @@ type UsageProgress struct {
 	// Unresolved is snapshot metadata for an accounting obligation whose
 	// provider identity is still unknown. Ledger observations cannot settle it.
 	Unresolved bool
+	// CreatedAt is snapshot metadata: when the accounting root was reserved.
+	// A resource created inside the current window has no completed window
+	// to collect yet, so its missing first observation is not a gap.
+	CreatedAt time.Time
 }
 
 // UsageLineItem is a normalized, provider-neutral meter line. It is an
@@ -656,23 +710,40 @@ func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
 	return nil
 }
 
+// Supports wraps ErrUnsupported with what the backend offers instead, so a
+// request for an unoffered major or class names the alternatives.
 func (c Capabilities) Supports(spec Spec) error {
 	if err := spec.Validate(); err != nil {
 		return err
 	}
-	if !contains(c.PostgresMajors, spec.PostgresMajor) || !contains(c.ServiceClasses, spec.Class) || !contains(c.Availability, spec.Availability) {
-		return ErrUnsupported
-	}
-	if spec.ScaleToZero && !c.ScaleToZero {
-		return ErrUnsupported
-	}
-	if spec.RestoreWindowSeconds > 0 && (!c.PointInTimeRestore || (c.MaxRestoreWindowSeconds > 0 && spec.RestoreWindowSeconds > c.MaxRestoreWindowSeconds)) {
-		return ErrUnsupported
-	}
-	if spec.StorageLimitBytes > 0 && c.MaxStorageBytes > 0 && spec.StorageLimitBytes > c.MaxStorageBytes {
-		return ErrUnsupported
+	switch {
+	case !contains(c.PostgresMajors, spec.PostgresMajor):
+		return fmt.Errorf("%w: postgres major %d is not offered here (offered: %s)", ErrUnsupported, spec.PostgresMajor, joinOffered(c.PostgresMajors, strconv.Itoa))
+	case !contains(c.ServiceClasses, spec.Class):
+		return fmt.Errorf("%w: service class %s is not offered here (offered: %s)", ErrUnsupported, spec.Class, joinOffered(c.ServiceClasses, func(v ServiceClass) string { return string(v) }))
+	case !contains(c.Availability, spec.Availability):
+		return fmt.Errorf("%w: availability %s is not offered here (offered: %s)", ErrUnsupported, spec.Availability, joinOffered(c.Availability, func(v Availability) string { return string(v) }))
+	case spec.ScaleToZero && !c.ScaleToZero:
+		return fmt.Errorf("%w: scale-to-zero is not offered here", ErrUnsupported)
+	case spec.RestoreWindowSeconds > 0 && !c.PointInTimeRestore:
+		return fmt.Errorf("%w: point-in-time restore is not offered here", ErrUnsupported)
+	case spec.RestoreWindowSeconds > 0 && c.MaxRestoreWindowSeconds > 0 && spec.RestoreWindowSeconds > c.MaxRestoreWindowSeconds:
+		return fmt.Errorf("%w: restore window %d s exceeds the %d s maximum", ErrUnsupported, spec.RestoreWindowSeconds, c.MaxRestoreWindowSeconds)
+	case spec.StorageLimitBytes > 0 && c.MaxStorageBytes > 0 && spec.StorageLimitBytes > c.MaxStorageBytes:
+		return fmt.Errorf("%w: storage limit %d bytes exceeds the %d byte maximum", ErrUnsupported, spec.StorageLimitBytes, c.MaxStorageBytes)
 	}
 	return nil
+}
+
+func joinOffered[T any](values []T, format func(T) string) string {
+	if len(values) == 0 {
+		return "none"
+	}
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = format(v)
+	}
+	return strings.Join(out, ", ")
 }
 
 // Provider is the complete vendor boundary. Mutating methods must be
@@ -898,6 +969,9 @@ func ValidName(name string) bool {
 	validName := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	return validName.MatchString(name)
 }
+
+// errInvalidName explains ValidName's rule in API problems.
+var errInvalidName = fmt.Errorf("%w: name must start with a lowercase letter and use at most 63 lowercase letters, digits and hyphens", ErrInvalid)
 
 func validBindingScope(scope string) bool {
 	if !utf8.ValidString(scope) {

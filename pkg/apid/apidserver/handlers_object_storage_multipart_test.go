@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -38,21 +39,21 @@ func TestObjectMultipartLayout(t *testing.T) {
 }
 
 func TestObjectMultipartUploadLifecycle(t *testing.T) {
-	_, teardown := withTestIdentities(t)
+	_, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
-	e := setup(t, api.PlanHobby)
-	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	e := apidserver.Setup(t, api.PlanHobby)
+	if err := (*(*e.S()).RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	createApp(t, e, "multipart-app")
-	provider := &fakeObjectProvider{}
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	apidserver.CreateApp(t, e, "multipart-app")
+	provider := &apidserver.FakeObjectProvider{}
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, &apidserver.FakeObjectProvider{}, "external"))
 	bucketPath := "/v1/apps/multipart-app/buckets"
-	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
-	qualifyObjectAccounting(t, e, bucket.ID)
+	bucket := apidserver.BucketResponse(t, e.Do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	apidserver.QualifyObjectAccounting(t, e, bucket.ID)
 	base := bucketPath + "/" + bucket.ID + "/multipart-uploads"
 
-	createdResponse := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "large file.bin", SizeBytes: 70, ContentType: "application/octet-stream"}, nil)
+	createdResponse := e.Do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "large file.bin", SizeBytes: 70, ContentType: "application/octet-stream"}, nil)
 	if createdResponse.Code != 201 || createdResponse.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(createdResponse.Code, createdResponse.Body.String())
 	}
@@ -60,123 +61,122 @@ func TestObjectMultipartUploadLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createdResponse.Body.Bytes(), &upload); err != nil {
 		t.Fatal(err)
 	}
-	if upload.State != state.ObjectMultipartActive || upload.PartCount != 1 || upload.PartSizeBytes != e.s.objectStorage.MaxPartBytes {
+	if upload.State != state.ObjectMultipartActive || upload.PartCount != 1 || upload.PartSizeBytes != (*(*e.S()).ObjectStorage()).MaxPartBytes {
 		t.Fatal(upload)
 	}
-	retryResponse := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: upload.Key, SizeBytes: upload.SizeBytes, ContentType: upload.ContentType}, nil)
+	retryResponse := e.Do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: upload.Key, SizeBytes: upload.SizeBytes, ContentType: upload.ContentType}, nil)
 	var retry api.ObjectMultipartUpload
 	if retryResponse.Code != 200 || json.Unmarshal(retryResponse.Body.Bytes(), &retry) != nil || retry.ID != upload.ID {
 		t.Fatal("create was not idempotent", retryResponse.Code, retryResponse.Body.String())
 	}
-	if got := e.do(t, "GET", base+"/"+upload.ID, nil, nil); got.Code != 200 {
+	if got := e.Do(t, "GET", base+"/"+upload.ID, nil, nil); got.Code != 200 {
 		t.Fatal(got.Code, got.Body.String())
 	}
-	listed := e.do(t, "GET", base+"?limit=1", nil, nil)
+	listed := e.Do(t, "GET", base+"?limit=1", nil, nil)
 	var uploadList api.ObjectMultipartUploadList
 	if listed.Code != 200 || json.Unmarshal(listed.Body.Bytes(), &uploadList) != nil || len(uploadList.Items) != 1 || uploadList.Items[0].ID != upload.ID {
 		t.Fatal("session list", listed.Code, listed.Body.String())
 	}
-	partResponse := e.do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)
+	partResponse := e.Do(t, "POST", base+"/"+upload.ID+"/parts/1/signed-url", api.ObjectMultipartPartSignRequest{ExpiresIn: 60}, nil)
 	var signed api.ObjectSignedRequest
 	if partResponse.Code != 200 || json.Unmarshal(partResponse.Body.Bytes(), &signed) != nil || signed.Headers["Content-Length"] != strconv.FormatInt(upload.SizeBytes, 10) {
 		t.Fatal(partResponse.Code, partResponse.Body.String())
 	}
-	provider.multipartParts = objectstorage.MultipartPartsPage{Items: []objectstorage.MultipartPart{{PartNumber: 1, ETag: `"etag"`, SizeBytes: upload.SizeBytes, LastModified: time.Now().UTC()}}}
-	partsResponse := e.do(t, "GET", base+"/"+upload.ID+"/parts?limit=1", nil, nil)
+	(*provider.MultipartParts()) = objectstorage.MultipartPartsPage{Items: []objectstorage.MultipartPart{{PartNumber: 1, ETag: `"etag"`, SizeBytes: upload.SizeBytes, LastModified: time.Now().UTC()}}}
+	partsResponse := e.Do(t, "GET", base+"/"+upload.ID+"/parts?limit=1", nil, nil)
 	var partsList api.ObjectMultipartPartList
 	if partsResponse.Code != 200 || json.Unmarshal(partsResponse.Body.Bytes(), &partsList) != nil || len(partsList.Items) != 1 || partsList.Items[0].ETag != `"etag"` {
 		t.Fatal("provider part list", partsResponse.Code, partsResponse.Body.String())
 	}
-	if invalid := e.do(t, "POST", base+"/"+upload.ID+"/parts/2/signed-url", api.ObjectMultipartPartSignRequest{}, nil); invalid.Code != 400 {
+	if invalid := e.Do(t, "POST", base+"/"+upload.ID+"/parts/2/signed-url", api.ObjectMultipartPartSignRequest{}, nil); invalid.Code != 400 {
 		t.Fatal("invalid part accepted", invalid.Code, invalid.Body.String())
 	}
 	complete := api.CompleteObjectMultipartUploadRequest{Parts: []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: `"etag"`}}}
-	completedResponse := e.do(t, "POST", base+"/"+upload.ID+"/complete", complete, nil)
+	completedResponse := e.Do(t, "POST", base+"/"+upload.ID+"/complete", complete, nil)
 	var completed api.ObjectMultipartUpload
-	if completedResponse.Code != 200 || json.Unmarshal(completedResponse.Body.Bytes(), &completed) != nil || completed.State != state.ObjectMultipartCompleted || len(provider.multipartCompleted) != 1 {
-		t.Fatal(completedResponse.Code, completedResponse.Body.String(), provider.multipartCompleted)
+	if completedResponse.Code != 200 || json.Unmarshal(completedResponse.Body.Bytes(), &completed) != nil || completed.State != state.ObjectMultipartCompleted || len((*provider.MultipartCompleted())) != 1 {
+		t.Fatal(completedResponse.Code, completedResponse.Body.String(), (*provider.MultipartCompleted()))
 	}
-	if repeated := e.do(t, "POST", base+"/"+upload.ID+"/complete", complete, nil); repeated.Code != 200 || len(provider.multipartCompleted) != 1 {
-		t.Fatal("completion retry repeated provider call", repeated.Code, len(provider.multipartCompleted))
+	if repeated := e.Do(t, "POST", base+"/"+upload.ID+"/complete", complete, nil); repeated.Code != 200 || len((*provider.MultipartCompleted())) != 1 {
+		t.Fatal("completion retry repeated provider call", repeated.Code, len((*provider.MultipartCompleted())))
 	}
 
-	abortResponse := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "cancel.bin", SizeBytes: 10}, nil)
-	provider.multipartParts = objectstorage.MultipartPartsPage{}
+	abortResponse := e.Do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "cancel.bin", SizeBytes: 10}, nil)
+	(*provider.MultipartParts()) = objectstorage.MultipartPartsPage{}
 	var abortUpload api.ObjectMultipartUpload
 	if abortResponse.Code != 201 || json.Unmarshal(abortResponse.Body.Bytes(), &abortUpload) != nil {
 		t.Fatal(abortResponse.Code, abortResponse.Body.String())
 	}
-	if aborted := e.do(t, "DELETE", base+"/"+abortUpload.ID, nil, nil); aborted.Code != 204 || len(provider.multipartAborted) != 1 {
-		t.Fatal(aborted.Code, aborted.Body.String(), provider.multipartAborted)
+	if aborted := e.Do(t, "DELETE", base+"/"+abortUpload.ID, nil, nil); aborted.Code != 204 || len((*provider.MultipartAborted())) != 1 {
+		t.Fatal(aborted.Code, aborted.Body.String(), (*provider.MultipartAborted()))
 	}
-	if repeated := e.do(t, "DELETE", base+"/"+abortUpload.ID, nil, nil); repeated.Code != 204 || len(provider.multipartAborted) != 1 {
-		t.Fatal("abort retry repeated provider call", repeated.Code, len(provider.multipartAborted))
+	if repeated := e.Do(t, "DELETE", base+"/"+abortUpload.ID, nil, nil); repeated.Code != 204 || len((*provider.MultipartAborted())) != 1 {
+		t.Fatal("abort retry repeated provider call", repeated.Code, len((*provider.MultipartAborted())))
 	}
 }
 
 func TestObjectMultipartUploadRequiresWriteGrant(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	e := apidserver.Setup(t, api.PlanHobby)
+	if err := (*(*e.S()).RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	createApp(t, e, "multipart-auth")
-	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	apidserver.CreateApp(t, e, "multipart-auth")
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, &apidserver.FakeObjectProvider{}, &apidserver.FakeObjectProvider{}, "external"))
 	bucketPath := "/v1/apps/multipart-auth/buckets"
-	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
-	qualifyObjectAccounting(t, e, bucket.ID)
+	bucket := apidserver.BucketResponse(t, e.Do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	apidserver.QualifyObjectAccounting(t, e, bucket.ID)
 	plain, hash, _ := api.GenerateAPIKey()
-	key, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, hash, "writer", []string{api.ScopeStorageWrite})
+	key, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, hash, "writer", []string{api.ScopeStorageWrite})
 	if err != nil {
 		t.Fatal(err)
 	}
 	headers := map[string]string{"Authorization": "Bearer " + plain}
 	base := bucketPath + "/" + bucket.ID + "/multipart-uploads"
 	request := api.CreateObjectMultipartUploadRequest{Key: "large.bin", SizeBytes: 10}
-	if response := e.do(t, "POST", base, request, headers); response.Code != 403 {
+	if response := e.Do(t, "POST", base, request, headers); response.Code != 403 {
 		t.Fatal("ungranted writer created upload", response.Code, response.Body.String())
 	}
-	var access state.ObjectBucketAccessStore = e.store
-	if _, err = access.SetObjectBucketAccessGrant(t.Context(), e.acct.ID, bucket.ID, key.ID, state.ObjectBucketPermissionWrite); err != nil {
+	var access state.ObjectBucketAccessStore = (*e.Store())
+	if _, err = access.SetObjectBucketAccessGrant(t.Context(), (*e.Acct()).ID, bucket.ID, key.ID, state.ObjectBucketPermissionWrite); err != nil {
 		t.Fatal(err)
 	}
-	if response := e.do(t, "POST", base, request, headers); response.Code != 201 {
+	if response := e.Do(t, "POST", base, request, headers); response.Code != 201 {
 		t.Fatal("granted writer denied", response.Code, response.Body.String())
 	}
 }
 
 func TestObjectMultipartCompletionIntentSurvivesProviderFailure(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	if err := e.s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	e := apidserver.Setup(t, api.PlanHobby)
+	if err := (*(*e.S()).RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	createApp(t, e, "multipart-recovery")
-	provider := &fakeObjectProvider{}
-	e.s.WithObjectStorage(objectRegistry(t, provider, &fakeObjectProvider{}, "external"))
+	apidserver.CreateApp(t, e, "multipart-recovery")
+	provider := &apidserver.FakeObjectProvider{}
+	(*e.S()).WithObjectStorage(apidserver.ObjectRegistry(t, provider, &apidserver.FakeObjectProvider{}, "external"))
 	bucketPath := "/v1/apps/multipart-recovery/buckets"
-	bucket := bucketResponse(t, e.do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
-	qualifyObjectAccounting(t, e, bucket.ID)
+	bucket := apidserver.BucketResponse(t, e.Do(t, "POST", bucketPath, map[string]any{"name": "assets"}, nil), 201)
+	apidserver.QualifyObjectAccounting(t, e, bucket.ID)
 	base := bucketPath + "/" + bucket.ID + "/multipart-uploads"
-	created := e.do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "recover.bin", SizeBytes: 10}, nil)
+	created := e.Do(t, "POST", base, api.CreateObjectMultipartUploadRequest{Key: "recover.bin", SizeBytes: 10}, nil)
 	var upload api.ObjectMultipartUpload
 	if created.Code != 201 || json.Unmarshal(created.Body.Bytes(), &upload) != nil {
 		t.Fatal(created.Code, created.Body.String())
 	}
-
-	provider.multipartErr = objectstorage.ErrUnavailable
+	(*provider.MultipartErr()) = objectstorage.ErrUnavailable
 	parts := []api.ObjectMultipartCompletedPart{{PartNumber: 1, ETag: `"persisted"`}}
-	failed := e.do(t, "POST", base+"/"+upload.ID+"/complete", api.CompleteObjectMultipartUploadRequest{Parts: parts}, nil)
+	failed := e.Do(t, "POST", base+"/"+upload.ID+"/complete", api.CompleteObjectMultipartUploadRequest{Parts: parts}, nil)
 	if failed.Code != 503 {
 		t.Fatal(failed.Code, failed.Body.String())
 	}
-	app, err := e.store.AppBySlug(t.Context(), "multipart-recovery")
+	app, err := (*e.Store()).AppBySlug(t.Context(), "multipart-recovery")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := e.store.GetObjectMultipartUpload(t.Context(), e.acct.ID, app.ID, bucket.ID, upload.ID)
+	stored, err := (*e.Store()).GetObjectMultipartUpload(t.Context(), (*e.Acct()).ID, app.ID, bucket.ID, upload.ID)
 	if err != nil || stored.State != state.ObjectMultipartCompleting || len(stored.Parts) != 1 || stored.Parts[0] != parts[0] || stored.LeaseToken != "" || stored.LastErrorCode != "temporary" {
 		t.Fatal(stored, err)
 	}
-	if retried := e.do(t, "POST", base+"/"+upload.ID+"/complete", api.CompleteObjectMultipartUploadRequest{Parts: parts}, nil); retried.Code != 409 {
+	if retried := e.Do(t, "POST", base+"/"+upload.ID+"/complete", api.CompleteObjectMultipartUploadRequest{Parts: parts}, nil); retried.Code != 409 {
 		t.Fatal("retry bypassed durable cooldown", retried.Code, retried.Body.String())
 	}
 }

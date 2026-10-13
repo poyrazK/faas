@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,7 +34,7 @@ func TestCompletenessWindow(t *testing.T) {
 		{"fully expired", now.AddDate(0, 0, -60), now.AddDate(0, 0, -30), time.Time{}, time.Time{}, false},
 	}
 	for _, tc := range cases {
-		from, end, ok := completenessWindow(tc.since, tc.until, now)
+		from, end, ok := apidserver.CompletenessWindow(tc.since, tc.until, now)
 		if ok != tc.ok || (ok && (!from.Equal(tc.from) || !end.Equal(tc.end))) {
 			t.Errorf("%s: got %s..%s ok=%v, want %s..%s ok=%v", tc.name, from, end, ok, tc.from, tc.end, tc.ok)
 		}
@@ -42,9 +43,9 @@ func TestCompletenessWindow(t *testing.T) {
 
 // adr: 954
 func TestAPIConsumerUsageCompletenessEndpoint(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "consumer-completeness-app")
-	created := e.do(t, http.MethodPost, "/v1/apps/consumer-completeness-app/consumers", api.CreateAPIConsumerRequest{
+	e := apidserver.Setup(t, api.PlanHobby)
+	apidserver.MustSeedApp(t, e, "consumer-completeness-app")
+	created := e.Do(t, http.MethodPost, "/v1/apps/consumer-completeness-app/consumers", api.CreateAPIConsumerRequest{
 		ExternalRef: "checked-customer", Name: "Checked Customer",
 	}, nil)
 	if created.Code != http.StatusCreated {
@@ -55,20 +56,20 @@ func TestAPIConsumerUsageCompletenessEndpoint(t *testing.T) {
 		t.Fatalf("decode consumer: %v", err)
 	}
 	hour := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour)
-	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
-		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: consumer.AppID,
+	if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), state.APIConsumerUsageEvent{
+		EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: consumer.AppID,
 		ConsumerKey: consumer.ID, WindowStart: hour.Add(5 * time.Minute),
 		RequestCount: 6, ErrorCount: 1, BillableUnits: 6,
 	}); err != nil {
 		t.Fatalf("record usage: %v", err)
 	}
-	e.store.SeedAPIConsumerTelemetryHour(e.acct.ID, consumer.AppID, consumer.ID, hour, 7)
+	(*e.Store()).SeedAPIConsumerTelemetryHour((*e.Acct()).ID, consumer.AppID, consumer.ID, hour, 7)
 
 	q := url.Values{}
 	q.Set("since", hour.Add(-time.Hour).Format(time.RFC3339))
 	q.Set("until", time.Now().UTC().Format(time.RFC3339))
 	path := "/v1/apps/consumer-completeness-app/consumers/" + consumer.ID + "/usage-completeness?" + q.Encode()
-	rec := e.do(t, http.MethodGet, path, nil, nil)
+	rec := e.Do(t, http.MethodGet, path, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("completeness: %d %s", rec.Code, rec.Body)
 	}
@@ -81,10 +82,10 @@ func TestAPIConsumerUsageCompletenessEndpoint(t *testing.T) {
 		t.Fatalf("completeness = %+v", got)
 	}
 
-	if bad := e.do(t, http.MethodGet, "/v1/apps/consumer-completeness-app/consumers/"+consumer.ID+"/usage-completeness?since=x", nil, nil); bad.Code != http.StatusBadRequest {
+	if bad := e.Do(t, http.MethodGet, "/v1/apps/consumer-completeness-app/consumers/"+consumer.ID+"/usage-completeness?since=x", nil, nil); bad.Code != http.StatusBadRequest {
 		t.Fatalf("bad window: %d %s", bad.Code, bad.Body)
 	}
-	if missing := e.do(t, http.MethodGet, "/v1/apps/consumer-completeness-app/consumers/nope/usage-completeness?"+q.Encode(), nil, nil); missing.Code != http.StatusNotFound {
+	if missing := e.Do(t, http.MethodGet, "/v1/apps/consumer-completeness-app/consumers/nope/usage-completeness?"+q.Encode(), nil, nil); missing.Code != http.StatusNotFound {
 		t.Fatalf("unknown consumer: %d %s", missing.Code, missing.Body)
 	}
 }

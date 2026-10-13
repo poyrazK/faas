@@ -20,7 +20,7 @@
 // build a stub auditOps + a failingStore wrapper directly. The
 // handler-level counterpart that proves the customer-facing 401 is
 // unaffected lives in handlers_auth_login_test.go.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -36,7 +36,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // stubFailedOps is the in-memory auditFailedOps the unit tests
@@ -105,7 +107,7 @@ func (f *flushCounter) Count() int {
 // failingStore pattern so the audit-write-failure path is wired
 // identically to the success-path audit seam.
 type failingFlushStore struct {
-	state.Store
+	Store state.Store
 }
 
 func (failingFlushStore) AppendEvent(_ context.Context, _, _ string, _ *string, _ []byte) error {
@@ -187,13 +189,13 @@ func (s *stubFailedOps) writeFailureCount() float64 {
 // hits the default branch without the test having to enqueue 4096
 // rows. flushEvery / flushBatch are also parameterised so the
 // flapping test runs fast.
-func newAuditorForTestWithCapacity(store state.Store, log *slog.Logger, ops auditFailedOps, cap int, flushEvery time.Duration, flushBatch int) *auditor {
-	a := newAuditor(store, log, nil)
-	a.failedCh = make(chan failedLoginRow, cap)
-	a.closeSignal = make(chan struct{})
-	a.failedOps = ops
-	a.flushEvery = flushEvery
-	a.flushBatch = flushBatch
+func newAuditorForTestWithCapacity(store state.Store, log *slog.Logger, ops apidserver.AuditFailedOps, cap int, flushEvery time.Duration, flushBatch int) *apidserver.Auditor {
+	a := apidserver.NewAuditor(store, log, nil)
+	(*a.FailedCh()) = make(chan apidserver.FailedLoginRow, cap)
+	(*a.CloseSignal()) = make(chan struct{})
+	(*a.FailedOps()) = ops
+	(*a.FlushEvery()) = flushEvery
+	(*a.FlushBatch()) = flushBatch
 	return a
 }
 
@@ -206,7 +208,7 @@ func TestAuditFailedLogin_EnqueueWritesRowToStore(t *testing.T) {
 	ops := newStubFailedOps()
 	auditOps := newStubAuditOps()
 	a := newAuditorForTestWithCapacity(ms, slog.New(slog.NewTextHandler(io.Discard, nil)), ops, 16, 25*time.Millisecond, 100)
-	a.ops = auditOps
+	(*a.Ops()) = auditOps
 	a.Start(context.Background())
 	defer a.Close()
 
@@ -222,8 +224,8 @@ func TestAuditFailedLogin_EnqueueWritesRowToStore(t *testing.T) {
 		}
 		if len(events) == 1 {
 			e := events[0]
-			if e.Kind != KindAuthLoginFailed {
-				t.Errorf("kind = %q, want %q", e.Kind, KindAuthLoginFailed)
+			if e.Kind != apidserver.KindAuthLoginFailed {
+				t.Errorf("kind = %q, want %q", e.Kind, apidserver.KindAuthLoginFailed)
 			}
 			if e.Subject != nil {
 				t.Errorf("subject = %v, want nil (failed login cannot be attributed to a known account)", e.Subject)
@@ -284,9 +286,9 @@ func TestAuditFailedLogin_AuditWriteFailureIncrementsCounter(t *testing.T) {
 	failingStore := failingFlushStore{Store: state.NewMemStore()}
 	ops := newStubFailedOps()
 	successOps := newStubAuditOps()
-	base := newAuditor(failingStore, slog.New(slog.NewTextHandler(io.Discard, nil)), successOps)
-	base.failedOps = ops
-	base.closeSignal = make(chan struct{})
+	base := apidserver.NewAuditor(statetest.NewStore(failingStore), slog.New(slog.NewTextHandler(io.Discard, nil)), successOps)
+	(*base.FailedOps()) = ops
+	(*base.CloseSignal()) = make(chan struct{})
 	base.Start(context.Background())
 	defer base.Close()
 
@@ -342,8 +344,8 @@ func TestAuditFailedLogin_FlappingChannelBatchFlushes(t *testing.T) {
 		if len(events) == n {
 			// Every row landed with the right kind.
 			for _, e := range events {
-				if e.Kind != KindAuthLoginFailed {
-					t.Errorf("event kind = %q, want %q", e.Kind, KindAuthLoginFailed)
+				if e.Kind != apidserver.KindAuthLoginFailed {
+					t.Errorf("event kind = %q, want %q", e.Kind, apidserver.KindAuthLoginFailed)
 				}
 			}
 			return

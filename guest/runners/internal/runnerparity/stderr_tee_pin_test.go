@@ -26,64 +26,36 @@ package runnerparity
 // here — it needs a separate framed channel (a spec change, not a bug
 // fix). See issue #254.
 //
-// The walk mirrors TestRunners_InvokeHandlerUsesCmdRun: file-path string
-// matching, no AST parse, runs in microseconds.
+// Every runner delegates to the shared internal.Serve (ADR-999), so the walk
+// checks each runner delegates and inspects internal/serve.go once. It
+// mirrors TestRunners_InvokeHandlerUsesCmdRun: file-path string matching, no
+// AST parse, runs in microseconds.
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestRunners_TeeCustomerStderr(t *testing.T) {
-	root := filepath.Join(runnerRoot, "runners")
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read runners dir: %v", err)
+	names := requireRunnersDelegate(t, runnerMains(t))
+	src := serveSource(t)
+
+	// (1) stderr is teed to the host.
+	if !strings.Contains(src, "cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)") {
+		t.Errorf("internal/serve.go: cmd.Stderr is not teed to os.Stderr (issue #254).\n" +
+			"want: cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)\n" +
+			"Without the tee, the customer's stack traces never leave the " +
+			"microVM — guest-init's ring (and therefore `faas logs`) only " +
+			"ever sees platform noise.")
 	}
 
-	var checked int
-	var runnerDirs []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		// Skip the shared internal/ helpers package.
-		if e.Name() == "internal" {
-			continue
-		}
-		mainPath := filepath.Join(root, e.Name(), "main.go")
-		body, err := os.ReadFile(mainPath)
-		if err != nil {
-			t.Errorf("read %s: %v", mainPath, err)
-			continue
-		}
-		src := string(body)
-		checked++
-		runnerDirs = append(runnerDirs, e.Name())
-
-		// (1) stderr is teed to the host.
-		if !strings.Contains(src, "cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)") {
-			t.Errorf("%s: cmd.Stderr is not teed to os.Stderr (issue #254).\n"+
-				"want: cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)\n"+
-				"Without the tee, the customer's stack traces never leave the "+
-				"microVM — guest-init's ring (and therefore `faas logs`) only "+
-				"ever sees platform noise.", e.Name())
-		}
-
-		// (2) stdout is NOT teed — it is protocol-bearing.
-		if strings.Contains(src, "cmd.Stdout = io.MultiWriter") {
-			t.Errorf("%s: cmd.Stdout is teed — this breaks the §4.9 envelope.\n"+
-				"stdout carries the response envelope and is json.Unmarshal'd "+
-				"from that buffer; interleaving customer writes corrupts every "+
-				"response. Capturing customer stdout needs a separate framed "+
-				"channel (issue #254), not a tee.", e.Name())
-		}
+	// (2) stdout is NOT teed — it is protocol-bearing.
+	if strings.Contains(src, "cmd.Stdout = io.MultiWriter") {
+		t.Errorf("internal/serve.go: cmd.Stdout is teed — this breaks the §4.9 envelope.\n" +
+			"stdout carries the response envelope and is json.Unmarshal'd " +
+			"from that buffer; interleaving customer writes corrupts every " +
+			"response. Capturing customer stdout needs a separate framed " +
+			"channel (issue #254), not a tee.")
 	}
-
-	if checked == 0 {
-		t.Fatal("no runner dirs found under " + root + " — walk path is wrong")
-	}
-	t.Logf("walked %d runner dirs %v — stderr teed, stdout untouched", checked, runnerDirs)
+	t.Logf("walked %d runner dirs %v — all delegate to internal.Serve: stderr teed, stdout untouched", len(names), names)
 }

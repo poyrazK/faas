@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -9,16 +9,17 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestProjectPlatformTenantPolicyScanApply(t *testing.T) {
 	t.Setenv("FAAS_SCAN_SPOOL_ROOT", t.TempDir())
-	e, _ := newTestServerWithCapturingNotifier(t, api.PlanPro)
+	e, _ := apidserver.NewTestServerWithCapturingNotifier(t, api.PlanPro)
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	srv := httptest.NewServer(e.h)
+	srv := httptest.NewServer((*e.H()))
 	defer srv.Close()
-	client := api.NewClient(srv.URL, e.key)
-	source := applyProjectOneWorkloadTarGz(t)
+	client := api.NewClient(srv.URL, (*e.Key()))
+	source := apidserver.ApplyProjectOneWorkloadTarGz(t)
 	ctx := context.Background()
 	policy := true
 	scan := func(override *bool) api.PlanResponse {
@@ -45,7 +46,7 @@ func TestProjectPlatformTenantPolicyScanApply(t *testing.T) {
 		if err := apply(plan, mismatch); !errors.As(err, &problem) || problem.Problem.Code != "plan_token_stale" {
 			t.Fatalf("mismatched apply=%v", err)
 		}
-		apps, err := e.store.ListApps(ctx, e.acct.ID)
+		apps, err := (*e.Store()).ListApps(ctx, (*e.Acct()).ID)
 		if err != nil || len(apps) != 0 {
 			t.Fatalf("mismatched apply wrote apps: %+v, %v", apps, err)
 		}
@@ -55,7 +56,7 @@ func TestProjectPlatformTenantPolicyScanApply(t *testing.T) {
 	}
 	assertPolicy := func(want bool) {
 		t.Helper()
-		app, err := e.store.AppBySlug(ctx, plan.Workloads[0].Name)
+		app, err := (*e.Store()).AppBySlug(ctx, plan.Workloads[0].Name)
 		if err != nil || app.PlatformTenantRequired != want {
 			t.Fatalf("app policy=%v want=%v err=%v", app.PlatformTenantRequired, want, err)
 		}
@@ -75,12 +76,12 @@ func TestProjectPlatformTenantPolicyScanApply(t *testing.T) {
 }
 
 func TestProjectPlatformTenantPolicyFreeScanRejected(t *testing.T) {
-	e := setup(t, api.PlanFree)
+	e := apidserver.Setup(t, api.PlanFree)
 	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
-	srv := httptest.NewServer(e.h)
+	srv := httptest.NewServer((*e.H()))
 	defer srv.Close()
 	policy := true
-	_, err := api.NewClient(srv.URL, e.key).ScanProjectWithBindingEnvironment(context.Background(), bytes.NewReader(applyProjectOneWorkloadTarGz(t)), "project.tar.gz", "customer-platform", "", "", 0, nil, nil, false, false, "", &policy)
+	_, err := api.NewClient(srv.URL, (*e.Key())).ScanProjectWithBindingEnvironment(context.Background(), bytes.NewReader(apidserver.ApplyProjectOneWorkloadTarGz(t)), "project.tar.gz", "customer-platform", "", "", 0, nil, nil, false, false, "", &policy)
 	var problem *api.APIError
 	if !errors.As(err, &problem) || problem.Problem.Status != http.StatusPaymentRequired {
 		t.Fatalf("Free scan=%v", err)

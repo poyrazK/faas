@@ -13593,7 +13593,29 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 	return c, nil
 }
 
+// cronDeleteBatch bounds how many dependent rows one statement detaches.
+// An every-minute cron references ~1,400 invocations a day and invocations
+// carries a dozen row triggers: detaching them inside the DELETE's own
+// ON DELETE SET NULL ran past the request budget on production-us and was
+// cancelled, and rolled back, on every attempt, so the cron could never be
+// deleted (hunt #9, H9-165). Each batch commits, so a retry resumes.
+const cronDeleteBatch = 1000
+
 func (s *PgStore) DeleteCron(ctx context.Context, id, appID string) error {
+	for _, detach := range []string{
+		`update invocations set cron_id = null where id in (select i.id from invocations i join crons c on c.id = i.cron_id where i.cron_id = $1 and c.app_id = $2 limit $3)`,
+		`update app_tasks set cron_id = null where id in (select t.id from app_tasks t join crons c on c.id = t.cron_id where t.cron_id = $1 and c.app_id = $2 limit $3)`,
+	} {
+		for {
+			tag, err := s.pool.Exec(ctx, detach, id, appID, cronDeleteBatch)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() < cronDeleteBatch {
+				break
+			}
+		}
+	}
 	tag, err := s.pool.Exec(ctx, `delete from crons where id = $1 and app_id = $2`, id, appID)
 	if err != nil {
 		return err

@@ -1,12 +1,13 @@
 from typing import Literal
 
-EventRecoveryExecutionFinishedWebhookPayloadState = Literal["cancelled", "completed"]
+EventRecoveryExecutionFinishedWebhookPayloadState = Literal["cancelled", "completed", "expired"]
 
 EVENT_RECOVERY_EXECUTION_FINISHED_WEBHOOK_PAYLOAD_STATE_VALUES: set[
     EventRecoveryExecutionFinishedWebhookPayloadState
 ] = {
     "cancelled",
     "completed",
+    "expired",
 }
 
 

@@ -12,7 +12,7 @@ export type EventRecoveryJobHealth = {
    */
   capacity_wait?: EventRecoveryCapacityWait;
   job_id: string;
-  mode: 'routing' | 'execution';
+  mode: 'routing' | 'execution' | 'workflow';
   state: 'running' | 'paused';
   status: 'running' | 'paused' | 'finishing' | 'expired' | 'stalled' | 'capacity_wait' | 'legacy_claim_wait' | 'paced';
   pending_count: number;

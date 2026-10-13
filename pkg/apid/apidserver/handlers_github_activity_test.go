@@ -1,19 +1,21 @@
-package apidserver
+package apidserver_test
 
 import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestProjectDashboardGitHubActivityUsesSafeStatusAndLinks(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
-	view := projectDashboardGitHubActivity(&githubActivityResponse{
-		WebhookDeliveries: []githubWebhookActivityResponse{{
+	view := apidserver.ProjectDashboardGitHubActivity(&apidserver.GithubActivityResponse{
+		WebhookDeliveries: []apidserver.GithubWebhookActivityResponse{{
 			EventType: "push", Status: "dead", CommitSHA: sha, ReceivedAt: now,
 		}},
-		CheckUpdates: []githubCheckActivityResponse{{
+		CheckUpdates: []apidserver.GithubCheckActivityResponse{{
 			DeploymentID: "deployment-1", Status: "succeeded", CommitSHA: sha, UpdatedAt: now,
 		}},
 	}, "acme/api", "demo")

@@ -74,7 +74,7 @@ func TestDataResourceIdentityPinsBindingsRestoresAndCleanup(t *testing.T) {
 			if err != nil || provider.lastIssueRequest.ProviderResourceID != source.DataResourceID || binding.CredentialGeneration != 2 {
 				t.Fatalf("rotation followed changed default: %v", err)
 			}
-			point := service.now().Add(-time.Hour)
+			point := source.CreatedAt
 			target, err := service.Restore(ctx, RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "stage", PointInTime: point})
 			if err != nil || target.RestoreSourceResourceID != source.DataResourceID || provider.lastRestore.SourceResourceID != source.DataResourceID || target.DataResourceID == source.DataResourceID || target.DataResourceID == "" {
 				t.Fatalf("restore followed changed default or shared data: %+v, %v", target, err)

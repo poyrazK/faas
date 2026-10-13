@@ -14,7 +14,7 @@
 // secrets` pattern (re-used via sbomTestServer's shape, minus the
 // sbomRoot field) seeds a MemStore + API key so each test can
 // issue authenticated requests.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -48,8 +49,8 @@ func buildTestServer(t *testing.T) (h http.Handler, key string, store *state.Mem
 	if _, err = store.CreateAPIKey(context.Background(), acct.ID, hash, "build-test", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
-	return srv.handler(), pt, store, acct
+	srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
+	return srv.Handler(), pt, store, acct
 }
 
 // seedBuildForStatus creates an app + deployment + build owned by

@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -139,7 +140,7 @@ func TestEngineWake_BootStartedCarriesColdReason(t *testing.T) {
 	}
 }
 
-type activeSnapshotBackoffStore struct{ *state.MemStore }
+type activeSnapshotBackoffStore struct{ MemStore *state.MemStore }
 
 func (activeSnapshotBackoffStore) DeploymentSnapshotBackoffActive(context.Context, string) (state.Deployment, bool, error) {
 	return state.Deployment{}, true, nil
@@ -169,7 +170,7 @@ func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 
 	vmm := &fakeVMM{}
 	store := activeSnapshotBackoffStore{MemStore: mem}
-	e := wakeEngineWithEvents(t, store, vmm, &fakeNotifier{})
+	e := wakeEngineWithEvents(t, statetest.NewMem(store), vmm, &fakeNotifier{})
 	res, err := e.Wake(ctx, app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake with ephemeral secret and active snapshot backoff: %v", err)
@@ -177,7 +178,7 @@ func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 	if vmm.restores != 0 || vmm.coldBoots != 1 {
 		t.Fatalf("VMM wake calls: restores=%d cold_boots=%d, want 0/1", vmm.restores, vmm.coldBoots)
 	}
-	for _, row := range eventuallyEventsForInstance(t, store, res.WakeID, 3) {
+	for _, row := range eventuallyEventsForInstance(t, statetest.NewMem(store), res.WakeID, 3) {
 		if row.Kind != "wake.boot_started" {
 			continue
 		}
@@ -195,7 +196,7 @@ func TestEngineWake_EphemeralSecretNeverRestoresExistingSnapshot(t *testing.T) {
 
 // historyStore reports snapshot history the way PgStore does (any row,
 // stale or not). MemStore.HasSnapshotHistory always answers false.
-type historyStore struct{ *state.MemStore }
+type historyStore struct{ MemStore *state.MemStore }
 
 func (historyStore) HasSnapshotHistory(context.Context, string) (bool, error) { return true, nil }
 
@@ -212,12 +213,12 @@ func TestEngineWake_AllSnapshotsStaleReason(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 	store := historyStore{mem}
-	e := wakeEngineWithEvents(t, store, &fakeVMM{}, &fakeNotifier{})
+	e := wakeEngineWithEvents(t, statetest.NewMem(store), &fakeVMM{}, &fakeNotifier{})
 	res, err := e.Wake(context.Background(), app.ID, "", "", "")
 	if err != nil {
 		t.Fatalf("Wake: %v", err)
 	}
-	for _, r := range eventuallyEventsForInstance(t, store, res.WakeID, 3) {
+	for _, r := range eventuallyEventsForInstance(t, statetest.NewMem(store), res.WakeID, 3) {
 		if r.Kind != "wake.boot_started" {
 			continue
 		}

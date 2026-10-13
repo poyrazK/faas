@@ -22,7 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, appID, account string, pool *pgxpool.Pool, store *state.PgStore, fixture *postgresfixture.Fixture, proxy postgresfixture.Proxy, bindings map[mp.CredentialAccess]mp.Binding, phase func(string, func(*testing.T)), rotate func(*testing.T, bool), workload *func(*testing.T, mp.Binding, string), deploymentID, snapshotID *string) {
+func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, appID, account string, pool *pgxpool.Pool, store *state.PgStore, fixture *postgresfixture.Fixture, proxy postgresfixture.Proxy, bindings map[mp.CredentialAccess]mp.Binding, phase func(string, func(*testing.T)), rotate func(*testing.T, bool), workload *func(*testing.T, mp.Binding, string), deploymentID, snapshotID *string, recordRuntime func(*testing.T, string, string)) {
 	t.Helper()
 	noteBody := "starter-" + randHexSuffix()
 	expected := make(map[int64]string)
@@ -129,6 +129,7 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 		if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, *deploymentID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 			t.Fatalf("starter deployment: %v", err)
 		}
+		recordRuntime(t, *deploymentID, "node22")
 		release, err := store.ReleaseAppTaskByDeployment(ctx, *deploymentID)
 		if err != nil || release.Kind != state.AppTaskKindRelease || release.Status != state.AppTaskSucceeded {
 			t.Fatal("starter migration release did not succeed")

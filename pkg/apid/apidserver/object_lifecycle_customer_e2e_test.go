@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -13,11 +13,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func lifecycleCustomerClient(t *testing.T, f gatewayRecoveryFixture) (*server, *api.Client) {
+func lifecycleCustomerClient(t *testing.T, f gatewayRecoveryFixture) (*apidserver.Server, *api.Client) {
 	t.Helper()
 	token, hash, err := api.GenerateAPIKey()
 	if err != nil {
@@ -26,11 +28,11 @@ func lifecycleCustomerClient(t *testing.T, f gatewayRecoveryFixture) (*server, *
 	if _, err = f.st.CreateAPIKey(t.Context(), f.account.ID, hash, "lifecycle", api.ScopesAdminOnly); err != nil {
 		t.Fatal(err)
 	}
-	s := newServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithObjectStorage(f.registry)
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	s := apidserver.NewServer(state.NewPgStore(f.pool), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(f.registry)
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(s.handler())
+	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	return s, api.NewClient(srv.URL, token)
 }
@@ -78,7 +80,7 @@ func TestObjectLifecycleCustomerConfigurationPG(t *testing.T) {
 	if err = f.st.RetryObjectLifecycleScan(ctx, j.ID, "private-lease"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
 	f.enabled.Store(false)

@@ -7,18 +7,19 @@
 // builder is testable in isolation here — no server, no
 // Store, no auth surface.
 
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestBuildEnvDiffResponse_Empty(t *testing.T) {
-	got := buildEnvDiffResponse("app-empty", nil, nil)
+	got := apidserver.BuildEnvDiffResponse("app-empty", nil, nil)
 	if got.AppSlug != "app-empty" {
 		t.Errorf("AppSlug = %q, want %q", got.AppSlug, "app-empty")
 	}
@@ -46,7 +47,7 @@ func TestBuildEnvDiffResponse_SecretCellsCarryValueHashNeverValue(t *testing.T) 
 		{AccountID: "a", AppID: "b", Scope: "prod", Key: "STRIPE_KEY", ValueHash: "abcdef0123456789"},
 		{AccountID: "a", AppID: "b", Scope: "staging", Key: "STRIPE_KEY", ValueHash: "1111111111111111"},
 	}
-	got := buildEnvDiffResponse("sec-app", secrets, nil)
+	got := apidserver.BuildEnvDiffResponse("sec-app", secrets, nil)
 	if len(got.Rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(got.Rows))
 	}
@@ -79,7 +80,7 @@ func TestBuildEnvDiffResponse_EnvCellsCarryValueNeverValueHash(t *testing.T) {
 		{AccountID: "a", AppID: "b", Scope: "prod", Key: "LOG_LEVEL", Value: "info"},
 		{AccountID: "a", AppID: "b", Scope: "staging", Key: "LOG_LEVEL", Value: "debug"},
 	}
-	got := buildEnvDiffResponse("env-app", nil, envs)
+	got := apidserver.BuildEnvDiffResponse("env-app", nil, envs)
 	if len(got.Rows) != 1 {
 		t.Fatalf("want 1 row, got %d", len(got.Rows))
 	}
@@ -99,7 +100,7 @@ func TestBuildEnvDiffResponse_PrePRCRowEmitsEmptyValueHash(t *testing.T) {
 	secrets := []state.AppSecret{
 		{AccountID: "a", AppID: "b", Scope: "prod", Key: "OLD_KEY"}, // no ValueHash
 	}
-	got := buildEnvDiffResponse("pre-prc", secrets, nil)
+	got := apidserver.BuildEnvDiffResponse("pre-prc", secrets, nil)
 	cell := got.Rows[0].Cells["prod"]
 	if !cell.Present {
 		t.Error("Present = false, want true (the row exists, just lacks value_hash)")
@@ -120,7 +121,7 @@ func TestBuildEnvDiffResponse_MissingScopeRendersPresentFalse(t *testing.T) {
 		{AccountID: "a", AppID: "b", Scope: "staging", Key: "STRIPE_KEY", ValueHash: "1234567890abcdef"},
 		{AccountID: "a", AppID: "b", Scope: "dev", Key: "OTHER_KEY", ValueHash: "feedfacefeedface"},
 	}
-	got := buildEnvDiffResponse("miss-scope", secrets, nil)
+	got := apidserver.BuildEnvDiffResponse("miss-scope", secrets, nil)
 	// Scopes are unioned: dev, prod, staging (sorted ASC).
 	if len(got.Scopes) != 3 {
 		t.Fatalf("Scopes = %+v, want 3 (dev, prod, staging)", got.Scopes)
@@ -165,7 +166,7 @@ func TestBuildEnvDiffResponse_SortedKeysAndScopes(t *testing.T) {
 		{Key: "B", Scope: "z-scope", Value: "1"},
 		{Key: "Y", Scope: "a-scope", Value: "2"},
 	}
-	got := buildEnvDiffResponse("sort", secrets, envs)
+	got := apidserver.BuildEnvDiffResponse("sort", secrets, envs)
 	// Scopes sorted ASC: a-scope < m-scope < z-scope
 	if len(got.Scopes) != 3 || got.Scopes[0] != "a-scope" || got.Scopes[1] != "m-scope" || got.Scopes[2] != "z-scope" {
 		t.Errorf("Scopes = %+v, want [a-scope m-scope z-scope]", got.Scopes)
@@ -193,7 +194,7 @@ func TestBuildEnvDiffResponse_UnionByKeyNotByKind(t *testing.T) {
 	envs := []state.AppEnv{
 		{Key: "DATABASE_URL", Scope: "prod", Value: "postgres://prod/db"},
 	}
-	got := buildEnvDiffResponse("union", secrets, envs)
+	got := apidserver.BuildEnvDiffResponse("union", secrets, envs)
 	if len(got.Rows) != 2 {
 		t.Fatalf("want 2 rows (secret + env for same key), got %d", len(got.Rows))
 	}

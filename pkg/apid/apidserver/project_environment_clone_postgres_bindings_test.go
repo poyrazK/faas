@@ -18,10 +18,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type clonePostgresPreparationFailureStore struct {
-	*state.PgStore
+	PgStore                          *state.PgStore
 	loseReservation, losePreparation bool
 }
 
@@ -87,7 +88,7 @@ func capturedClonePostgresBindingWorkerContract(t *testing.T, srv *server, store
 	beforeIssues := len(provider.issued)
 	failing := &clonePostgresPreparationFailureStore{PgStore: store, loseReservation: true, losePreparation: true}
 	previousStore := srv.store
-	srv.store = failing
+	srv.store = statetest.NewPg(failing)
 	defer func() { srv.store = previousStore }()
 	lease, _, _, err = srv.prepareProjectEnvironmentClonePostgresBindings(ctx, lease)
 	if err == nil || !strings.Contains(err.Error(), "reservation acknowledgement lost") || len(provider.issued) != beforeIssues {

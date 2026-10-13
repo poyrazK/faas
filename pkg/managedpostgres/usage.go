@@ -46,6 +46,9 @@ type UsageSummary struct {
 	PolicyEnabled   bool
 	Fresh           bool
 	Exceeded        bool
+	// DatabaseLimit is the account's effective reservation limit, the one
+	// Create enforces; zero when it could not be resolved.
+	DatabaseLimit int
 }
 
 type UsageCollectorOptions struct {
@@ -510,13 +513,27 @@ func (s *Service) UsageSummary(ctx context.Context, accountID string, now time.T
 		return UsageSummary{}, err
 	}
 	policy := s.registry.UsagePolicy().WithCeilings(ceilings)
-	return UsageSummary{
+	summary := UsageSummary{
 		Snapshot:        snapshot,
 		EffectivePolicy: policy,
 		PolicyEnabled:   policy.Enabled,
 		Fresh:           policy.Enabled && !snapshot.Stale(policy, now),
 		Exceeded:        snapshot.Exceeds(policy),
-	}, nil
+	}
+	if limit, err := s.reservationLimit(ctx, accountID); err == nil {
+		summary.DatabaseLimit = limit
+	}
+	return summary, nil
+}
+
+// EnforcedDatabaseLimit caps a plan's database maximum by the reservation
+// limit Create enforces, so usage reports the same limit as capabilities when
+// the operator holds accounts below their plan.
+func (s UsageSummary) EnforcedDatabaseLimit(planMax int) int {
+	if s.DatabaseLimit > 0 && s.DatabaseLimit < planMax {
+		return s.DatabaseLimit
+	}
+	return planMax
 }
 
 func (p UsagePolicy) Cost(reading MeterReading) (int64, error) {

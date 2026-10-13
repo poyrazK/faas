@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // `gregale keys add` printed fp_live_f8470c7e while `gregale keys list`
@@ -14,8 +15,8 @@ import (
 // returned the plaintext's first 16 characters, list a hash-derived value.
 // The listing now shows the prefix recorded at mint.
 func TestKeyListShowsThePrefixPrintedAtCreation(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, http.MethodPost, "/v1/keys", api.CreateKeyRequest{Label: "match-me", Scopes: []string{api.ScopeAppsRead}}, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", api.CreateKeyRequest{Label: "match-me", Scopes: []string{api.ScopeAppsRead}}, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/keys: %d %s", rec.Code, rec.Body)
 	}
@@ -33,12 +34,12 @@ func TestKeyListShowsThePrefixPrintedAtCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := e.store.CreateAPIKey(t.Context(), e.acct.ID, legacyHash, "legacy", []string{api.ScopeAppsRead})
+	legacy, err := (*e.Store()).CreateAPIKey(t.Context(), (*e.Acct()).ID, legacyHash, "legacy", []string{api.ScopeAppsRead})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	listRec := e.do(t, http.MethodGet, "/v1/keys", nil, nil)
+	listRec := e.Do(t, http.MethodGet, "/v1/keys", nil, nil)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("GET /v1/keys: %d %s", listRec.Code, listRec.Body)
 	}
@@ -53,7 +54,7 @@ func TestKeyListShowsThePrefixPrintedAtCreation(t *testing.T) {
 	if got[created.ID] != created.Prefix {
 		t.Fatalf("listed prefix %q, want %q as printed at creation", got[created.ID], created.Prefix)
 	}
-	if want := keyPrefixFromHash(legacyHash); got[legacy.ID] != want {
+	if want := apidserver.KeyPrefixFromHash(legacyHash); got[legacy.ID] != want {
 		t.Fatalf("legacy key listed as %q, want hash-derived %q", got[legacy.ID], want)
 	}
 }

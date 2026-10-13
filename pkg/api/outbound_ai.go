@@ -1,9 +1,14 @@
 package api
 
 import (
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 // ValidOutboundAICostLimits accepts optional daily and monthly cost limits
@@ -29,6 +34,14 @@ type OutboundAIPriceEntry struct {
 	CachedInputMillicentsPerMTok *int64 `json:"cached_input_millicents_per_mtok,omitempty"`
 	CacheWriteMillicentsPerMTok  *int64 `json:"cache_write_millicents_per_mtok,omitempty"`
 	OutputMillicentsPerMTok      int64  `json:"output_millicents_per_mtok"`
+	// Media prices (ADR-997). Image-token prices fall back to the input and
+	// output prices. The per-image, per-audio-minute and per-character
+	// prices are zero when absent.
+	InputImageMillicentsPerMTok    *int64 `json:"input_image_millicents_per_mtok,omitempty"`
+	OutputImageMillicentsPerMTok   *int64 `json:"output_image_millicents_per_mtok,omitempty"`
+	MillicentsPerImage             *int64 `json:"millicents_per_image,omitempty"`
+	MillicentsPerAudioMinute       *int64 `json:"millicents_per_audio_minute,omitempty"`
+	MillicentsPerMillionCharacters *int64 `json:"millicents_per_million_characters,omitempty"`
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -42,10 +55,15 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 		if !validAIModelText(entry.ModelPrefix) || !validPrice(entry.InputMillicentsPerMTok) || !validPrice(entry.OutputMillicentsPerMTok) {
 			return false
 		}
-		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok} {
+		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok,
+			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters} {
 			if optional != nil && !validPrice(*optional) {
 				return false
 			}
+		}
+		if !optionalWithin(entry.MillicentsPerImage, MaxOutboundAIPriceMillicentsPerImage) ||
+			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) {
+			return false
 		}
 		if _, dup := seen[entry.ModelPrefix]; dup {
 			return false
@@ -53,6 +71,10 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 		seen[entry.ModelPrefix] = struct{}{}
 	}
 	return true
+}
+
+func optionalWithin(value *int64, maximum int64) bool {
+	return value == nil || (*value >= 0 && *value <= maximum)
 }
 
 // validAIModelText bounds model names and prefixes to printable ASCII.
@@ -79,6 +101,92 @@ type PutOutboundAIPricesRequest struct {
 type OutboundAIPriceListResponse struct {
 	EffectiveFrom *time.Time             `json:"effective_from"`
 	Entries       []OutboundAIPriceEntry `json:"entries"`
+}
+
+// Content guardrail actions for one detector (ADR-997).
+const (
+	OutboundAIContentOff    = "off"
+	OutboundAIContentRedact = "redact"
+	OutboundAIContentBlock  = "block"
+)
+
+// OutboundAIContentPolicy is an integration's content guardrails (ADR-997).
+// Each detector is off, redacts its findings before the request reaches the
+// provider, or blocks the request. A request that contains a blocked term,
+// compared without case, is blocked. The gateway checks the string values
+// of buffered JSON bodies and the text fields of multipart forms.
+type OutboundAIContentPolicy struct {
+	Email        string   `json:"email"`
+	PaymentCard  string   `json:"payment_card"`
+	IBAN         string   `json:"iban"`
+	Secret       string   `json:"secret"`
+	BlockedTerms []string `json:"blocked_terms"`
+}
+
+// Normalized replaces empty actions with off and a nil term list with an
+// empty one.
+func (p OutboundAIContentPolicy) Normalized() OutboundAIContentPolicy {
+	for _, action := range []*string{&p.Email, &p.PaymentCard, &p.IBAN, &p.Secret} {
+		if *action == "" {
+			*action = OutboundAIContentOff
+		}
+	}
+	if p.BlockedTerms == nil {
+		p.BlockedTerms = []string{}
+	}
+	return p
+}
+
+// Active reports whether any detector or term is on.
+func (p OutboundAIContentPolicy) Active() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
+		if action != OutboundAIContentOff {
+			return true
+		}
+	}
+	return len(p.BlockedTerms) > 0
+}
+
+// Valid checks actions and the blocked terms: at most
+// OutboundAIBlockedTermsMax printable, trimmed terms of at most
+// OutboundAIBlockedTermMaxBytes, unique without case.
+func (p OutboundAIContentPolicy) Valid() bool {
+	p = p.Normalized()
+	for _, action := range []string{p.Email, p.PaymentCard, p.IBAN, p.Secret} {
+		if action != OutboundAIContentOff && action != OutboundAIContentRedact && action != OutboundAIContentBlock {
+			return false
+		}
+	}
+	if len(p.BlockedTerms) > OutboundAIBlockedTermsMax {
+		return false
+	}
+	seen := make(map[string]struct{}, len(p.BlockedTerms))
+	for _, term := range p.BlockedTerms {
+		folded := strings.ToLower(term)
+		if term == "" || len(term) > OutboundAIBlockedTermMaxBytes || strings.TrimSpace(term) != term || !utf8.ValidString(term) ||
+			strings.IndexFunc(term, unicode.IsControl) >= 0 {
+			return false
+		}
+		if _, dup := seen[folded]; dup {
+			return false
+		}
+		seen[folded] = struct{}{}
+	}
+	return true
+}
+
+// OutboundAIPriceCatalogResponse is the built-in price catalog of one
+// provider (ADR-994): list prices converted from USD at USDPerEUR and
+// rounded up. It prices the models an integration's own list does not name;
+// a "*" entry in that list turns the catalog off for the integration.
+type OutboundAIPriceCatalogResponse struct {
+	AIProvider string                 `json:"ai_provider"`
+	Source     string                 `json:"source"`
+	Generated  string                 `json:"generated"`
+	USDPerEUR  string                 `json:"usd_per_eur"`
+	FXSource   string                 `json:"fx_source"`
+	Entries    []OutboundAIPriceEntry `json:"entries"`
 }
 
 // PutOutboundBindingAIBudgetRequest sets or clears an app's daily AI token
@@ -144,11 +252,36 @@ func ValidOutboundAIRouteTargetShape(targets []OutboundAIRouteTarget) bool {
 
 // Route formats (ADR-991). A native route sends the caller's request to
 // targets of one provider. An openai route accepts OpenAI chat completions
-// and translates them for Anthropic and Gemini targets.
+// and embeddings and translates them for each target's provider (ADR-995).
 const (
 	OutboundAIRouteFormatNative = "native"
 	OutboundAIRouteFormatOpenAI = "openai"
 )
+
+// OutboundVertexAnthropicVersion is the anthropic_version a translated
+// Claude request on Vertex AI carries (ADR-995).
+const OutboundVertexAnthropicVersion = "vertex-2023-10-16"
+
+var outboundVertexBasePattern = regexp.MustCompile(`^/(v1|v1beta1)/projects/([^/]+)/locations/([^/]+)(/|$)`)
+
+// OutboundVertexBasePath derives "/{version}/projects/{project}/locations/{location}"
+// from a Vertex integration's allowed path prefixes. Translated routes need
+// exactly one such base; prefixes naming none or several are refused.
+func OutboundVertexBasePath(prefixes []string) (string, bool) {
+	base := ""
+	for _, prefix := range prefixes {
+		match := outboundVertexBasePattern.FindStringSubmatch(prefix)
+		if match == nil {
+			continue
+		}
+		found := "/" + match[1] + "/projects/" + match[2] + "/locations/" + match[3]
+		if base != "" && base != found {
+			return "", false
+		}
+		base = found
+	}
+	return base, base != ""
+}
 
 // ValidOutboundAIRouteFormat accepts the empty value (native) and both formats.
 func ValidOutboundAIRouteFormat(format string) bool {
@@ -165,7 +298,8 @@ func OutboundAIRouteFormatTargetProvider(format, provider string) (allowed, need
 	switch provider {
 	case OutboundAIProviderOpenAI:
 		return true, false
-	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini:
+	case OutboundAIProviderAzureOpenAI, OutboundAIProviderAnthropic, OutboundAIProviderGemini,
+		OutboundAIProviderVertex, OutboundAIProviderBedrock:
 		return true, true
 	}
 	return false, false
@@ -268,7 +402,15 @@ const (
 	OutboundAIBudgetAppDailyTokens = "app_daily_tokens"
 	OutboundAIBudgetDailyCost      = "daily_cost"
 	OutboundAIBudgetMonthlyCost    = "monthly_cost"
+	// Per-end-user UTC-day budgets (ADR-995); their alerts name EndUser.
+	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
+	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
 )
+
+// OutboundAIBudgetIsPerUser reports whether a budget is one end user's.
+func OutboundAIBudgetIsPerUser(budget string) bool {
+	return budget == OutboundAIBudgetUserDailyTokens || budget == OutboundAIBudgetUserDailyCost
+}
 
 // OutboundAIBudgetAlert records the first settlement that reached a
 // threshold of one budget in one period. Limit and Used are tokens for
@@ -278,6 +420,7 @@ type OutboundAIBudgetAlert struct {
 	IntegrationID    string    `json:"integration_id"`
 	Budget           string    `json:"budget"`
 	AppID            *string   `json:"app_id"`
+	EndUser          *string   `json:"end_user"`
 	PeriodStart      string    `json:"period_start"`
 	ThresholdPercent int32     `json:"threshold_percent"`
 	Limit            int64     `json:"limit"`
@@ -297,6 +440,7 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	IntegrationName  string    `json:"integration_name"`
 	Budget           string    `json:"budget"`
 	AppID            *string   `json:"app_id"`
+	EndUser          *string   `json:"end_user"`
 	PeriodStart      string    `json:"period_start"`
 	ThresholdPercent int32     `json:"threshold_percent"`
 	Limit            int64     `json:"limit"`
@@ -305,7 +449,8 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 }
 
 // OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-991).
-// Caller is an app ID or "runs". No request or response content is kept.
+// Caller is an app ID or "runs". Its bodies are kept only when the
+// integration opted in to content capture (ADR-996).
 type OutboundAIRequestLogEntry struct {
 	ID                string    `json:"id"`
 	CreatedAt         time.Time `json:"created_at"`
@@ -322,11 +467,210 @@ type OutboundAIRequestLogEntry struct {
 	DurationMS        int64     `json:"duration_ms"`
 	TimeToFirstByteMS *int64    `json:"ttfb_ms"`
 	Attempts          int       `json:"attempts"`
+	// EndUser is the call's X-Gregale-AI-User value, when sent (ADR-994).
+	EndUser *string `json:"end_user"`
+	// ContentCaptured reports that the call's bodies can be read (ADR-996).
+	ContentCaptured bool `json:"content_captured"`
 }
+
+// Encodings of a captured body: text that is valid UTF-8, or base64.
+const (
+	OutboundAIContentEncodingUTF8   = "utf-8"
+	OutboundAIContentEncodingBase64 = "base64"
+)
+
+// OutboundAIContentBody is the start of one captured body. Truncated
+// reports that the body was longer than the capture keeps, or that the
+// gateway streamed it without buffering.
+type OutboundAIContentBody struct {
+	Body        string  `json:"body"`
+	Encoding    string  `json:"encoding"`
+	Truncated   bool    `json:"truncated"`
+	ContentType *string `json:"content_type"`
+}
+
+// OutboundAIRequestContent is one logged call's captured bodies as the
+// gateway sent them to the provider and read them back, never headers
+// (ADR-996).
+type OutboundAIRequestContent struct {
+	RequestID string    `json:"request_id"`
+	CreatedAt time.Time `json:"created_at"`
+	// RequestPath is the call's provider path; null for captures made
+	// before ADR-997.
+	RequestPath *string               `json:"request_path"`
+	Request     OutboundAIContentBody `json:"request"`
+	Response    OutboundAIContentBody `json:"response"`
+}
+
+// Per-end-user attribution and key affinity headers (ADR-994). An app sets
+// them on calls through the gateway; they never reach the provider.
+const (
+	OutboundAIUserHeader    = "X-Gregale-AI-User"
+	OutboundAISessionHeader = "X-Gregale-AI-Session"
+	// OutboundAIUserOverflow aggregates end users beyond the per-day cap.
+	// No header value can name it.
+	OutboundAIUserOverflow = "~other"
+)
+
+// ValidOutboundAIUserID accepts 1 to 64 letters, digits and . _ : @ + = / |
+// -, enough for opaque IDs, UUIDs, hashes and e-mail-like keys. The same
+// rule bounds the session header.
+func ValidOutboundAIUserID(id string) bool {
+	if id == "" || len(id) > OutboundAIUserIDMaxBytes {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte("._:@+=/|-", c) >= 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ValidOutboundAIUserLimits accepts optional per-end-user daily token and
+// cost limits; either requires an AI provider (ADR-994).
+func ValidOutboundAIUserLimits(provider string, tokens, cost *int64) bool {
+	if tokens != nil && (provider == "" || *tokens < 1 || *tokens > MaxOutboundAITokensPerDay) {
+		return false
+	}
+	return cost == nil || (provider != "" && *cost >= 1 && *cost <= MaxOutboundAICostMillicents)
+}
+
+// OutboundAIUserUsageItem is one end user's UTC-day usage on an
+// integration. Tokens are input plus output, the amount the per-user token
+// limit counts.
+type OutboundAIUserUsageItem struct {
+	EndUser        string `json:"end_user"`
+	Requests       int64  `json:"requests"`
+	ErrorRequests  int64  `json:"error_requests"`
+	InputTokens    int64  `json:"input_tokens"`
+	OutputTokens   int64  `json:"output_tokens"`
+	Tokens         int64  `json:"tokens"`
+	CostMillicents int64  `json:"cost_millicents"`
+}
+
+// OutboundAIUserUsageResponse lists one UTC day's end users by cost, then
+// tokens (ADR-994). TrackedUsers counts the day's distinct end users,
+// including the "~other" overflow row.
+type OutboundAIUserUsageResponse struct {
+	UsageDate                    string                    `json:"usage_date"`
+	UserDailyTokenLimit          *int64                    `json:"user_daily_token_limit"`
+	UserDailyCostLimitMillicents *int64                    `json:"user_daily_cost_limit_millicents"`
+	TrackedUsers                 int64                     `json:"tracked_users"`
+	Items                        []OutboundAIUserUsageItem `json:"items"`
+}
+
+// OutboundAIUserUsageExportRow is one NDJSON line of a per-end-user usage
+// export (ADR-995); the CSV export has the same columns in this order.
+type OutboundAIUserUsageExportRow struct {
+	UsageDate string `json:"usage_date"`
+	OutboundAIUserUsageItem
+}
+
+// OutboundAIUserUsageExportColumns names the CSV export's header row.
+var OutboundAIUserUsageExportColumns = []string{"usage_date", "end_user", "requests", "error_requests",
+	"input_tokens", "output_tokens", "tokens", "cost_millicents"}
 
 // OutboundAIRequestLogList is one newest-first page. NextBefore, when set,
 // is the created_at cursor for the next page.
 type OutboundAIRequestLogList struct {
 	Items      []OutboundAIRequestLogEntry `json:"items"`
 	NextBefore *time.Time                  `json:"next_before"`
+}
+
+// Replay states (ADR-997).
+const (
+	OutboundAIReplayPending = "pending"
+	OutboundAIReplayRunning = "running"
+	OutboundAIReplayDone    = "done"
+	OutboundAIReplayFailed  = "failed"
+)
+
+// OutboundAIReplayTarget is one integration a captured call is replayed on,
+// with an optional model. A target whose provider differs from the
+// captured call's needs a model.
+type OutboundAIReplayTarget struct {
+	IntegrationID string `json:"integration_id"`
+	Model         string `json:"model,omitempty"`
+}
+
+// CreateOutboundAIReplayRequest replays a captured call on up to
+// OutboundAIReplayTargetsMax targets (ADR-997).
+type CreateOutboundAIReplayRequest struct {
+	Targets []OutboundAIReplayTarget `json:"targets"`
+}
+
+// Valid checks the target count, IDs and model names.
+func (r CreateOutboundAIReplayRequest) Valid() bool {
+	if len(r.Targets) == 0 || len(r.Targets) > OutboundAIReplayTargetsMax {
+		return false
+	}
+	for _, target := range r.Targets {
+		if _, err := uuid.Parse(target.IntegrationID); err != nil {
+			return false
+		}
+		if target.Model != "" && !validAIModelText(target.Model) {
+			return false
+		}
+	}
+	return true
+}
+
+// OutboundAIReplaySource summarizes the captured call a replay resends.
+// OutputText is the text read from its captured response, when any.
+type OutboundAIReplaySource struct {
+	Model             string  `json:"model"`
+	Status            int     `json:"status"`
+	InputTokens       int64   `json:"input_tokens"`
+	OutputTokens      int64   `json:"output_tokens"`
+	CostMillicents    int64   `json:"cost_millicents"`
+	DurationMS        int64   `json:"duration_ms"`
+	TimeToFirstByteMS *int64  `json:"ttfb_ms"`
+	OutputText        *string `json:"output_text"`
+}
+
+// OutboundAIReplayResult is one target's replayed call. Status is null when
+// the gateway sent no response, Outcome null when the call was refused
+// before it reached the provider, and ErrorCode the problem code of a
+// refused or failed call.
+type OutboundAIReplayResult struct {
+	IntegrationID     string                `json:"integration_id"`
+	Model             *string               `json:"model"`
+	Status            *int                  `json:"status"`
+	Outcome           *string               `json:"outcome"`
+	ErrorCode         *string               `json:"error_code"`
+	InputTokens       int64                 `json:"input_tokens"`
+	OutputTokens      int64                 `json:"output_tokens"`
+	CostMillicents    int64                 `json:"cost_millicents"`
+	DurationMS        int64                 `json:"duration_ms"`
+	TimeToFirstByteMS *int64                `json:"ttfb_ms"`
+	OutputText        string                `json:"output_text"`
+	Response          OutboundAIContentBody `json:"response"`
+}
+
+// OutboundAIReplay is a replay of one captured call and, once done, its
+// results in target order (ADR-997). Replayed calls settle under the
+// "replay" caller and count against the targets' budgets.
+type OutboundAIReplay struct {
+	ID            string                   `json:"id"`
+	IntegrationID string                   `json:"integration_id"`
+	RequestID     string                   `json:"request_id"`
+	State         string                   `json:"state"`
+	ErrorCode     *string                  `json:"error_code"`
+	CreatedAt     time.Time                `json:"created_at"`
+	FinishedAt    *time.Time               `json:"finished_at"`
+	Targets       []OutboundAIReplayTarget `json:"targets"`
+	Source        OutboundAIReplaySource   `json:"source"`
+	Results       []OutboundAIReplayResult `json:"results"`
+}
+
+// ErrOutboundAIReplayLimit is the problem for an integration that reached
+// its replays for the UTC day.
+func ErrOutboundAIReplayLimit(observed int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, "outbound_ai_replay_limit", "AI replay limit reached",
+		"An integration can replay at most 100 captured calls per UTC day.").
+		WithLimit(OutboundAIReplaysPerDay, observed).
+		WithDocs(docsBase + "/outbound-integrations#replay")
 }

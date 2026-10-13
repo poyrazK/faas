@@ -16,9 +16,16 @@ T = TypeVar("T", bound="IssueActionRequest")
 
 @_attrs_define
 class IssueActionRequest:
-    """Desired ownership or lifecycle action, validated within the app scope."""
+    """Desired ownership, lifecycle, or reversible regrouping action within the app. Merge adopts the destination
+    owner/state; split opens one linked original group. Merge/split responses identify the remaining canonical issue.
+
+    """
 
     action: IssueActionRequestAction
+    target_issue_id: UUID | Unset = UNSET
+    """Required only for merge; destination in the same app and environment."""
+    member_issue_id: UUID | Unset = UNSET
+    """Required only for split; linked original identity to detach."""
     assignee_account_id: UUID | Unset = UNSET
     fixed_deployment_id: UUID | Unset = UNSET
     ignored_until: datetime.datetime | Unset = UNSET
@@ -26,6 +33,14 @@ class IssueActionRequest:
 
     def to_dict(self) -> dict[str, Any]:
         action: str = self.action
+
+        target_issue_id: str | Unset = UNSET
+        if not isinstance(self.target_issue_id, Unset):
+            target_issue_id = str(self.target_issue_id)
+
+        member_issue_id: str | Unset = UNSET
+        if not isinstance(self.member_issue_id, Unset):
+            member_issue_id = str(self.member_issue_id)
 
         assignee_account_id: str | Unset = UNSET
         if not isinstance(self.assignee_account_id, Unset):
@@ -46,6 +61,10 @@ class IssueActionRequest:
                 "action": action,
             }
         )
+        if target_issue_id is not UNSET:
+            field_dict["target_issue_id"] = target_issue_id
+        if member_issue_id is not UNSET:
+            field_dict["member_issue_id"] = member_issue_id
         if assignee_account_id is not UNSET:
             field_dict["assignee_account_id"] = assignee_account_id
         if fixed_deployment_id is not UNSET:
@@ -59,6 +78,20 @@ class IssueActionRequest:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
         action = check_issue_action_request_action(d.pop("action"))
+
+        _target_issue_id = d.pop("target_issue_id", UNSET)
+        target_issue_id: UUID | Unset
+        if isinstance(_target_issue_id, Unset):
+            target_issue_id = UNSET
+        else:
+            target_issue_id = UUID(_target_issue_id)
+
+        _member_issue_id = d.pop("member_issue_id", UNSET)
+        member_issue_id: UUID | Unset
+        if isinstance(_member_issue_id, Unset):
+            member_issue_id = UNSET
+        else:
+            member_issue_id = UUID(_member_issue_id)
 
         _assignee_account_id = d.pop("assignee_account_id", UNSET)
         assignee_account_id: UUID | Unset
@@ -83,6 +116,8 @@ class IssueActionRequest:
 
         issue_action_request = cls(
             action=action,
+            target_issue_id=target_issue_id,
+            member_issue_id=member_issue_id,
             assignee_account_id=assignee_account_id,
             fixed_deployment_id=fixed_deployment_id,
             ignored_until=ignored_until,

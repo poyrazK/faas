@@ -5,7 +5,7 @@
 // inserts without holding the lock). PgStore tests live in
 // pkg/state/pgstore_test.go because they need a real Postgres.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -32,7 +33,7 @@ import (
 // unreachable, the handler-level invariant is what matters.
 func TestCreateApp_ConcurrentQuotaEnforcement_MemStore(t *testing.T) {
 	const n = 10
-	e := setup(t, api.PlanFree) // Free.DeployedApps = 1
+	e := apidserver.Setup(t, api.PlanFree) // Free.DeployedApps = 1
 
 	var (
 		ok       atomic.Int32
@@ -49,10 +50,10 @@ func TestCreateApp_ConcurrentQuotaEnforcement_MemStore(t *testing.T) {
 			<-start // release all goroutines at once to maximise contention
 			req := httptest.NewRequest("POST", "/v1/apps",
 				strings.NewReader(fmt.Sprintf(`{"slug":"app-%d"}`, i)))
-			req.Header.Set("Authorization", "Bearer "+e.key)
+			req.Header.Set("Authorization", "Bearer "+(*e.Key()))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
-			e.h.ServeHTTP(rec, req)
+			(*e.H()).ServeHTTP(rec, req)
 			switch rec.Code {
 			case http.StatusCreated:
 				ok.Add(1)
@@ -84,7 +85,7 @@ func TestCreateApp_ConcurrentQuotaEnforcement_MemStore(t *testing.T) {
 	}
 	// The store-side ground truth: cap was enforced end-to-end, not
 	// just at the wire.
-	storeN, err := e.store.CountDeployedApps(context.Background(), e.acct.ID)
+	storeN, err := (*e.Store()).CountDeployedApps(context.Background(), (*e.Acct()).ID)
 	if err != nil {
 		t.Fatalf("CountDeployedApps: %v", err)
 	}

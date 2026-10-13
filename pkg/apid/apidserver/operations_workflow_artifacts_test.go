@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 
 	// Test-only downstream orchestration exercises the full workflow HTTP boundary.
@@ -98,7 +99,7 @@ func TestOperationWorkflowArtifactHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{})
+			srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 			provider, declaration := operationArtifactFixture(t, srv, store.(operationArtifactFixtureStore), acct, app, dep.Scope)
 			private, err := rsa.GenerateKey(rand.Reader, 2048)
 			if err != nil {
@@ -108,7 +109,7 @@ func TestOperationWorkflowArtifactHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+			(*srv.Operation()).WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +121,7 @@ func TestOperationWorkflowArtifactHTTP(t *testing.T) {
 			if _, err := store.CreateAPIKey(ctx, acct.ID, hash, "workflow-files", api.ScopesAdminOnly); err != nil {
 				t.Fatal(err)
 			}
-			httpServer := httptest.NewServer(srv.handler())
+			httpServer := httptest.NewServer(srv.Handler())
 			defer httpServer.Close()
 			runtime := api.NewClient(httpServer.URL, assertion.AccessToken)
 			owner := api.NewClient(httpServer.URL, key)
@@ -142,7 +143,7 @@ func TestOperationWorkflowArtifactHTTP(t *testing.T) {
 					request.Header.Set(name, value)
 				}
 				response := httptest.NewRecorder()
-				srv.handler().ServeHTTP(response, request)
+				srv.Handler().ServeHTTP(response, request)
 				if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || bytes.Contains(response.Body.Bytes(), []byte(proof.Capability)) || bytes.Contains(response.Body.Bytes(), []byte("invocation_id")) {
 					t.Fatal("control leaked proof, invented an HTTP claim or was cacheable", response.Code)
 				}
@@ -185,7 +186,7 @@ func TestOperationWorkflowArtifactHTTP(t *testing.T) {
 						mixed.Header.Set(name, value)
 					}
 					rec := httptest.NewRecorder()
-					srv.handler().ServeHTTP(rec, mixed)
+					srv.Handler().ServeHTTP(rec, mixed)
 					if rec.Code != http.StatusUnauthorized {
 						t.Fatal("workflow proof accepted as HTTP invocation", rec.Code)
 					}

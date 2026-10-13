@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -17,10 +18,10 @@ import (
 // admission. Routing failures/backoff are fixtures; scheduler acceptance drives
 // the real failure budget, disabled-runtime behavior and restart separately.
 func TestEventWorkflowRecipientRecoveryPostgresHTTP(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	store := e.store.(*state.PgStore)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	store := (*e.Store()).(*state.PgStore)
 	ctx := t.Context()
-	workflow, err := store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "workflow-recovery", Type: state.AppTypeApp, RAMMB: 512})
+	workflow, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "workflow-recovery", Type: state.AppTypeApp, RAMMB: 512})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,14 +35,14 @@ func TestEventWorkflowRecipientRecoveryPostgresHTTP(t *testing.T) {
 	if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
 		t.Fatal(err)
 	}
-	healthy, err := store.CreateApp(ctx, state.App{AccountID: e.acct.ID, Slug: "healthy-recovery", Type: state.AppTypeApp, RAMMB: 512})
+	healthy, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "healthy-recovery", Type: state.AppTypeApp, RAMMB: 512})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.UpsertEventSubscription(ctx, e.acct.ID, healthy.ID, "orders", "order.created", nil); err != nil {
+	if _, _, err := store.UpsertEventSubscription(ctx, (*e.Acct()).ID, healthy.ID, "orders", "order.created", nil); err != nil {
 		t.Fatal(err)
 	}
-	publish := e.do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "workflow-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"amount":150}`)}, nil)
+	publish := e.Do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "workflow-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"amount":150}`)}, nil)
 	if publish.Code != http.StatusAccepted {
 		t.Fatalf("publish=%d %s", publish.Code, publish.Body)
 	}
@@ -82,7 +83,7 @@ func TestEventWorkflowRecipientRecoveryPostgresHTTP(t *testing.T) {
 		}
 	}
 	read := func() api.EventReceiptResponse {
-		r := e.do(t, http.MethodGet, appevents.EventReceiptURL("orders", "workflow-recovery"), nil, nil)
+		r := e.Do(t, http.MethodGet, appevents.EventReceiptURL("orders", "workflow-recovery"), nil, nil)
 		var receipt api.EventReceiptResponse
 		if r.Code != http.StatusOK || json.Unmarshal(r.Body.Bytes(), &receipt) != nil {
 			t.Fatalf("receipt=%d %s", r.Code, r.Body)
@@ -98,12 +99,12 @@ func TestEventWorkflowRecipientRecoveryPostgresHTTP(t *testing.T) {
 		t.Fatalf("workflow recovery action=%+v", selected)
 	}
 	action := selected.RecoveryActions[0]
-	replay := e.do(t, action.Method, action.URL, action.Body, nil)
+	replay := e.Do(t, action.Method, action.URL, action.Body, nil)
 	if replay.Code != http.StatusAccepted {
 		t.Fatalf("selective replay=%d %s", replay.Code, replay.Body)
 	}
 	// A reconstructed store resumes the new generation from its captured DAG.
-	store = state.NewPgStore(e.pool)
+	store = state.NewPgStore((*e.Pool()))
 	work, err := store.ClaimDuePublishedEventRecipient(ctx, time.Now().UTC())
 	if err != nil || work.Recipient.ID != failedID || work.Generation != 2 {
 		t.Fatalf("replay claim=%+v err=%v", work, err)
@@ -127,11 +128,11 @@ func TestEventWorkflowRecipientRecoveryPostgresHTTP(t *testing.T) {
 		t.Fatalf("healthy sibling repeated=%+v err=%v", invocations, err)
 	}
 	for _, link := range []string{selected.AttemptHistoryURL, selected.FanoutHistoryURL} {
-		if r := e.do(t, http.MethodGet, link, nil, nil); r.Code != http.StatusOK {
+		if r := e.Do(t, http.MethodGet, link, nil, nil); r.Code != http.StatusOK {
 			t.Fatalf("history=%s status=%d body=%s", link, r.Code, r.Body)
 		}
 	}
-	replay = e.do(t, action.Method, action.URL, action.Body, nil)
+	replay = e.Do(t, action.Method, action.URL, action.Body, nil)
 	if replay.Code != http.StatusNotFound {
 		t.Fatalf("settled workflow replayed again=%d %s", replay.Code, replay.Body)
 	}

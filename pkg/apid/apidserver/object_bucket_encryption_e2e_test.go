@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -23,24 +24,24 @@ import (
 
 // adr: 561
 func TestBucketDefaultEncryptionControlE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	var offset atomic.Int64
 	now := time.Now().UTC()
-	e.store.SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
-	bucketDefaultEncryptionControlE2E(t, e.s, e.store, e.acct, e.key, nil, func() { offset.Add(int64(api.ObjectBucketEncryptionRetry + time.Second)) })
+	(*e.Store()).SetClockForTest(func() time.Time { return now.Add(time.Duration(offset.Load())) })
+	bucketDefaultEncryptionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, func() { offset.Add(int64(api.ObjectBucketEncryptionRetry + time.Second)) })
 }
 func TestBucketDefaultEncryptionControlE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	bucketDefaultEncryptionControlE2E(t, e.s, e.store, e.acct, e.key, e.pool, func() {
-		if _, err := e.pool.Exec(t.Context(), `UPDATE object_bucket_encryption SET retry_at=clock_timestamp()`); err != nil {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	bucketDefaultEncryptionControlE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), func() {
+		if _, err := (*e.Pool()).Exec(t.Context(), `UPDATE object_bucket_encryption SET retry_at=clock_timestamp()`); err != nil {
 			t.Fatal(err)
 		}
 	})
 }
 
-func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, retry func()) {
+func bucketDefaultEncryptionControlE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, retry func()) {
 	t.Helper()
-	identity, teardown := withTestIdentities(t)
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	native := &signedURLNative{}
 	var mu sync.Mutex
@@ -84,10 +85,10 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	}))
 	defer upstream.Close()
 	registry, b, backend, _ := seedEncryptionJournalStorage(t, s, st, acct, upstream.URL)
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
-	management := httptest.NewServer(s.handler())
+	management := httptest.NewServer(s.Handler())
 	defer management.Close()
 	client := api.NewClient(management.URL, bearer)
 	selection := api.ObjectEncryption{Algorithm: "aws:kms", KeyID: backend.Encryption.Keys[0].Reference}
@@ -99,7 +100,7 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	if err != nil || policy.State != "waiting" || policy.Revision != 1 || policy.Encryption != nil || policy.DesiredEncryption == nil || policy.DesiredEncryption.KeyID != selection.KeyID {
 		t.Fatal("owned intent missing", policy, err)
 	}
-	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	policy, err = client.GetObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)
@@ -112,13 +113,13 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	native.mu.Unlock()
 	retry()
 	if pool != nil {
-		s.store = state.NewPgStore(pool)
+		(*s.Store()) = state.NewPgStore(pool)
 	}
 	s.WithObjectStorage(registry())
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal("disabled ingress blocked recovery", err)
 	}
 	policy, err = client.GetObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)
@@ -135,14 +136,14 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	if configPuts != 1 || keysAfter != keysBefore {
 		t.Fatal("recovery repeated configuration or key check", configPuts, keysBefore, keysAfter)
 	}
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	var gateway http.Handler
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
 	defer public.Close()
-	s.objectStorage.PublicEndpoint = public.URL
-	h, err := s3gateway.New(s3gateway.Config{Registry: s.objectStorage, Store: s.store.(s3gateway.Store), RequestMetrics: s.store.(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
+	h, err := s3gateway.New(s3gateway.Config{Registry: (*s.ObjectStorage()), Store: (*s.Store()).(s3gateway.Store), RequestMetrics: (*s.Store()).(state.ObjectStorageProviderUsageStore), SpoolDir: t.TempDir(), OpenSecret: func(blob []byte) (string, error) {
 		ns, plain, err := secretbox.OpenBytes(identity, blob)
 		if err != nil || ns != s3gateway.CredentialSecretNamespace {
 			return "", objectstorage.ErrConfiguration
@@ -174,19 +175,19 @@ func bucketDefaultEncryptionControlE2E(t *testing.T, s *server, st state.Store, 
 	if response.StatusCode != 200 || response.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id") != selection.KeyID {
 		t.Fatal("default encrypted broker PUT", response.StatusCode, response.Header)
 	}
-	receipt, err := s.store.(state.ObjectTrackedGatewayUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", signedCredentialSubject(t, s.store, signed.URL), signed.UploadID)
+	receipt, err := (*s.Store()).(state.ObjectTrackedGatewayUploadStore).GetObjectUploadReceipt(t.Context(), acct.ID, b.AppID, "", signedCredentialSubject(t, (*s.Store()), signed.URL), signed.UploadID)
 	if err != nil || receipt.EncryptionDefaultRevision != 1 || receipt.Status != "completed" || receipt.Encryption.ProviderKeyID != journalNativeKMSKey {
 		t.Fatal("broker did not preserve default proof", receipt, err)
 	}
 	bucketDefaultEncryptionRoute(t, s, client, b, bearer, registry)
-	if err = s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("false")); err != nil {
+	if err = (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("false")); err != nil {
 		t.Fatal(err)
 	}
 	policy, err = client.DeleteObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)
 	if err != nil || policy.State != "waiting" || policy.Revision != 2 {
 		t.Fatal("disabled ingress blocked clear", policy, err)
 	}
-	if err = s.object.ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
+	if err = (*s.Object()).ReconcileObjectBucketEncryption(t.Context(), nil); err != nil {
 		t.Fatal(err)
 	}
 	policy, err = client.GetObjectBucketEncryption(t.Context(), "encrypted-journal", b.ID)
@@ -214,13 +215,13 @@ func signedCredentialSubject(t *testing.T, st state.Store, signed string) string
 	return credential.ID
 }
 
-func bucketDefaultEncryptionRoute(t *testing.T, s *server, client *api.Client, b state.ObjectBucket, bearer string, registry func() *objectstorage.Registry) {
+func bucketDefaultEncryptionRoute(t *testing.T, s *apidserver.Server, client *api.Client, b state.ObjectBucket, bearer string, registry func() *objectstorage.Registry) {
 	t.Helper()
 	route, err := client.CreateObjectUploadRoute(t.Context(), "encrypted-journal", api.CreateObjectUploadRouteRequest{Name: "default-files", BucketID: b.ID, KeyPrefix: "uploads", MaxBytes: 3})
 	if err != nil || route.Encryption != nil {
 		t.Fatal(route, err)
 	}
-	handler, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{Store: s.store.(objectstorage.PublicReadStore), Routes: s.store.(state.ObjectUploadRouteStore), Buckets: s.store.(state.ObjectBucketStore), Authenticator: s.store, Registry: registry(), Accounting: s.store.(state.ObjectStorageAccountingStore), RequestMetrics: s.store.(state.ObjectStorageProviderUsageStore), AppsDomain: "apps.test", Next: http.NotFoundHandler()})
+	handler, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{Store: (*s.Store()).(objectstorage.PublicReadStore), Routes: (*s.Store()).(state.ObjectUploadRouteStore), Buckets: (*s.Store()).(state.ObjectBucketStore), Authenticator: (*s.Store()), Registry: registry(), Accounting: (*s.Store()).(state.ObjectStorageAccountingStore), RequestMetrics: (*s.Store()).(state.ObjectStorageProviderUsageStore), AppsDomain: "apps.test", Next: http.NotFoundHandler()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +238,7 @@ func bucketDefaultEncryptionRoute(t *testing.T, s *server, client *api.Client, b
 	if id == "" {
 		t.Fatal("route did not return its captured receipt")
 	}
-	receipt, err := s.store.(state.ObjectWriteReceiptStore).GetObjectWriteReceipt(t.Context(), b.AccountID, b.AppID, b.ID, id)
+	receipt, err := (*s.Store()).(state.ObjectWriteReceiptStore).GetObjectWriteReceipt(t.Context(), b.AccountID, b.AppID, b.ID, id)
 	if err != nil || receipt.Encryption == nil || receipt.Encryption.Algorithm != "aws:kms" || receipt.Status != "completed" {
 		t.Fatal("default route did not settle its encrypted receipt", receipt, err)
 	}

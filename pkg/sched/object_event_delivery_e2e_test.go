@@ -269,4 +269,8 @@ func objectEventDeliveryEndToEnd(t *testing.T, st objectEventIntegrationStore, r
 	if calls.Load() != 3 {
 		t.Fatal("notification intent called provider or delivery repeated mutation", calls.Load())
 	}
+	objectComputeTriggersSDKEndToEnd(t, st, restart, b, client)
+	if calls.Load() != 5 {
+		t.Fatal("trigger delivery repeated provider mutation", calls.Load())
+	}
 }

@@ -263,3 +263,21 @@ and snapshot behavior.
 | [Agent guide](CLAUDE.md) | Repository conventions and load-bearing constraints. |
 | [License](LICENSE) | Proprietary viewing and usage terms. |
 | [Contribution terms](CONTRIBUTING.md) | Rights granted when submitting changes. |
+
+Durable policy changes, worker reason transitions, health incidents and retained recovery evidence can be inspected with `gregale automations history --app APP`, filtered by workflow, run, policy version and time window, or exported one page at a time with `--json`. See [automation authoring](docs/automation-authoring.md#recovery-history) for retention and pagination semantics.
+
+Inspect recovery automation outcomes with
+`gregale automations report --app APP --since 7d` (or global `--json`). The report
+includes workflow/policy groups, distinct-action blockers and evidence links,
+with explicit retention and sample limitations. See
+[automation authoring](docs/automation-authoring.md#recovery-effectiveness-report).
+
+Compare proposed recovery settings against retained candidate evidence with
+`gregale automations recovery-policy-evaluate --app APP --file POLICY.json --since 7d`.
+Terminal failure capture also includes workflows outside active policy filters,
+with partial coverage and missing retry checks shown explicitly.
+The read-only comparison explains exclusions, unknowns, conditional preparation
+limits and recorded execution pressure; historical gaps and replay assumptions are
+explicit. See [historical evaluation](docs/automation-authoring.md#historical-recovery-policy-evaluation).
+
+Recovery policy evaluation now includes separately timed `later_eligibility` checks for unreviewed failures. The bounded background observer runs even without a recovery policy, checking retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and expire for qualification after 15 minutes. These observations do not change historical preparation totals or authorize retries; missing or stale evidence remains unknown. See [ADR-1026](docs/adr/1026-workflow-failure-eligibility-observer.md).

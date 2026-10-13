@@ -44,6 +44,7 @@ type devAllApp struct {
 
 // devAllOptions are the single-app flags forwarded unchanged to every child.
 type devAllOptions struct {
+	buckets        devBucketNames
 	once           bool
 	stop           bool
 	noLogs         bool
@@ -69,6 +70,7 @@ func (o devAllOptions) childArgs(app devAllApp, jsonMode bool) []string {
 	if o.ttl != "" {
 		args = append(args, "--ttl", o.ttl)
 	}
+	args = appendDevBucketArgs(args, o.buckets)
 	// Pass the output mode explicitly: a child would otherwise fall back to a
 	// persisted JSON preference that the parent's --json=false overrode.
 	if jsonMode {

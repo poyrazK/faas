@@ -15,6 +15,8 @@ func (s *PgStore) MaterializeProjectEnvironmentCloneForLease(ctx context.Context
 	if !validCloneLeaseIdentity(lease) || lease.Operation.Status != CloneOperationCopying || secretCount < 0 || (len(bindingIDs) == 0) != (secretCount == 0) {
 		return ProjectEnvironment{}, ErrInvalidArgument
 	}
+	ctx, cancel := context.WithDeadline(ctx, lease.ExpiresAt)
+	defer cancel()
 	op := lease.Operation
 	clone := ProjectEnvironmentClone{AccountID: op.AccountID, ProjectID: op.ProjectID, SourceSlug: op.SourceEnvironment, TargetSlug: op.TargetEnvironment,
 		CloneOperationID: op.ID, CloneOperationRevision: op.Revision, ManagedBindingsPrepared: len(bindingIDs) > 0,
@@ -105,6 +107,9 @@ func replayCloneMaterializationTx(ctx context.Context, tx pgx.Tx, op ProjectEnvi
 		if actual[appID] != head {
 			return ProjectEnvironment{}, ErrConflict
 		}
+	}
+	if _, err := verifyCloneConfigurationOwnershipTx(ctx, tx, op, pgUUIDString(env.ID)); err != nil {
+		return ProjectEnvironment{}, err
 	}
 	return ProjectEnvironment{ID: pgUUIDString(env.ID), AccountID: op.AccountID, ProjectID: op.ProjectID, Slug: env.Slug,
 		Protected: env.Protected, CreatedAt: env.CreatedAt.Time, UpdatedAt: env.UpdatedAt.Time}, nil

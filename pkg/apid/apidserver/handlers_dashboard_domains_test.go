@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"net/http"
@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestDashboardHandler_AppDomainsSummaryAndDoctor(t *testing.T) {
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -68,7 +69,7 @@ func TestParseAppDomainsPath(t *testing.T) {
 		{path: "/domains", ok: false},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			got, ok := parseAppDomainsPath(tc.path)
+			got, ok := apidserver.ParseAppDomainsPath(tc.path)
 			if got != tc.want || ok != tc.ok {
 				t.Fatalf("parseAppDomainsPath(%q) = (%q, %v), want (%q, %v)", tc.path, got, ok, tc.want, tc.ok)
 			}
@@ -81,7 +82,7 @@ func TestParseAppDomainsPath(t *testing.T) {
 func TestDashboardHandler_AppDomainsShowsDNSRecords(t *testing.T) {
 	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
 	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "203.0.113.10")
-	h, cookie, store, _ := newAuthedDashboardServerFull(t)
+	h, cookie, store, _ := apidserver.NewAuthedDashboardServerFull(t)
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)

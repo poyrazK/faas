@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestCreatePlatformTenantWebhookEventFilter(t *testing.T) {
 	e := setupWebhookTest(t, api.PlanPro)
-	tenant, _, err := e.store.CreatePlatformTenant(context.Background(), e.acct.ID,
-		"webhook-customer-"+uuid.NewString()[:8], "Webhook customer", 250)
+	tenant, _, err := (*e.Store()).CreatePlatformTenant(context.Background(), (*e.Acct()).ID, "webhook-customer-"+uuid.NewString()[:8], "Webhook customer", 250)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestCreatePlatformTenantWebhookEventFilter(t *testing.T) {
 	defaultRequest := api.CreatePlatformTenantWebhookRequest{
 		TargetURL: "https://example.com/billing", WebhookSecret: "test-secret",
 	}
-	defaultResponse := e.do(t, http.MethodPost, path, defaultRequest, nil)
+	defaultResponse := e.Do(t, http.MethodPost, path, defaultRequest, nil)
 	if defaultResponse.Code != http.StatusCreated {
 		t.Fatalf("default create: %d %s", defaultResponse.Code, defaultResponse.Body)
 	}
@@ -38,7 +38,7 @@ func TestCreatePlatformTenantWebhookEventFilter(t *testing.T) {
 		TargetURL: "https://example.com/hostnames", WebhookSecret: "test-secret",
 		EventFilter: []string{"platform_tenant.hostname.verified"},
 	}
-	hostnameResponse := e.do(t, http.MethodPost, path, hostnameRequest, nil)
+	hostnameResponse := e.Do(t, http.MethodPost, path, hostnameRequest, nil)
 	if hostnameResponse.Code != http.StatusCreated {
 		t.Fatalf("hostname create: %d %s", hostnameResponse.Code, hostnameResponse.Body)
 	}
@@ -53,7 +53,7 @@ func TestCreatePlatformTenantWebhookEventFilter(t *testing.T) {
 		TargetURL: "https://example.com/reconciliations", WebhookSecret: "test-secret",
 		EventFilter: []string{"platform_tenant.reconciliation.applied"},
 	}
-	reconciliationResponse := e.do(t, http.MethodPost, path, reconciliationRequest, nil)
+	reconciliationResponse := e.Do(t, http.MethodPost, path, reconciliationRequest, nil)
 	if reconciliationResponse.Code != http.StatusCreated {
 		t.Fatalf("reconciliation create: %d %s", reconciliationResponse.Code, reconciliationResponse.Body)
 	}
@@ -69,11 +69,11 @@ func TestCreatePlatformTenantWebhookEventFilter(t *testing.T) {
 		TargetURL: "https://example.com/invalid", WebhookSecret: "test-secret",
 		EventFilter: []string{"platform_tenant.hostname.verified", "platform_tenant.hostname.verified"},
 	}
-	if got := e.do(t, http.MethodPost, path, invalidRequest, nil); got.Code != http.StatusBadRequest {
+	if got := e.Do(t, http.MethodPost, path, invalidRequest, nil); got.Code != http.StatusBadRequest {
 		t.Fatalf("duplicate event filter status = %d, want 400: %s", got.Code, got.Body)
 	}
 	emptyRequest := json.RawMessage(`{"target_url":"https://example.com/empty","webhook_secret":"test-secret","event_filter":[]}`)
-	if got := e.do(t, http.MethodPost, path, emptyRequest, nil); got.Code != http.StatusBadRequest {
+	if got := e.Do(t, http.MethodPost, path, emptyRequest, nil); got.Code != http.StatusBadRequest {
 		t.Fatalf("empty event filter status = %d, want 400: %s", got.Code, got.Body)
 	}
 }

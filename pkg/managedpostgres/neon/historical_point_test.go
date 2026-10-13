@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,12 +31,17 @@ func TestLSNRestoreResolvesPinnedSourceHistoryAcrossRecovery(t *testing.T) {
 				Spec: testDatabaseSpec(), PointInTime: point, IdempotencyKey: "restore"}
 			posts, mappings, custodyWrites := 0, 0, 0
 			var provider *Provider
+			// The provider can issue requests concurrently, so the fake
+			// server's shared target and post count are guarded by mu.
+			var mu sync.Mutex
 			target := branch{ID: "br-target", ProjectID: "project-source", ParentID: "br-source", ParentLSN: "0/1E25788",
 				InitSource: "parent-data", CurrentState: "ready", CreatedAt: point.Add(time.Second).Format(time.RFC3339Nano)}
 			if mode == "rounded_commit" {
 				target.ParentTimestamp = point.Add(-time.Second).Format(time.RFC3339Nano)
 			}
 			provider = testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
 				target.Name = provider.restoreBranchName(request.ResourceID)
 				switch r.Method + " " + r.URL.Path {
 				case "GET /api/v2/projects/project-source/branches":
@@ -98,8 +104,11 @@ func TestLSNRestoreResolvesPinnedSourceHistoryAcrossRecovery(t *testing.T) {
 			if mode == "create" {
 				wantCustody = 1
 			}
-			if posts != wantPosts || custodyWrites != wantCustody || mappings != 1 {
-				t.Fatalf("posts=%d custody=%d mappings=%d", posts, custodyWrites, mappings)
+			mu.Lock()
+			gotPosts := posts
+			mu.Unlock()
+			if gotPosts != wantPosts || custodyWrites != wantCustody || mappings != 1 {
+				t.Fatalf("posts=%d custody=%d mappings=%d", gotPosts, custodyWrites, mappings)
 			}
 		})
 	}

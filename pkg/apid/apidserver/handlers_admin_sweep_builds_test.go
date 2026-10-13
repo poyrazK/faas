@@ -17,7 +17,7 @@
 // The test exercises parseSweepOlderThan directly for the
 // edge cases and the handler for the happy path.
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestParseSweepOlderThan_TableDriven(t *testing.T) {
@@ -51,7 +52,7 @@ func TestParseSweepOlderThan_TableDriven(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, prob := parseSweepOlderThan(c.raw)
+			got, prob := apidserver.ParseSweepOlderThan(c.raw)
 			if c.wantOK {
 				if prob != nil {
 					t.Fatalf("unexpected problem: %+v", prob)
@@ -78,7 +79,7 @@ func TestParseSweepReason_TableDriven(t *testing.T) {
 		want     string
 		wantCode string
 	}{
-		{name: "empty_defaults", want: sweepDefaultReason},
+		{name: "empty_defaults", want: apidserver.SweepDefaultReason},
 		{name: "valid_reason", raw: "incident_2026_08_27", want: "incident_2026_08_27"},
 		{name: "hyphen_rejected", raw: "incident-123", wantCode: api.CodeValidation},
 		{name: "space_rejected", raw: "incident 123", wantCode: api.CodeValidation},
@@ -86,7 +87,7 @@ func TestParseSweepReason_TableDriven(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, prob := parseSweepReason(c.raw)
+			got, prob := apidserver.ParseSweepReason(c.raw)
 			if c.wantCode != "" {
 				if prob == nil {
 					t.Fatalf("expected problem, got reason %q", got)
@@ -108,14 +109,14 @@ func TestParseSweepReason_TableDriven(t *testing.T) {
 
 func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	t.Run("non_allowlisted_admin_is_denied", func(t *testing.T) {
-		srv, _, cookie := newForceHarness(t, nil)
-		srv.adminAllowlist.emails = map[string]struct{}{"another-operator@example.com": {}}
+		srv, _, cookie := apidserver.NewForceHarness(t, nil)
+		(*(*srv.AdminAllowlist()).Emails()) = map[string]struct{}{"another-operator@example.com": {}}
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
@@ -123,13 +124,13 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("missing_confirm_returns_400", func(t *testing.T) {
-		srv, _, cookie := newForceHarness(t, nil)
+		srv, _, cookie := apidserver.NewForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -144,13 +145,13 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("older_than_too_small_returns_400", func(t *testing.T) {
-		srv, _, cookie := newForceHarness(t, nil)
+		srv, _, cookie := apidserver.NewForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=500ms", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -165,13 +166,13 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("older_than_too_large_returns_400", func(t *testing.T) {
-		srv, _, cookie := newForceHarness(t, nil)
+		srv, _, cookie := apidserver.NewForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=2h", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -186,13 +187,13 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("invalid_reason_returns_400", func(t *testing.T) {
-		srv, _, cookie := newForceHarness(t, nil)
+		srv, _, cookie := apidserver.NewForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m&reason=incident-123", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -207,13 +208,13 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 	})
 
 	t.Run("happy_path_returns_swept_count", func(t *testing.T) {
-		srv, _, cookie := newForceHarness(t, nil)
+		srv, _, cookie := apidserver.NewForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation")
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 
 		// MemStore's SweepStuckRunningBuilds returns 0 (no rows
 		// to sweep in unit tests); the handler should still
@@ -241,14 +242,14 @@ func TestPostSweepStuckBuilds_TableDriven(t *testing.T) {
 
 	t.Run("trace_id_is_echoed_and_stamped_on_audit_event", func(t *testing.T) {
 		const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
-		srv, store, cookie := newForceHarness(t, nil)
+		srv, store, cookie := apidserver.NewForceHarness(t, nil)
 		req := httptest.NewRequest(http.MethodPost,
 			"/v1/admin/builds/sweep-stuck?confirm=true&older_than=15m&reason=builder_vm_timeout", nil)
 		req.AddCookie(cookie)
 		req.Header.Set("Idempotency-Key", "test-admin-mutation-trace")
 		req.Header.Set("X-Trace-Id", traceID)
 		rec := httptest.NewRecorder()
-		srv.handler().ServeHTTP(rec, req)
+		srv.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 		}

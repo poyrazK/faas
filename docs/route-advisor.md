@@ -34,6 +34,18 @@ Each suggestion has a stable ID: the same kind, method and route always get
 the same ID. Rule bodies depend on the window and the cache lifetime, so apply
 with the same `--since` and `--cache-max-age` you listed with.
 
+## Settings
+
+Two suggestions change app settings instead of adding edge rules:
+
+| Kind | Suggested when | Applying it |
+| --- | --- | --- |
+| `wake_ahead` | Your app is not opted in and the gateways measured a service it usually calls right after a cold wake, usually parked. | Turns on [service wake-ahead](service-wake-ahead.md). |
+| `priority` | No route priorities are set and, in the last 24 hours, at least 10 requests were turned away or lost their queue place while every instance was busy. | Saves the busiest routes that change data (up to three) as critical [route priorities](route-priority.md). Review them first. |
+
+`gregale routes status` marks routes with a pending suggestion
+(`advice_available`) and counts all suggestions.
+
 ## Reading the estimates
 
 Estimates replay your retained telemetry; they are not guarantees.

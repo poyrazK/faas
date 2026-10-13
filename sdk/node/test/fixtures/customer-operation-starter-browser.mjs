@@ -1,3 +1,4 @@
+import {writePackedSDKRuntimeLock} from './packed-sdk-runtime-lock.mjs';
 import assert from 'node:assert/strict';
 import {cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -31,10 +32,14 @@ export async function browserStarter(t, template = 'customer-operation-workflow-
   const source = fileURLToPath(new URL(`../../../../cmd/gregale/templates/${template}/`, import.meta.url));
   const dest = join(temp, 'feature'); cpSync(source, dest, {recursive: true}); mkdirSync(join(dest, 'packages'));
   prepareOfflineStarterInstall(dest);
-  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}));
-  cpSync(join(temp, packed.filename), join(dest, 'packages/gregale-sdk.tgz'));
+  // npm's JSON report includes every generated file and can overflow the
+  // subprocess buffer. Filename-only output still produces the full tarball.
+  const filename = execFileSync('npm', ['pack', '--ignore-scripts', '--loglevel=error', '--pack-destination', temp], {cwd: sdk, encoding: 'utf8', timeout: 30000}).trim();
+  assert.match(filename, /^[A-Za-z0-9_.-]+\.tgz$/);
+  cpSync(join(temp, filename), join(dest, 'packages/gregale-sdk.tgz'));
+  writePackedSDKRuntimeLock(dest, sdk);
   const childEnv = {...process.env}; delete childEnv.NODE_TEST_CONTEXT;
-  execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000, stdio: 'pipe'});
+  execFileSync('npm', ['ci', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {cwd: dest, env: childEnv, timeout: 60000, stdio: 'pipe'});
   const config = {apiURL: 'https://api.example.test', appID, definitionID, scope: 'default'};
   const {createExportServer} = await import(pathToFileURL(join(dest, 'server.mjs')));
   const server = createExportServer({config});

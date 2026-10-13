@@ -18,7 +18,7 @@
 //   - cross-account slug (IDOR safety): mirrors the existing
 //     TestAppMetrics_CrossAccount404 contract
 
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -29,7 +29,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -37,7 +39,7 @@ import (
 // gatewayd control listener that responds with a bounded route
 // set, and asserts the apid reverse-proxy shape.
 func TestAppRoutes_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
 
 	// Fake gatewayd control listener. The path segment
@@ -49,9 +51,9 @@ func TestAppRoutes_HappyPath(t *testing.T) {
 		_, _ = w.Write([]byte(`{"slug":"my-api","app_id":"app-uuid-1","routes":["GET /users","POST /orders","__route_other__"]}`))
 	}))
 	t.Cleanup(gw.Close)
-	e.s.WithGatewaydControlURL(gw.URL)
+	(*e.S()).WithGatewaydControlURL(gw.URL)
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -74,22 +76,22 @@ func TestAppRoutes_HappyPath(t *testing.T) {
 }
 
 func TestAppRoutes_IncludesAccountScopedDiscoveredRoutes(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	app := seedApp(t, e, "discovered-api")
+	e := apidserver.Setup(t, api.PlanPro)
+	app := apidserver.SeedApp(t, e, "discovered-api")
 	now := time.Now().UTC()
 	event := state.APIConsumerUsageEvent{
-		EventID: uuid.NewString(), AccountID: e.acct.ID, AppID: app.ID,
+		EventID: uuid.NewString(), AccountID: (*e.Acct()).ID, AppID: app.ID,
 		ConsumerKey: state.AnonymousConsumerKey, WindowStart: now.Truncate(time.Minute),
 		RequestCount: 1, BillableUnits: 1, DiscoveredRoute: "GET /profiles/{id}", DiscoveredAt: now,
 	}
-	if _, err := e.store.RecordAPIConsumerUsage(context.Background(), event); err != nil {
+	if _, err := (*e.Store()).RecordAPIConsumerUsage(context.Background(), event); err != nil {
 		t.Fatal(err)
 	}
 
 	// With no live gateway configured, this route can only come from the
 	// durable inventory. The handler must pass the authenticated account ID
 	// to the collector so the inventory read remains tenant-scoped.
-	rec := e.do(t, http.MethodGet, "/v1/apps/discovered-api/routes", nil, nil)
+	rec := e.Do(t, http.MethodGet, "/v1/apps/discovered-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -106,7 +108,7 @@ func TestAppRoutes_IncludesAccountScopedDiscoveredRoutes(t *testing.T) {
 // empty admitted set renders as `[]` not `null` — the dashboard
 // JS would crash on null.
 func TestAppRoutes_EmptyRoutesRendersArrayNotNull(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
 
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -115,9 +117,9 @@ func TestAppRoutes_EmptyRoutesRendersArrayNotNull(t *testing.T) {
 		_, _ = w.Write([]byte(`{"slug":"my-api","app_id":"app-uuid-1","routes":[]}`))
 	}))
 	t.Cleanup(gw.Close)
-	e.s.WithGatewaydControlURL(gw.URL)
+	(*e.S()).WithGatewaydControlURL(gw.URL)
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -134,14 +136,15 @@ func TestAppRoutes_EmptyRoutesRendersArrayNotNull(t *testing.T) {
 // where the apid→gatewayd hop fails (gatewayd not running, or
 // the loopback bind is wrong).
 func TestAppRoutes_DialFailureRendersUnavailable(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
+	(*
 
 	// 127.0.0.1:1 is reserved + never bound; the dial fails
 	// immediately without occupying a port.
-	e.s.WithGatewaydControlURL("http://127.0.0.1:1")
+	e.S()).WithGatewaydControlURL("http://127.0.0.1:1")
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 (unavailable-state-not-502 contract)", rec.Code)
 	}
@@ -164,11 +167,11 @@ func TestAppRoutes_DialFailureRendersUnavailable(t *testing.T) {
 // pre-ADR-093 / dev-mode posture where the operator never wired
 // FAAS_GATEWAYD_CONTROL_URL.
 func TestAppRoutes_MissingURLRendersUnavailable(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
 	// Do NOT call WithGatewaydControlURL — the field stays "".
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 (unavailable-state-not-502 contract)", rec.Code)
 	}
@@ -186,12 +189,12 @@ func TestAppRoutes_MissingURLRendersUnavailable(t *testing.T) {
 // 200 with B's route labels, which would leak another tenant's
 // API surface).
 func TestAppRoutes_CrossAccount404(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	// Other tenant's app — must NOT be visible to e's caller.
-	otherAcct, _ := e.store.CreateAccount(t.Context(), "other@hobby.com", api.PlanPro)
-	mustSeedAppFor(t, e.store, otherAcct.ID, "their-api")
+	otherAcct, _ := (*e.Store()).CreateAccount(t.Context(), "other@hobby.com", api.PlanPro)
+	apidserver.MustSeedAppFor(t, (*e.Store()), otherAcct.ID, "their-api")
 
-	rec := e.do(t, "GET", "/v1/apps/their-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/their-api/routes", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404 (IDOR)", rec.Code)
 	}
@@ -209,9 +212,9 @@ func substringContains(haystack, needle string) bool {
 // mustSeedAppForPro is a thin wrapper that uses the existing
 // mustSeedAppFor helper with a Pro account context. Mirrors the
 // pattern in handlers_metrics_test.go's helpers.
-func mustSeedAppForPro(t *testing.T, e testEnv, slug string) {
+func mustSeedAppForPro(t *testing.T, e apidserver.TestEnv, slug string) {
 	t.Helper()
-	mustSeedAppFor(t, e.store, e.acct.ID, slug)
+	apidserver.MustSeedAppFor(t, (*e.Store()), (*e.Acct()).ID, slug)
 }
 
 // TestAppRoutes_CapHitTrueWhenOverflow is the PR-B1 regression
@@ -222,7 +225,7 @@ func mustSeedAppForPro(t *testing.T, e testEnv, slug string) {
 // must carry cap_hit=true so the dashboard can render "you
 // have hit the 50-route cap" without counting routes.
 func TestAppRoutes_CapHitTrueWhenOverflow(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
 
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -231,9 +234,9 @@ func TestAppRoutes_CapHitTrueWhenOverflow(t *testing.T) {
 		_, _ = w.Write([]byte(`{"slug":"my-api","app_id":"app-uuid-1","routes":["GET /users","__route_other__"],"cap_hit":true}`))
 	}))
 	t.Cleanup(gw.Close)
-	e.s.WithGatewaydControlURL(gw.URL)
+	(*e.S()).WithGatewaydControlURL(gw.URL)
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -255,7 +258,7 @@ func TestAppRoutes_CapHitTrueWhenOverflow(t *testing.T) {
 // Under cap, the loopback wire shape carries cap_hit=false and
 // the apid reverse-proxy must propagate it through.
 func TestAppRoutes_CapHitFalseWhenBelowCap(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
 
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -264,9 +267,9 @@ func TestAppRoutes_CapHitFalseWhenBelowCap(t *testing.T) {
 		_, _ = w.Write([]byte(`{"slug":"my-api","app_id":"app-uuid-1","routes":["GET /users"],"cap_hit":false}`))
 	}))
 	t.Cleanup(gw.Close)
-	e.s.WithGatewaydControlURL(gw.URL)
+	(*e.S()).WithGatewaydControlURL(gw.URL)
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -292,14 +295,15 @@ func TestAppRoutes_CapHitFalseWhenBelowCap(t *testing.T) {
 // future field-addition regression can't silently flip the
 // unavailable-state wire shape to advertise a false cap_hit.
 func TestAppRoutes_CapHitOmittedOnUnavailable(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	mustSeedAppForPro(t, e, "my-api")
+	(*
 
 	// 127.0.0.1:1 is reserved + never bound; the dial fails
 	// immediately. The handler returns 200 + source:unavailable.
-	e.s.WithGatewaydControlURL("http://127.0.0.1:1")
+	e.S()).WithGatewaydControlURL("http://127.0.0.1:1")
 
-	rec := e.do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
+	rec := e.Do(t, "GET", "/v1/apps/my-api/routes", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 (unavailable-state-not-502 contract)", rec.Code)
 	}

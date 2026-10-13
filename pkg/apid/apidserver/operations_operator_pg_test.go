@@ -1,7 +1,7 @@
 //go:build !no_pg
 
 // adr: 521
-package apidserver
+package apidserver_test
 
 import (
 	"os"

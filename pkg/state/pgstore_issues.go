@@ -43,11 +43,11 @@ func issueNullableTime(t *time.Time) pgtype.Timestamptz {
 	return issueTime(*t)
 }
 func issueRow(r sqlc.AppIssue) api.Issue {
-	return api.Issue{ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint, GroupingVersion: int(r.GroupingVersion), Title: r.Title, State: r.State, AssigneeAccountID: issueID(r.AssigneeAccountID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time, EventCount: r.EventCount, RegressionCount: r.RegressionCount, ResolvedAt: issueTimePtr(r.ResolvedAt), FixedDeploymentID: issueID(r.FixedDeploymentID), FixedDeploymentCreatedAt: issueTimePtr(r.FixedDeploymentCreatedAt), IgnoredUntil: issueTimePtr(r.IgnoredUntil)}
+	return api.Issue{SplitSourceIssueID: issueID(r.SplitSourceIssueID), ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint, GroupingVersion: int(r.GroupingVersion), Title: r.Title, State: r.State, AssigneeAccountID: issueID(r.AssigneeAccountID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time, EventCount: r.EventCount, RegressionCount: r.RegressionCount, ResolvedAt: issueTimePtr(r.ResolvedAt), FixedDeploymentID: issueID(r.FixedDeploymentID), FixedDeploymentCreatedAt: issueTimePtr(r.FixedDeploymentCreatedAt), IgnoredUntil: issueTimePtr(r.IgnoredUntil)}
 }
 func issueImpactListRow(r sqlc.IssueListByImpactRow) api.Issue {
 	return api.Issue{
-		ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint,
+		SplitSourceIssueID: issueID(r.SplitSourceIssueID), ID: issueID(r.ID), AppID: issueID(r.AppID), Environment: r.Environment, Fingerprint: r.Fingerprint,
 		GroupingVersion: int(r.GroupingVersion), Title: r.Title, State: r.State,
 		AssigneeAccountID: issueID(r.AssigneeAccountID), FirstSeenAt: r.FirstSeenAt.Time, LastSeenAt: r.LastSeenAt.Time,
 		EventCount: r.EventCount, RegressionCount: r.RegressionCount, ResolvedAt: issueTimePtr(r.ResolvedAt),
@@ -164,7 +164,8 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 		if old.PayloadHash != in.PayloadHash {
 			return api.IssueEventResponse{}, ErrIssueEventConflict
 		}
-		return api.IssueEventResponse{IssueID: issueID(old.IssueID), EventID: in.Event.EventID, Duplicate: true}, nil
+		canonical, resolveErr := q.IssueCanonicalID(ctx, tx, sqlc.IssueCanonicalIDParams{AppID: owner.ID, ID: old.IssueID})
+		return api.IssueEventResponse{IssueID: issueID(canonical), EventID: in.Event.EventID, Duplicate: true}, resolveErr
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.IssueEventResponse{}, err
@@ -201,6 +202,16 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
+	provenanceID := row.ID
+	row, err = issueRouteSplitCapture(ctx, q, tx, row, in.Event)
+	if err != nil {
+		return api.IssueEventResponse{}, err
+	}
+	originalID := row.ID
+	group, err := issueCanonicalRow(ctx, q, tx, c.AppID, issueID(originalID))
+	if err != nil {
+		return api.IssueEventResponse{}, err
+	}
 	consumer, tenant, err := issueAttribution(ctx, q, tx, in)
 	if err != nil {
 		return api.IssueEventResponse{}, err
@@ -213,7 +224,7 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	var customersBefore int64
 	if minimumCustomers > 0 {
 		customersBefore, err = q.IssueImpactCustomerCount(ctx, tx, sqlc.IssueImpactCustomerCountParams{
-			IssueID: row.ID, Since: issueTime(in.Now.Add(-api.IssueImpactAlertWindow)), Until: issueTime(in.Now),
+			IssueID: group.ID, Since: issueTime(in.Now.Add(-api.IssueImpactAlertWindow)), Until: issueTime(in.Now),
 		})
 		if err != nil {
 			return api.IssueEventResponse{}, err
@@ -223,10 +234,10 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	if err = q.IssueInsertEvent(ctx, tx, sqlc.IssueInsertEventParams{AppID: owner.ID, DeploymentID: dep.ID, EventID: issueUUID(in.Event.EventID), IssueID: row.ID, PayloadHash: in.PayloadHash, Payload: raw, OccurredAt: issueTime(in.Event.OccurredAt), ReceivedAt: issueTime(in.Now), ConsumerID: consumer, TenantID: tenant}); err != nil {
+	if err = q.IssueInsertEvent(ctx, tx, sqlc.IssueInsertEventParams{AppID: owner.ID, DeploymentID: dep.ID, EventID: issueUUID(in.Event.EventID), IssueID: row.ID, OriginalIssueID: provenanceID, PayloadHash: in.PayloadHash, Payload: raw, OccurredAt: issueTime(in.Event.OccurredAt), ReceivedAt: issueTime(in.Now), ConsumerID: consumer, TenantID: tenant}); err != nil {
 		return api.IssueEventResponse{}, err
 	}
-	regressed := issues.Recurs(issueRow(row), c.DeploymentID, in.Event.OccurredAt, row.FixedDeploymentCreatedAt.Valid && dep.CreatedAt.Time.After(row.FixedDeploymentCreatedAt.Time))
+	regressed := issues.Recurs(issueRow(group), c.DeploymentID, in.Event.OccurredAt, group.FixedDeploymentCreatedAt.Valid && dep.CreatedAt.Time.After(group.FixedDeploymentCreatedAt.Time))
 	row, err = q.IssueObserve(ctx, tx, sqlc.IssueObserveParams{ID: row.ID, OccurredAt: issueTime(in.Event.OccurredAt), Regressed: regressed})
 	if err != nil {
 		return api.IssueEventResponse{}, err
@@ -264,7 +275,16 @@ func (s *PgStore) RecordIssue(ctx context.Context, in RecordIssueParams) (api.Is
 			break
 		}
 	}
-	if err = q.IssueObserveRelease(ctx, tx, sqlc.IssueObserveReleaseParams{IssueID: row.ID, DeploymentID: dep.ID, CommitSha: dep.CommitSha.String, ImageDigest: dep.ImageDigest, OccurredAt: issueTime(in.Event.OccurredAt)}); err != nil {
+	if err = q.IssueObserveRelease(ctx, tx, sqlc.IssueObserveReleaseParams{IssueID: originalID, DeploymentID: dep.ID, CommitSha: dep.CommitSha.String, ImageDigest: dep.ImageDigest, OccurredAt: issueTime(in.Event.OccurredAt)}); err != nil {
+		return api.IssueEventResponse{}, err
+	}
+	if regressed {
+		if err = q.IssueReopenGroup(ctx, tx, group.ID); err != nil {
+			return api.IssueEventResponse{}, err
+		}
+	}
+	row, err = issueGroupRow(ctx, q, tx, group)
+	if err != nil {
 		return api.IssueEventResponse{}, err
 	}
 	if autoAssigned != nil {
@@ -571,7 +591,7 @@ func (s *PgStore) ListIssues(ctx context.Context, app string, filter IssueListFi
 		if i == api.IssuePageSize {
 			break
 		}
-		out.Items = append(out.Items, issueRow(r))
+		out.Items = append(out.Items, issueRow(sqlc.AppIssue(r)))
 	}
 	if len(rows) > api.IssuePageSize {
 		last := out.Items[len(out.Items)-1]
@@ -614,11 +634,31 @@ func (s *PgStore) GetIssueDetail(ctx context.Context, app, id string, since, unt
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	r, err := q.IssueGet(ctx, tx, sqlc.IssueGetParams{AppID: issueUUID(app), ID: issueUUID(id)})
+	r, err := issueCanonicalRow(ctx, q, tx, app, id)
 	if err != nil {
 		return api.IssueDetail{}, mapErr(err)
 	}
+	r, err = issueGroupRow(ctx, q, tx, r)
+	if err != nil {
+		return api.IssueDetail{}, err
+	}
 	out := api.IssueDetail{Issue: issueRow(r), Events: []api.IssueOccurrence{}, Releases: []api.IssueRelease{}, Activity: []api.IssueActivity{}}
+	members, err := q.IssueGroupMembers(ctx, tx, r.ID)
+	if err != nil {
+		return out, err
+	}
+	if len(members) > 1 {
+		for _, member := range members {
+			out.GroupMembers = append(out.GroupMembers, issueRow(member))
+		}
+	}
+	rules, err := q.IssueListGroupSplitRules(ctx, tx, r.ID)
+	if err != nil {
+		return out, err
+	}
+	for _, rule := range rules {
+		out.SplitRules = append(out.SplitRules, issueSplitRuleRow(rule))
+	}
 	events, err := q.IssueListEvents(ctx, tx, sqlc.IssueListEventsParams{IssueID: r.ID, Since: issueTime(since), Until: issueTime(until), CursorTime: issueTime(cur.Events.Time), CursorID: issueUUID(cur.Events.ID), PageLimit: api.IssuePageSize + 1})
 	if err != nil {
 		return out, err
@@ -635,7 +675,7 @@ func (s *PgStore) GetIssueDetail(ctx context.Context, app, id string, since, unt
 		if e.VerifiedConsumerID.Valid || e.VerifiedPlatformTenantID.Valid {
 			attr = "verified"
 		}
-		out.Events = append(out.Events, api.IssueOccurrence{ID: issueID(e.ID), IssueEvent: event, DebugRequestID: issueDebugRequest(ctx, q, tx, issueID(r.AccountID), issueID(r.AppID), issueID(e.DeploymentID), event), DeploymentID: issueID(e.DeploymentID), ReceivedAt: e.ReceivedAt.Time, VerifiedConsumerID: issueID(e.VerifiedConsumerID), VerifiedPlatformTenantID: issueID(e.VerifiedPlatformTenantID), Attribution: attr})
+		out.Events = append(out.Events, api.IssueOccurrence{ID: issueID(e.ID), OriginalIssueID: issueID(e.ProvenanceIssueID), IssueEvent: event, GroupingExplanation: issues.ExplainGrouping(event, int(e.GroupingVersion), e.Fingerprint), DebugRequestID: issueDebugRequest(ctx, q, tx, issueID(r.AccountID), issueID(r.AppID), issueID(e.DeploymentID), event), DeploymentID: issueID(e.DeploymentID), ReceivedAt: e.ReceivedAt.Time, VerifiedConsumerID: issueID(e.VerifiedConsumerID), VerifiedPlatformTenantID: issueID(e.VerifiedPlatformTenantID), Attribution: attr})
 	}
 	if len(events) > api.IssuePageSize {
 		last := out.Events[len(out.Events)-1]
@@ -667,7 +707,7 @@ func (s *PgStore) GetIssueDetail(ctx context.Context, app, id string, since, unt
 		if err = json.Unmarshal(a.Details, &details); err != nil {
 			return out, err
 		}
-		out.Activity = append(out.Activity, api.IssueActivity{ID: issueID(a.ID), Action: a.Action, ActorAccountID: issueID(a.ActorAccountID), CreatedAt: a.CreatedAt.Time, Details: details})
+		out.Activity = append(out.Activity, api.IssueActivity{ID: issueID(a.ID), OriginalIssueID: issueID(a.IssueID), Action: a.Action, ActorAccountID: issueID(a.ActorAccountID), CreatedAt: a.CreatedAt.Time, Details: details})
 	}
 	impact, err := q.IssueImpact(ctx, tx, sqlc.IssueImpactParams{IssueID: r.ID, Since: issueTime(since), Until: issueTime(until)})
 	if err != nil {
@@ -678,6 +718,14 @@ func (s *PgStore) GetIssueDetail(ctx context.Context, app, id string, since, unt
 }
 
 func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.IssueActionRequest, now time.Time) (api.Issue, error) {
+	// Compare UUID identities rather than accepted alternate string encodings.
+	id = issueID(issueUUID(id))
+	if in.TargetIssueID != "" {
+		in.TargetIssueID = issueID(issueUUID(in.TargetIssueID))
+	}
+	if in.MemberIssueID != "" {
+		in.MemberIssueID = issueID(issueUUID(in.MemberIssueID))
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return api.Issue{}, err
@@ -688,9 +736,24 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 	if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
 		return api.Issue{}, mapErr(err)
 	}
-	row, err := q.IssueGetLocked(ctx, tx, sqlc.IssueGetLockedParams{AppID: issueUUID(app), ID: issueUUID(id)})
+	canonical, err := q.IssueCanonicalID(ctx, tx, sqlc.IssueCanonicalIDParams{AppID: issueUUID(app), ID: issueUUID(id)})
 	if err != nil {
 		return api.Issue{}, mapErr(err)
+	}
+	row, err := q.IssueGetLocked(ctx, tx, sqlc.IssueGetLockedParams{AppID: issueUUID(app), ID: canonical})
+	if err != nil {
+		return api.Issue{}, mapErr(err)
+	}
+	if in.Action == "merge" || in.Action == "split" {
+		if in.Action == "merge" {
+			row, err = issueMergeGroups(ctx, q, tx, row, id, actor, in, now)
+		} else {
+			row, err = issueSplitGroup(ctx, q, tx, row, actor, in, now)
+		}
+		if err != nil {
+			return api.Issue{}, err
+		}
+		return issueRow(row), tx.Commit(ctx)
 	}
 	p := sqlc.IssueUpdateActionParams{ID: row.ID, State: row.State, Assignee: row.AssigneeAccountID, ResolvedAt: row.ResolvedAt, FixedDeploymentID: row.FixedDeploymentID, FixedDeploymentCreatedAt: row.FixedDeploymentCreatedAt, IgnoredUntil: row.IgnoredUntil}
 	details := map[string]string{}
@@ -707,14 +770,14 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 			}
 		}
 		if issueID(row.AssigneeAccountID) == in.AssigneeAccountID {
-			return issueRow(row), nil
+			return issueGroupView(ctx, q, tx, row)
 		}
 		p.Assignee = issueUUID(in.AssigneeAccountID)
 		details["assignee_account_id"] = in.AssigneeAccountID
 		action = "assigned"
 	case "resolve":
 		if row.State == "resolved" && issueID(row.FixedDeploymentID) == in.FixedDeploymentID {
-			return issueRow(row), nil
+			return issueGroupView(ctx, q, tx, row)
 		}
 		dep, scopeErr := q.IssueDeploymentScope(ctx, tx, sqlc.IssueDeploymentScopeParams{AppID: row.AppID, AccountID: row.AccountID, DeploymentID: issueUUID(in.FixedDeploymentID), Environment: row.Environment})
 		if scopeErr != nil {
@@ -732,14 +795,14 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 		}
 	case "expire-ignore":
 		if row.State != "ignored" || !row.IgnoredUntil.Valid || row.IgnoredUntil.Time.After(now) {
-			return issueRow(row), nil
+			return issueGroupView(ctx, q, tx, row)
 		}
 		p.State = "open"
 		p.IgnoredUntil = pgtype.Timestamptz{}
 		action = "reopened"
 	case "reopen":
 		if row.State == "open" {
-			return issueRow(row), nil
+			return issueGroupView(ctx, q, tx, row)
 		}
 		p.State = "open"
 		p.ResolvedAt = pgtype.Timestamptz{}
@@ -749,7 +812,7 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 		action = "reopened"
 	case "ignore":
 		if row.State == "ignored" && in.IgnoredUntil != nil && row.IgnoredUntil.Valid && row.IgnoredUntil.Time.Equal(*in.IgnoredUntil) {
-			return issueRow(row), nil
+			return issueGroupView(ctx, q, tx, row)
 		}
 		p.State = "ignored"
 		p.IgnoredUntil = issueNullableTime(in.IgnoredUntil)
@@ -758,6 +821,13 @@ func (s *PgStore) ActOnIssue(ctx context.Context, app, id, actor string, in api.
 		return api.Issue{}, ErrInvalidArgument
 	}
 	row, err = q.IssueUpdateAction(ctx, tx, p)
+	if err != nil {
+		return api.Issue{}, err
+	}
+	if err = q.IssueSyncGroupAction(ctx, tx, row.ID); err != nil {
+		return api.Issue{}, err
+	}
+	row, err = issueGroupRow(ctx, q, tx, row)
 	if err != nil {
 		return api.Issue{}, err
 	}
@@ -828,6 +898,11 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 	if _, err := q.IssueLockApp(ctx, tx, row.AppID); err != nil {
 		return mapErr(err)
 	}
+	canonical, err := q.IssueCanonicalID(ctx, tx, sqlc.IssueCanonicalIDParams{AppID: row.AppID, ID: row.IssueID})
+	if err != nil {
+		return mapErr(err)
+	}
+	row.IssueID = canonical
 	var e api.IssueEvent
 	if err := json.Unmarshal(row.Payload, &e); err != nil {
 		return err
@@ -871,11 +946,11 @@ func (s *PgStore) enrichOneIssueAttribution(ctx context.Context, q *sqlc.Queries
 			return countErr
 		}
 		if customersAfter >= minimumCustomers && customersBefore < minimumCustomers {
-			issue, getErr := q.IssueGet(ctx, tx, sqlc.IssueGetParams{AppID: row.AppID, ID: row.IssueID})
+			issue, getErr := q.IssueGetGroup(ctx, tx, sqlc.IssueGetGroupParams{AppID: row.AppID, ID: row.IssueID})
 			if getErr != nil {
 				return getErr
 			}
-			if err := recordIssueImpactThresholdTransition(ctx, q, tx, issue, minimumCustomers, customersBefore, customersAfter, issueID(row.DeploymentID), now); err != nil {
+			if err := recordIssueImpactThresholdTransition(ctx, q, tx, sqlc.AppIssue(issue), minimumCustomers, customersBefore, customersAfter, issueID(row.DeploymentID), now); err != nil {
 				return err
 			}
 		}

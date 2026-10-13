@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gitapproval"
+	"github.com/onebox-faas/faas/pkg/gitlabsource"
 )
 
 // CreateEnvironmentGitSourceRequest selects a definition in the project's
-// verified repository. Repository and installation identities come from the
-// server's GitHub connection, never from this request.
+// verified repository. GitHub identity comes from the project's installation;
+// GitLab identity is verified against the account's OAuth connection.
 type CreateEnvironmentGitSourceRequest struct {
+	Provider       string `json:"provider,omitempty"`
+	Repository     string `json:"repository,omitempty"`
 	Ref            string `json:"ref,omitempty"`
 	ManifestPath   string `json:"manifest_path"`
 	Mode           string `json:"mode,omitempty"`
@@ -106,6 +109,7 @@ type RemoveEnvironmentGitOpsOverrideRequest struct {
 }
 
 type EnvironmentGitSourceSpec struct {
+	Provider       string `json:"provider,omitempty"`
 	RepositoryID   int64  `json:"repository_id"`
 	InstallationID int64  `json:"installation_id"`
 	Repository     string `json:"repository"`
@@ -210,8 +214,14 @@ func (p EnvironmentGitOpsPlan) HasDrift() bool {
 }
 
 func (s EnvironmentGitSourceSpec) Validate() error {
+	provider := s.Provider
+	if provider == "" {
+		provider = "github"
+	}
 	parts := strings.Split(s.Repository, "/")
-	if s.RepositoryID <= 0 || s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n") {
+	if s.RepositoryID <= 0 || (provider == "github" && (s.InstallationID <= 0 || len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(s.Repository, " \t\r\n"))) ||
+		(provider == "gitlab" && (s.InstallationID != 0 || !gitlabsource.ValidRepositoryPath(s.Repository))) ||
+		(provider != "github" && provider != "gitlab") {
 		return fmt.Errorf("git source requires a verified repository and installation identity")
 	}
 	if !validEnvironmentGitRef(s.Ref) || s.ApprovalPolicy == "protected_branch" && !strings.HasPrefix(s.Ref, "refs/heads/") {
@@ -222,6 +232,9 @@ func (s EnvironmentGitSourceSpec) Validate() error {
 	}
 	if s.Mode != "report" && s.Mode != "enforce" || s.ApprovalPolicy != "manual" && s.ApprovalPolicy != "protected_branch" {
 		return fmt.Errorf("git source needs report/enforce mode and manual/protected_branch approval_policy")
+	}
+	if provider == "gitlab" && (s.Mode != "report" || s.ApprovalPolicy != "manual" || s.Prune) {
+		return fmt.Errorf("GitLab source currently supports report mode, manual approval, and retained resources")
 	}
 	return nil
 }

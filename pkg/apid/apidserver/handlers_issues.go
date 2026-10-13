@@ -30,6 +30,10 @@ func (s *server) registerIssueRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueOwnershipRules)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-ownership-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setIssueOwnershipRules))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issues/{issue_id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssue)))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-rules", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createIssueSplitRule)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.undoIssueSplitRule)))))
+	mux.HandleFunc("PATCH /v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateIssueSplitRule)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/split-preview", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previewIssueSplit)))
 	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/actions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.actOnIssue)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/issue-ingest-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createIssueIngestToken))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-ingest-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.listIssueIngestTokens))))
@@ -78,6 +82,8 @@ func writeIssueError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Not found", "issue resource not found"))
+	case errors.Is(err, state.ErrIssueGroupingConflict):
+		api.WriteProblem(w, api.NewProblem(409, "issue_grouping_conflict", "Conflict", "issue membership changed or is incompatible with the requested regrouping"))
 	case errors.Is(err, state.ErrIssueEventConflict):
 		api.WriteProblem(w, api.NewProblem(409, "issue_event_conflict", "Conflict", "event_id was already used with a different payload"))
 	case errors.Is(err, state.ErrIssueQuota):
@@ -119,7 +125,7 @@ func (s *server) ingestIssueEvent(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrValidation("application ingestion accepts exception or worker events"))
 		return
 	}
-	out, err := st.RecordIssue(r.Context(), state.RecordIssueParams{Credential: credential, Event: event, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersion, Limits: acct.Plan.IssueLimits(), Now: now})
+	out, err := st.RecordIssue(r.Context(), state.RecordIssueParams{Credential: credential, Event: event, Fingerprint: fp, Title: title, PayloadHash: digest, GroupingVersion: issues.GroupingVersionFor(event), Limits: acct.Plan.IssueLimits(), Now: now})
 	s.observeIssueEvent(out, err)
 	if err != nil {
 		writeIssueError(w, err)
@@ -469,14 +475,22 @@ func validateIssueAction(in api.IssueActionRequest, now time.Time) error {
 			return errors.New("resolution requires fixed_deployment_id")
 		}
 	case "reopen":
+	case "merge":
+		if _, err := uuid.Parse(in.TargetIssueID); err != nil {
+			return errors.New("merge requires target_issue_id")
+		}
+	case "split":
+		if _, err := uuid.Parse(in.MemberIssueID); err != nil {
+			return errors.New("split requires member_issue_id")
+		}
 	case "ignore":
 		if in.IgnoredUntil == nil || !in.IgnoredUntil.After(now) || in.IgnoredUntil.After(now.Add(api.IssueMaxTokenLifetime)) {
 			return errors.New("ignored_until must be in the future and within 90 days")
 		}
 	default:
-		return errors.New("action must be assign, resolve, reopen, or ignore")
+		return errors.New("action must be assign, resolve, reopen, ignore, merge, or split")
 	}
-	if in.Action != "assign" && in.AssigneeAccountID != "" || in.Action != "resolve" && in.FixedDeploymentID != "" || in.Action != "ignore" && in.IgnoredUntil != nil {
+	if in.Action != "assign" && in.AssigneeAccountID != "" || in.Action != "resolve" && in.FixedDeploymentID != "" || in.Action != "ignore" && in.IgnoredUntil != nil || in.Action != "merge" && in.TargetIssueID != "" || in.Action != "split" && in.MemberIssueID != "" {
 		return errors.New("action contains unrelated fields")
 	}
 	return nil

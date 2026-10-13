@@ -13,7 +13,7 @@
 // is hermetic — no Postgres dependency, runs under `-tags=!no_pg`
 // OR under the default Go build. Mirrors handlers_queues_read_test.go
 // for the cross-account 404 shape.
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -39,13 +40,13 @@ import (
 // `stateName` parameter is honoured by a follow-up
 // forceInvocationState call that drives the row through the
 // production drain's claim → terminate sequence.
-func seedInvocation(t *testing.T, e testEnv, stateName string, source state.InvocationSource) (string, string) {
+func seedInvocation(t *testing.T, e apidserver.TestEnv, stateName string, source state.InvocationSource) (string, string) {
 	t.Helper()
-	appID := mustSeedApp(t, e, "replay-app")
+	appID := apidserver.MustSeedApp(t, e, "replay-app")
 	now := time.Now().UTC()
-	inv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
+	inv, err := (*e.Store()).EnqueueInvocation(context.Background(), state.Invocation{
 		AppID:     appID,
-		AccountID: e.acct.ID,
+		AccountID: (*e.Acct()).ID,
 		Source:    source,
 		Method:    "POST",
 		Path:      "/api/charge",
@@ -87,7 +88,7 @@ func seedInvocation(t *testing.T, e testEnv, stateName string, source state.Invo
 // For states the replay route already rejects (pending, dispatching,
 // cancelled) we just don't drive any transition — the freshly
 // enqueued row IS in pending.
-func forceInvocationState(t *testing.T, e testEnv, id, stateName string) error {
+func forceInvocationState(t *testing.T, e apidserver.TestEnv, id, stateName string) error {
 	t.Helper()
 	ctx := context.Background()
 	switch stateName {
@@ -95,27 +96,27 @@ func forceInvocationState(t *testing.T, e testEnv, id, stateName string) error {
 		// EnqueueInvocation already leaves the row at pending — no-op.
 		return nil
 	case "dispatching":
-		_, err := e.store.ClaimInvocation(ctx, id, "test-inst", 30)
+		_, err := (*e.Store()).ClaimInvocation(ctx, id, "test-inst", 30)
 		return err
 	case "completed":
-		if _, err := e.store.ClaimInvocation(ctx, id, "test-inst", 30); err != nil {
+		if _, err := (*e.Store()).ClaimInvocation(ctx, id, "test-inst", 30); err != nil {
 			return err
 		}
-		return e.store.CompleteInvocation(ctx, id, json.RawMessage(`{"status":200}`))
+		return (*e.Store()).CompleteInvocation(ctx, id, json.RawMessage(`{"status":200}`))
 	case "failed":
-		if _, err := e.store.ClaimInvocation(ctx, id, "test-inst", 30); err != nil {
+		if _, err := (*e.Store()).ClaimInvocation(ctx, id, "test-inst", 30); err != nil {
 			return err
 		}
-		return e.store.FailInvocation(ctx, id, "test failure", 0, 0)
+		return (*e.Store()).FailInvocation(ctx, id, "test failure", 0, 0)
 	case "dead_letter":
-		if _, err := e.store.ClaimInvocation(ctx, id, "test-inst", 30); err != nil {
+		if _, err := (*e.Store()).ClaimInvocation(ctx, id, "test-inst", 30); err != nil {
 			return err
 		}
 		// retryAfter > 0 with budget == 1 + Attempts already 1 (Claim
 		// incremented it) lands the row in dead_letter.
-		return e.store.FailInvocation(ctx, id, "test budget exhausted", time.Second, 1)
+		return (*e.Store()).FailInvocation(ctx, id, "test budget exhausted", time.Second, 1)
 	case "cancelled":
-		return e.store.CancelInvocation(ctx, id)
+		return (*e.Store()).CancelInvocation(ctx, id)
 	default:
 		t.Fatalf("unknown test state %q", stateName)
 		return nil
@@ -128,10 +129,10 @@ func forceInvocationState(t *testing.T, e testEnv, id, stateName string) error {
 //  2. The new row exists in the store with Source="replay".
 //  3. The new row's payload/method/path match the original verbatim.
 func TestReplayInvocation_HappyPath(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	id, _ := seedInvocation(t, e, "failed", state.InvocationAsyncInvoke)
 
-	rec := e.do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
+	rec := e.Do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
@@ -147,7 +148,7 @@ func TestReplayInvocation_HappyPath(t *testing.T) {
 	}
 
 	// The new row exists and carries the replay stamp.
-	got, err := e.store.InvocationByID(context.Background(), resp.ID)
+	got, err := (*e.Store()).InvocationByID(context.Background(), resp.ID)
 	if err != nil {
 		t.Fatalf("InvocationByID(newID): %v", err)
 	}
@@ -157,9 +158,9 @@ func TestReplayInvocation_HappyPath(t *testing.T) {
 	if got.ReplayedFromInvocationID != id || got.ReplayRootInvocationID != id {
 		t.Fatalf("replay lineage = %q/%q, want original %q", got.ReplayedFromInvocationID, got.ReplayRootInvocationID, id)
 	}
-	if got.AccountID != e.acct.ID {
+	if got.AccountID != (*e.Acct()).ID {
 		t.Errorf("new row AccountID = %q, want %q (must be the replayer's account, not the original's)",
-			got.AccountID, e.acct.ID)
+			got.AccountID, (*e.Acct()).ID)
 	}
 	if got.Method != "POST" || got.Path != "/api/charge" {
 		t.Errorf("new row method/path = %s/%s, want POST//api/charge (original's verbatim)",
@@ -171,10 +172,10 @@ func TestReplayInvocation_HappyPath(t *testing.T) {
 }
 
 func TestReplayInvocation_PreservesCapturedEnvironment(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	ctx := context.Background()
-	appID := mustSeedApp(t, e, "replay-scoped")
-	original, err := e.store.EnqueueInvocation(ctx, state.Invocation{AppID: appID, AccountID: e.acct.ID,
+	appID := apidserver.MustSeedApp(t, e, "replay-scoped")
+	original, err := (*e.Store()).EnqueueInvocation(ctx, state.Invocation{AppID: appID, AccountID: (*e.Acct()).ID,
 		DeploymentScope: "staging", Source: state.InvocationAsyncInvoke, Method: "POST", Path: "/task", DueAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +183,7 @@ func TestReplayInvocation_PreservesCapturedEnvironment(t *testing.T) {
 	if err := forceInvocationState(t, e, original.ID, "failed"); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.do(t, "POST", "/v1/invocations/"+original.ID+"/replay", nil, nil)
+	rec := e.Do(t, "POST", "/v1/invocations/"+original.ID+"/replay", nil, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("replay: %d, %s", rec.Code, rec.Body.String())
 	}
@@ -190,7 +191,7 @@ func TestReplayInvocation_PreservesCapturedEnvironment(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	got, err := e.store.InvocationByID(ctx, response.ID)
+	got, err := (*e.Store()).InvocationByID(ctx, response.ID)
 	if err != nil || got.DeploymentScope != "staging" {
 		t.Fatalf("replay moved environment: scope=%q, err=%v", got.DeploymentScope, err)
 	}
@@ -200,10 +201,10 @@ func TestReplayInvocation_PreservesCapturedEnvironment(t *testing.T) {
 // passes the allow-list (issue #394 terminal failure mode after the
 // retry budget is spent).
 func TestReplayInvocation_DeadLetterAllowed(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	id, _ := seedInvocation(t, e, "dead_letter", state.InvocationQueue)
 
-	rec := e.do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
+	rec := e.Do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body.String())
 	}
@@ -225,10 +226,10 @@ func TestReplayInvocation_NotReplayableStates(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.state, func(t *testing.T) {
-			e := setup(t, api.PlanPro)
+			e := apidserver.Setup(t, api.PlanPro)
 			id, _ := seedInvocation(t, e, tc.state, state.InvocationAsyncInvoke)
 
-			rec := e.do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
+			rec := e.Do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
 			if rec.Code != http.StatusConflict {
 				t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 			}
@@ -255,11 +256,11 @@ func TestReplayInvocation_NotReplayableStates(t *testing.T) {
 // fresh MemStore, so the foreign probe lands on the
 // InvocationByID → not-found branch.
 func TestReplayInvocation_CrossAccount(t *testing.T) {
-	owner := setup(t, api.PlanPro)
+	owner := apidserver.Setup(t, api.PlanPro)
 	id, _ := seedInvocation(t, owner, "failed", state.InvocationAsyncInvoke)
 
-	foreign := setup(t, api.PlanPro)
-	rec := foreign.do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
+	foreign := apidserver.Setup(t, api.PlanPro)
+	rec := foreign.Do(t, "POST", "/v1/invocations/"+id+"/replay", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-account replay status = %d, want 404 (IDOR-safe); body=%s",
 			rec.Code, rec.Body.String())
@@ -270,8 +271,8 @@ func TestReplayInvocation_CrossAccount(t *testing.T) {
 // invocation_not_found code. Mirrors the read-side 404 — the replay
 // route cannot leak the existence of an id to a stranger.
 func TestReplayInvocation_UnknownID(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	rec := e.do(t, "POST", "/v1/invocations/nonexistent-id/replay", nil, nil)
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/invocations/nonexistent-id/replay", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown id replay status = %d, want 404; body=%s",
 			rec.Code, rec.Body.String())
@@ -296,9 +297,9 @@ func TestReplayInvocation_UnknownID(t *testing.T) {
 // The replay from the env's account must now return 404, matching
 // the IDOR-safe pattern (never 403, never 200).
 func TestReplayInvocation_AppTransferredAway(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	// Seed a foreign app on a different account.
-	foreignApp, err := e.store.CreateApp(context.Background(), state.App{
+	foreignApp, err := (*e.Store()).CreateApp(context.Background(), state.App{
 		AccountID: "00000000-0000-0000-0000-000000000099",
 		Slug:      "foreign-app",
 		Type:      state.AppTypeApp,
@@ -310,9 +311,9 @@ func TestReplayInvocation_AppTransferredAway(t *testing.T) {
 	// Insert an invocation that points at the foreign app but
 	// carries the env's account_id (the post-transfer state).
 	now := time.Now().UTC()
-	inv, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{
+	inv, err := (*e.Store()).EnqueueInvocation(context.Background(), state.Invocation{
 		AppID:     foreignApp.ID,
-		AccountID: e.acct.ID, // the env's account still owns the row
+		AccountID: (*e.Acct()).ID, // the env's account still owns the row
 		Source:    state.InvocationAsyncInvoke,
 		Method:    "POST",
 		Path:      "/api/charge",
@@ -325,14 +326,14 @@ func TestReplayInvocation_AppTransferredAway(t *testing.T) {
 	}
 	// Flip the row to failed so it would pass the state allow-list
 	// if the app-ownership check didn't catch the mismatch first.
-	if _, err := e.store.ClaimInvocation(context.Background(), inv.ID, "test-inst", 30); err != nil {
+	if _, err := (*e.Store()).ClaimInvocation(context.Background(), inv.ID, "test-inst", 30); err != nil {
 		t.Fatalf("ClaimInvocation: %v", err)
 	}
-	if err := e.store.FailInvocation(context.Background(), inv.ID, "test failure", 0, 0); err != nil {
+	if err := (*e.Store()).FailInvocation(context.Background(), inv.ID, "test failure", 0, 0); err != nil {
 		t.Fatalf("FailInvocation: %v", err)
 	}
 
-	rec := e.do(t, "POST", "/v1/invocations/"+inv.ID+"/replay", nil, nil)
+	rec := e.Do(t, "POST", "/v1/invocations/"+inv.ID+"/replay", nil, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("replay against foreign app status = %d, want 404 (IDOR-safe); body=%s",
 			rec.Code, rec.Body.String())
@@ -342,13 +343,13 @@ func TestReplayInvocation_AppTransferredAway(t *testing.T) {
 // TestListInvocations_PaginatesWithNextBefore proves that the public
 // cursor is discoverable and advances without repeating the anchor row.
 func TestListInvocations_PaginatesWithNextBefore(t *testing.T) {
-	e := setup(t, api.PlanHobby)
-	appID := mustSeedApp(t, e, "invocation-pagination")
+	e := apidserver.Setup(t, api.PlanHobby)
+	appID := apidserver.MustSeedApp(t, e, "invocation-pagination")
 	ctx := context.Background()
 	now := time.Now().UTC()
 	for i := 0; i < 3; i++ {
-		_, err := e.store.EnqueueInvocation(ctx, state.Invocation{
-			AppID: appID, AccountID: e.acct.ID, Source: state.InvocationAsyncInvoke,
+		_, err := (*e.Store()).EnqueueInvocation(ctx, state.Invocation{
+			AppID: appID, AccountID: (*e.Acct()).ID, Source: state.InvocationAsyncInvoke,
 			Method: "POST", Path: "/invoke", DueAt: now,
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
 		})
@@ -357,7 +358,7 @@ func TestListInvocations_PaginatesWithNextBefore(t *testing.T) {
 		}
 	}
 
-	first := e.do(t, http.MethodGet, "/v1/invocations?limit=2", nil, nil)
+	first := e.Do(t, http.MethodGet, "/v1/invocations?limit=2", nil, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first page status = %d: %s", first.Code, first.Body)
 	}
@@ -369,7 +370,7 @@ func TestListInvocations_PaginatesWithNextBefore(t *testing.T) {
 		t.Fatalf("first page = %+v, want 2 rows and a cursor", page1)
 	}
 
-	second := e.do(t, http.MethodGet, "/v1/invocations?limit=2&before="+page1.NextBefore, nil, nil)
+	second := e.Do(t, http.MethodGet, "/v1/invocations?limit=2&before="+page1.NextBefore, nil, nil)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second page status = %d: %s", second.Code, second.Body)
 	}

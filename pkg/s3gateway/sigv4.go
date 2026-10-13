@@ -191,6 +191,9 @@ func verifyPresignedSigV4(ctx context.Context, r *http.Request, parsed sigV4Requ
 	if secret == "" {
 		return errSignature
 	}
+	if r.ContentLength == 0 && slices.Contains(strings.Split(parsed.SignedHeader, ";"), "content-length") {
+		return verifyZeroLengthSigV4(r, parsed, secret, region, true)
+	}
 	clone := r.Clone(ctx)
 	clone.Body, clone.GetBody = nil, nil
 	// The signer automatically adds content-length to the canonical headers
@@ -266,6 +269,9 @@ func headerOrQueryValue(r *http.Request, name string) string {
 func verifySigV4(ctx context.Context, r *http.Request, parsed sigV4Request, secret, region string) error {
 	if secret == "" {
 		return errSignature
+	}
+	if r.ContentLength == 0 && slices.Contains(strings.Split(parsed.SignedHeader, ";"), "content-length") {
+		return verifyZeroLengthSigV4(r, parsed, secret, region, false)
 	}
 	clone := r.Clone(ctx)
 	clone.Body, clone.GetBody = nil, nil

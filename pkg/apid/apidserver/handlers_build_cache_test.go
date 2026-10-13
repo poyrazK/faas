@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,8 +37,8 @@ func TestDeploymentResponseWithBuildSurfacesCacheDecision(t *testing.T) {
 	if err := store.SetBuildCacheOutcome(ctx, build.ID, "hit", key); err != nil {
 		t.Fatal(err)
 	}
-	srv := newServer(store, testLogger(), "gregale.dev", noopNotifier{})
-	resp := srv.deploymentResponseWithBuild(ctx, dep, app)
+	srv := apidserver.NewServer(store, apidserver.TestLogger(), "gregale.dev", apidserver.NoopNotifier{})
+	resp := srv.DeploymentResponseWithBuild(ctx, dep, app)
 	if resp.BuildCacheStatus != "hit" || resp.CacheKeySHA256 != key {
 		t.Fatalf("deployment cache fields = (%q, %q), want hit + key", resp.BuildCacheStatus, resp.CacheKeySHA256)
 	}

@@ -9,5 +9,7 @@ const (
 	DurableEntityOutboxHandlerProtocolVersion      = 2
 	DurableEntityHandlerMaxRequestBytes            = 2097152
 	DurableEntityHandlerMaxTransitionBytes         = 1048576
+	DurableEntityHandlerMaxIdentityBytes           = 256
+	DurableEntityHandlerMaxPendingOutbox           = 128
 	DurableEntityHandlerPath                       = "/__gregale/entities"
 )

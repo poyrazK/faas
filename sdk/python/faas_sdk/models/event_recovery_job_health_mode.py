@@ -1,10 +1,11 @@
 from typing import Literal
 
-EventRecoveryJobHealthMode = Literal["execution", "routing"]
+EventRecoveryJobHealthMode = Literal["execution", "routing", "workflow"]
 
 EVENT_RECOVERY_JOB_HEALTH_MODE_VALUES: set[EventRecoveryJobHealthMode] = {
     "execution",
     "routing",
+    "workflow",
 }
 
 

@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // TestAppMetrics_HappyPath seeds an app, installs a Prometheus
@@ -378,9 +379,9 @@ func TestAppMetrics_PlanDowngradeBounces(t *testing.T) {
 // Method-shadowing via embedding: the outer method wins over the
 // MemStore sentinel stub at pkg/state/memstore_wake_count.go:38.
 type wakeBootStartedStore struct {
-	*state.MemStore
-	count int64
-	err   error
+	MemStore *state.MemStore
+	count    int64
+	err      error
 }
 
 func (w wakeBootStartedStore) CountWakeBootStarted24h(_ context.Context, _ string) (int64, error) {
@@ -388,7 +389,7 @@ func (w wakeBootStartedStore) CountWakeBootStarted24h(_ context.Context, _ strin
 }
 
 type emptyIDMetricsStore struct {
-	*state.MemStore
+	MemStore    *state.MemStore
 	countCalled bool
 }
 
@@ -414,7 +415,7 @@ func TestAppMetrics_Wakes24hEnrichment(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "my-api")
 	wrapped := wakeBootStartedStore{MemStore: e.store, count: 47}
-	srv := newServer(wrapped, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	srv := newServer(statetest.NewMem(wrapped), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
 	installPromFixture(t, &e, func(q string) string {
 		return `{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`
@@ -449,7 +450,7 @@ func TestAppMetrics_Wakes24hEmptyWindow(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "my-api")
 	wrapper := wakeBootStartedStore{MemStore: e.store, count: 0}
-	srv := newServer(wrapper, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	srv := newServer(statetest.NewMem(wrapper), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
 	installPromFixture(t, &e, func(q string) string {
 		return `{"status":"success","data":{"resultType":"vector","result":[{"value":[0,"0"]}]}}`
@@ -476,7 +477,7 @@ func TestAppMetrics_MissingAppIDSkipsWakeCount(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "my-api")
 	wrapper := &emptyIDMetricsStore{MemStore: e.store}
-	srv := newServer(wrapper, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	srv := newServer(statetest.NewMem(wrapper), slog.New(slog.NewTextHandler(io.Discard, nil)),
 		"gregale.dev", noopNotifier{}).WithOpsMetrics(context.Background(), e.ops)
 
 	rec := httptest.NewRecorder()

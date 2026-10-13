@@ -432,3 +432,87 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// adr: 192 — schedd appends the placement identity (FAAS_INSTANCE_ID,
+// FAAS_NODE_ID) to env.json on every wake, and every restore is a new
+// instance. The skip ignores those keys, and still writes when anything else
+// in env.json changes.
+func TestStagePreBootFilesUnless_IgnoresPlacementIdentity(t *testing.T) {
+	fakeLoopMounts(t)
+	v := newStagingVMM(t, "cold")
+	envFor := func(instance, node, mode string) []byte {
+		return []byte(fmt.Sprintf(`{"APP_MODE":%q,%q:%q,%q:%q}`, mode, api.PlatformInstanceIDEnv, instance, api.PlatformNodeIDEnv, node))
+	}
+	resolver := "10.100.0.1"
+	if err := v.stagePreBootFiles("cold", nil, nil, envFor("cold", "n1", "prod"), resolver, false); err != nil {
+		t.Fatal(err)
+	}
+	capture := v2CaptureKey("identity")
+	v.preBoot.captured("cold", capture)
+
+	for _, tc := range []struct {
+		name     string
+		env      []byte
+		wantSkip bool
+	}{
+		{"new instance on another node", envFor("restore-1", "n2", "prod"), true},
+		{"changed app env", envFor("restore-2", "n1", "staging"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sessions, _ := fakeLoopMounts(t)
+			inst := "restore-" + strings.ReplaceAll(tc.name, " ", "-")
+			restored := newStagingVMMFrom(t, v, inst)
+			skipped, err := restored.stagePreBootFilesUnless(inst, capture, nil, nil, tc.env, resolver, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if skipped != tc.wantSkip || *sessions != map[bool]int{true: 0, false: 1}[tc.wantSkip] {
+				t.Fatalf("skipped = %v with %d mounts, want skip %v", skipped, *sessions, tc.wantSkip)
+			}
+		})
+	}
+}
+
+// After a vmmd restart, a capture whose drive holds another instance's
+// identity is learned on the first restore and skipped on the next.
+func TestStagePreBootFilesUnless_LearnsCaptureAcrossInstanceIdentity(t *testing.T) {
+	sessions, _ := fakeLoopMounts(t)
+	v := newStagingVMM(t, "first")
+	envFor := func(instance string) []byte {
+		return []byte(fmt.Sprintf(`{"K":"v",%q:%q,%q:"n1"}`, api.PlatformInstanceIDEnv, instance, api.PlatformNodeIDEnv))
+	}
+	if err := v.stagePreBootFiles("first", nil, nil, envFor("first"), "10.100.0.1", false); err != nil {
+		t.Fatal(err)
+	}
+	v.preBoot = newPreBootLedger() // vmmd restart
+	key := v2CaptureKey("reused-identity")
+
+	before := *sessions
+	skipped, err := v.stagePreBootFilesUnless("first", key, nil, nil, envFor("second"), "10.100.0.1", false)
+	if err != nil || skipped || *sessions-before != 1 {
+		t.Fatalf("first restore after restart: skipped=%v err=%v mounts=%d, want one learning mount", skipped, err, *sessions-before)
+	}
+	next := newStagingVMMFrom(t, v, "third")
+	before = *sessions
+	skipped, err = next.stagePreBootFilesUnless("third", key, nil, nil, envFor("third"), "10.100.0.1", false)
+	if err != nil || !skipped || *sessions != before {
+		t.Fatalf("next restore: skipped=%v err=%v mounts=%d, want a skip", skipped, err, *sessions-before)
+	}
+}
+
+func TestPlacementStableAPIEnv(t *testing.T) {
+	a, err := placementStableAPIEnv([]byte(`{"B":"2","A":"1","FAAS_INSTANCE_ID":"x","FAAS_NODE_ID":"n1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := placementStableAPIEnv([]byte(`{"FAAS_NODE_ID":"n2","A":"1","FAAS_INSTANCE_ID":"y","B":"2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != `{"A":"1","B":"2"}` || string(a) != string(b) {
+		t.Fatalf("stable env = %s and %s, want both {\"A\":\"1\",\"B\":\"2\"}", a, b)
+	}
+	if _, err := placementStableAPIEnv([]byte("not json")); err == nil {
+		t.Fatal("invalid JSON parsed")
+	}
+}

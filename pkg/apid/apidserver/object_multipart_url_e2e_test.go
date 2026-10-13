@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -23,37 +24,37 @@ import (
 
 // adr: 558
 func TestControlMultipartURLE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, false)
+	e := apidserver.Setup(t, api.PlanPro)
+	controlMultipartURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, false)
 }
 func TestControlMultipartURLE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, false)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	controlMultipartURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), false)
 }
 
 // adr: 560
 func TestControlMultipartURLVersionQuotaE2EMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, true)
+	e := apidserver.Setup(t, api.PlanPro)
+	controlMultipartURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, true)
 }
 func TestControlMultipartURLVersionQuotaE2EPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, true)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	controlMultipartURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), true)
 }
 
 // adr: 561
 func TestBucketDefaultEncryptionControlMultipartMem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, nil, false, true)
+	e := apidserver.Setup(t, api.PlanPro)
+	controlMultipartURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), nil, false, true)
 }
 func TestBucketDefaultEncryptionControlMultipartPG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanPro)
-	controlMultipartURLE2E(t, e.s, e.store, e.acct, e.key, e.pool, false, true)
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	controlMultipartURLE2E(t, (*e.S()), (*e.Store()), (*e.Acct()), (*e.Key()), (*e.Pool()), false, true)
 }
 
-func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, versions bool, defaultPolicy ...bool) {
+func controlMultipartURLE2E(t *testing.T, s *apidserver.Server, st state.Store, acct state.Account, bearer string, pool *pgxpool.Pool, versions bool, defaultPolicy ...bool) {
 	t.Helper()
-	identity, teardown := withTestIdentities(t)
+	identity, teardown := apidserver.WithTestIdentities(t)
 	defer teardown()
 	native := &encryptionJournalHTTP{}
 	upstream := httptest.NewServer(controlMultipartDefaultNative(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { native.serve(t, w, r) })))
@@ -68,16 +69,16 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		if e != nil {
 			t.Fatal(e)
 		}
-		return state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, time.Now())
+		return state.SummarizeObjectUsage(snapshot, (*s.ObjectStorage()).Accounting, time.Now())
 	}
-	if err := s.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+	if err := (*s.RuntimeConfig()).Apply(apidserver.RuntimeConfigS3, json.RawMessage("true")); err != nil {
 		t.Fatal(err)
 	}
 	var gateway http.Handler
 	public := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gateway.ServeHTTP(w, r) }))
 	defer public.Close()
-	s.objectStorage.PublicEndpoint = public.URL
-	h, err := s3gateway.New(s3gateway.Config{Registry: s.objectStorage, Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), OpenSecret: func(blob []byte) (string, error) {
+	(*s.ObjectStorage()).PublicEndpoint = public.URL
+	h, err := s3gateway.New(s3gateway.Config{Registry: (*s.ObjectStorage()), Store: st.(s3gateway.Store), RequestMetrics: st.(state.ObjectStorageProviderUsageStore), OpenSecret: func(blob []byte) (string, error) {
 		ns, plain, e := secretbox.OpenBytes(identity, blob)
 		if e != nil {
 			return "", e
@@ -91,7 +92,7 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		t.Fatal(err)
 	}
 	gateway = h
-	management := httptest.NewServer(s.handler())
+	management := httptest.NewServer(s.Handler())
 	defer management.Close()
 	client := api.NewClient(management.URL, bearer)
 	ctx := t.Context()
@@ -102,7 +103,7 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		if _, err = client.PutObjectBucketEncryption(ctx, "encrypted-journal", b.ID, selection); err != nil {
 			t.Fatal(err)
 		}
-		if err = s.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err = (*s.Object()).ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 		requested = nil
@@ -122,7 +123,7 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 		if _, err = client.DeleteObjectBucketEncryption(ctx, "encrypted-journal", b.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err = s.object.ReconcileObjectBucketEncryption(ctx, nil); err != nil {
+		if err = (*s.Object()).ReconcileObjectBucketEncryption(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -209,8 +210,8 @@ func controlMultipartURLE2E(t *testing.T, s *server, st state.Store, acct state.
 	} else {
 		st.(*state.MemStore).SetClockForTest(func() time.Time { return time.Now().Add(2 * time.Minute) })
 	}
-	fresh := newServer(st, s.log, "gregale.dev", noopNotifier{}).WithObjectStorage(registry())
-	if err = fresh.object.ReconcileObjectMultipartUploads(ctx, nil); err != nil {
+	fresh := apidserver.NewServer(st, (*s.Log()), "gregale.dev", apidserver.NoopNotifier{}).WithObjectStorage(registry())
+	if err = (*fresh.Object()).ReconcileObjectMultipartUploads(ctx, nil); err != nil {
 		t.Fatal("restart recovery", err)
 	}
 	done, err := client.GetObjectMultipartUpload(ctx, "encrypted-journal", b.ID, u.ID)

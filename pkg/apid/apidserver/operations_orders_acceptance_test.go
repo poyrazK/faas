@@ -1,7 +1,7 @@
 // ADR-713: source-declared transactions recover committed order fulfillment without repeating business writes.
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"archive/tar"
@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -84,9 +85,9 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := newServer(store, logger, "gregale.dev", noopNotifier{})
-	srv.operation.AdmissionEnabled = true
-	owner := httptest.NewServer(srv.handler())
+	srv := apidserver.NewServer(store, logger, "gregale.dev", apidserver.NoopNotifier{})
+	(*srv.Operation()).AdmissionEnabled = true
+	owner := httptest.NewServer(srv.Handler())
 	t.Cleanup(owner.Close)
 	call := func(method, path, bearer string, body any) *httptest.ResponseRecorder {
 		t.Helper()
@@ -97,7 +98,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 		r := httptest.NewRequest(method, path, bytes.NewReader(raw))
 		r.Header.Set("Authorization", "Bearer "+bearer)
 		w := httptest.NewRecorder()
-		srv.handler().ServeHTTP(w, r)
+		srv.Handler().ServeHTTP(w, r)
 		return w
 	}
 	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "operations-orders", Type: state.AppTypeApp, Status: state.AppActive, ConsumerAuthMode: api.ConsumerAuthModeRequired, PlatformTenantRequired: true})
@@ -169,7 +170,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.operation.WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
+	(*srv.Operation()).WorkloadVerifier, err = workloadidentity.NewVerifier(signer.JWKS(), workloadidentity.DefaultIssuer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,10 +184,10 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	if err := os.WriteFile(jwksPath, jwks, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.configureOperations(Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
+	if err := srv.ConfigureOperations(apidserver.Config{OperationsPreviewPolicyPath: policyPath, OperationsWorkloadJWKSPath: jwksPath}, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
 	}
-	srv.operation.AdmissionEnabled = false
+	(*srv.Operation()).AdmissionEnabled = false
 	identity := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("audience") != workloadidentity.OperationsAudience {
 			http.Error(w, "audience", 400)
@@ -202,7 +203,7 @@ func newOrderAcceptance(t *testing.T) *orderAcceptanceFixture {
 	t.Cleanup(identity.Close)
 
 	return &orderAcceptanceFixture{store: store, account: acct, app: app, definition: def, logger: logger,
-		preview: srv.operation.Preview, ownerKey: key, apiURL: owner.URL, identityURL: identity.URL, node: node, tenants: tenants,
+		preview: (*srv.Operation()).Preview, ownerKey: key, apiURL: owner.URL, identityURL: identity.URL, node: node, tenants: tenants,
 		customerTokens: customerTokens, ingressKeys: ingressKeys, call: call}
 }
 
@@ -225,7 +226,7 @@ func orderAcceptanceSpec(t *testing.T) api.OperationDefinitionSpec {
 		}
 		entries = append(entries, operationSchemaEntry{name: file, body: string(body), kind: tar.TypeReg})
 	}
-	if err := resolveSourceOperations(operationSchemaArchive(t, entries), "gregale.yaml", "operations-orders", api.PlanPro, m); err != nil {
+	if err := apidserver.ResolveSourceOperations(operationSchemaArchive(t, entries), "gregale.yaml", "operations-orders", api.PlanPro, m); err != nil {
 		t.Fatal(err)
 	}
 	if len(m.ResolvedOperations) != 1 || m.ResolvedOperations[0].HTTPTransactionVersion != 1 || len(m.ResolvedOperations[0].WorkflowSteps) != 1 {
@@ -380,7 +381,7 @@ func TestOperationsOrderHTTPPostgresRecoveryAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine, err := sched.NewEngine(ctx, f.store, sched.NewNodeLedger(), nil, noopNotifier{}, "order-acceptance", f.logger)
+	engine, err := sched.NewEngine(ctx, f.store, sched.NewNodeLedger(), nil, apidserver.NoopNotifier{}, "order-acceptance", f.logger)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -146,15 +146,28 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DURABLE_ENTITY_BACKEND` | apid | `default` |  |  | `` | ADR-712 configured private conditional-state backend ID; required only when the invocation preview is enabled; S3 ETags or native GCS generations |
 | `FAAS_DURABLE_ENTITY_BACKEND_FINGERPRINT` | apid | `default` |  |  | `` | ADR-712 immutable placement fingerprint for the selected backend; required only when the invocation preview is enabled |
 | `FAAS_DURABLE_ENTITY_BACKUPS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_BROWSER_SESSIONS_ENABLED` | apid | `default` |  | 0 | `` | ADR-988 scoped browser grants; requires sockets and the invocation preview; native acceptance pending |
 | `FAAS_DURABLE_ENTITY_BUCKET` | apid | `default` |  |  | `` | ADR-712 dedicated private platform bucket; required only when the invocation preview is enabled; never a customer-managed bucket |
 | `FAAS_DURABLE_ENTITY_HEALTH_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_MAINTENANCE_ENABLED` | apid | `default` |  | 0 | `` | ADR-712 opt-in checkpointed cleanup and inventory; requires the invocation preview and private listing/deletion |
 | `FAAS_DURABLE_ENTITY_MAX_RETAINED_BYTES` | apid | `default` |  |  | `int` | ADR-712 optional positive per-entity committed-byte cap; unset leaves new entities uncapped and preserves existing persisted caps; not a billing quota |
 | `FAAS_DURABLE_ENTITY_OUTBOX_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_OUTBOX_HANDLERS_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
+| `FAAS_DURABLE_ENTITY_QUOTA_MIGRATION_ENABLED` | apid | `default` |  | 0 | `` | ADR-990 fenced quota inventory migration; requires tenant quotas; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_QUOTA_POLICY_ENABLED` | apid | `default` |  | 0 | `` | ADR-991 audited quota policy management; requires quota migration; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_ENABLED` | apid | `default` |  | 0 | `` | ADR-994 epoch-fenced registry cleanup; requires registry management; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_REGISTRY_CLEANUP_WORKER_ENABLED` | apid | `default` |  | 0 | `` | ADR-996 bounded continuation of explicitly authorized cleanup; requires cleanup management; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_REGISTRY_ENABLED` | apid | `default` |  | 0 | `` | ADR-993 immutable sharded registry management; requires quota policy management; native acceptance pending |
 | `FAAS_DURABLE_ENTITY_RESTORE_ISOLATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_RESTORE_VALIDATION_ENABLED` | apid | `default` |  | 0 | `` | Local durable entity operator preview; exact 1 enables; qualification pending. |
 | `FAAS_DURABLE_ENTITY_RESTORE_VALIDATOR_BUNDLES_FILE` | apid | `default` |  |  | `` | Legacy startup validator registry; unused with shared artifact storage. |
+| `FAAS_DURABLE_ENTITY_RETIREMENT_ENABLED` | apid | `default` |  | 0 | `` | ADR-992 permanently fenced retirement and verified quota credit; requires quota policy management; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_SOCKETS_ENABLED` | apid | `default` |  | 0 | `` | ADR-986 reconnectable service sessions; requires the invocation preview; native acceptance pending |
+| `FAAS_DURABLE_ENTITY_TENANT_GRANTS_PER_MINUTE` | apid | `default` |  | 60 | `int` | ADR-989 optional tenant grant rate; accepts 1 through 256 |
+| `FAAS_DURABLE_ENTITY_TENANT_INVOCATIONS_PER_MINUTE` | apid | `default` |  | 120 | `int` | ADR-989 optional tenant invocation rate; accepts 1 through 10000 |
+| `FAAS_DURABLE_ENTITY_TENANT_MAX_CONNECTIONS` | apid | `default` |  | 8 | `int` | ADR-989 optional tenant connection cap; accepts 1 through 32 |
+| `FAAS_DURABLE_ENTITY_TENANT_MAX_RETAINED_BYTES` | apid | `default` |  | 16777216 | `int` | ADR-989 optional tenant committed-byte cap; at least the per-entity cap and at most 1 GiB |
+| `FAAS_DURABLE_ENTITY_TENANT_QUOTAS_ENABLED` | apid | `default` |  | 0 | `` | ADR-989 bucket-backed tenant admission; requires the invocation preview and a positive per-entity cap; native acceptance pending |
 | `FAAS_DURABLE_ENTITY_VALIDATOR_ACCESS_KEY` | apid, builderd, imaged, schedd, shared | `secrets-env` |  |  | `` | ADR-947 private S3 validator credential from /etc/faas/sealed.env (apid) or per-daemon /etc/faas/secrets/ EnvironmentFiles; GCS uses ADC. |
 | `FAAS_DURABLE_ENTITY_VALIDATOR_ARTIFACTS_ENABLED` | apid, builderd, imaged, schedd, shared | `default` |  | 0 | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
 | `FAAS_DURABLE_ENTITY_VALIDATOR_BUCKET` | apid, builderd, imaged, schedd, shared | `default` |  |  | `` | ADR-947 private immutable validator artifact storage; consistent configuration required across lifecycle owners. |
@@ -179,6 +192,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value |
+| `FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT` | apid | `dev-only` |  | 0 | `` | isolated GitOps end-to-end acceptance only; requires FAAS_DEV=1 and GREGALE_GITOPS_ACCEPTANCE=1 and is rejected on production control-plane roles |
 | `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH` | schedd | `default` |  | 0 | `` | explicit opt-in for preview qualification dispatch; leave off until dedicated native Linux acceptance passes |
 | `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTPS_URL` | schedd | `default` |  |  | `url` | optional local private HTTPS service proxy URL for qualification; unset rejects HTTPS service-bound graphs before VM admission |
 | `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL` | schedd | `default` |  |  | `url` | optional local private HTTP service proxy URL for qualification; unset rejects HTTP service-bound graphs before VM admission |
@@ -243,11 +257,15 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITHUB_APP_KEY_PATH` | githubd, shared | `unit` |  |  | `` |  |
 | `FAAS_GITHUB_APP_REDIRECT_URI` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/githubd/githubd.env (githubd) and /etc/faas/sealed.env (apid) |
 | `FAAS_GITHUB_WEBHOOK_SECRET` | gatewayd-internal, githubd | `secrets-env` |  |  | `` | the same GitHub App webhook secret is delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env and /etc/faas/secrets/githubd/githubd.env |
+| `FAAS_GITLAB_OAUTH_CLIENT_ID` | apid | `secrets-env` |  |  | `` | optional GitLab.com GitOps OAuth application; delivered by /etc/faas/sealed.env on apid |
+| `FAAS_GITLAB_OAUTH_CLIENT_SECRET` | apid | `secrets-env` |  |  | `` | optional GitLab.com GitOps OAuth application secret; delivered by /etc/faas/sealed.env on apid |
+| `FAAS_GITLAB_OAUTH_REDIRECT_URI` | apid | `secrets-env` |  |  | `` | optional HTTPS callback ending in /v1/gitlab/callback; delivered by /etc/faas/sealed.env on apid |
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |  | `` |  |
 | `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
 | `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_GUEST_TRACING_ENABLED` | apid, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958) |
+| `FAAS_HEARTBEAT_FAILURE_THRESHOLD` | schedd | `default` |  | 3 | `` | consecutive failed node pings before schedd declares a node lost (H9-171); the e2e harness sets 1 so recovery tests need not wait three heartbeat periods |
 | `FAAS_HOST_AGE_IDENTITY_PATH` | apid, githubd, imaged, meterd, s3-gatewayd, schedd, shared | `unit` |  |  | `` |  |
 | `FAAS_HOST_AGE_KEY` | githubd | `default` |  |  | `` |  |
 | `FAAS_HOST_AGE_PUB` | githubd | `unit` |  |  | `` |  |
@@ -262,6 +280,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
+| `FAAS_INTERACTIVE_APP_TASKS` | apid, shared | `default` |  |  | `` | exact opt-in for ADR-1037 interactive app tasks (exec -it, cp, port-forward) on top of FAAS_APP_TASK_API_ENABLED; default off until vmmd, schedd, gateways and guest-init carry the attach path |
 | `FAAS_INTERNAL_H2C` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SOCKET` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SVC_KEY_PATH` | schedd | `default` |  |  | `` |  |
@@ -294,6 +313,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MAIL_TRANSPORT` | apid, meterd, shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_MANAGED_POSTGRES_CANARY_ACCOUNTS` | shared | `default` |  |  | `` | optional comma-separated exact account IDs eligible for managed PostgreSQL staging provisioning; malformed or oversized lists fail closed |
 | `FAAS_MANAGED_POSTGRES_CONFIG` | shared | `default` |  |  | `` | optional provider-registry JSON path; apid loads the dark-wired Neon adapter and reconciler, while the file's provisioning_enabled flag defaults false (ADR-155) |
+| `FAAS_MANAGED_POSTGRES_GUEST_QUALIFICATION_PATH` | shared | `default` |  |  | `` | optional operator-owned native guest report path; supplying this path requires combined PostgreSQL staging qualification and the approved runtime manifest; reload requires an apid restart (ADR-992) |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED` | shared | `default` |  |  | `` | legacy explicit staging-only provider qualification approval; used only when no approval artifact path is configured, and provisioning stays disabled unless true and the remaining qualification gates match |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_BACKEND` | shared | `default` |  |  | `` | legacy exact managed PostgreSQL backend ID; used by the fallback env gate when no approval artifact path is configured |
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_FINGERPRINT` | shared | `default` |  |  | `` | legacy exact non-secret backend fingerprint; used by the fallback env gate when no approval artifact path is configured |
@@ -301,6 +321,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION` | shared | `default` |  |  | `` | legacy exact qualification artifact version; mismatched or omitted versions fail the fallback staging gate closed |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_PATH` | shared | `default` |  |  | `` | operator-owned JSON qualification artifact path used by managed-postgres-qualify --verify and, when configured, apid's authoritative staging provisioning gate; reload requires an apid restart |
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
+| `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION` | shared | `default` |  |  | `` | optional staging-canary requirement for combined provider/durable and native guest evidence; unset defaults false, malformed or partial policy fails closed, and production admission remains disabled (ADR-992) |
+| `FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` | shared | `default` |  |  | `` | optional independently approved PostgreSQL qualification-bundle manifest path; supplying this path requires combined staging qualification and the native guest report; reload requires an apid restart (ADR-992) |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_METADATA_ENV_ENDPOINT` | guest, shared | `guest` |  | http://169.254.169.254/v1/metadata/env | `` | guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
@@ -392,6 +414,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
+| `FAAS_QUIET_PAUSE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-957 quiet pause between requests; production default is off |
 | `FAAS_QUOTA_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_CALLBACK_OUTBOX` | realtimed | `default` |  |  | `` |  |

@@ -44,3 +44,22 @@
   to 2 MiB guest pages with Firecracker 1.7, but it replaces Firecracker's
   page-fault path and needs its own ADR). Persisting sets beside the snapshot
   in shared storage (couples a node-local cache hint to the storage contract).
+
+## Restore bursts on Firecracker 1.17 (measured 2026-10-12)
+
+`TestMetalRestoreBurst` (`pkg/fcvm`) wakes twelve 1 GiB Node VMs at once
+from one snapshot, with a cold page cache, through vmmd's Manager. On the n2
+test node (2 vCPUs, persistent disk, Firecracker 1.17, guest 6.18):
+
+| restore concurrency | prefetch | first byte p50 / p95 | burst wall time |
+|---|---|---|---|
+| 1 | on | 6.5 / 9.2 s | 9.2 s |
+| 3 (default) | on | 8.2 / 9.8 s | 9.9 s |
+| 3 | off | 7.5 / 8.8 s | 8.8 s |
+| 6 | on | 7.1 / 7.1 s | 7.1 s |
+| unlimited | on | 6.9 / 6.9 s | 6.9 s |
+
+On two vCPUs a twelve-wake burst is CPU-bound, so a higher limit finishes
+it sooner. Prefetch did not help a burst from one memory file, because the
+first restore pulls in the pages every other restore needs. The default of
+3 was chosen on four-vCPU hosts and stays until a burst is measured on one.

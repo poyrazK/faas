@@ -4,14 +4,14 @@
 /* eslint-disable */
 import type { EventRecoveryExecutionSummary } from './EventRecoveryExecutionSummary.js';
 /**
- * Frozen confirmed terminal execution results for all queued deliveries after admission finishes. Unknown outcomes block capture. Separate from event_recovery.completed; does not imply every execution succeeded or any receiver acknowledged.
+ * Frozen confirmed terminal execution results for all queued invocation deliveries or workflow resumes after admission finishes. Unknown outcomes block capture. Separate from event_recovery.completed; does not imply every execution succeeded or any receiver acknowledged.
  */
 export type EventRecoveryExecutionFinishedWebhookPayload = {
   event_id: string;
   job_id: string;
   app_id: string;
-  mode: 'execution';
-  state: 'completed' | 'cancelled';
+  mode: 'execution' | 'workflow';
+  state: 'completed' | 'cancelled' | 'expired';
   outcome: 'all_succeeded' | 'finished_with_non_success';
   selected_count: number;
   pending_count: 0;
@@ -23,6 +23,10 @@ export type EventRecoveryExecutionFinishedWebhookPayload = {
   completed_at: string;
   execution: EventRecoveryExecutionSummary;
   execution_finished_at: string;
+  /**
+   * Authenticated relative API link to paginated recovery items and their invocation/run identifiers.
+   */
+  items_url?: string;
   /**
    * Unknown or nonterminal queued deliveries; capture requires zero.
    */

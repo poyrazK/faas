@@ -1,14 +1,15 @@
 //go:build !no_pg
 
-package apidserver
+package apidserver_test
 
 import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 func TestOwnedBucketCleanupFencePG(t *testing.T) {
-	e := setupPGHandler(t, api.PlanHobby)
-	ownedBucketCleanupSuite(t, e.s, e.store, e.acct)
+	e := apidserver.SetupPGHandler(t, api.PlanHobby)
+	apidserver.OwnedBucketCleanupSuite(t, (*e.S()), (*e.Store()), (*e.Acct()))
 }

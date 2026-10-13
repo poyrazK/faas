@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 // Spec §11 Control plane — "apid input validation is the trust boundary —
 // fuzz it". Today the only validation coverage is the tarball-shape unit
@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
 // recoverPanic converts an unexpected panic inside the fuzzer body into a
@@ -58,7 +60,7 @@ func FuzzValidSlug(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, s string) {
 		defer recoverPanic(t)
-		ok := validSlug(s)
+		ok := apidserver.ValidSlug(s)
 		// Independent re-check: if validSlug accepted it, the input must
 		// satisfy the slug regex. If it didn't, that's the test passing.
 		if ok && !slugShape.MatchString(s) {
@@ -102,7 +104,7 @@ func FuzzParseImageDigest(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, ref string) {
 		defer recoverPanic(t)
-		digest, ok := parseImageDigest(ref)
+		digest, ok := apidserver.ParseImageDigest(ref)
 		// If accepted, the returned substring MUST be exactly "@sha256:"
 		// + 64 lowercase hex. parseImageDigest returns "" on reject, so
 		// this also pins that rejected calls cannot accidentally return
@@ -117,7 +119,7 @@ func FuzzParseImageDigest(f *testing.F) {
 		// Invariant: ok agrees with isDigestPinned (the input-validation
 		// surface). If they ever diverge, deploy-input validation is in
 		// a half-broken state.
-		if got := isDigestPinned(ref); got != ok {
+		if got := apidserver.IsDigestPinned(ref); got != ok {
 			t.Errorf("parseImageDigest(%q).ok=%v but isDigestPinned=%v", ref, ok, got)
 		}
 	})
@@ -151,7 +153,7 @@ func FuzzIsDigestPinned(f *testing.F) {
 		defer recoverPanic(t)
 		// Independent check: if isDigestPinned accepts, the substring
 		// after the last "@" must look like a pinned sha256 digest.
-		got := isDigestPinned(ref)
+		got := apidserver.IsDigestPinned(ref)
 		if !got {
 			return
 		}

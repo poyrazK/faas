@@ -1,4 +1,4 @@
-package apidserver
+package apidserver_test
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
@@ -56,11 +57,11 @@ func TestIssueCSRFToken(t *testing.T) {
 	})
 
 	t.Run("is reachable while the session is mfa pending", func(t *testing.T) {
-		env := setupWithMFA(t, api.PlanPro, true, false)
+		env := apidserver.SetupWithMFA(t, api.PlanPro, true, false)
 		req := httptest.NewRequest(http.MethodGet, "/v1/auth/csrf?action=mfa_recover", nil)
-		req.AddCookie(env.cookie)
+		req.AddCookie((*env.Cookie()))
 		rec := httptest.NewRecorder()
-		env.h.ServeHTTP(rec, req)
+		(*env.H()).ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 		}
@@ -90,16 +91,16 @@ func TestIssueCSRFToken_ConnectBinding(t *testing.T) {
 		accountID string
 		valid     bool
 	}{
-		{name: "connect action and account", action: githubConnectAction, accountID: env.acct.ID, valid: true},
+		{name: "connect action and account", action: apidserver.GithubConnectAction, accountID: env.acct.ID, valid: true},
 		{name: "wrong action", action: "mfa_confirm", accountID: env.acct.ID},
-		{name: "wrong account", action: githubConnectAction, accountID: "another-account"},
+		{name: "wrong account", action: apidserver.GithubConnectAction, accountID: "another-account"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/dashboard/install/connect",
 				strings.NewReader(url.Values{"csrf_token": {token}}.Encode()))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.AddCookie(cookie)
-			err := middleware.VerifyAuthenticatedNamed(env.mgr, req, tc.action, tc.accountID, githubConnectCSRFCookie)
+			err := middleware.VerifyAuthenticatedNamed(env.mgr, req, tc.action, tc.accountID, apidserver.GithubConnectCSRFCookie)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid = %t, verification error = %v", tc.valid, err)
 			}

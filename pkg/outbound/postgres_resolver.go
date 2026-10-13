@@ -48,7 +48,9 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 	var policyUpdatedAt time.Time
 	var aiProvider string
 	var aiDailyTokenLimitValue, aiDailyCostLimitValue, aiMonthlyCostLimitValue int64
-	var aiRequestLogEnabled bool
+	var aiRequestLogEnabled, aiRequestLogContent bool
+	var contentPolicy api.OutboundAIContentPolicy
+	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	err = r.pool.QueryRow(ctx, `
 		SELECT integration.account_id, integration.name, account.plan, integration.origin, integration.token_hash,
 		       integration.rate_per_second, integration.burst, integration.max_in_flight,
@@ -61,14 +63,19 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		       COALESCE(integration.daily_request_limit, 0),
 		       COALESCE(integration.ai_provider, ''), COALESCE(integration.ai_daily_token_limit, 0),
 		       COALESCE(integration.ai_daily_cost_limit_millicents, 0), COALESCE(integration.ai_monthly_cost_limit_millicents, 0),
-		       integration.ai_request_log_enabled
+		       integration.ai_request_log_enabled,
+		       COALESCE(integration.ai_user_daily_token_limit, 0), COALESCE(integration.ai_user_daily_cost_limit_millicents, 0),
+		       integration.ai_request_log_content, integration.ai_content_email, integration.ai_content_payment_card,
+		       integration.ai_content_iban, integration.ai_content_secret, integration.ai_content_blocked_terms
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		 WHERE integration.id = $1`, integrationID).
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
 			&credentialSource, &allowedMethods, &allowedPathPrefixes, &ownerKind, &dailyRequestLimitValue,
-			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled)
+			&aiProvider, &aiDailyTokenLimitValue, &aiDailyCostLimitValue, &aiMonthlyCostLimitValue, &aiRequestLogEnabled,
+			&aiUserTokenLimitValue, &aiUserCostLimitValue, &aiRequestLogContent, &contentPolicy.Email,
+			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -201,9 +208,11 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 		ProviderAuthMode:               providerAuthMode, CredentialSource: credentialSource, OwnerKind: ownerKind, AllowedMethods: allowedMethods,
 		AllowedPathPrefixes: allowedPathPrefixes, Enabled: true, AIProvider: aiProvider,
 		BindingDailyAITokenLimits: bindingDailyAITokenLimits, AIPrices: prices,
-		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled,
+		BindingAIGuardrails: bindingAIGuardrails, AIRequestLogEnabled: aiRequestLogEnabled, AIRequestLogContent: aiRequestLogContent,
+		AIContentPolicy:   contentPolicy,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
-		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue)}
+		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
+		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
 	if err := i.Validate(); err != nil {
 		return Integration{}, err
 	}
@@ -214,7 +223,9 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uuid.UUID) ([]AIPrice, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
-		       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok
+		       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
+		       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
+		       entry.millicents_per_audio_minute, entry.millicents_per_million_characters
 		  FROM outbound_ai_price_entries entry
 		 WHERE entry.price_list_id = (
 		       SELECT list.id FROM outbound_ai_price_lists list
@@ -229,7 +240,9 @@ func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uu
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
-			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok); err != nil {
+			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
+			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
+			&entry.MillicentsPerMillionCharacters); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

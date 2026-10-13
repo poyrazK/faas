@@ -285,7 +285,7 @@ func TestRestoreCreatesIndependentDurableTargetAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source Create: %v", err)
 	}
-	pointInTime := time.Date(2026, 9, 5, 11, 0, 0, 0, time.UTC)
+	pointInTime := source.CreatedAt
 	request := RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: "orders-restore", PointInTime: pointInTime}
 	restored, created, err := service.RestoreWithResult(context.Background(), request)
 	if err != nil || !created {
@@ -351,7 +351,7 @@ func TestRestoreCompletedRetrySurvivesRetentionExpiry(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 5, 13, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "restored", PointInTime: now.Add(-time.Hour)}
+	request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "restored", PointInTime: source.CreatedAt}
 	restored, err := service.Restore(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -368,6 +368,34 @@ func TestRestoreCompletedRetrySurvivesRetentionExpiry(t *testing.T) {
 	request.Name = "new-expired-restore"
 	if _, err := service.Restore(context.Background(), request); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("new expired restore intent accepted: %v", err)
+	}
+}
+
+// TestRestoreRejectsPointBeforeSourceExisted pins H9-P105: a point inside
+// the retention window but before the source database existed passed
+// validation, reserved a target on the account's quota and failed only at
+// the provider, leaving a failed row retried hourly until deleted.
+func TestRestoreRejectsPointBeforeSourceExisted(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	store := NewMemoryStore()
+	service := testService(t, testRegistry(t, provider, nil), store)
+	source, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := RestoreDatabaseRequest{AccountID: source.AccountID, SourceDatabaseID: source.ID, Name: "before-birth", PointInTime: source.CreatedAt.Add(-time.Minute)}
+	if _, created, err := service.RestoreWithResult(context.Background(), request); !errors.Is(err, ErrInvalid) || created {
+		t.Fatalf("restore before source creation: created=%v err=%v, want ErrInvalid", created, err)
+	}
+	if provider.restoreCalls != 0 {
+		t.Fatalf("provider contacted %d times", provider.restoreCalls)
+	}
+	if _, err := store.FindByName(context.Background(), source.AccountID, request.Name); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rejected restore reserved a target: %v", err)
+	}
+	request.PointInTime = source.CreatedAt
+	if _, created, err := service.RestoreWithResult(context.Background(), request); err != nil || !created {
+		t.Fatalf("restore at source creation: created=%v err=%v", created, err)
 	}
 }
 
@@ -598,5 +626,23 @@ func TestUsageRejectsDuplicateOrNegativeMeters(t *testing.T) {
 	invalid := Usage{Window: window, Readings: []MeterReading{{Meter: MeterOperations, Quantity: 5}, {Meter: MeterOperations, Quantity: -1}}}
 	if !errors.Is(invalid.Validate(), ErrInvalid) {
 		t.Fatalf("invalid usage accepted")
+	}
+}
+
+// TestClosedProvisioningGateIsDistinguishable pins H9-P107: the rollout
+// gate's refusal must stay retryable (ErrUnavailable) yet be told apart
+// from a provider outage.
+func TestClosedProvisioningGateIsDistinguishable(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady}
+	service, err := NewService(testRegistry(t, provider, nil), NewMemoryStore(), ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if !errors.Is(err, ErrProvisioningClosed) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("closed gate = %v, want ErrProvisioningClosed wrapping ErrUnavailable", err)
+	}
+	if errors.Is(ErrUnavailable, ErrProvisioningClosed) {
+		t.Fatal("a provider outage matched the closed gate")
 	}
 }

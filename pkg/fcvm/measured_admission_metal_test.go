@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -27,7 +28,9 @@ import (
 // starting an app on :8080 that answers /heavy, /alloc?mb= and /free) while a
 // sched.NodeLedger with measured admission, fed by the VMs' cgroup
 // memory.current, admits them against FAAS_TEST_ADMISSION_CEILING_MB (default
-// 8,593 MB, a 16 GB compute node).
+// 8,593 MB, a 16 GB compute node). After a burst it checks pressure
+// eviction: SelectMemoryEvictions, given the VMs' real memory and a ceiling
+// just under it, brings the node back under 90% of that ceiling.
 func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 	if os.Getenv("FAAS_TEST_MEASURED_ADMISSION") != "1" {
 		t.Skip("set FAAS_TEST_MEASURED_ADMISSION=1 (boots up to 16 1 GiB VMs)")
@@ -80,6 +83,7 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 
 	before := fcvm.MemAvailableMBForTest(t)
 	hosts := map[string]string{}
+	started := map[string]time.Time{}
 	var refusal error
 	for i := 0; i < 40; i++ {
 		measure()
@@ -100,6 +104,7 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 			t.Fatalf("wake %d: %v", i, err)
 		}
 		t.Cleanup(func() { _ = m.Destroy(context.Background(), id) })
+		started[id] = time.Now()
 		h := "http://" + inst.Lease.HostIP.String() + ":8080"
 		if _, err := fcvm.FirstResponseForTest(h+"/", 120*time.Second); err != nil {
 			t.Fatalf("%s does not serve: %v", id, err)
@@ -132,14 +137,71 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 	}
 	time.Sleep(2 * time.Second)
 	start := time.Now()
+	lastRequest := map[string]time.Time{}
 	for _, id := range ids {
 		mustGet(t, hosts[id]+"/")
+		lastRequest[id] = time.Now()
 	}
 	t.Logf("burst: %d VMs +320 MB, measured %d MB, host MemAvailable %d MB, memory PSI %s, all %d served in %v",
 		burst, measure(), fcvm.MemAvailableMBForTest(t), memoryPSI(t), len(ids), time.Since(start).Round(time.Millisecond))
+	bursted := map[string]bool{}
 	for _, id := range ids[:burst] {
-		mustGet(t, hosts[id]+"/free")
+		bursted[id] = true
 	}
+
+	// Pressure eviction, with a ceiling just under the node's real use so
+	// the shared host never nears its limit.
+	used, resident := vmMemory(t, ids)
+	evictCeiling := used - 200
+	infos := make([]sched.InstanceInfo, 0, len(ids))
+	for _, id := range ids {
+		infos = append(infos, sched.InstanceInfo{Instance: id, AppID: "app-" + id, Plan: api.PlanScale, State: state.StateRunning,
+			RAMMB: 1024, NodeID: "metal", Started: started[id], LastRequest: lastRequest[id]})
+	}
+	evict := sched.SelectMemoryEvictions(time.Now(), infos, map[string]int{"metal": used},
+		map[string]int{"metal": evictCeiling}, resident)
+	gone := map[string]bool{}
+	for _, id := range evict {
+		if err := m.Destroy(ctx, id); err != nil {
+			t.Fatalf("evict %s: %v", id, err)
+		}
+		gone[id] = true
+	}
+	var kept []string
+	for _, id := range ids {
+		if !gone[id] {
+			kept = append(kept, id)
+		}
+	}
+	time.Sleep(2 * time.Second)
+	after, _ := vmMemory(t, kept)
+	target := evictCeiling * api.MeasuredEvictionTargetPercent / 100
+	t.Logf("eviction: node at %d MB over a %d MB ceiling; evicted %d VMs %v; node now %d MB (target %d), host MemAvailable %d MB",
+		used, evictCeiling, len(evict), evict, after, target, fcvm.MemAvailableMBForTest(t))
+	if len(evict) == 0 || after > target+64 {
+		t.Fatalf("eviction left the node at %d MB, want at most %d", after, target)
+	}
+	for _, id := range kept {
+		mustGet(t, hosts[id]+"/")
+		if bursted[id] {
+			mustGet(t, hosts[id]+"/free")
+		}
+	}
+}
+
+// vmMemory is the VMs' cgroup memory.current, in total and per VM, in MB.
+func vmMemory(t *testing.T, ids []string) (int, map[string]int) {
+	t.Helper()
+	total, per := 0, make(map[string]int, len(ids))
+	for _, id := range ids {
+		cur, err := fcvm.VMCgroupIntForTest(api.PlanScale, id, "memory.current")
+		if err != nil {
+			t.Fatalf("%s memory.current: %v", id, err)
+		}
+		per[id] = int(cur >> 20)
+		total += per[id]
+	}
+	return total, per
 }
 
 func mustGet(t *testing.T, url string) {
