@@ -2366,6 +2366,17 @@ List retained bulk lineage retry job summaries
 | `--limit <N>` | page size (default 50, maximum 200) |  |
 | `--after <CURSOR>` | continuation cursor from the previous page |  |
 
+### events subscription-lineage-retry-preflight
+
+Check a saved retry request without changing it
+
+`gregale events subscription-lineage-retry-preflight [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | saved JSON request with original UUID and guards |  |
+| `--timeout <DURATION>` | maximum preflight duration (default 2m) |  |
+
 ### events subscription-lineage-retry-job-create
 
 Submit a reviewed fixed lineage retry selection

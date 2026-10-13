@@ -175,6 +175,62 @@ acceptance and known root incarnation remain fenced. Bulk retries record lineage
 only and preserve scan counters, history-loss markers and established coverage
 boundaries. They never rerun handlers or recreate missing historical evidence.
 
+## Preflight a saved retry request
+
+Check a reviewed export before submission, preserving the original file and UUID:
+
+```sh
+gregale --json events subscription-lineage-retry-preflight APP SUB --file retry-request.json
+```
+
+The command validates the bounded file and its nonzero request UUID, 1–200 unique
+positive outbox IDs, positive revisions, original acceptance timestamps and any
+nonzero diagnostic UUIDs before calling read APIs. UUID casing, selection order
+and timestamp zones are normalized in memory using submission semantics. The
+file's contents, request UUID and guards are never rewritten.
+
+Each case uses a one-row current listing at its outbox ID. Reports contain the
+original selection, current case metadata when available, a status and all
+observed issues: `acceptance_changed`, `diagnostic_changed`, `revision_changed`,
+`no_longer_retryable` or `unavailable`. `ready` means the current case is unresolved
+or conflicting with all supplied guards matching. Missing a required diagnostic
+guard is reported as `diagnostic_changed`. When several checks fail, `status` is
+the first issue in the above order and `issues` preserves every mismatch.
+
+Preflight also reads the retained request UUID before and after checking cases:
+
+- `already_submitted`: a retained job has the same normalized selection. A repeat
+  submission returns this existing job, even if current case guards have changed.
+- `identity_conflict`: the retained UUID belongs to another selection.
+- `identity_changed`: its creation/app/retention identity changed during the check.
+- `identity_unavailable`: an initially retained job became unavailable.
+- `not_retained`: neither request lookup observed a retained job.
+- `unverified`: the request identity check did not finish successfully.
+
+The JSON report includes `request_state`, any `existing_job` summary, per-case
+results, `total`, `checked`, `ready_cases`, `complete` and `ready`. A complete report
+is ready when all case guards match and no conflicting/changing request identity
+was observed, or when the same selection is already submitted. Thus an
+`already_submitted` report can be ready while individual current cases report
+issues; it does not request a second evaluation or claim that repair succeeded.
+
+Exit 0 requires a complete, ready report. A complete report with stale/unavailable
+cases or a conflicting request identity returns 1. API/transport errors and
+malformed responses emit an incomplete report with `complete: false` and
+`ready: false`, then a diagnostic on stderr with the normal CLI error code.
+Timeout returns 3 and Ctrl-C 130. `--timeout` defaults to 2 minutes and must be
+positive; individual reads also have the existing control timeout. At most 202
+read requests are made for a full 200-case file; no unbounded case scan occurs.
+
+Preflight is advisory and read-only. Reads are live observations, not a
+transaction, reservation or guarantee that submission will succeed. A 404 request
+lookup cannot distinguish a fresh UUID from an expired identity that remains
+physically retained and blocks reuse until pruning. Retention can expire and
+case guards can change after checking. Preflight does not verify deploy/write
+permissions or reserve capacity. Submission remains the authoritative atomic
+validation and idempotency check. Review mismatches and deliberately export a new
+request if needed; do not silently refresh guards under an already-used UUID.
+
 ## Find retained bulk retry jobs
 
 List jobs when their request UUID is unknown or another operator submitted them:
