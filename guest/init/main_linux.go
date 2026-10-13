@@ -72,6 +72,10 @@ func main() {
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
 	}
+	// Nor does the builder's dependency-cache check, run by the build shell.
+	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
+		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
+	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
 		os.Exit(1)
@@ -1256,6 +1260,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		case removed:
 			fmt.Fprintf(os.Stderr, "guest-init: dependency cache exceeded %d bytes and was discarded\n", api.MaxExportedLayerBytes)
 		}
+		finishDependencyCacheInputs(m.OutDir)
 	}
 	fmt.Printf("guest-init: build command finished, err=%v, output bytes=%d\n", err, buf.Len())
 	if buf.Len() > 0 {
@@ -1747,11 +1752,18 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	if m.DependencyCache {
-		build += " --export-cache " + shellQuote("type=local,dest=/build/out/cache,mode=max")
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	if !m.DependencyCache {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
 	}
-	build += " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
-	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build}
+	// "$@" carries --export-cache. Once the plan exists, a re-executed
+	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
+	// cache came from the same plan and install inputs; anything else exports.
+	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
+		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
+	}, " ")
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
@@ -2014,6 +2026,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
+		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
 		if watchErr != nil {

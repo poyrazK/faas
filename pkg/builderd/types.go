@@ -143,6 +143,9 @@ type BuildOutcome struct {
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool
 	DependencyCacheStoreError string
+	// DependencyCacheUnchanged: the guest kept the imported cache because
+	// the build's plan and install inputs matched it, so nothing was stored.
+	DependencyCacheUnchanged bool
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string

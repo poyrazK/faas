@@ -121,4 +121,8 @@ type BuildDone struct {
 	// DevPatch records, for a successful build, whether its source reached
 	// the image unchanged (ADR-740). Older guests omit it.
 	DevPatch *DevPatchSourceMap `json:"dev_patch,omitempty"`
+	// DependencyCacheUnchanged reports that the build kept the imported
+	// dependency cache instead of exporting it: its plan and install inputs
+	// matched the ones that produced it. builderd keeps the stored cache.
+	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
 }
