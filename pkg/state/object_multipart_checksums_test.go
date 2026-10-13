@@ -102,7 +102,7 @@ func TestObjectMultipartChecksumOldWriterAndRollbackPG(t *testing.T) {
 			t.Fatal("old writer bypassed checksum journal", err)
 		}
 	}
-	file, err := migrations.FS.ReadFile("20261013113000001_object_multipart_checksums.sql")
+	file, err := migrations.FS.ReadFile("20261013135901265_object_multipart_checksums.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
