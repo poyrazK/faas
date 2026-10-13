@@ -1,0 +1,13 @@
+{
+  "name": "gregale-us-east1-edges",
+  "description": "Edges of the US East cell (ADR-1152): one gatewayd-public + Caddy per control node, one per zone",
+  "enabled": true,
+  "minimum_origins": 1,
+  "monitor": "REPLACE_WITH_MONITOR_ID",
+  "notification_email": "REPLACE_WITH_ONCALL_EMAIL",
+  "origins": [
+    { "name": "cp-us-east1-b", "address": "REPLACE_WITH_PUBLIC_IP_1", "enabled": true, "weight": 1 },
+    { "name": "cp-us-east1-c", "address": "REPLACE_WITH_PUBLIC_IP_2", "enabled": true, "weight": 1 },
+    { "name": "cp-us-east1-d", "address": "REPLACE_WITH_PUBLIC_IP_3", "enabled": true, "weight": 1 }
+  ]
+}

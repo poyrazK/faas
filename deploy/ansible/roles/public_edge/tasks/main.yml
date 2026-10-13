@@ -115,17 +115,34 @@
       {% if faas_public_edge_platform_tls | default(true) | bool %}
       {{ faas_public_edge_domain }}, *.{{ faas_public_edge_domain }} {
           tls {{ faas_public_edge_cert }} {{ faas_public_edge_key }}
+          # ADR-1152 §2: the Cloudflare Load Balancer monitor asks this one
+          # path on the origin hostname; gatewayd-public's /edgez answers it
+          # without depending on Postgres. No app host is affected.
+          @edgehealth {
+              host {{ faas_public_edge_origin_host }}
+              path {{ faas_public_edge_health_path }}
+          }
       {% if faas_custom_domain_tls | default(false) | bool %}
           @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
           route {
               abort @direct
+              handle @edgehealth {
+                  rewrite * /edgez
+                  reverse_proxy {{ faas_public_edge_health_upstream }}
+              }
               reverse_proxy {{ faas_public_edge_upstream }} {
                   header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
               }
           }
       {% else %}
-          reverse_proxy {{ faas_public_edge_upstream }} {
-              header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+          route {
+              handle @edgehealth {
+                  rewrite * /edgez
+                  reverse_proxy {{ faas_public_edge_health_upstream }}
+              }
+              reverse_proxy {{ faas_public_edge_upstream }} {
+                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              }
           }
       {% endif %}
       }

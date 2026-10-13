@@ -406,7 +406,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// dialer as the reverse proxy and asks gatewayd-internal's lightweight
 	// /healthz endpoint, so a listening-but-unresponsive socket stays
 	// out of service.
-	probe, pgProbeSig, pgStop := setupReadiness(ctx, pool, internalDialer, internalURL, log)
+	probe, pgProbeSig, edge, pgStop := setupReadiness(ctx, pool, internalDialer, internalURL, log)
 	defer pgStop()
 	// gatewayMetrics is the gateway.Metrics bundle local to the
 	// public daemon. The public daemon also owns wire.OpsMetrics;
@@ -658,6 +658,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg},
 		probe.ReadyFunc(), drainTracker)
 	installOnDemandTLSAsk(controlMux, pgStore, platformAppsDomain(), tlsAskReg, log)
+	// ADR-1152 §2: the Cloudflare Load Balancer monitor's signal, independent
+	// of Postgres (edge_health.go).
+	controlMux.HandleFunc("/edgez", edge.handler())
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
 	listenAddr := envOr("FAAS_PUBLIC_LISTEN_ADDR", defaultListenAddr)
 	// Multi-host safety cluster PR-8 (audit F8-A): in multi-host
@@ -701,7 +704,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, edge, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
 		return err
 	}
 	return nil
@@ -738,7 +741,7 @@ func platformHostOnly(platform http.Handler, appsDomain string, tenant func() ht
 // setupReadiness builds the probe with checks for Postgres and the
 // gatewayd-internal upstream. The returned stopper is idempotent and
 // stops every background check used by the probe.
-func setupReadiness(ctx context.Context, pool *pgxpool.Pool, internalDialer gateway.InternalDialer, internalTarget *url.URL, log *slog.Logger) (*gateway.ReadyzProbe, *gateway.ReadySignal, func()) {
+func setupReadiness(ctx context.Context, pool *pgxpool.Pool, internalDialer gateway.InternalDialer, internalTarget *url.URL, log *slog.Logger) (*gateway.ReadyzProbe, *gateway.ReadySignal, *edgeHealth, func()) {
 	probe := &gateway.ReadyzProbe{}
 	var pgSig *gateway.ReadySignal
 	var pgStop func()
@@ -755,7 +758,7 @@ func setupReadiness(ctx context.Context, pool *pgxpool.Pool, internalDialer gate
 	})
 	probe.RegisterSignal(internalSig)
 	_ = log
-	return probe, pgSig, func() {
+	return probe, pgSig, &edgeHealth{internal: internalSig}, func() {
 		internalStop()
 		pgStop()
 	}
@@ -865,7 +868,7 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 //  4. Wait for tracked requests and hijacked streams within the remainder of
 //     that same budget. A second SIGTERM cancels the drain immediately.
 //  5. The caller's deferred pgStop runs again as an idempotent safety net.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error) error {
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, pgProbeSig *gateway.ReadySignal, edge *edgeHealth, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -883,6 +886,7 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 		}
 		log.Info("gatewayd-public: SIGTERM received; draining")
 		pgProbeSig.Set(false, "draining")
+		edge.startDraining()
 		// Stop the PG ping signal BEFORE shutting down so the
 		// probe stays 503 during the entire drain. The PG signal
 		// goroutine may otherwise be stuck in pool.Ping and add

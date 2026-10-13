@@ -1,0 +1,19 @@
+{
+  "description": "Gregale cell edge health (ADR-1152): gatewayd-public /edgez via Caddy, independent of Postgres",
+  "type": "https",
+  "method": "GET",
+  "path": "/__gregale/edge-health",
+  "header": {
+    "Host": ["origin.gregale.dev"]
+  },
+  "expected_codes": "200",
+  "expected_body": "ready",
+  "interval": 15,
+  "retries": 2,
+  "timeout": 5,
+  "port": 443,
+  "follow_redirects": false,
+  "allow_insecure": true,
+  "consecutive_down": 2,
+  "consecutive_up": 2
+}

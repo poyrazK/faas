@@ -15,6 +15,15 @@ faas_public_edge_platform_tls: "{{ faas_cloudflare_origin_only | default(false) 
 faas_public_edge_domain: "{{ gatewayd_apps_domain | default('gregale.dev') }}"
 # Must match faas-gatewayd-public.socket ListenStream.
 faas_public_edge_upstream: "127.0.0.1:8080"
+# ADR-1152 §2: Cloudflare Load Balancer health monitor. The monitor sends
+# GET {{ faas_public_edge_health_path }} with Host set to the origin hostname;
+# Caddy answers it from gatewayd-public's loopback /edgez (ready while the
+# edge is not draining and can reach a compute gateway, independent of
+# Postgres). See deploy/cloudflare/load-balancer/.
+faas_public_edge_origin_host: "origin.{{ faas_public_edge_domain }}"
+faas_public_edge_health_path: "/__gregale/edge-health"
+# gatewayd-public's control listener (FAAS_PUBLIC_CONTROL_ADDR).
+faas_public_edge_health_upstream: "127.0.0.1:9092"
 faas_public_edge_caddyfile: /etc/caddy/Caddyfile
 faas_public_edge_caddy_binary: /usr/bin/caddy
 # Operator-provisioned Origin CA material (a secret: never in inventory or the

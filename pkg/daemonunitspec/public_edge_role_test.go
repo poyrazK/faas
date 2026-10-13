@@ -70,13 +70,23 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		}
 	}
 	vars["faas_public_edge_domain"] = "gregale.dev"
+	vars["faas_public_edge_origin_host"] = "origin.gregale.dev"
+	// ADR-1152 §2: the Cloudflare Load Balancer monitor reaches
+	// gatewayd-public's Postgres-independent /edgez on the origin host only.
+	edgeHealth := []string{
+		"host origin.gregale.dev",
+		"path " + defaults["faas_public_edge_health_path"].(string),
+		"handle @edgehealth {",
+		"rewrite * /edgez",
+		"reverse_proxy " + defaults["faas_public_edge_health_upstream"].(string),
+	}
 	text := renderPublicEdgeBlock(t, block, vars)
-	for _, want := range []string{
+	for _, want := range append([]string{
 		"gregale.dev, *.gregale.dev {",
 		"tls /etc/caddy/tls/cloudflare-origin.pem /etc/caddy/tls/cloudflare-origin.key",
 		"reverse_proxy " + listen[1] + " {",
 		"header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}",
-	} {
+	}, edgeHealth...) {
 		if !strings.Contains(text, want) {
 			t.Errorf("rendered edge block is missing %q:\n%s", want, text)
 		}
@@ -95,7 +105,7 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	vars["faas_custom_domain_acme_email"] = "ops@gregale.dev"
 	vars["faas_public_edge_cloudflare_cidrs"] = []string{"173.245.48.0/20", "2400:cb00::/32"}
 	text = renderPublicEdgeBlock(t, block, vars)
-	for _, want := range []string{
+	for _, want := range append([]string{
 		"email ops@gregale.dev",
 		"ask " + defaults["faas_public_edge_ask_url"].(string),
 		"@direct not remote_ip 173.245.48.0/20 2400:cb00::/32",
@@ -104,7 +114,7 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 		"on_demand",
 		"header_up X-Forwarded-For {remote_host}",
 		"redir https://{host}{uri} 308",
-	} {
+	}, edgeHealth...) {
 		if !strings.Contains(text, want) {
 			t.Errorf("customer-domain edge block is missing %q:\n%s", want, text)
 		}
