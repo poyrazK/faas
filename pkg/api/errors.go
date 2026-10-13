@@ -791,6 +791,19 @@ const (
 	// unauthenticated developer app, a Dockerfile build, or a build plan the
 	// watch overlay does not understand.
 	CodeDevWatchUnsupported = "dev_watch_unsupported"
+	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
+	// freeze an instance whose traffic or lifecycle does not allow it (warm
+	// pool, job, app task, builder, private network member, pending waitUntil
+	// task). CodeInstanceBusy refuses a freeze while a forwarded request,
+	// stream or session is in flight; the guest keeps running.
+	// CodeFrozenInstanceRefused is vmmd's refusal to snapshot or migrate a
+	// frozen instance; schedd destroys it instead. CodeInstanceFrozen fails a
+	// forward to a frozen instance fast, so the gateway wakes it through
+	// schedd instead of waiting on a paused guest.
+	CodeInstanceNotFreezable  = "instance_not_freezable"
+	CodeInstanceBusy          = "instance_busy"
+	CodeFrozenInstanceRefused = "frozen_instance_refused"
+	CodeInstanceFrozen        = "instance_frozen"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1959,7 +1972,8 @@ func StatusForCode(code string) int {
 		return http.StatusGone
 	case CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
-		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
+		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable,
+		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -2005,7 +2019,8 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused:
 		return http.StatusConflict
 	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected

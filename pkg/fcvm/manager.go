@@ -446,6 +446,15 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
+	// for the frozen tier, until Thaw resumes it or teardown kills it.
+	// FrozenSince is when that pause took effect. Both are guarded by
+	// Manager.mu. Not to be confused with Paused, a warm-pool restore.
+	Frozen      bool
+	FrozenSince time.Time
+	// freezing is non-nil while a Freeze decides and pauses, and closes once
+	// that freeze has settled either way. Guarded by Manager.mu.
+	freezing chan struct{}
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -1177,6 +1186,11 @@ type Manager struct {
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
+
+	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
+	// activity tracker; without it Freeze cannot see forwards in flight.
+	freezeActivity QuietActivity
+	freezeMetrics  *FreezeMetrics
 }
 
 type appCPUPolicy struct {
@@ -5468,6 +5482,9 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
+	if m.isFrozen(inst) {
+		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
+	}
 	m.mu.Lock()
 	flight.parking = true
 	m.mu.Unlock()
@@ -5528,6 +5545,9 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: app task instances cannot be snapshotted", instance)
+	}
+	if m.isFrozen(inst) {
+		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, ErrInstanceFrozen)
 	}
 	info, err := m.warmSnapshotInstance(ctx, inst, spec)
 	if err != nil {
@@ -5623,6 +5643,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
 	}
+	if m.isFrozen(inst) {
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, ErrInstanceFrozen)
+	}
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
 	}
@@ -5711,25 +5734,35 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m.vmm == nil {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
 	}
+	return m.resumeAndProbe(ctx, "resume_vm", inst)
+}
+
+// resumeAndProbe resumes a paused guest, runs the resume hook and image
+// healthcheck its stored boot contract requires, and restarts its probes. A
+// resumed guest is no longer frozen (ADR-1151). The caller holds the
+// instance flight.
+func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance) error {
+	instance := inst.Lease.Instance
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
-		return fmt.Errorf("resume_vm %s: %w", instance, err)
+		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
+	m.clearFrozen(inst)
 	if inst.ImageHealthcheckRequired {
 		checker, ok := m.vmm.(interface {
 			WaitImageHealthcheck(context.Context, Lease, int) error
 		})
 		if !ok {
-			return fmt.Errorf("resume_vm %s: image healthcheck capability unavailable", instance)
+			return fmt.Errorf("%s %s: image healthcheck capability unavailable", op, instance)
 		}
 		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
-			return fmt.Errorf("resume_vm %s: resume hook: %w", instance, err)
+			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
 			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("resume_vm %s: %w", instance, err)
+		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
@@ -5788,6 +5821,11 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
 	}); inst.IsJob && supported {
 		killSignalSent, exitCode, err = signaler.SignalJob(ctx, inst.Lease, signal, grace)
+	} else if m.isFrozen(inst) {
+		// A frozen guest (ADR-1151) cannot act on a signal, so the grace
+		// period would only delay the kill. Signal 0 with no grace is the
+		// immediate SIGKILL.
+		killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, 0, 0)
 	} else {
 		killSignalSent, exitCode, err = m.vmm.SignalAndKill(ctx, inst.Lease, signal, grace)
 	}
