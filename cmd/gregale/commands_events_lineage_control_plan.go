@@ -12,10 +12,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func cmdEventsLineageControlPlan(args []string, apply bool) int {
+func cmdEventsLineageControlPlan(args []string, apply bool, preflight ...bool) int {
+	checking := len(preflight) > 0 && preflight[0]
 	flags, positional := splitArgsForFlags(args)
 	mode := "subscription-lineage-retry-control-plan-export"
-	if apply {
+	if checking {
+		mode = "subscription-lineage-retry-control-plan-preflight"
+	} else if apply {
 		mode = "subscription-lineage-retry-control-plan-apply"
 	}
 	fs := newFlagSet(mode, flag.ContinueOnError)
@@ -23,7 +26,7 @@ func cmdEventsLineageControlPlan(args []string, apply bool) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum total duration")
 	var action, status, attention, after string
 	var limit int
-	if !apply {
+	if !apply && !checking {
 		fs.StringVar(&action, "action", "", "pause, resume or cancel")
 		fs.StringVar(&status, "status", "", "pending or paused; omit for both")
 		fs.StringVar(&attention, "attention", "any", "any, stalled or retention_risk")
@@ -42,7 +45,7 @@ func cmdEventsLineageControlPlan(args []string, apply bool) int {
 		return printErr("Invalid subscription", fmt.Errorf("subscription must be a nonzero UUID"))
 	}
 	var plan lineageControlPlan
-	if apply {
+	if apply || checking {
 		plan, err = readLineageControlPlan(*file)
 		if err == nil && plan.SubscriptionID != sub.String() {
 			err = fmt.Errorf("plan subscription does not match supplied target")
@@ -64,6 +67,9 @@ func cmdEventsLineageControlPlan(args []string, apply bool) int {
 	defer stop()
 	ctx, cancel := context.WithTimeout(signalCtx, *timeout)
 	defer cancel()
+	if checking {
+		return preflightLineageControlPlan(ctx, client, positional[0], plan, *file)
+	}
 	if apply {
 		return applyLineageControlPlan(ctx, client, positional[0], plan, *file)
 	}

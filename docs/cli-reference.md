@@ -2382,6 +2382,17 @@ Apply a reviewed fixed control plan with independent results
 | `--file <PATH>` | reviewed plan; unchanged on apply |  |
 | `--timeout <DURATION>` | total duration (default 2m) |  |
 
+### events subscription-lineage-retry-control-plan-preflight
+
+Check reviewed commands with read-only job and receipt inspection
+
+`gregale events subscription-lineage-retry-control-plan-preflight [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | reviewed plan; unchanged on preflight |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
 ### events subscription-lineage-retry-jobs
 
 List retained bulk lineage retry job summaries

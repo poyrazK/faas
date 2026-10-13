@@ -1087,3 +1087,31 @@ Both commands accept a positive overall `--timeout` (default `2m`), and each API
 read/control also uses the existing control timeout. A large or slow plan may need
 a longer total timeout; otherwise repeat its unchanged file for unattempted jobs.
 No new API route, SDK operation, schema migration or registry update is needed.
+
+### Preflight a reviewed batch-control plan
+
+Before applying a fixed control plan, inspect its current jobs and command history:
+
+```sh
+gregale --json events subscription-lineage-retry-control-plan-preflight APP SUB --file controls.json --timeout 2m
+```
+
+This command uses read-only requests and leaves the plan unchanged. It validates
+saved app/subscription scope, creation and retention guards, current job metadata,
+and the full bounded receipt journal. Per-job outcomes are `ready`, `no_op`,
+`already_acknowledged`, `stale_guard`, `expired`, `command_conflict`, `receipt_limit`,
+`terminal`, or `unverified`. Failed or malformed reads are unverified and include
+an error; other jobs are still inspected. Existing matching receipts take precedence
+over terminal state and receipt capacity. A new no-op command consumes a receipt
+slot when applied.
+
+`ready` in the report means all entries are ready, no-op or already acknowledged;
+`complete` means all entries were assessed, including definite blockers. Exit 0
+means advisory readiness, 1 means a blocker or unverified entry, and 130 means
+interruption after partial reporting. Requests have per-read and total deadlines.
+Read failures and app-scope failures never imply readiness.
+
+The job and receipt reads are separate observations. State, receipt capacity and
+retention may change before apply. Preflight does not check write permission/MFA
+or reserve anything. Review the report, then apply the same unchanged file; server
+guards remain authoritative. No new UUIDs or files are created by preflight.

@@ -499,6 +499,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1168 | [Lineage retry-job watch alerts](1168-lineage-retry-job-watch-alerts.md) | accepted | Opt-in durable stalled, retention-risk and paused-backlog lifecycle conditions |
 | 1169 | [Paginated lineage retry-job attention](1169-paginated-lineage-retry-job-attention.md) | accepted | Live warning-filtered pages beyond health samples with creation guards and progress metadata |
 | 1170 | [Reviewed lineage batch-control plans](1170-reviewed-lineage-batch-control-plans.md) | accepted | Fixed scoped commands with independent receipt-verified results and safe repeats |
+| 1171 | [Lineage batch-control plan preflight](1171-lineage-batch-control-plan-preflight.md) | accepted | Read-only guarded readiness and existing command acknowledgments before fixed-plan apply |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
