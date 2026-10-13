@@ -109,6 +109,7 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	fs.Int64Var(&f.options.LineageStalled, "lineage-stalled-threshold", 0, "stalled pending retry-job count threshold; zero disables")
 	fs.Int64Var(&f.options.LineageRetentionRisk, "lineage-retention-risk-threshold", 0, "active retry-job retention-risk count threshold; zero disables")
 	fs.DurationVar(&f.options.LineagePaused, "lineage-paused-threshold", 0, "sustained fresh nonzero paused retry-job backlog duration; zero disables")
+	fs.DurationVar(&f.options.ReceiptBudgetFull, "receipt-budget-full-threshold", 0, "sustained fresh full capacity-command receipt budget duration; zero disables")
 	fs.Func("waiting-reason-count", "repeatable REASON=N pending recipient threshold", func(value string) error {
 		reason, raw, ok := strings.Cut(value, "=")
 		n, err := strconv.ParseInt(raw, 10, 64)

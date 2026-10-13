@@ -21,6 +21,7 @@ type EventDeliveryHealthWatchOptions struct {
 	Retrying, DeadLetters                                  int64
 	LineageStalled, LineageRetentionRisk                   int64
 	LineagePaused                                          time.Duration
+	ReceiptBudgetFull                                      time.Duration
 	// WaitingReasonCounts and WaitingReasonDurations select known pending reasons.
 	WaitingReasonCounts    map[string]int64
 	WaitingReasonDurations map[string]time.Duration
@@ -93,7 +94,7 @@ func (o EventDeliveryHealthWatchOptions) validate() error {
 		return ErrValidation("invalid delivery health watch interval, timeout or max age")
 	}
 	enabled := false
-	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused} {
+	for _, d := range []time.Duration{o.OldestPending, o.Paused, o.CircuitBlocked, o.CapacityBlocked, o.LineagePaused, o.ReceiptBudgetFull} {
 		if d < 0 || d > EventDeliveryHealthWatchThresholdMax || (d > 0 && d < EventDeliveryHealthWatchThresholdMin) {
 			return ErrValidation("invalid delivery health duration threshold")
 		}
@@ -146,6 +147,7 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 		{"lineage_retry_stalled_jobs", float64(o.LineageStalled), false},
 		{"lineage_retry_retention_risk_jobs", float64(o.LineageRetentionRisk), false},
 		{"lineage_retry_paused_seconds", o.LineagePaused.Seconds(), true},
+		{"capacity_command_receipt_budget_full_seconds", o.ReceiptBudgetFull.Seconds(), true},
 	} {
 		if v.threshold > 0 {
 			out = append(out, &deliveryHealthCondition{EventDeliveryHealthCondition: EventDeliveryHealthCondition{Metric: v.metric, State: "unknown", Threshold: v.threshold}, sustained: v.sustained})
@@ -423,3 +425,5 @@ const EventDeliveryHealthSLOPercentageMax = 100.0
 const EventExecutionLedgerRetention = 30 * 24 * time.Hour
 const EventExecutionLedgerPruneBatchDefault = 500
 const EventExecutionLedgerPruneBatchMax = 5000
+
+const EventSubscriptionCapacityCommandMaxReceipts = 128

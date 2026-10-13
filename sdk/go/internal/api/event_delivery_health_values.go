@@ -6,6 +6,9 @@ import (
 )
 
 func deliveryHealthValue(h EventConsumerDeliveryHealth, metric string) (float64, bool, time.Time) {
+	if metric == "capacity_command_receipt_budget_full_seconds" {
+		return deliveryHealthReceiptBudgetValue(h)
+	}
 	if strings.HasPrefix(metric, "lineage_retry_") {
 		return deliveryHealthLineageRetryValue(h, metric)
 	}
@@ -132,4 +135,23 @@ func deliveryHealthLineageRetryValue(h EventConsumerDeliveryHealth, metric strin
 		return 0, valid, e.ObservedAt
 	}
 	return 0, false, e.ObservedAt
+}
+
+// Receipt budget evidence is independent of routing and execution history coverage.
+func deliveryHealthReceiptBudgetValue(h EventConsumerDeliveryHealth) (float64, bool, time.Time) {
+	pressure := h.CapacityPressure
+	if pressure == nil || pressure.CapacityCommandBudget == nil {
+		return 0, false, time.Time{}
+	}
+	b := pressure.CapacityCommandBudget
+	valid := pressure.Complete && pressure.Coverage == "live_slots_and_all_pending_application_recipients" && b.Complete &&
+		b.AppID != "" && b.SubscriptionID != "" && strings.EqualFold(pressure.AppID, h.Routing.AppID) && strings.EqualFold(pressure.SubscriptionID, h.Routing.SubscriptionID) &&
+		strings.EqualFold(b.AppID, pressure.AppID) && strings.EqualFold(b.SubscriptionID, pressure.SubscriptionID) && b.ObservedAt.Equal(pressure.ObservedAt) &&
+		b.Limit == EventSubscriptionCapacityCommandMaxReceipts && b.RetainedReceipts >= 0 && b.RetainedReceipts <= b.Limit &&
+		b.RemainingSlots == b.Limit-b.RetainedReceipts && b.Full == (b.RemainingSlots == 0) &&
+		((b.RetainedReceipts == 0) == (b.EarliestExpiryAt == nil)) && (b.EarliestExpiryAt == nil || b.EarliestExpiryAt.After(b.ObservedAt))
+	if b.Full {
+		return 1, valid, b.ObservedAt
+	}
+	return 0, valid, b.ObservedAt
 }

@@ -52,7 +52,7 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 	}
 	count := metric == "retrying_executions" || metric == "dead_lettered_executions" || metric == "lineage_retry_stalled_jobs" || metric == "lineage_retry_retention_risk_jobs"
 	switch metric {
-	case "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds":
+	case "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds", "capacity_command_receipt_budget_full_seconds":
 	default:
 		parts := strings.Split(metric, ".")
 		if len(parts) != 3 || parts[0] != "waiting_reason" {

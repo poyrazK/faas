@@ -3306,3 +3306,15 @@ Receipts sort newest first by recording time, with command UUID descending as a 
 The existing delivery-control GET returns optional `capacity_command_budget`; delivery-health pressure includes the same metadata from its own snapshot, with the same observation time as pressure. Go, Node and Python response models expose these fields. Preview JSON includes `new_command_receipt_slot_available` when known and a `receipt_budget_warning` when full or unavailable. Older servers without metadata report unknown receipt availability while preserving the existing capacity proposal and projection. Mutation responses may omit the budget.
 
 A full budget warns that new command UUIDs can be rejected; it does not prevent known unchanged-input command repeats. Commands without UUIDs remain available but have no idempotent receipt evidence. Earliest expiry can free a slot, but concurrent commands can consume it. Status and preview reserve no slots, never prune receipts or extend deadlines, and do not establish write authorization or execution readiness. A valid preview still returns success when the budget is full; inspect the separate receipt-budget diagnostic before deciding to issue a new command.
+
+### Watch for a full capacity-command receipt budget
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --receipt-budget-full-threshold 30s --interval 5s --timeout 10m
+```
+
+The optional threshold defaults to zero (disabled) and accepts the existing 100ms–24h duration range. Go SDK users set `EventDeliveryHealthWatchOptions.ReceiptBudgetFull` on `WatchEventConsumerDeliveryHealth`. The metric `capacity_command_receipt_budget_full_seconds` measures locally confirmed fullness: an incident opens only after at least two fresh full observations and the configured elapsed duration. A fresh valid budget with remaining receipt slots resolves it. It does not measure the age of a command or prove continuous fullness between polls.
+
+Missing budget metadata on older servers, incomplete or malformed counts, scope/time mismatches, stale or repeated observations, and future-dated samples mean unknown. An active alert loses confirmation rather than falsely reporting recovery; sample gaps reset confirmation. Resume requires fresh sustained evidence and does not count downtime. Existing `--checkpoint`, `--resume`, `--alerts-json`, and acknowledgment handling apply, including persistence before notification and the usual matching watch-selection requirement. Older checkpoint readers must be upgraded before reading checkpoints containing the new metric. Node and Python can continue reading the budget through their health response models.
+
+The watcher only reads health. A full receipt budget can reject new command UUIDs, while retained commands repeated with their original inputs remain available. Alerts never apply capacity changes, reserve slots, prune receipts or extend retention.
