@@ -93,7 +93,7 @@ func observeFulfillmentReview(ctx context.Context, store readinessSubscriptionBa
 		copy.Fulfillments = nil
 		raw.Coordination = &copy
 	}
-	for _, item := range sourceObligationActions(id, scope, raw, tenant) {
+	for _, item := range sourceObligationActions(ctx, id, scope, raw, tenant) {
 		if item.Action.Kind != f.ActionKind || item.Action.Obligation == nil || item.Action.Obligation.ID != f.Binding.ObligationID {
 			continue
 		}

@@ -93,7 +93,7 @@ func targetObservationKey(n api.OperationWorkflowReadinessNotification, binding 
 
 // Called with the source locked and the subscription lease validated. An observation
 // and its durable notice commit together; source edits fence prepared observations.
-func applyObligationTargetObservation(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+func applyObligationTargetObservation(ctx context.Context, r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
 	assessment := u.TargetAssessment
 	if assessment == nil || assessment.Binding == nil || n.ID != u.SourceID || n.Coordination == nil || n.Coordination.Revision != u.Revision {
 		return n, nil, false
@@ -110,7 +110,7 @@ func applyObligationTargetObservation(r *readinessSubscriptionRecord, n api.Oper
 	}
 	active := false
 	owner := n.Coordination.Owner
-	for _, action := range sourceObligationActions(r.Subscription.ID, r.Subscription.Scope, n, r.Subscription.TenantID) {
+	for _, action := range sourceObligationActions(ctx, r.Subscription.ID, r.Subscription.Scope, n, r.Subscription.TenantID) {
 		if action.Action.Obligation != nil && action.Action.Obligation.ID == assessment.ObligationID {
 			active = true
 			owner = action.Action.Owner

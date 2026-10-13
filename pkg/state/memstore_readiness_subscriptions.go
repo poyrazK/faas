@@ -131,7 +131,7 @@ func (m *MemStore) claimReadinessSubscriptions(_ context.Context) ([]readinessSu
 	}
 	return out, nil
 }
-func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessWatchUpdate) error {
+func (m *MemStore) finishReadinessSubscription(ctx context.Context, r readinessSubscriptionRecord, notifications []api.OperationWorkflowReadinessNotification, watchUpdates []readinessWatchUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data := m.operationMemoryLocked()
@@ -157,14 +157,14 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 					for _, ref := range append(slices.Clone(watch.StepAssignments), watch.ReviewAssignments...) {
 						for j, n := range data.readinessInbox[r.Subscription.ID] {
 							if updated, ok := syncPlaybookStepAssignment(n, *progress, ref); ok {
-								data.readinessInbox[r.Subscription.ID][j] = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, n, updated, "")
+								data.readinessInbox[r.Subscription.ID][j] = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, n, updated, "")
 								break
 							}
 						}
 					}
 					for j, n := range data.readinessInbox[r.Subscription.ID] {
 						if updated, ok := syncPlaybookOutcomeEscalation(n, watch); ok {
-							data.readinessInbox[r.Subscription.ID][j] = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, n, updated, "")
+							data.readinessInbox[r.Subscription.ID][j] = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, n, updated, "")
 							break
 						}
 					}
@@ -185,13 +185,13 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 					n, refreshed = refreshPlaybookStepResponse(n, []api.OperationWorkflowPlaybookProgress{row.Progress})
 				}
 			}
-			updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
+			updated, published, ok := applyReadinessWatchUpdate(ctx, &r, n, u)
 			if ok || refreshed {
-				data.readinessInbox[r.Subscription.ID][i] = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, prior, updated, "")
+				data.readinessInbox[r.Subscription.ID][i] = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, prior, updated, "")
 				if n.BusinessOutcomeWatch != nil && n.BusinessOutcomeWatch.Escalation != nil {
 					for j, target := range data.readinessInbox[r.Subscription.ID] {
 						if synced, ok := syncReadinessOutcomeEscalation(target, updated); ok {
-							data.readinessInbox[r.Subscription.ID][j] = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, target, synced, "")
+							data.readinessInbox[r.Subscription.ID][j] = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, target, synced, "")
 							break
 						}
 					}
@@ -205,7 +205,7 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 	r.LeaseUntil = time.Time{}
 	data.readinessSubscriptions[r.Subscription.ID] = cloneReadinessRecord(r)
 	for i, n := range notifications {
-		notifications[i] = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, api.OperationWorkflowReadinessNotification{}, n, "")
+		notifications[i] = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, api.OperationWorkflowReadinessNotification{}, n, "")
 	}
 	inbox := append(data.readinessInbox[r.Subscription.ID], notifications...)
 	if len(inbox) > api.OperationWorkflowReadinessInboxMax {
@@ -215,7 +215,7 @@ func (m *MemStore) finishReadinessSubscription(_ context.Context, r readinessSub
 	return nil
 }
 
-func (m *MemStore) updateReadinessNotification(_ context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req readinessCoordinationUpdate, operator bool) (api.OperationWorkflowReadinessNotification, error) {
+func (m *MemStore) updateReadinessNotification(ctx context.Context, account, tenant, app, scope, id string, sequence int64, actor string, req readinessCoordinationUpdate, operator bool) (api.OperationWorkflowReadinessNotification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out api.OperationWorkflowReadinessNotification
@@ -226,11 +226,11 @@ func (m *MemStore) updateReadinessNotification(_ context.Context, account, tenan
 	}
 	for i, n := range data.readinessInbox[id] {
 		if n.Sequence == sequence {
-			out, err := applyReadinessCoordination(cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{n}}).Items[0], actor, req)
+			out, err := applyReadinessCoordination(ctx, cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{n}}).Items[0], actor, req)
 			if err != nil {
 				return out, err
 			}
-			out = captureObligationReceipts(id, scope, n, out, actor)
+			out = captureObligationReceipts(ctx, id, scope, n, out, actor)
 			out = cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{out}}).Items[0]
 			data.readinessInbox[id][i] = out
 			return cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{out}}).Items[0], nil

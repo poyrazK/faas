@@ -84,15 +84,15 @@ func prepareObligationTarget(ctx context.Context, store readinessSubscriptionBac
 func bindableObligationKind(kind string) bool {
 	return kind == "response_check_in" || kind == "coordinator_completion" || kind == "follow_up"
 }
-func sourceObligationActions(id, scope string, n api.OperationWorkflowReadinessNotification, sourceTenant string) []api.OperationWorkflowNextActionQueueItem {
+func sourceObligationActions(ctx context.Context, id, scope string, n api.OperationWorkflowReadinessNotification, sourceTenant string) []api.OperationWorkflowNextActionQueueItem {
 	if n.Coordination == nil {
 		return nil
 	}
 	row := readinessFollowUpProjection(api.OperationWorkflowReadinessSubscription{ID: id, Scope: scope, TenantID: sourceTenant}, sourceTenant, n)
-	page, _ := nextActionWorkQueue(context.Background(), []api.OperationWorkflowReadinessFollowUp{row}, "", api.OperationWorkflowReadinessFollowUpOptions{Scope: scope}, true, readinessQueueOffsetMax("next_actions"), api.OperationWorkflowReadinessFollowUpsResponse{EvaluatedAt: time.Now().UTC()})
+	page, _ := nextActionWorkQueue(ctx, []api.OperationWorkflowReadinessFollowUp{row}, "", api.OperationWorkflowReadinessFollowUpOptions{Scope: scope}, true, readinessQueueOffsetMax("next_actions"), api.OperationWorkflowReadinessFollowUpsResponse{EvaluatedAt: time.Now().UTC()})
 	return page.NextActions
 }
-func applyObligationTarget(n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
+func applyObligationTarget(ctx context.Context, n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
 	if req.TargetBinding == nil {
 		return n, nil
 	}
@@ -100,7 +100,7 @@ func applyObligationTarget(n api.OperationWorkflowReadinessNotification, req rea
 	if binding == nil || n.Coordination == nil {
 		return n, ErrConflict
 	}
-	actions := sourceObligationActions(req.TargetSubscriptionID, req.TargetScope, n, req.TargetSourceTenant)
+	actions := sourceObligationActions(ctx, req.TargetSubscriptionID, req.TargetScope, n, req.TargetSourceTenant)
 	active := false
 	activeIDs := map[string]bool{}
 	for _, item := range actions {

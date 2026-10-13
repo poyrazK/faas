@@ -153,7 +153,7 @@ func readinessVerificationItem(prior api.OperationWorkflowReadinessVerificationW
 }
 
 // Called only while the source row and subscription are locked. Coordination is preserved.
-func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
+func applyReadinessWatchUpdate(ctx context.Context, r *readinessSubscriptionRecord, n api.OperationWorkflowReadinessNotification, u readinessWatchUpdate) (api.OperationWorkflowReadinessNotification, []api.OperationWorkflowReadinessNotification, bool) {
 	if u.FulfillmentReviewEscalation != nil {
 		return applyFulfillmentReviewEscalation(r, n, u)
 	}
@@ -167,7 +167,7 @@ func applyReadinessWatchUpdate(r *readinessSubscriptionRecord, n api.OperationWo
 		return applyObligationReopeningNotice(r, n, u)
 	}
 	if u.TargetAssessment != nil {
-		return applyObligationTargetObservation(r, n, u)
+		return applyObligationTargetObservation(ctx, r, n, u)
 	}
 	if u.ScheduledActionReview != nil {
 		return applyScheduledActionReview(r, n, u)

@@ -230,11 +230,11 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 			}
 			n, refreshed = refreshPlaybookStepResponse(n, rows)
 		}
-		updated, published, ok := applyReadinessWatchUpdate(&r, n, u)
+		updated, published, ok := applyReadinessWatchUpdate(ctx, &r, n, u)
 		if !ok && !refreshed {
 			continue
 		}
-		updated = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, prior, updated, "")
+		updated = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, prior, updated, "")
 		payload, err = json.Marshal(updated)
 		if err != nil {
 			return err
@@ -261,7 +261,7 @@ func (s *PgStore) finishReadinessSubscription(ctx context.Context, r readinessSu
 		return mapErr(err)
 	}
 	for _, notification := range notifications {
-		notification = captureObligationReceipts(r.Subscription.ID, r.Subscription.Scope, api.OperationWorkflowReadinessNotification{}, notification, "")
+		notification = captureObligationReceipts(ctx, r.Subscription.ID, r.Subscription.Scope, api.OperationWorkflowReadinessNotification{}, notification, "")
 		payload, err := json.Marshal(notification)
 		if err != nil {
 			return err
@@ -300,11 +300,11 @@ func (s *PgStore) updateReadinessNotification(ctx context.Context, account, tena
 		return out, err
 	}
 	before := cloneReadinessInbox(api.OperationWorkflowReadinessInboxResponse{Items: []api.OperationWorkflowReadinessNotification{out}}).Items[0]
-	out, err = applyReadinessCoordination(out, actor, req)
+	out, err = applyReadinessCoordination(ctx, out, actor, req)
 	if err != nil {
 		return out, err
 	}
-	out = captureObligationReceipts(id, scope, before, out, actor)
+	out = captureObligationReceipts(ctx, id, scope, before, out, actor)
 	payload, err := json.Marshal(out)
 	if err != nil {
 		return out, err
@@ -388,7 +388,7 @@ func syncReadinessOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Qu
 	if !ok {
 		return nil
 	}
-	updated = captureObligationReceipts(uuid.UUID(subscriptionID.Bytes).String(), scope, n, updated, "")
+	updated = captureObligationReceipts(ctx, uuid.UUID(subscriptionID.Bytes).String(), scope, n, updated, "")
 	payload, err = json.Marshal(updated)
 	if err != nil {
 		return err

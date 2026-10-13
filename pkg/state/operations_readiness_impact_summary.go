@@ -65,9 +65,10 @@ func readinessBusinessImpactSummary(rows []api.OperationWorkflowReadinessFollowU
 		summary.ReviewCount = len(group.reviews)
 		summary.CaseCount = len(group.cases)
 		for _, review := range group.reviews {
-			if review.Priority == 3 {
+			switch review.Priority {
+			case 3:
 				summary.CriticalCount++
-			} else if review.Priority == 2 {
+			case 2:
 				summary.HighCount++
 			}
 			if review.Overdue {

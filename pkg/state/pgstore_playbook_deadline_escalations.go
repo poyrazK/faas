@@ -32,7 +32,7 @@ func syncPlaybookOutcomeEscalationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Que
 	if !ok {
 		return nil
 	}
-	updated = captureObligationReceipts(uuid.UUID(id.Bytes).String(), scope, n, updated, "")
+	updated = captureObligationReceipts(ctx, uuid.UUID(id.Bytes).String(), scope, n, updated, "")
 	payload, err = json.Marshal(updated)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func syncPlaybookStepAssignmentsTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queri
 		if !ok {
 			continue
 		}
-		updated = captureObligationReceipts(uuid.UUID(id.Bytes).String(), scope, n, updated, "")
+		updated = captureObligationReceipts(ctx, uuid.UUID(id.Bytes).String(), scope, n, updated, "")
 		raw, err = json.Marshal(updated)
 		if err != nil {
 			return err

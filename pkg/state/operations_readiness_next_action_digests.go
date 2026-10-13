@@ -69,7 +69,7 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 			return nil, err
 		}
 		action := item.Action
-		if action.Kind != "handoff_acceptance" && !(action.Kind == "fulfillment_review" && action.DueAt == nil) && (action.DueAt == nil || action.DueAt.After(soon)) {
+		if action.Kind != "handoff_acceptance" && (action.Kind != "fulfillment_review" || action.DueAt != nil) && (action.DueAt == nil || action.DueAt.After(soon)) {
 			continue
 		}
 		matching++

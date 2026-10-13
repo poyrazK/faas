@@ -9,10 +9,12 @@ import (
 )
 
 // Capture only transitions in the locked source, never reconstruct an audit from old snapshots.
-func captureObligationReceipts(id, scope string, before, after api.OperationWorkflowReadinessNotification, actor string) api.OperationWorkflowReadinessNotification {
+func captureObligationReceipts(ctx context.Context, id, scope string, before, after api.OperationWorkflowReadinessNotification, actor string) api.OperationWorkflowReadinessNotification {
 	if after.NextActionDigest != nil || after.TargetAssessment != nil || after.ObligationReopening != nil || after.FulfillmentReview != nil {
 		return after
 	}
+	// Complete the locked-source audit even if the caller was canceled.
+	ctx = context.WithoutCancel(ctx)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	if actor == "" {
 		actor = "system:obligation-receipts"
@@ -25,7 +27,7 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 			return result
 		}
 		row := readinessFollowUpProjection(api.OperationWorkflowReadinessSubscription{ID: id, Scope: scope}, "", n)
-		page, err := nextActionWorkQueue(context.Background(), []api.OperationWorkflowReadinessFollowUp{row}, "", api.OperationWorkflowReadinessFollowUpOptions{Scope: scope}, true, readinessQueueOffsetMax("next_actions"), api.OperationWorkflowReadinessFollowUpsResponse{EvaluatedAt: now})
+		page, err := nextActionWorkQueue(ctx, []api.OperationWorkflowReadinessFollowUp{row}, "", api.OperationWorkflowReadinessFollowUpOptions{Scope: scope}, true, readinessQueueOffsetMax("next_actions"), api.OperationWorkflowReadinessFollowUpsResponse{EvaluatedAt: now})
 		if err != nil {
 			return result
 		}
@@ -106,11 +108,12 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 					receipts = append(receipts, event)
 				}
 			}
-			if terminal == "completed" {
+			switch terminal {
+			case "completed":
 				add(id, "completed", "This change fulfilled the coordination obligation.")
-			} else if terminal == "canceled" {
+			case "canceled":
 				add(id, "canceled", "This obligation was canceled or declined.")
-			} else {
+			default:
 				add(id, "superseded", "This obligation was superseded.")
 			}
 		} else if before.ReviewResponse != nil && before.ReviewResponse.DecisionReview != nil && previous.Kind == "decision_revalidation" && after.ReviewResponse != nil && after.ReviewResponse.Decision != nil && after.ReviewResponse.Decision.At.After(before.ReviewResponse.DecisionReview.RequiredAt) && (before.ReviewResponse.Decision == nil || !after.ReviewResponse.Decision.At.Equal(before.ReviewResponse.Decision.At)) {

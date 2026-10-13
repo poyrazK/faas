@@ -50,12 +50,12 @@ func prepareObligationReopening(ctx context.Context, store readinessSubscription
 	if operator {
 		sourceTenant = page.Subscription.TenantID
 	}
-	return currentObligationReopening(n, id, scope, sourceTenant, *input)
+	return currentObligationReopening(ctx, n, id, scope, sourceTenant, *input)
 }
 
 // Validate against the latest fulfillment and the source's unsuppressed projection.
 // Clearing/rebinding a target, retiring a plan or starting a new cycle fences reopening.
-func currentObligationReopening(n api.OperationWorkflowReadinessNotification, id, scope, sourceTenant string, input api.OperationWorkflowObligationReopeningRequest) (*api.OperationWorkflowObligationReopening, error) {
+func currentObligationReopening(ctx context.Context, n api.OperationWorkflowReadinessNotification, id, scope, sourceTenant string, input api.OperationWorkflowObligationReopeningRequest) (*api.OperationWorkflowObligationReopening, error) {
 	coord := n.Coordination
 	if coord == nil || len(coord.Reopenings) >= 128 || !obligationFulfilled(*coord, input.Binding.ObligationID, input.Binding.Case, sourceTenant) {
 		return nil, ErrConflict
@@ -85,7 +85,7 @@ func currentObligationReopening(n api.OperationWorkflowReadinessNotification, id
 	copy := *coord
 	copy.Fulfillments = nil
 	raw.Coordination = &copy
-	for _, item := range sourceObligationActions(id, scope, raw, sourceTenant) {
+	for _, item := range sourceObligationActions(ctx, id, scope, raw, sourceTenant) {
 		if item.Action.Obligation == nil || item.Action.Obligation.ID != input.Binding.ObligationID || !bindableObligationKind(item.Action.Kind) {
 			continue
 		}
@@ -99,14 +99,14 @@ func currentObligationReopening(n api.OperationWorkflowReadinessNotification, id
 	return nil, ErrConflict
 }
 
-func applyObligationReopening(n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
+func applyObligationReopening(ctx context.Context, n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
 	if req.Reopening == nil {
 		return n, nil
 	}
 	if req.PreparedReopening == nil {
 		return n, ErrConflict
 	}
-	reopening, err := currentObligationReopening(n, req.TargetSubscriptionID, req.TargetScope, req.TargetSourceTenant, *req.Reopening)
+	reopening, err := currentObligationReopening(ctx, n, req.TargetSubscriptionID, req.TargetScope, req.TargetSourceTenant, *req.Reopening)
 	if err != nil {
 		return n, err
 	}

@@ -80,7 +80,7 @@ func updateReadinessNotification(ctx context.Context, store readinessSubscriptio
 	}
 	return store.updateReadinessNotification(ctx, account, tenant, app, scope, uuid.MustParse(id).String(), sequence, actor, prepared, operator)
 }
-func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, actor string, req readinessCoordinationUpdate) (api.OperationWorkflowReadinessNotification, error) {
+func applyReadinessCoordination(ctx context.Context, n api.OperationWorkflowReadinessNotification, actor string, req readinessCoordinationUpdate) (api.OperationWorkflowReadinessNotification, error) {
 	revision := int64(0)
 	if n.Coordination != nil {
 		revision = n.Coordination.Revision
@@ -417,15 +417,15 @@ func applyReadinessCoordination(n api.OperationWorkflowReadinessNotification, ac
 	}
 	n = readinessEscalationCoordination(n, c, actor, now)
 	n.Coordination = c
-	n, err := applyObligationTarget(n, req, actor, now)
+	n, err := applyObligationTarget(ctx, n, req, actor, now)
 	if err != nil {
 		return n, err
 	}
-	n, err = applyObligationFulfillment(n, req, actor, now)
+	n, err = applyObligationFulfillment(ctx, n, req, actor, now)
 	if err != nil {
 		return n, err
 	}
-	n, err = applyObligationReopening(n, req, actor, now)
+	n, err = applyObligationReopening(ctx, n, req, actor, now)
 	if err != nil {
 		return n, err
 	}

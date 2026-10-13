@@ -147,7 +147,7 @@ func obligationFulfilled(coord api.OperationWorkflowReadinessCoordination, oblig
 	return false
 }
 
-func applyObligationFulfillment(n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
+func applyObligationFulfillment(ctx context.Context, n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
 	if req.Fulfillment == nil {
 		return n, nil
 	}
@@ -166,7 +166,7 @@ func applyObligationFulfillment(n api.OperationWorkflowReadinessNotification, re
 		return n, ErrConflict
 	}
 	active := false
-	for _, item := range sourceObligationActions(req.TargetSubscriptionID, req.TargetScope, n, req.TargetSourceTenant) {
+	for _, item := range sourceObligationActions(ctx, req.TargetSubscriptionID, req.TargetScope, n, req.TargetSourceTenant) {
 		if item.Action.Obligation == nil || item.Action.Obligation.ID != binding.ObligationID || item.Action.Kind != receipt.ActionKind || item.Action.Owner != receipt.Owner {
 			continue
 		}
