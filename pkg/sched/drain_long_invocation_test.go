@@ -12,8 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // gatedSynth holds every invocation until the test releases it, and
@@ -34,7 +39,11 @@ func (g *gatedSynth) Invoke(ctx context.Context, _ string, inv state.Invocation)
 	g.order = append(g.order, inv.ID)
 	g.deadlines = append(g.deadlines, deadline)
 	g.mu.Unlock()
-	<-g.release
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return inv, ctx.Err()
+	}
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-" + inv.ID
 	inv.Result = json.RawMessage(`{"ok":true}`)
@@ -49,10 +58,16 @@ func (g *gatedSynth) calls() []string {
 
 // newLongDrainHarness seeds a Pro function whose invocations may run for
 // two minutes (request_timeout_s=120).
-func newLongDrainHarness(t *testing.T) (*Drain, state.Store, state.App, *gatedSynth) {
+func newLongDrainHarness(t *testing.T, opts ...DrainOption) (*Drain, state.Store, state.App, *gatedSynth) {
+	t.Helper()
+	return newLongDrainHarnessWith(t, func(m *state.MemStore) state.Store { return m }, opts...)
+}
+
+// newLongDrainHarnessWith is newLongDrainHarness over a wrapped MemStore.
+func newLongDrainHarnessWith(t *testing.T, wrap func(*state.MemStore) state.Store, opts ...DrainOption) (*Drain, state.Store, state.App, *gatedSynth) {
 	t.Helper()
 	ctx := context.Background()
-	store := state.NewMemStore()
+	store := wrap(state.NewMemStore())
 	acct, err := store.CreateAccount(ctx, "long@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
@@ -68,8 +83,9 @@ func newLongDrainHarness(t *testing.T) (*Drain, state.Store, state.App, *gatedSy
 	}
 	eng := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	synth := &gatedSynth{release: make(chan struct{})}
-	d := NewDrain(store, eng, WithDrainGatewaySynth(synth),
-		WithDrainLogger(slog.New(slog.NewTextHandler(testWriter{t}, nil))))
+	opts = append([]DrainOption{WithDrainGatewaySynth(synth),
+		WithDrainLogger(slog.New(slog.NewTextHandler(testWriter{t}, nil)))}, opts...)
+	d := NewDrain(store, eng, opts...)
 	return d, store, app, synth
 }
 
@@ -98,8 +114,8 @@ func waitInvocationState(t *testing.T, store state.Store, id string, want state.
 	}
 }
 
-// ADR-1180: a long-timeout app's invocation holds a lease that outlasts its
-// run and is delivered in the background, so the tick does not wait for it.
+// ADR-1180: a long-timeout app's invocation is delivered in the background, so
+// the tick does not wait for it, under the ordinary lease it keeps renewing.
 func TestDrain_LongTimeoutInvocationDeliversInTheBackground(t *testing.T) {
 	t.Parallel()
 	d, store, app, synth := newLongDrainHarness(t)
@@ -114,9 +130,8 @@ func TestDrain_LongTimeoutInvocationDeliversInTheBackground(t *testing.T) {
 		t.Fatal("the tick waited for a long invocation")
 	}
 	claimed := waitInvocationState(t, store, inv.ID, state.InvocationDispatching)
-	wantLease := api.AsyncInvocationLease(2 * time.Minute)
-	if claimed.LeaseExpiresAt == nil || claimed.LeaseExpiresAt.Before(started.Add(wantLease-5*time.Second)) {
-		t.Fatalf("lease expires at %v, want about %s after the claim", claimed.LeaseExpiresAt, wantLease)
+	if claimed.LeaseExpiresAt == nil || claimed.LeaseExpiresAt.After(started.Add(65*time.Second)) {
+		t.Fatalf("lease expires at %v, want the ordinary 60 s lease, renewed while the run lasts", claimed.LeaseExpiresAt)
 	}
 	for len(synth.calls()) == 0 {
 		time.Sleep(10 * time.Millisecond)
@@ -233,5 +248,92 @@ func TestTriggerBatchContextFollowsTheAppsInvocationTimeout(t *testing.T) {
 	want, _ := callerCtx.Deadline()
 	if got, _ := batchCtx.Deadline(); !got.Equal(want) {
 		t.Errorf("batch deadline %v replaced the caller's %v", got, want)
+	}
+}
+
+// ADR-1180: the drain renews a long invocation's short lease while the run
+// lasts, so the expired-lease sweep never requeues a live run.
+func TestDrain_LongInvocationRenewsItsLease(t *testing.T) {
+	t.Parallel()
+	d, store, app, synth := newLongDrainHarness(t, WithDrainWakeLease(3))
+	inv := enqueueLongInvocation(t, store, app, state.InvocationAsyncInvoke, time.Now().Add(-time.Second))
+	d.Tick(context.Background())
+	claimed := waitInvocationState(t, store, inv.ID, state.InvocationDispatching)
+	time.Sleep(5 * time.Second) // past the 3 s lease it was claimed with
+	current, err := store.InvocationByID(context.Background(), inv.ID)
+	if err != nil || current.State != state.InvocationDispatching || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(*claimed.LeaseExpiresAt) {
+		t.Fatalf("after 5 s the claim is %+v (err %v); want it dispatching under a renewed lease", current, err)
+	}
+	if n, err := store.(interface {
+		RequeueExpiredInvocations(context.Context, time.Time, int) (int, error)
+	}).RequeueExpiredInvocations(context.Background(), time.Now(), 10); err != nil || n != 0 {
+		t.Fatalf("a live run was requeued: %d %v", n, err)
+	}
+	close(synth.release)
+	waitInvocationState(t, store, inv.ID, state.InvocationCompleted)
+}
+
+// lostInvocationLease reports every renewal as refused, as when the claim
+// was requeued under this dispatcher.
+type lostInvocationLease struct {
+	MemStore *state.MemStore
+}
+
+func (*lostInvocationLease) RenewInvocationLease(context.Context, string, int, int) (bool, error) {
+	return false, nil
+}
+
+// ADR-1180: when the drain cannot keep a long invocation's claim, it cancels
+// the delivery so a requeued attempt cannot overlap it.
+func TestDrain_LongInvocationLeaseLossCancelsDelivery(t *testing.T) {
+	t.Parallel()
+	d, store, app, synth := newLongDrainHarnessWith(t, func(m *state.MemStore) state.Store {
+		return statetest.NewMem(&lostInvocationLease{MemStore: m})
+	}, WithDrainWakeLease(3))
+	inv := enqueueLongInvocation(t, store, app, state.InvocationAsyncInvoke, time.Now().Add(-time.Second))
+	d.Tick(context.Background())
+	// The first renewal, a second in, is refused; the delivery is
+	// cancelled and the invocation goes back for a retry.
+	got := waitInvocationState(t, store, inv.ID, state.InvocationPending)
+	if got.Attempts != 1 || len(synth.calls()) != 1 {
+		t.Fatalf("invocation %+v after %d deliveries; want one cancelled delivery awaiting retry", got, len(synth.calls()))
+	}
+}
+
+// ADR-1180: a long-timeout app's trigger records go one per batch; other
+// apps keep their batch size.
+func TestLongTimeoutTriggerBatchIsOneRecord(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "batch-cap@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "long", Manifest: state.AppManifest{RequestTimeoutS: 240}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := NewLoop(nil, newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0"), slog.Default())
+	trigger := func(appID string) sqlc.Trigger {
+		t.Helper()
+		parsed, err := uuid.Parse(appID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sqlc.Trigger{AppID: pgtype.UUID{Bytes: parsed, Valid: true}, BatchSizeMax: 10}
+	}
+	if got := loop.longTimeoutTriggerBatch(ctx, trigger(long.ID)).BatchSizeMax; got != 1 {
+		t.Errorf("long-timeout app batch size = %d, want 1", got)
+	}
+	if got := loop.longTimeoutTriggerBatch(ctx, trigger(plain.ID)).BatchSizeMax; got != 10 {
+		t.Errorf("default app batch size = %d, want 10", got)
+	}
+	if got := (&Loop{}).longTimeoutTriggerBatch(ctx, trigger(long.ID)).BatchSizeMax; got != 10 {
+		t.Errorf("loop without an engine changed the batch size to %d", got)
 	}
 }

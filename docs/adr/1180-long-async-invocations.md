@@ -41,12 +41,20 @@ processing.
    request budget of every synthetic invocation, so the forwarder sends it
    as `X-Faas-Deadline-Ms` (ADR-1150) and the runner allows the run.
 
-3. **Leases outlast the run.** A long-timeout invocation is claimed for
-   the wake allowance (60 s) plus its timeout plus a 30 s margin
-   (`api.AsyncInvocationLease`). Its dispatch is bounded by the wake
-   allowance plus the timeout, so the outcome is recorded before the lease
-   could lapse. Named queue claims take the longer of 600 s and the batch
-   timeout plus the margin.
+3. **Leases are renewed while the run lasts.** The drain claims a
+   long-timeout invocation with its ordinary 60 s lease and renews it
+   every 20 s while the run is delivered (`RenewInvocationLease`), as the
+   operation path already does. A scheduler that crashes or restarts
+   stops renewing, so its invocations are requeued within one lease; their
+   interrupted deliveries end with the scheduler's connection. Renewal is
+   fenced by the claim's attempt and refuses a lapsed lease. The keeper
+   tolerates one failed renewal; when the row is no longer its attempt's,
+   or the lease would lapse, it cancels the delivery so a requeued attempt
+   cannot overlap it. A store without renewal claims for the wake
+   allowance plus the timeout plus a 30 s margin
+   (`api.AsyncInvocationLease`). The dispatch is bounded by the wake
+   allowance plus the timeout. Named queue claims take the longer of 600 s
+   and the batch timeout plus the margin.
 
 4. **Long runs do not hold shared loops.**
    - The drain delivers a long-timeout invocation in the background, under
@@ -57,9 +65,14 @@ processing.
      instead of delivering it inline.
    - Named queue triggers already run on their own lanes.
 
-5. **Batches fit one whole record.** A trigger batch for a long-timeout
-   app may take the longer of the 5-minute batch bound and one whole
-   record (`api.TriggerBatchDispatchTimeout`); schedd waits that long.
+5. **Long-timeout triggers deliver one record per batch.** A trigger
+   batch for a long-timeout app may take the longer of the 5-minute batch
+   bound and one whole record (`api.TriggerBatchDispatchTimeout`); schedd
+   waits that long. Such an app's triggers poll one record per batch, as
+   named-queue push lanes already did, because records behind a long one
+   would time out without running and spend their attempts. The cap
+   applies before the poll: a record polled but left out of a batch stays
+   claimed until its lease or visibility timeout lapses.
 
 6. **Default apps are unchanged.** Every path above keeps its previous
    bound and inline delivery for an app at the 30 s default, and resolving
@@ -78,23 +91,25 @@ processing.
 
 - A Scale function can process a queue message, a cron fire or an async
   invocation for up to 15 minutes; Pro for up to 5.
-- A schedd restart while long invocations run leaves them `dispatching`
-  until their leases lapse, up to the timeout plus 90 s later, when they
-  are requeued. The delivery contract was already at-least-once.
+- A schedd restart interrupts the long invocations it was delivering;
+  they are requeued within one 60 s lease and run again. The delivery
+  contract was already at-least-once.
+- Each running long invocation renews its lease every 20 s: one indexed
+  row update.
 - A long-timeout cron fire is delivered by the drain, so a transient
   failure is retried under the drain's retry policy rather than waiting
   for the next schedule boundary. This was already the case when the
   drain won the claim race.
-- A trigger batch for a long-timeout app holds its lane for up to one
-  record's run; later records in that batch are retried
-  (`batch_timeout`), as before.
+- A long-timeout app's trigger throughput is one record per batch per
+  lane; its records run one after another rather than timing out in a
+  shared batch.
 
 ## Alternatives
 
-- **Renew leases while the invocation runs.** The operation path already
-  renews (`operationClaimContext`). Rejected for this change: every
-  running invocation would write every 20 s, and a lease sized to the run
-  needs no writes. Renewal can replace it if timeouts outgrow 15 minutes.
+- **A lease sized to the whole run.** It needs no renewal writes, but a
+  crashed or restarted scheduler's invocations sat `dispatching` for up to
+  the timeout plus 90 s before being requeued, though nothing was running
+  them. Kept only as the fallback for a store without renewal.
 - **Make every drain dispatch asynchronous.** Rejected: it changes the
   delivery timing of every app to serve the few with long timeouts.
 - **A separate async timeout setting.** Rejected for the same reason as in

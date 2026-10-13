@@ -69416,6 +69416,28 @@ func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db 
 	return i, err
 }
 
+const renewInvocationLease = `-- name: RenewInvocationLease :execrows
+UPDATE invocations
+SET lease_expires_at = now() + $1::integer * interval '1 second'
+WHERE id = $2::uuid AND operation_id IS NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now()
+`
+
+type RenewInvocationLeaseParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewInvocationLease(ctx context.Context, db DBTX, arg RenewInvocationLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, renewInvocationLease, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const renewNotificationClaim = `-- name: RenewNotificationClaim :execrows
 WITH owned AS MATERIALIZED (
     SELECT id, lease_until FROM notification_outbox

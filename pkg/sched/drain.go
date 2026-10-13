@@ -823,7 +823,12 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	leaseSeconds := d.wakeLeaseSeconds
 	release := func() {}
 	if timeout > api.AsyncInvocationTimeoutFloor {
-		leaseSeconds = int(api.AsyncInvocationLease(timeout) / time.Second)
+		// A renewed claim keeps the ordinary lease, so a crashed
+		// scheduler's invocation is requeued within one lease. A store
+		// that cannot renew falls back to a lease sized to the run.
+		if !d.renewsInvocationLease(inv) {
+			leaseSeconds = int(api.AsyncInvocationLease(timeout) / time.Second)
+		}
 		var ok bool
 		if release, ok = d.acquireLongDispatch(inv); !ok {
 			return
@@ -908,6 +913,9 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		var cancelDispatch context.CancelFunc
 		claimCtx, cancelDispatch = context.WithTimeout(withLongDispatch(claimCtx), api.AsyncInvocationDispatchTimeout(timeout))
 		defer cancelDispatch()
+		var stopLease func()
+		claimCtx, stopLease = d.keepInvocationLease(claimCtx, inv)
+		defer stopLease()
 	}
 	var err error
 	d.observeDelayedTaskClaim(inv)

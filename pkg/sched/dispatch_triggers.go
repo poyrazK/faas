@@ -376,6 +376,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if exclusiveBinding == nil && l.gatewayHTTPClient == nil {
 		return nil
 	}
+	t = l.longTimeoutTriggerBatch(ctx, t)
 
 	// 2. Poll. The broker may carry a W3C context in each record, but
 	// it is not available until Poll returns. Keep the poll span rooted
@@ -1283,6 +1284,22 @@ func appAsyncInvocationTimeout(ctx context.Context, store interface {
 		return api.AsyncInvocationTimeoutFloor
 	}
 	return state.AsyncInvocationTimeout(ctx, store, app)
+}
+
+// longTimeoutTriggerBatch delivers a long-timeout app's records one per batch
+// (ADR-1180), as named-queue push lanes already do. The gateway gives a batch
+// room for one whole record of such an app; records behind it would time out
+// without running and spend their attempts. The cap applies before Poll,
+// because a record polled but left out of the batch stays claimed until its
+// lease or visibility timeout lapses.
+func (l *Loop) longTimeoutTriggerBatch(ctx context.Context, t sqlc.Trigger) sqlc.Trigger {
+	if t.BatchSizeMax == 1 || l.engine == nil {
+		return t
+	}
+	if appAsyncInvocationTimeout(ctx, l.engine.Store(), t.AppID.String()) > api.AsyncInvocationTimeoutFloor {
+		t.BatchSizeMax = 1
+	}
+	return t
 }
 
 // triggerBatchContext bounds one batch POST. The gateway may spend one whole
