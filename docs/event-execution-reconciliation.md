@@ -1142,3 +1142,38 @@ A plan hash detects mismatches but does not authenticate editable reports. Read
 and control requests remain separate observations; server guards and retained
 receipts provide idempotency. Reports contain job progress and receipt metadata,
 not event payloads, and do not extend retention or provide atomic batch execution.
+
+### Reconcile an execution report without sending controls
+
+```sh
+gregale --json events subscription-lineage-retry-control-plan-reconcile APP SUB --file controls.json --source-report run-1.jsonl --report reconciled.jsonl --timeout 2m
+```
+
+The command validates the report against the unchanged normalized plan, binds the
+explicit target app/subscription, and checks every fixed command using read-only
+job and guarded receipt requests. This includes commands absent from an interrupted
+report. It never sends pause/resume/cancel requests or allocates replacement UUIDs.
+The source and plan stay unchanged; the destination must be new and is a private,
+synced execution journal using the existing 1 MiB limit.
+
+Results add `evidence`: `receipt_present` confirms a matching acknowledgment;
+`receipt_absent` means the complete observed journal lacked that command;
+`command_conflict` means its UUID was used for another action. `expired`,
+`stale_guard`, and `unavailable` indicate missing usable evidence. Only verified
+matching receipts produce `acknowledged`; all other entries remain `unconfirmed`.
+Missing receipts do not prove that a command never ran. Old local acknowledgments
+are rechecked rather than trusted, and separate reads can observe changes.
+
+The JSON summary counts acknowledged and unresolved entries. `complete` means all
+entries were assessed and persisted; a complete report can still contain definite
+unresolved observations. Read/scope failures, interruption, or persistence failure
+make it incomplete. Exit 0 means all acknowledgments were verified and saved, 1
+means unresolved entries or persistence failure, and 130 means interruption after
+partial reporting. Independent read failures allow other jobs to be inspected;
+persistence failure stops further inspection and is included in the summary.
+
+Use the fresh journal for another reconciliation or as `--resume-report` when you
+choose to resume controls. Resume rechecks server receipts before retrying, with
+the same plan commands and guards. Readers predating the optional `evidence` field
+must be upgraded to read reconciled journals. Reconciliation does not extend
+retention or turn an editable local report into authenticated evidence.

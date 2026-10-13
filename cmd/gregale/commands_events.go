@@ -52,6 +52,8 @@ func cmdEvents(args []string) int {
 		return cmdEventsLineageControlPlan(args[1:], false)
 	case "subscription-lineage-retry-control-plan-preflight":
 		return cmdEventsLineageControlPlan(args[1:], false, true)
+	case "subscription-lineage-retry-control-plan-reconcile":
+		return cmdEventsLineageControlPlanReconcile(args[1:])
 	case "subscription-lineage-retry-control-plan-apply":
 		return cmdEventsLineageControlPlan(args[1:], true)
 	case "subscription-lineage-retry-jobs":

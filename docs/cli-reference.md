@@ -2395,6 +2395,19 @@ Check reviewed commands with read-only job and receipt inspection
 | `--file <PATH>` | reviewed plan; unchanged on preflight |  |
 | `--timeout <DURATION>` | total duration (default 2m) |  |
 
+### events subscription-lineage-retry-control-plan-reconcile
+
+Reconcile execution evidence with read-only receipt inspection
+
+`gregale events subscription-lineage-retry-control-plan-reconcile [--file <PATH>] [--source-report <PATH>] [--report <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | unchanged reviewed plan |  |
+| `--source-report <PATH>` | previous matching execution report |  |
+| `--report <PATH>` | new private reconciled report; never overwrite |  |
+| `--timeout <DURATION>` | total duration (default 2m) |  |
+
 ### events subscription-lineage-retry-jobs
 
 List retained bulk lineage retry job summaries

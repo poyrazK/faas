@@ -9,6 +9,7 @@ import (
 )
 
 type lineageControlPlanResult struct {
+	Evidence     string                                           `json:"evidence,omitempty"`
 	JobRequestID string                                           `json:"job_request_id"`
 	CommandID    string                                           `json:"command_id"`
 	Action       string                                           `json:"action"`

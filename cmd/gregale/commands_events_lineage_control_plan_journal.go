@@ -157,7 +157,7 @@ func readLineageControlPlanJournal(path string, plan lineageControlPlan) (map[in
 		if shapeErr != nil {
 			return nil, shapeErr
 		}
-		if _, shapeErr = lineageHistoryObjectFields(fields["result"], []string{"job_request_id", "command_id", "action", "outcome"}, []string{"error", "status", "processed", "selected", "receipt"}); shapeErr != nil {
+		if _, shapeErr = lineageHistoryObjectFields(fields["result"], []string{"job_request_id", "command_id", "action", "outcome"}, []string{"error", "status", "processed", "selected", "receipt", "evidence"}); shapeErr != nil {
 			return nil, shapeErr
 		}
 		var record lineageControlPlanJournalRecord
@@ -179,6 +179,9 @@ func readLineageControlPlanJournal(path string, plan lineageControlPlan) (map[in
 		result := record.Result
 		if result.JobRequestID != entry.JobRequestID || result.CommandID != entry.CommandID || result.Action != entry.Action || (result.Outcome != "acknowledged" && result.Outcome != "unconfirmed" && result.Outcome != "not_attempted") {
 			return nil, fmt.Errorf("report entry does not match plan")
+		}
+		if result.Evidence != "" && result.Evidence != "receipt_present" && result.Evidence != "receipt_absent" && result.Evidence != "command_conflict" && result.Evidence != "unavailable" && result.Evidence != "expired" && result.Evidence != "stale_guard" {
+			return nil, fmt.Errorf("unknown execution report evidence")
 		}
 		// Stored acknowledgments are evidence only; resume verifies them with GETs.
 		out[record.Index] = result
