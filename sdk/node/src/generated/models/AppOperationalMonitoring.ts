@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AppOperationalIncident } from './AppOperationalIncident.js';
+import type { ScopedRouteBudgetReport } from './ScopedRouteBudgetReport.js';
 /**
- * Recent default-scope route-monitor evaluation with observed-only coverage. Unknown or unavailable health is independent of deployment smoke verification.
+ * Recent default-scope or explicitly scoped route-monitor evaluation with observed-only coverage. Unknown or unavailable health is independent of deployment smoke verification.
  */
 export type AppOperationalMonitoring = {
+  route_budgets?: ScopedRouteBudgetReport;
   available: boolean;
   status: string;
   reason: string;
