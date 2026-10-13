@@ -1,8 +1,9 @@
 from typing import Literal
 
-CreateAppLogDrainRequestKind = Literal["http_json", "otlp"]
+CreateAppLogDrainRequestKind = Literal["datadog", "http_json", "otlp"]
 
 CREATE_APP_LOG_DRAIN_REQUEST_KIND_VALUES: set[CreateAppLogDrainRequestKind] = {
+    "datadog",
     "http_json",
     "otlp",
 }

@@ -41,7 +41,8 @@ class UpdateAppWebhookRequest:
     opt into health notifications."""
     retry_policy: UpdateAppWebhookRequestRetryPolicy | Unset = UNSET
     delivery_format: UpdateAppWebhookRequestDeliveryFormat | Unset = UNSET
-    """Wire envelope for future deliveries; existing delivery rows are unchanged."""
+    """Wire envelope for future deliveries; existing delivery rows are unchanged. Switching to datadog requires a
+    new webhook_secret holding the Datadog API key."""
     enabled: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
