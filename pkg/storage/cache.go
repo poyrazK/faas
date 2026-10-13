@@ -1014,7 +1014,7 @@ type cacheFillReader struct {
 func (r *cacheFillReader) LinkTo(path string) error {
 	r.cache.mu.Lock()
 	defer r.cache.mu.Unlock()
-	name := r.File.Name()
+	name := r.Name()
 	if _, err := os.Lstat(name); err != nil {
 		name, _ = r.cache.cacheFileFor(r.key)
 	}
