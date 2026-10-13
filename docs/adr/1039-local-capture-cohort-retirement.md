@@ -1,4 +1,4 @@
-# ADR-976: Retire a local capture as one quarantined cohort
+# ADR-1039: Retire a local capture as one quarantined cohort
 
 - **Status:** proposed; implementation validated on ext4, native lifecycle acceptance pending
 - **Date:** 2026-10-12

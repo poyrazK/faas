@@ -514,6 +514,14 @@ func validDelimiter(delimiter string) bool {
 func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req requestContext, key string) {
 	query := operationQuery(r.URL.Query())
 	query.Del("x-id")
+	if query.Has("attributes") {
+		if r.Method != http.MethodGet || !queryKeysOnly(query, "attributes", "versionId") || len(query["attributes"]) != 1 || query.Get("attributes") != "" || query.Has("versionId") && len(query["versionId"]) != 1 {
+			h.unsupported(w, r, req.requestID)
+			return
+		}
+		h.objectAttributes(w, r, req, key)
+		return
+	}
 	if query.Has("retention") || query.Has("legal-hold") {
 		kind := "retention"
 		if query.Has("legal-hold") {
@@ -849,6 +857,10 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	}
 	defer h.closeResponseBody(response.Body, req.requestID)
 	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
+		return
+	}
+	if !validReadChecksumHeaders(response.Header) {
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return
 	}
 	h.writeGatewayRead(w, r, req, key, response)

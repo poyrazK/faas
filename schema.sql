@@ -3993,7 +3993,7 @@ SELECT EXISTS (
         AND deployment.scope=environment.slug
     JOIN invocations invocation ON invocation.id=target_invocation AND invocation.app_id=target_app
         AND invocation.source='queue' AND invocation.state='completed'
-        AND invocation.completed_at IS NOT NULL AND invocation.deployment_scope=environment.slug
+        AND invocation.completed_at>=release.created_at AND invocation.deployment_scope=environment.slug
         AND invocation.queue_binding_id=target_binding
     CROSS JOIN LATERAL jsonb_array_elements(graph.members) AS graph_member(value)
     CROSS JOIN LATERAL jsonb_each(coalesce(graph_member.value->'queue_bindings','{}'::jsonb)) AS queue_binding(name,value)
@@ -4176,13 +4176,108 @@ $$;
 CREATE FUNCTION public.environment_workload_serving_ready(target_graph uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
-SELECT environment_workload_serving_ready_without_scheduled_jobs(target_graph)
-    AND EXISTS (
-        SELECT 1 FROM environment_workload_serving_receipts receipt
-        JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
-        WHERE receipt.graph_id=target_graph
-            AND environment_workload_scheduled_jobs_ready(target_graph,release.id)
-    )
+SELECT EXISTS (
+    SELECT 1
+    FROM environment_workload_serving_receipts receipt
+    JOIN environment_workload_graphs graph ON graph.id=receipt.graph_id
+    JOIN active_environment_git_sources source ON source.id=receipt.source_id
+    JOIN project_environments environment ON environment.id=source.environment_id
+    JOIN project_release_sets release ON release.id=receipt.release_set_id AND release.active
+    WHERE receipt.graph_id=target_graph AND source.mode='enforce' AND NOT source.suspended
+        AND source.generation=graph.generation AND source.intent_version=graph.intent_version
+        AND source.approved_revision_id=graph.revision_id
+        AND environment_workload_graph_serving_supported(graph.id)
+        AND (SELECT count(*) FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)=(
+            SELECT count(*) FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            WHERE graph_member.value->>'execution_mode' IN ('request','service')
+                AND NOT EXISTS (
+                    SELECT 1 FROM environment_workload_serving_routes route
+                    JOIN project_release_members release_member ON release_member.release_id=release.id
+                        AND release_member.app_id=route.app_id AND release_member.deployment_id=route.deployment_id
+                    WHERE route.graph_id=graph.id AND route.app_id::text=graph_member.value->>'app_id'
+                        AND ((route.cutover_required AND route.deployment_id::text=graph_member.value->>'candidate_deployment_id') OR
+                            (NOT route.cutover_required AND nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? route.deployment_id::text))
+                )
+        )
+        AND (NOT EXISTS (SELECT 1 FROM environment_workload_serving_routes route WHERE route.graph_id=graph.id)
+            OR cardinality(receipt.expected_gateways)>0)
+        AND NOT EXISTS (
+            SELECT 1 FROM environment_workload_serving_routes route
+            WHERE route.graph_id=graph.id AND (SELECT count(*) FROM environment_workload_serving_route_acks ack
+                WHERE ack.graph_id=route.graph_id AND ack.route_generation=route.route_generation)<>cardinality(receipt.expected_gateways)
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN queue_bindings binding ON binding.id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (binding.id IS NULL OR binding.app_id::text<>graph_member.value->>'app_id'
+                    OR binding.account_id<>source.account_id
+                    OR binding.environment_id<>source.environment_id OR binding.deployment_scope<>environment.slug
+                    OR binding.name<>queue_binding.name OR binding.queue_name<>queue_binding.value->'contract'->>'queue_name'
+                    OR binding.mode<>queue_binding.value->'contract'->>'mode'
+                    OR binding.workload_class<>queue_binding.value->'contract'->>'workload_class'
+                    OR binding.enabled IS DISTINCT FROM (queue_binding.value->'contract'->>'enabled')::boolean
+                    OR binding.max_concurrency::text<>queue_binding.value->'contract'->>'max_concurrency'
+                    OR coalesce(nullif(queue_binding.value->'contract'->'retry_policy','null'::jsonb),'{}'::jsonb)<>binding.retry_policy
+                    OR binding.retired_at IS NOT NULL
+                    OR (binding.mode='push' AND NOT EXISTS (
+                        SELECT 1 FROM triggers queue_trigger
+                        WHERE queue_trigger.id::text=queue_binding.value->>'trigger_id'
+                            AND queue_trigger.app_id=binding.app_id AND queue_trigger.queue_binding_id=binding.id
+                            AND queue_trigger.account_id=source.account_id
+                            AND queue_trigger.enabled AND queue_trigger.kind='queue' AND queue_trigger.source='queue'
+                            AND queue_trigger.slug=queue_binding.value->'contract'->>'queue_name'
+                            AND queue_trigger.queue_binding_scope=environment.slug
+                            AND queue_trigger.queue_binding_environment_id=source.environment_id
+                    ))
+                    OR (binding.mode='pull' AND coalesce(queue_binding.value->>'trigger_id','')<>'')
+                    OR binding.mode NOT IN ('push','pull'))
+        )
+        AND (SELECT count(*) FROM environment_workload_serving_queue_acks ack WHERE ack.graph_id=graph.id)=(
+            SELECT count(*)
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(graph.members) AS graph_member(value)
+            CROSS JOIN LATERAL jsonb_each(coalesce(nullif(graph_member.value->'queue_bindings','null'::jsonb),'{}'::jsonb)) AS queue_binding(name,value)
+            LEFT JOIN environment_workload_serving_queue_acks ack ON ack.graph_id=graph.id
+                AND ack.binding_id::text=queue_binding.value->>'binding_id'
+            WHERE (graph_member.value->>'execution_mode'='worker' OR
+                (graph_member.value->>'execution_mode'='request' AND graph_member.value->>'function'='true'))
+                AND queue_binding.value->'contract'->>'enabled'='true'
+                AND (ack.graph_id IS NULL OR ack.mode<>queue_binding.value->'contract'->>'mode'
+                    OR NOT environment_workload_queue_serving_ack_authorized(ack.graph_id,ack.binding_id,ack.mode,
+                        ack.trigger_id,ack.app_id,ack.deployment_id,ack.invocation_id)
+                    OR ack.app_id::text<>graph_member.value->>'app_id'
+                    OR (ack.mode='push' AND ack.trigger_id::text<>queue_binding.value->>'trigger_id')
+                    OR (ack.mode='pull' AND ack.trigger_id IS NOT NULL)
+                    OR NOT EXISTS (
+                        SELECT 1 FROM project_release_members release_member
+                        JOIN deployments deployment ON deployment.id=release_member.deployment_id
+                            AND deployment.app_id=release_member.app_id AND deployment.status='live'
+                            AND NOT deployment.environment_workload_held AND deployment.scope=environment.slug
+                        WHERE release_member.release_id=release.id AND release_member.app_id=ack.app_id
+                            AND release_member.deployment_id=ack.deployment_id
+                            AND (graph_member.value->>'candidate_deployment_id'=ack.deployment_id::text OR
+                                (nullif(graph_member.value->>'candidate_deployment_id','') IS NULL
+                                    AND coalesce(graph_member.value->'retained_deployments','[]'::jsonb) ? ack.deployment_id::text))
+                    ))
+        )
+)
 $$;
 
 
@@ -8089,6 +8184,40 @@ END $$;
 
 
 --
+-- Name: guard_environment_workload_image_full_rootfs(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_workload_image_full_rootfs() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE reviewed_source jsonb;
+BEGIN
+ IF NEW.environment_workload_runtime IS NULL OR NEW.kind <> 'image' THEN
+  RETURN NEW;
+ END IF;
+ SELECT w.source INTO reviewed_source
+ FROM app_environment_workload_intents w
+ JOIN project_environments e ON e.id=w.environment_id
+ WHERE w.app_id=NEW.app_id AND e.slug=NEW.scope;
+ IF reviewed_source IS NULL OR reviewed_source->>'kind' <> 'image' THEN
+  RETURN NEW;
+ END IF;
+ IF NEW.environment_workload_runtime->'source' IS DISTINCT FROM reviewed_source OR
+    coalesce(reviewed_source->>'full_rootfs','false') NOT IN ('true','false') THEN
+  RAISE EXCEPTION 'frozen image source differs from reviewed workload intent' USING ERRCODE='23514';
+ END IF;
+ IF reviewed_source->>'full_rootfs'='true' THEN
+  IF NEW.full_rootfs_override IS DISTINCT FROM true THEN
+   RAISE EXCEPTION 'reviewed image requires full-rootfs opt-in' USING ERRCODE='23514';
+  END IF;
+ ELSIF NOT (NEW.environment_workload_runtime ? 'deployment_inputs') AND NEW.full_rootfs_override IS NOT NULL THEN
+  RAISE EXCEPTION 'image full-rootfs override is not reviewed' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_environment_workload_instance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11127,6 +11256,76 @@ $$;
 
 
 --
+-- Name: object_multipart_checksum_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_multipart_checksum_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  a text; t text; v text; p jsonb; n integer; item jsonb; i integer;
+BEGIN
+  IF jsonb_typeof(NEW.checksum_snapshot) <> 'object'
+     OR octet_length(NEW.checksum_snapshot::text) > 2097152
+     OR NEW.checksum_snapshot - ARRAY['algorithm','type','value','parts'] <> '{}' THEN
+    RAISE EXCEPTION 'invalid multipart checksum snapshot' USING ERRCODE='23514';
+  END IF;
+  IF TG_OP='UPDATE' THEN
+    IF (OLD.checksum_snapshot->>'algorithm',OLD.checksum_snapshot->>'type') IS DISTINCT FROM
+       (NEW.checksum_snapshot->>'algorithm',NEW.checksum_snapshot->>'type')
+       OR OLD.checksum_verified AND NOT NEW.checksum_verified
+       OR OLD.state IN ('completing','completing_conditional','completed','aborting','aborted')
+          AND OLD.checksum_snapshot <> NEW.checksum_snapshot THEN
+      RAISE EXCEPTION 'immutable multipart checksum intent' USING ERRCODE='23514';
+    END IF;
+  END IF;
+  IF NEW.checksum_snapshot='{}' THEN
+    IF NEW.checksum_verified THEN
+      RAISE EXCEPTION 'checksum verification requires an intent' USING ERRCODE='23514';
+    END IF;
+    RETURN NEW;
+  END IF;
+  a := NEW.checksum_snapshot->>'algorithm';
+  t := NEW.checksum_snapshot->>'type';
+  v := coalesce(NEW.checksum_snapshot->>'value','');
+  p := coalesce(NEW.checksum_snapshot->'parts','[]');
+  IF a IS NULL OR t IS NULL OR NOT (
+     a IN ('CRC32','CRC32C') AND t IN ('COMPOSITE','FULL_OBJECT') OR
+     a='CRC64NVME' AND t='FULL_OBJECT' OR
+     a IN ('SHA1','SHA256') AND t='COMPOSITE') OR jsonb_typeof(p)<>'array' THEN
+    RAISE EXCEPTION 'invalid multipart checksum policy' USING ERRCODE='23514';
+  END IF;
+  n := jsonb_array_length(p);
+  IF NEW.state IN ('initiating','active') OR TG_OP='INSERT' THEN
+    IF n<>0 OR v<>'' OR NEW.checksum_verified THEN
+      RAISE EXCEPTION 'initial multipart checksum has no completion proof' USING ERRCODE='23514';
+    END IF;
+  ELSIF NEW.state IN ('completing','completing_conditional','completed') THEN
+    IF n<1 OR n>10000 OR n<>jsonb_array_length(NEW.completion_parts)
+       OR v='' OR length(v)>128 THEN
+      RAISE EXCEPTION 'multipart checksum completion requires selected parts' USING ERRCODE='23514';
+    END IF;
+    FOR item, i IN SELECT value, ordinality::integer FROM jsonb_array_elements(p) WITH ORDINALITY LOOP
+      IF jsonb_typeof(item)<>'object' OR item - ARRAY['number','size','value']<>'{}'
+         OR (item->>'number')::integer IS DISTINCT FROM i
+         OR (NEW.completion_parts->(i-1)->>'part_number')::integer IS DISTINCT FROM i
+         OR (item->>'size')::bigint IS NULL OR (item->>'size')::bigint NOT BETWEEN 1 AND 5368709120
+         OR item->>'value' IS NULL OR length(item->>'value')>88
+         OR item->>'value' !~ '^[A-Za-z0-9+/]+={0,2}$' THEN
+        RAISE EXCEPTION 'invalid selected multipart checksum part' USING ERRCODE='23514';
+      END IF;
+    END LOOP;
+  END IF;
+  IF NEW.state='completed' AND NOT NEW.checksum_verified OR
+     NEW.checksum_verified AND NEW.state<>'completed' THEN
+    RAISE EXCEPTION 'multipart checksum result must be verified before settlement' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: object_url_issuer_live(uuid, uuid, uuid, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11293,6 +11492,8 @@ CREATE TABLE public.object_storage_multipart_uploads (
     protection_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
     protection_lease_token text DEFAULT ''::text NOT NULL,
     protection_verified boolean DEFAULT false NOT NULL,
+    checksum_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    checksum_verified boolean DEFAULT false NOT NULL,
     CONSTRAINT object_multipart_completion_conditions CHECK (((octet_length(completion_if_match) <= 256) AND (completion_if_match !~ '[[:cntrl:]]'::text) AND (completion_if_none_match = ANY (ARRAY[''::text, '*'::text])) AND ((completion_if_match = ''::text) OR (completion_if_none_match = ''::text)) AND ((state <> ALL (ARRAY['initiating'::text, 'active'::text, 'completing'::text])) OR ((completion_if_match = ''::text) AND (completion_if_none_match = ''::text))) AND ((state <> 'completing_conditional'::text) OR ((part_count = 0) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_completion_error CHECK (((completion_error_code = ANY (ARRAY[''::text, 'precondition_failed'::text, 'conditional_conflict'::text, 'conditional_not_found'::text])) AND ((completion_error_code = ''::text) OR ((state = ANY (ARRAY['aborting'::text, 'aborted'::text])) AND ((completion_if_match <> ''::text) OR (completion_if_none_match <> ''::text)))))),
     CONSTRAINT object_multipart_encryption_phase CHECK ((((encryption_lease_token = ''::text) OR ((encryption_snapshot <> '{}'::jsonb) AND (lease_token IS NOT NULL) AND (encryption_lease_token = lease_token))) AND ((NOT encryption_verified) OR ((encryption_snapshot <> '{}'::jsonb) AND (state = 'completed'::text) AND completion_dispatched)) AND ((encryption_snapshot = '{}'::jsonb) OR (state <> 'completed'::text) OR encryption_verified))),
@@ -11657,8 +11858,8 @@ CREATE FUNCTION public.protect_bound_multipart_journal() RETURNS trigger
     AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM object_bucket_mutations WHERE multipart_upload_id=OLD.id) AND (
-  (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) IS DISTINCT FROM
-  (to_jsonb(OLD)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified']) OR
+  (to_jsonb(NEW)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified','checksum_snapshot','checksum_verified']) IS DISTINCT FROM
+  (to_jsonb(OLD)-ARRAY['expires_at','provider_upload_id','size_bytes','part_count','part_revision','completion_parts','completion_if_match','completion_if_none_match','completion_error_code','completion_etag','completion_version_id','completion_recovery_cursor','completion_versions_observed','completion_dispatched','part_url_unsafe_until','lifecycle_scan_id','lifecycle_binding','state','lease_token','lease_until','attempt_count','retry_at','last_error_code','updated_at','encryption_lease_token','encryption_verified','protection_lease_token','protection_verified','checksum_snapshot','checksum_verified']) OR
   (NEW.expires_at>OLD.expires_at) OR
   (NEW.provider_upload_id IS DISTINCT FROM OLD.provider_upload_id AND NOT (OLD.state='initiating' AND OLD.provider_upload_id='' AND NEW.state='active' AND NEW.provider_upload_id<>'')) OR
   (OLD.completion_dispatched AND (NEW.size_bytes IS DISTINCT FROM OLD.size_bytes OR NEW.completion_parts IS DISTINCT FROM OLD.completion_parts OR NEW.completion_if_match IS DISTINCT FROM OLD.completion_if_match OR NEW.completion_if_none_match IS DISTINCT FROM OLD.completion_if_none_match))
@@ -46951,6 +47152,13 @@ CREATE TRIGGER guard_environment_workload_hold_state BEFORE INSERT OR UPDATE ON 
 
 
 --
+-- Name: deployments guard_environment_workload_image_full_rootfs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_workload_image_full_rootfs BEFORE INSERT ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_image_full_rootfs();
+
+
+--
 -- Name: instances guard_environment_workload_instance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -47788,6 +47996,13 @@ CREATE TRIGGER object_multipart_capacity_fence BEFORE INSERT ON public.object_st
 --
 
 CREATE TRIGGER object_multipart_capture_admission BEFORE INSERT ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.fence_object_upload_capture_admission();
+
+
+--
+-- Name: object_storage_multipart_uploads object_multipart_checksum_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_multipart_checksum_guard BEFORE INSERT OR UPDATE ON public.object_storage_multipart_uploads FOR EACH ROW EXECUTE FUNCTION public.object_multipart_checksum_guard();
 
 
 --

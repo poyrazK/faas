@@ -10388,3 +10388,10 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// Bounded S3 checksum snapshots and object-attribute wire metadata.
+const MaxObjectMultipartChecksumSnapshotBytes = 2 << 20
+const MaxObjectChecksumValueBytes = 128
+const MaxObjectAttributesHeaderBytes = 128
+const MaxObjectStorageClassBytes = 64
+const MaxObjectAttributesSelections = 5
