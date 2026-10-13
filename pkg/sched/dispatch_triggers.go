@@ -1293,8 +1293,10 @@ func (l *Loop) triggerBatchContext(ctx context.Context, appID string) (context.C
 		return ctx, func() {}
 	}
 	wait := triggerBatchDefaultWait
-	if timeout := appAsyncInvocationTimeout(ctx, l.engine.Store(), appID); timeout > api.AsyncInvocationTimeoutFloor {
-		wait = api.TriggerBatchDispatchTimeout(timeout) + api.AsyncInvocationLeaseMargin
+	if l.engine != nil {
+		if timeout := appAsyncInvocationTimeout(ctx, l.engine.Store(), appID); timeout > api.AsyncInvocationTimeoutFloor {
+			wait = api.TriggerBatchDispatchTimeout(timeout) + api.AsyncInvocationLeaseMargin
+		}
 	}
 	return context.WithTimeout(ctx, wait)
 }
