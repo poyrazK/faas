@@ -42,6 +42,7 @@ const (
 	Schedd_ReportLivenessFailed_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
 	Schedd_EnsureWake_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
 	Schedd_ReportWorkloadOOM_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
+	Schedd_ReportMemoryPressure_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -326,6 +327,13 @@ type ScheddClient interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportWorkloadOOM(ctx context.Context, in *ReportWorkloadOOMRequest, opts ...grpc.CallOption) (*ReportWorkloadOOMAck, error)
+	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
+	// memory-pressure report: MemAvailable fell to the pressure share of
+	// MemTotal while a profile collector was registered. schedd queues one
+	// automatic heap capture on that instance, rate limited per app, so the
+	// heap is captured before an OOM kill. Reports for instances this schedd
+	// does not own are ignored (queued=false). Additive per ADR-016.
+	ReportMemoryPressure(ctx context.Context, in *ReportMemoryPressureRequest, opts ...grpc.CallOption) (*ReportMemoryPressureAck, error)
 }
 
 type scheddClient struct {
@@ -491,6 +499,16 @@ func (c *scheddClient) ReportWorkloadOOM(ctx context.Context, in *ReportWorkload
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReportWorkloadOOMAck)
 	err := c.cc.Invoke(ctx, Schedd_ReportWorkloadOOM_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) ReportMemoryPressure(ctx context.Context, in *ReportMemoryPressureRequest, opts ...grpc.CallOption) (*ReportMemoryPressureAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportMemoryPressureAck)
+	err := c.cc.Invoke(ctx, Schedd_ReportMemoryPressure_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -779,6 +797,13 @@ type ScheddServer interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportWorkloadOOM(context.Context, *ReportWorkloadOOMRequest) (*ReportWorkloadOOMAck, error)
+	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
+	// memory-pressure report: MemAvailable fell to the pressure share of
+	// MemTotal while a profile collector was registered. schedd queues one
+	// automatic heap capture on that instance, rate limited per app, so the
+	// heap is captured before an OOM kill. Reports for instances this schedd
+	// does not own are ignored (queued=false). Additive per ADR-016.
+	ReportMemoryPressure(context.Context, *ReportMemoryPressureRequest) (*ReportMemoryPressureAck, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -830,6 +855,9 @@ func (UnimplementedScheddServer) EnsureWake(context.Context, *EnsureWakeRequest)
 }
 func (UnimplementedScheddServer) ReportWorkloadOOM(context.Context, *ReportWorkloadOOMRequest) (*ReportWorkloadOOMAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportWorkloadOOM not implemented")
+}
+func (UnimplementedScheddServer) ReportMemoryPressure(context.Context, *ReportMemoryPressureRequest) (*ReportMemoryPressureAck, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportMemoryPressure not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1079,6 +1107,24 @@ func _Schedd_ReportWorkloadOOM_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_ReportMemoryPressure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportMemoryPressureRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).ReportMemoryPressure(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_ReportMemoryPressure_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).ReportMemoryPressure(ctx, req.(*ReportMemoryPressureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1129,6 +1175,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportWorkloadOOM",
 			Handler:    _Schedd_ReportWorkloadOOM_Handler,
+		},
+		{
+			MethodName: "ReportMemoryPressure",
+			Handler:    _Schedd_ReportMemoryPressure_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

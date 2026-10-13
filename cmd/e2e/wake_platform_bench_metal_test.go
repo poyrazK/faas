@@ -68,7 +68,14 @@ func TestWakePlatformBenchMetal(t *testing.T) {
 	e2etest.OverrideBuilderBase(t, builderBaseRef)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake)
+	// FAAS_WAKE_PLATFORM_BENCH_ENV passes comma-separated KEY=VALUE daemon
+	// settings for A/B runs, e.g. FAAS_PROFILING_ON_DEMAND=1 (ADR-1155).
+	var benchEnv []string
+	if raw := strings.TrimSpace(os.Getenv("FAAS_WAKE_PLATFORM_BENCH_ENV")); raw != "" {
+		benchEnv = strings.Split(raw, ",")
+		t.Logf("platform wake benchmark daemon env: %v", benchEnv)
+	}
+	h := e2etest.Start(t, pool, e2etest.DeployWake, benchEnv...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)
 	img, _ := e2etest.HelloImageAboveBase("library/hello", helloBody)
 	ref := registry.AddImage("library/hello", img)

@@ -57,14 +57,14 @@ func TestParseFrameworkReadyDatagram(t *testing.T) {
 		{
 			name: "unknown type byte (closed-set guard)",
 			// Sidecar health extends the closed set to
-			// {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09}. Anything outside
+			// {0x01, ..., 0x09, 0x0A (memory pressure, ADR-1155)}. Anything outside
 			// the closed set is rejected with the
 			// "unknown msg sub-type" sentinel. A future event
-			// class picks the next free byte (0x0a+) and adds
+			// class picks the next free byte (0x0b+) and adds
 			// a dispatch arm in lockstep. This test pins the
 			// closed-set tripwire.
-			body: []byte{0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 'n'},
-			want: want{err: true, errSub: "unknown msg sub-type 0x0a"},
+			body: []byte{0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 'n'},
+			want: want{err: true, errSub: "unknown msg sub-type 0x0b"},
 		},
 		{
 			name: "type-only, no warmup, no runtime",

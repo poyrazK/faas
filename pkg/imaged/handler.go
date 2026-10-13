@@ -99,6 +99,9 @@ type Handler struct {
 	oci                    oci.Puller
 	builder                LayerBuilder
 	log                    *slog.Logger
+	// profilingOnDemand stamps dormant guest collectors into manifests for
+	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
+	profilingOnDemand bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -509,6 +512,21 @@ func (p *ociImageSignaturePuller) FetchSignature(ctx context.Context, ref, diges
 func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {
 	h.functionRunnerNode22Path = p
 	return h
+}
+
+// WithProfilingOnDemand enables dormant on-demand profile collectors in new
+// deployments (ADR-1155). Existing deployments gain them on their next deploy.
+func (h *Handler) WithProfilingOnDemand(enabled bool) *Handler {
+	h.profilingOnDemand = enabled
+	return h
+}
+
+// stampProfilingOnDemand marks the manifest when the account's plan includes
+// profiling. The control plane enforces the plan again at capture time.
+func (h *Handler) stampProfilingOnDemand(manifest api.AppManifest, acct state.Account) api.AppManifest {
+	limits, ok := api.LimitsFor(acct.Plan)
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
+	return manifest
 }
 
 // WithNodeName pins the handler to a compute node identity for split-box
@@ -2226,7 +2244,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfilingOnDemand(applyAppLifecycle(manifest, app), acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -2846,7 +2864,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfilingOnDemand(applyAppLifecycle(manifest, app), acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
