@@ -146,8 +146,10 @@ until, approver}`; history records `waiting` and `resumed` events. The declared
 approver decides with `POST /v1/apps/{slug}/operations/{id}/approvals/{step}`
 (account) or `POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}`
 (customer), sending `expected_generation`, `decision` (`approved` or `rejected`)
-and an optional comment. The decision and the deciding key or token are recorded
-as an `approval_decided` event. Repeating a decision is idempotent; a different
+and an optional comment, or run `gregale customer-operations approve OP_ID --app
+SLUG --expected-generation N --step STEP --decision approved` (`--self` with a
+customer token). The decision and the deciding key or token are recorded as an
+`approval_decided` event. Repeating a decision is idempotent; a different
 decision conflicts. Rejection settles the operation `failed` with
 `approval_rejected`; a passed approval timeout settles `approval_expired`. Waits
 never require reconciliation, and cancelling a waiting operation settles it
