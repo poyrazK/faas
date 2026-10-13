@@ -1,0 +1,3 @@
+# Page alerts with no promtool fixture that fires them. Empty since ADR-1236:
+# every page alert is fire-tested. Keep it that way; a new page alert ships
+# with a fixture under pkg/promqlrules/testdata/, not with a line here.

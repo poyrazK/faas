@@ -33,11 +33,11 @@ export type EventReplayBackfillItemResponse = {
    */
   attempt_history_url?: string;
   /**
-   * Retained workflow run admitted for this item
+   * Retained workflow run admitted for this item, when still present.
    */
   workflow_run_id?: string;
   /**
-   * Current state of the retained workflow run
+   * Current state of the retained workflow run, when still present.
    */
   workflow_run_status?: string;
 };

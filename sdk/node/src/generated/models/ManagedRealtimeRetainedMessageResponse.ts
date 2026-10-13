@@ -7,6 +7,14 @@
  */
 export type ManagedRealtimeRetainedMessageResponse = {
   /**
+   * Original server-assigned delivery deadline when TTL is set.
+   */
+  expires_at?: string;
+  /**
+   * Expired checkpoint entry; payload and metadata are suppressed.
+   */
+  expired?: boolean;
+  /**
    * Exact-match routing metadata persisted with this channel message.
    */
   metadata?: Record<string, string>;

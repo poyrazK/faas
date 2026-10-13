@@ -29,7 +29,6 @@ AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat
 AppendComputeNodeHeartbeatWithStats
-AppendDeploymentAudit
 AppendDeploymentLog
 AppendDeploymentStage
 AppendEventWithTrace
@@ -241,10 +240,7 @@ InstallationIDForRepo
 InstanceListByNodeForRecovery
 IsMailSuppressed
 JobConcurrentByAccount
-JobCountByAccount
-JobGetByID
 JobGetByName
-JobListByAccount
 JobRunIncrementDeadLetter
 JobRunListByAccount
 JobRunListByJob
@@ -279,7 +275,6 @@ ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
 ListAllEventsPaged
-ListAllInstances
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge
@@ -478,7 +473,6 @@ RecordGitHubBinding
 RecordMailSuppression
 RecordPaddleOverageMonth
 RecordRestart
-RecordScenarioTestChaosInjections
 RecordStripePushHour
 RecordUploadCommitOutcome
 RecordWebhookDelivery
@@ -512,7 +506,6 @@ RotateOrgAPIKeyWithProvenance
 RunningInstanceForApp
 SafedeployListPendingRollouts
 SafedeployStampRollout
-ScenarioTestChaosMatchEvidence
 ScheduleWorkflowRun
 SetAccountEgressAllowlistExtra
 SetAccountKeyGraceWindow

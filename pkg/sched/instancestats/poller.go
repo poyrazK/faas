@@ -120,6 +120,8 @@ type Poller struct {
 }
 
 // WithTelemetry switches the poller to the persistent node telemetry stream.
+// It takes effect only with WithOwnerNodeID: the stream exists only on the
+// multi-node path.
 func (p *Poller) WithTelemetry(cache *sched.NodeTelemetryCache) *Poller {
 	if p != nil {
 		p.Telemetry = cache
@@ -281,6 +283,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
 		p.publishMemoryShadow(instances, rows, started)
+		p.publishQuietPaused(rows, started)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -289,10 +292,13 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// Production uses the persistent vmmd→schedd capacity stream. The stream
 	// updates one complete batch per node; this local projection can continue at
 	// the existing 200 ms cadence without opening any per-node connections.
-	if p.Telemetry != nil {
+	// vmmd publishes that stream only when it has a node name, so a single-box
+	// schedd (no owner node) reads vmmd Stats directly. Projecting its empty
+	// cache would hide every in-flight request from the idle reaper.
+	if p.Telemetry != nil && p.OwnerNodeID != "" {
 		rows, rolled := p.decodeTelemetrySnapshot(
 			p.Telemetry.Snapshot(p.now()), instances, sidecarByDeploy)
-		if p.Metrics != nil && p.OwnerNodeID != "" && len(rows) < len(instances) {
+		if p.Metrics != nil && len(rows) < len(instances) {
 			reported := make(map[string]struct{}, len(rows))
 			for _, row := range rows {
 				reported[row.InstanceID] = struct{}{}
@@ -309,6 +315,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		}
 		p.Reader.Replace(rows)
 		p.publishMemoryShadow(instances, rows, started)
+		p.publishQuietPaused(rows, started)
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		if p.Metrics != nil {
@@ -327,6 +334,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
 	p.publishMemoryShadow(instances, rows, started)
+	p.publishQuietPaused(rows, started)
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
@@ -482,6 +490,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			NodeID:           cached.NodeID,
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
+			QuietPaused:      in.QuietPaused,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			// Preserve the vmmd report timestamp. Using the local
@@ -718,6 +727,7 @@ func (p *Poller) decodeStatsSnapshot(
 			NodeID:           node.ID,
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
+			QuietPaused:      in.QuietPaused,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			SampledAt:        now,

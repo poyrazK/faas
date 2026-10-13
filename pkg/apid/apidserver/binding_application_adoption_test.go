@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func adoptionPromotionFixture(t *testing.T) (testEnv, state.App, state.Deployment, state.Deployment, state.Instance) {
@@ -161,7 +162,7 @@ func TestApplicationAckPromotionRejectsServingOnlyAndPostCheckChanges(t *testing
 				}
 				recordBindingAdoption(t, e, app, servingInstance, state.SecretApplicationReloadAckApplied)
 			} else {
-				e.s.store = &changingBindingPromotionStore{MemStore: e.store, before: func() {
+				e.s.store = statetest.NewMem(&changingBindingPromotionStore{MemStore: e.store, before: func() {
 					switch change {
 					case "receipt":
 						recordBindingAdoption(t, e, app, instance, state.SecretApplicationReloadAckFailed)
@@ -179,7 +180,7 @@ func TestApplicationAckPromotionRejectsServingOnlyAndPostCheckChanges(t *testing
 							t.Fatal(err)
 						}
 					}
-				}}
+				}})
 			}
 			response := e.do(t, http.MethodPost, "/v1/deployments/"+candidate.ID+"/promote-with-application-ack", api.BindingPromotionRequest{}, nil)
 			code := "bindings_check_changed"
@@ -194,7 +195,7 @@ func TestApplicationAckPromotionRejectsServingOnlyAndPostCheckChanges(t *testing
 	}
 }
 
-type unavailableBindingAdoptionStore struct{ *state.MemStore }
+type unavailableBindingAdoptionStore struct{ MemStore *state.MemStore }
 
 func (s *unavailableBindingAdoptionStore) ReadBindingApplicationAdoption(context.Context, string, string, []state.BindingAdoptionSelector) ([]state.BindingApplicationAdoptionRow, error) {
 	return nil, errors.New("PRIVATE_PROVIDER_ERROR")
@@ -202,7 +203,7 @@ func (s *unavailableBindingAdoptionStore) ReadBindingApplicationAdoption(context
 
 func TestApplicationAdoptionUnavailableReadIsOptionalUntilRequired(t *testing.T) {
 	e, app, serving, candidate, _ := adoptionPromotionFixture(t)
-	e.s.store = &unavailableBindingAdoptionStore{MemStore: e.store}
+	e.s.store = statetest.NewMem(&unavailableBindingAdoptionStore{MemStore: e.store})
 	response := e.do(t, http.MethodPost, "/v1/deployments/"+candidate.ID+"/promote-with-application-ack", api.BindingPromotionRequest{}, nil)
 	if response.Code != 409 || !strings.Contains(response.Body.String(), "application_adoption_unknown") || strings.Contains(response.Body.String(), "PRIVATE_PROVIDER_ERROR") {
 		t.Fatalf("unavailable: %d %s", response.Code, response.Body.String())
@@ -217,8 +218,8 @@ func TestApplicationAdoptionUnavailableReadIsOptionalUntilRequired(t *testing.T)
 }
 
 type countingBindingAdoptionStore struct {
-	*state.MemStore
-	calls int
+	MemStore *state.MemStore
+	calls    int
 }
 
 func (s *countingBindingAdoptionStore) ReadBindingApplicationAdoption(ctx context.Context, accountID, appID string, selectors []state.BindingAdoptionSelector) ([]state.BindingApplicationAdoptionRow, error) {
@@ -229,7 +230,7 @@ func (s *countingBindingAdoptionStore) ReadBindingApplicationAdoption(ctx contex
 func TestApplicationAdoptionReadsOnlyAuthorizedCatalogSelectors(t *testing.T) {
 	e, app, _, candidate, _ := adoptionPromotionFixture(t)
 	counted := &countingBindingAdoptionStore{MemStore: e.store}
-	e.s.store = counted
+	e.s.store = statetest.NewMem(counted)
 	plain, hash, err := api.GenerateAPIKey()
 	if err != nil {
 		t.Fatal(err)

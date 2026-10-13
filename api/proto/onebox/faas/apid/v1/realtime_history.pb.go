@@ -163,6 +163,7 @@ type RetainedChannelMessage struct {
 	Binary            bool                   `protobuf:"varint,3,opt,name=binary,proto3" json:"binary,omitempty"`
 	CreatedAtUnixNano int64                  `protobuf:"varint,4,opt,name=created_at_unix_nano,json=createdAtUnixNano,proto3" json:"created_at_unix_nano,omitempty"`
 	MetadataJson      []byte                 `protobuf:"bytes,5,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	ExpiresAtUnixNano int64                  `protobuf:"varint,6,opt,name=expires_at_unix_nano,json=expiresAtUnixNano,proto3" json:"expires_at_unix_nano,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -230,6 +231,13 @@ func (x *RetainedChannelMessage) GetMetadataJson() []byte {
 		return x.MetadataJson
 	}
 	return nil
+}
+
+func (x *RetainedChannelMessage) GetExpiresAtUnixNano() int64 {
+	if x != nil {
+		return x.ExpiresAtUnixNano
+	}
+	return 0
 }
 
 type ReportChannelRouteRequest struct {
@@ -556,13 +564,14 @@ const file_onebox_faas_apid_v1_realtime_history_proto_rawDesc = "" +
 	"\bmessages\x18\x01 \x03(\v2+.onebox.faas.apid.v1.RetainedChannelMessageR\bmessages\x12'\n" +
 	"\x0foldest_sequence\x18\x02 \x01(\x03R\x0eoldestSequence\x12'\n" +
 	"\x0flatest_sequence\x18\x03 \x01(\x03R\x0elatestSequence\x12/\n" +
-	"\x13history_unavailable\x18\x04 \x01(\bR\x12historyUnavailable\"\xb6\x01\n" +
+	"\x13history_unavailable\x18\x04 \x01(\bR\x12historyUnavailable\"\xe7\x01\n" +
 	"\x16RetainedChannelMessage\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x03R\bsequence\x12\x12\n" +
 	"\x04data\x18\x02 \x01(\fR\x04data\x12\x16\n" +
 	"\x06binary\x18\x03 \x01(\bR\x06binary\x12/\n" +
 	"\x14created_at_unix_nano\x18\x04 \x01(\x03R\x11createdAtUnixNano\x12#\n" +
-	"\rmetadata_json\x18\x05 \x01(\fR\fmetadataJson\"\x93\x01\n" +
+	"\rmetadata_json\x18\x05 \x01(\fR\fmetadataJson\x12/\n" +
+	"\x14expires_at_unix_nano\x18\x06 \x01(\x03R\x11expiresAtUnixNano\"\x93\x01\n" +
 	"\x19ReportChannelRouteRequest\x12\x1f\n" +
 	"\vendpoint_id\x18\x01 \x01(\tR\n" +
 	"endpointId\x12\x18\n" +

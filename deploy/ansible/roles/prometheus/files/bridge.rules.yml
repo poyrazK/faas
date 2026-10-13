@@ -84,7 +84,7 @@ groups:
           ) > 0.1
         for: 4h
         labels:
-          severity: page
+          severity: warn
           component: vmmd
           family: bridge
         annotations:

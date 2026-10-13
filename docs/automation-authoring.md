@@ -823,6 +823,7 @@ Use `for_each` to apply one action to every item in a JSON array. The
   "for_each": {
     "items": "input.recipients",
     "max_parallel": 4,
+    "on_item_failure": "continue",
     "action": {
       "run": "send_receipt",
       "input": {
@@ -834,8 +835,7 @@ Use `for_each` to apply one action to every item in a JSON array. The
       "retry": { "max_attempts": 3, "backoff": "exponential" },
       "when": { "ref": "input.item.active", "op": "eq", "value": true }
     }
-  },
-  "on_item_failure": "continue"
+  }
 }
 ```
 

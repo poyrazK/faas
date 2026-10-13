@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "entrypoint": "server.mjs",
+  "handlers": [
+    {
+      "namespace": "counters",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "counter",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "counterContract"
+      }
+    },
+    {
+      "namespace": "reservations",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "reservation",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "reservationContract"
+      }
+    },
+    {
+      "namespace": "sessions",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "session",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "sessionContract"
+      }
+    },
+    {
+      "namespace": "rooms",
+      "schema_version": 1,
+      "module": "handlers.mjs",
+      "export": "room",
+      "client": {
+        "module": "contracts.mjs",
+        "export": "roomContract"
+      }
+    },
+    {
+      "namespace": "recoverable-rooms",
+      "schema_version": 2,
+      "module": "handlers.mjs",
+      "export": "recoverableRoom",
+      "client": {"module": "contracts.mjs", "export": "recoverableRoomContract"}
+    }
+  ],
+  "restore_validator": "gregale.validator.json"
+}

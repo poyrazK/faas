@@ -19,10 +19,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyroles"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type roleWorkerFailureStore struct {
-	*state.PgStore
+	PgStore    *state.PgStore
 	loseRecord bool
 }
 
@@ -105,12 +106,12 @@ func cloneRoleWorkerFixture(t *testing.T, configure ...func(*roleWorkerFixture))
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv.store = x.store
-	owner, err := x.store.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), x.f.lease, id)
+	f.srv.store = statetest.NewPg(x.store)
+	owner, err := x.store.PgStore.ProjectEnvironmentClonePostgresCopyTargetForLease(t.Context(), x.f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inventory, err := x.store.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), x.f.lease, id)
+	inventory, err := x.store.PgStore.ProjectEnvironmentClonePostgresInventoryForLease(t.Context(), x.f.lease, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func cloneRoleWorkerFixture(t *testing.T, configure ...func(*roleWorkerFixture))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = x.store.RecordProjectEnvironmentClonePostgresTargetSQLPins(t.Context(), x.f.lease, id, inventory.Sealed.Fingerprint, sealed); err != nil {
+	if _, _, err = x.store.PgStore.RecordProjectEnvironmentClonePostgresTargetSQLPins(t.Context(), x.f.lease, id, inventory.Sealed.Fingerprint, sealed); err != nil {
 		t.Fatal(err)
 	}
 	return x
@@ -184,7 +185,7 @@ func TestPGClonePostgresRoleWorkerRetainsPlanBeforeDDLAndRecoversOriginalKey(t *
 	if got, err := x.f.srv.projectEnvironmentClonePostgresRoles(t.Context(), x.f.lease, x.source); !errors.Is(err, managedpostgres.ErrUnavailable) || !got.SeededAt().IsZero() || x.p.targetSQLCalls != 1 || x.roleExists(t) {
 		t.Fatalf("lost plan reply authorized role DDL: %v", err)
 	}
-	original, err := x.store.ProjectEnvironmentClonePostgresRolePlanForLease(t.Context(), x.f.lease, x.source.source.ID)
+	original, err := x.store.PgStore.ProjectEnvironmentClonePostgresRolePlanForLease(t.Context(), x.f.lease, x.source.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,10 +199,10 @@ func TestPGClonePostgresRoleWorkerRetainsPlanBeforeDDLAndRecoversOriginalKey(t *
 		t.Fatalf("plan recovery required provider/current recipient: %v", err)
 	}
 	x.f.srv.managedPostgres = service
-	if err = x.store.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
+	if err = x.store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), x.f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	x.f.lease, err = x.store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	x.f.lease, err = x.store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +235,7 @@ func TestPGClonePostgresRoleWorkerRetainsPlanBeforeDDLAndRecoversOriginalKey(t *
 	if err != nil || !retry.SeededAt().Equal(r.SeededAt()) || x.p.targetSQLCalls != 3 {
 		t.Fatalf("exact role retry changed committed identity: %v", err)
 	}
-	retained, err := x.store.ProjectEnvironmentClonePostgresRolePlanForLease(t.Context(), x.f.lease, x.source.source.ID)
+	retained, err := x.store.PgStore.ProjectEnvironmentClonePostgresRolePlanForLease(t.Context(), x.f.lease, x.source.source.ID)
 	if err != nil || !sameClonePostgresRolePlan(retained, original) || !bytes.Equal(retained.Sealed.Ciphertext, original.Sealed.Ciphertext) {
 		t.Fatalf("role worker rebased durable input: %v", err)
 	}
@@ -287,7 +288,7 @@ func TestPGClonePostgresRoleWorkerRefusesUnreadablePlansAndBoundaryAuthorityDrif
 			case "stale", "phase", "owner":
 				x.beforeSQL = func(ctx context.Context) error {
 					if fault == "stale" {
-						return x.store.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0)
+						return x.store.PgStore.ReleaseProjectEnvironmentCloneLease(ctx, x.f.lease, 0)
 					}
 					query := "UPDATE project_environment_clone_operations SET status='compensating' WHERE id=$1"
 					id := x.f.lease.Operation.ID
@@ -344,7 +345,7 @@ func TestPGClonePostgresRoleWorkerRejectsUnopenableRecipientsAndTargetPostchecks
 			if err == nil || !got.SeededAt().IsZero() || x.p.targetSQLCalls != calls {
 				t.Fatalf("unqualified role plan capture: %v", err)
 			}
-			if _, err := x.store.ProjectEnvironmentClonePostgresRolePlanForLease(t.Context(), x.f.lease, x.source.source.ID); !errors.Is(err, state.ErrNotFound) {
+			if _, err := x.store.PgStore.ProjectEnvironmentClonePostgresRolePlanForLease(t.Context(), x.f.lease, x.source.source.ID); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("failed plan capture retained ownership: %v", err)
 			}
 			x.assertPrivate(t)

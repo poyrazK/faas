@@ -79,6 +79,22 @@ func nativeImageFDPath(file *os.File) string {
 	return "/proc/self/fd/" + strconv.FormatUint(uint64(file.Fd()), 10)
 }
 
+// A bind mount can have the same st_dev as its source while linkat still
+// returns EXDEV. Decide before publishing the reference's durable Link mode;
+// an uncertain mount identity takes the bind-mount path.
+func nativeImagesShareMount(source, root *os.File) bool {
+	var sourceStat, rootStat unix.Statx_t
+	flags := unix.AT_EMPTY_PATH | unix.AT_NO_AUTOMOUNT
+	if err := unix.Statx(int(source.Fd()), "", flags, unix.STATX_MNT_ID, &sourceStat); err != nil {
+		return false
+	}
+	if err := unix.Statx(int(root.Fd()), "", flags, unix.STATX_MNT_ID, &rootStat); err != nil {
+		return false
+	}
+	return sourceStat.Mask&unix.STATX_MNT_ID != 0 && rootStat.Mask&unix.STATX_MNT_ID != 0 &&
+		sourceStat.Mnt_id != 0 && sourceStat.Mnt_id == rootStat.Mnt_id
+}
+
 func checkNativeImageRoot(root string, owner nativeLaunchRecord) error {
 	marker := filepath.Join(root, nativeImageRootMarker)
 	recorded, err := readNativeLaunchRecord(marker, owner.Lease.Instance)
@@ -107,7 +123,7 @@ func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source,
 	if !filepath.IsAbs(source) || filepath.Clean(source) != source {
 		return nil, errors.New("native image source: image placement differs from the original jail")
 	}
-	rootFile, rootStat, err := b.prepareRoot(owner, root, name)
+	rootFile, _, err := b.prepareRoot(owner, root, name)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +144,7 @@ func (b linuxNativeImageSources) Prepare(owner nativeLaunchRecord, root, source,
 	if err != nil {
 		return nil, errors.Join(err, input.Close())
 	}
-	return &linuxNativeImagePreparation{source: input, root: rootFile, identity: identity, namespace: namespace, link: preferLink && uint64(rootStat.Dev) == identity.Device, owner: owner}, nil
+	return &linuxNativeImagePreparation{source: input, root: rootFile, identity: identity, namespace: namespace, link: preferLink && nativeImagesShareMount(input, rootFile), owner: owner}, nil
 }
 
 func nativeImageRootPlacement(base string, owner nativeLaunchRecord, root, name string) error {

@@ -30,6 +30,8 @@ var ErrManagedRealtimeDurableCursorExpired = errors.New("state: managed realtime
 // Sequence is scoped to endpoint and channel; it is never a connection ID or
 // the inbound callback sequence used by realtimed.
 type ManagedRealtimeChannelMessage struct {
+	TTLSeconds              int               `json:"ttl_seconds,omitempty"`
+	ExpiresAt               *time.Time        `json:"expires_at,omitempty"`
 	Metadata                map[string]string `json:"metadata,omitempty"`
 	TargetMessageID         string
 	Version                 int64

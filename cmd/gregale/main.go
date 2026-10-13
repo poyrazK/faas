@@ -534,6 +534,10 @@ func run(args []string) (status int) {
 	case "run":
 		// ADR-171: execute untrusted source in a fresh, networkless
 		// disposable microVM and tear it down after the terminal result.
+		// ADR-1161: --image runs one command from an OCI image instead.
+		if runImageRequested(args[1:]) {
+			return cmdRunImage(args[1:])
+		}
 		return cmdRun(args[1:])
 	case "runs":
 		// ADR-171 lifecycle reads/cancellation for disposable runs.
@@ -542,6 +546,8 @@ func run(args []string) (status int) {
 		// Tier C: per-account invocation ledger (issue #394 follow-up).
 		// Mirrors `audit-events` for dispatcher shape.
 		return cmdInvocations(args[1:])
+	case "entities":
+		return cmdEntities(args[1:])
 	case "customer-operations":
 		return cmdCustomerOperations(args[1:])
 	case "operations":

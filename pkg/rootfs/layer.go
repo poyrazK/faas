@@ -100,6 +100,46 @@ type layerApplyOptions struct {
 	resolver               Resolver
 	preserveWhiteouts      bool
 	skipRuntimeMountpoints bool
+	// budget is shared by every layer of one build; nil means unbounded.
+	// Customer image builds (Build, BuildFullRootfs) always pass one.
+	budget *extractionBudget
+}
+
+// extractionBudget bounds the regular-file bytes a build writes while
+// applying image layers, so a small compressed layer cannot fill the build
+// disk before the final size check runs.
+type extractionBudget struct {
+	limit int64
+	used  int64
+}
+
+// newExtractionBudget fails closed: a non-positive limit admits no bytes.
+func newExtractionBudget(limit int64) *extractionBudget {
+	return &extractionBudget{limit: limit}
+}
+
+func (b *extractionBudget) charge(n int64) error {
+	if b == nil {
+		return nil
+	}
+	if n < 0 || n > b.limit-b.used {
+		return &ErrLayerExtractionExceedsBudget{UsedBytes: b.used, EntryBytes: n, LimitBytes: b.limit}
+	}
+	b.used += n
+	return nil
+}
+
+// ErrLayerExtractionExceedsBudget reports that applying image layers would
+// write more than the build's extraction budget.
+type ErrLayerExtractionExceedsBudget struct {
+	UsedBytes  int64
+	EntryBytes int64
+	LimitBytes int64
+}
+
+func (e *ErrLayerExtractionExceedsBudget) Error() string {
+	return fmt.Sprintf("rootfs: image layers exceed the extraction budget: %d bytes written, %d declared in next entry, %d budget",
+		e.UsedBytes, e.EntryBytes, e.LimitBytes)
 }
 
 func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
@@ -185,7 +225,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 					return fmt.Errorf("rootfs: clear replacement whiteout %s: %w", marker, err)
 				}
 			}
-			if err := applyEntry(dst, target, hdr, tr, opts.resolver); err != nil {
+			if err := applyEntryWithBudget(dst, target, hdr, tr, opts.resolver, opts.budget); err != nil {
 				return err
 			}
 			continue
@@ -206,6 +246,10 @@ func ApplyLayerGzWithResolver(dst string, r io.Reader, res Resolver) error {
 	return applyLayerGz(dst, r, layerApplyOptions{resolver: res})
 }
 
+func applyLayerGzWithResolverBudget(dst string, r io.Reader, res Resolver, budget *extractionBudget) error {
+	return applyLayerGz(dst, r, layerApplyOptions{resolver: res, budget: budget})
+}
+
 // ApplyLayerGzWithOverlayWhiteouts is the gzip-compressed counterpart to
 // ApplyLayerWithOverlayWhiteouts.
 func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {
@@ -216,10 +260,11 @@ func ApplyLayerGzWithOverlayWhiteouts(dst string, r io.Reader) error {
 // artifact. The shared base and guest-init provide /dev, /proc, /sys, and
 // /tmp, so retaining image-owned entries at those paths is both unnecessary
 // and unsafe when one of them is mounted in the staging namespace.
-func applyLayerGzForApp(dst string, r io.Reader) error {
+func applyLayerGzForApp(dst string, r io.Reader, budget *extractionBudget) error {
 	return applyLayerGz(dst, r, layerApplyOptions{
 		preserveWhiteouts:      true,
 		skipRuntimeMountpoints: true,
+		budget:                 budget,
 	})
 }
 
@@ -229,7 +274,26 @@ func applyLayerGz(dst string, r io.Reader, opts layerApplyOptions) error {
 		return fmt.Errorf("rootfs: gzip: %w", err)
 	}
 	defer func() { _ = zr.Close() }()
-	return applyLayer(dst, tar.NewReader(zr), opts)
+	if err := applyLayer(dst, tar.NewReader(zr), opts); err != nil {
+		return err
+	}
+	return drainLayer(zr, r)
+}
+
+// drainLayer reads the rest of a layer after its tar end-of-archive marker.
+// A registry blob reader checks the blob digest only when it reaches EOF, so
+// stopping at the tar trailer would apply a layer whose bytes were never
+// verified. Reading the gzip stream to its end also checks the gzip CRC.
+// Bytes after the final gzip member are tolerated, as before, but still read
+// so they count toward the digest.
+func drainLayer(zr *gzip.Reader, r io.Reader) error {
+	if _, err := io.Copy(io.Discard, zr); err != nil && !errors.Is(err, gzip.ErrHeader) {
+		return fmt.Errorf("rootfs: read layer: %w", err)
+	}
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return fmt.Errorf("rootfs: read layer: %w", err)
+	}
+	return nil
 }
 
 const (
@@ -254,8 +318,20 @@ func isRuntimeMountpointPath(name string) bool {
 }
 
 func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver) error {
+	return applyEntryWithBudget(base, target, hdr, tr, res, nil)
+}
+
+// applyEntryWithBudget charges regular-file bytes to budget before writing
+// them; a nil budget is unbounded.
+func applyEntryWithBudget(base, target string, hdr *tar.Header, tr io.Reader, res Resolver, budget *extractionBudget) error {
 	switch hdr.Typeflag {
 	case tar.TypeDir:
+		// A directory entry replaces any non-directory at its path, as the
+		// other entry types do. An existing symlink in particular must not be
+		// followed: its target is guest-side data and can name a host path.
+		if err := removeNonDirectory(target); err != nil {
+			return err
+		}
 		if err := mkdirImageDirectories(target, 0o755); err != nil {
 			return err
 		}
@@ -264,6 +340,9 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		}
 		return preserveOwnershipWithResolver(target, hdr, res)
 	case tar.TypeReg:
+		if err := budget.charge(hdr.Size); err != nil {
+			return err
+		}
 		if err := mkdirImageDirectories(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
@@ -357,6 +436,23 @@ func applyEntry(base, target string, hdr *tar.Header, tr io.Reader, res Resolver
 		recordLayerEntrySkipped()
 		return nil
 	}
+}
+
+func removeNonDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("rootfs: inspect existing entry %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("rootfs: replace entry %s with a directory: %w", path, err)
+	}
+	return nil
 }
 
 // preserveOwnershipWithResolver is the Resolver-aware sibling of

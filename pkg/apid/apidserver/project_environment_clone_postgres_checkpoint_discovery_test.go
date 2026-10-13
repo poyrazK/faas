@@ -47,15 +47,15 @@ func TestPGClonePostgresCheckpointDiscoveryRetainsOriginalAcrossLostReplyAndHand
 	if !errors.Is(err, managedpostgres.ErrUnavailable) || !reflect.DeepEqual(actual, checkpointselection.Selection{}) || provider.discoveries != 1 || provider.deadlineMissing {
 		t.Fatalf("lost committed discovery: calls=%d err=%v", provider.discoveries, err)
 	}
-	original, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+	original, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stale := f.lease
-	if err := store.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
+	if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(t.Context(), f.lease, 0); err != nil {
 		t.Fatal(err)
 	}
-	f.lease, err = store.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
+	f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(t.Context(), uuid.NewString(), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestPGClonePostgresCheckpointDiscoveryRetainsOriginalAcrossLostReplyAndHand
 	if err != nil || request.OwnerToken != f.lease.Operation.ID || !slices.Equal(request.DatabaseNames, []string{"source_private_alpha", "source_private_beta"}) {
 		t.Fatalf("original native intent changed: %v", err)
 	}
-	recovered, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
+	recovered, err := store.PgStore.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(t.Context(), f.lease, plan.source.ID)
 	if err != nil || !bytes.Equal(original.Sealed.Ciphertext, recovered.Sealed.Ciphertext) || original.Sealed.Fingerprint != recovered.Sealed.Fingerprint || !original.RetainedAt.Equal(recovered.RetainedAt) {
 		t.Fatalf("handoff replaced original receipt: %v", err)
 	}
@@ -106,11 +106,11 @@ func TestPGClonePostgresCheckpointDiscoveryFencesAdmissionAndPostReadDrift(t *te
 					case "cancel":
 						cancel()
 					case "handoff":
-						if err := store.ReleaseProjectEnvironmentCloneLease(readCtx, f.lease, 0); err != nil {
+						if err := store.PgStore.ReleaseProjectEnvironmentCloneLease(readCtx, f.lease, 0); err != nil {
 							return err
 						}
 						var err error
-						f.lease, err = store.ClaimNextProjectEnvironmentClone(readCtx, uuid.NewString(), time.Minute)
+						f.lease, err = store.PgStore.ClaimNextProjectEnvironmentClone(readCtx, uuid.NewString(), time.Minute)
 						return err
 					case "placement":
 						_, err := f.pool.Exec(readCtx, "update managed_postgres_databases set postgres_major=postgres_major+1 where id=$1", plan.source.ID)

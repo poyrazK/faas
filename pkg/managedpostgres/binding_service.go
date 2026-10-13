@@ -114,7 +114,7 @@ func (s *BindingService) Create(ctx context.Context, request CreateBindingReques
 // deleted during rollback.
 func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBindingRequest) (Binding, bool, error) {
 	if !s.provisioningEnabled() {
-		return Binding{}, false, ErrUnavailable
+		return Binding{}, false, ErrProvisioningClosed
 	}
 	if request.AccountID == "" || request.DatabaseID == "" || request.AppID == "" ||
 		!validBindingScope(request.Scope) || !validEnvironmentKey(request.EnvironmentKey) ||
@@ -122,7 +122,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 		return Binding{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
-		return Binding{}, false, ErrUnavailable
+		return Binding{}, false, ErrProvisioningClosed
 	}
 	database, err := customerDatabase(ctx, s.databases, request.AccountID, request.DatabaseID)
 	if err != nil {
@@ -184,7 +184,7 @@ func (s *BindingService) CreateWithResult(ctx context.Context, request CreateBin
 // and generation rather than creating another credential.
 func (s *BindingService) Rotate(ctx context.Context, accountID, bindingID string) (Binding, error) {
 	if !s.provisioningEnabled() || !s.provisioningAllowed(ctx, accountID) {
-		return Binding{}, ErrUnavailable
+		return Binding{}, ErrProvisioningClosed
 	}
 	binding, err := s.Get(ctx, accountID, bindingID)
 	if err != nil {

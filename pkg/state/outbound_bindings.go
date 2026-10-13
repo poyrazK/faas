@@ -39,6 +39,20 @@ type OutboundIntegrationOffer struct {
 	AIMonthlyCostLimit   *int64
 	// AIRequestLogEnabled records per-call metadata (ADR-991).
 	AIRequestLogEnabled bool
+	// Per-end-user UTC-day limits (ADR-994).
+	AIUserDailyTokenLimit *int64
+	AIUserDailyCostLimit  *int64
+	// AIRequestLogContent also captures logged calls' bodies (ADR-996).
+	AIRequestLogContent bool
+	// AIContentPolicy is the integration's content guardrails (ADR-997).
+	AIContentPolicy api.OutboundAIContentPolicy
+}
+
+// OutboundAIContentPolicyStore owns an integration's content guardrails
+// (ADR-997). It is separate from OutboundAIStore so existing
+// implementations do not change.
+type OutboundAIContentPolicyStore interface {
+	SetOutboundAIContentPolicy(ctx context.Context, accountID, integrationID string, policy api.OutboundAIContentPolicy) error
 }
 
 // OutboundAIUsageItem is one UTC-day AI usage rollup written by outboundd
@@ -54,6 +68,10 @@ type OutboundAIUsageItem struct {
 	CacheWriteTokens     int64
 	OutputTokens         int64
 	CostMillicents       int64
+	// Media usage (ADR-997).
+	Images       int64
+	AudioSeconds int64
+	Characters   int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.
@@ -82,12 +100,20 @@ type OutboundAIPolicy struct {
 	DailyCostLimit    *int64
 	MonthlyCostLimit  *int64
 	RequestLogEnabled bool
+	// UserDailyTokenLimit and UserDailyCostLimit cap each end user named by
+	// X-Gregale-AI-User per UTC day (ADR-994).
+	UserDailyTokenLimit *int64
+	UserDailyCostLimit  *int64
+	// RequestLogContent also captures logged calls' bodies; it requires
+	// the request log (ADR-996).
+	RequestLogContent bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
 	return api.ValidOutboundAIPolicy(p.Provider, p.DailyTokenLimit) &&
 		api.ValidOutboundAICostLimits(p.Provider, p.DailyCostLimit, p.MonthlyCostLimit) &&
-		(!p.RequestLogEnabled || p.Provider != "")
+		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
+		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled)
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

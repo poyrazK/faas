@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // Any provider call panics through the nil embedded interface.
@@ -28,7 +29,7 @@ func (diagnosticsNoProvider) Capabilities() managedpostgres.Capabilities {
 }
 
 type diagnosticsAccountStore struct {
-	state.Store
+	Store   state.Store
 	target  state.Account
 	lookups int
 }
@@ -58,7 +59,7 @@ func TestManagedPostgresAccountingDiagnosticsRoute(t *testing.T) {
 	target := (*e.Acct())
 	target.ID = uuid.NewString()
 	catalog := &diagnosticsAccountStore{Store: (*e.Store()), target: target}
-	(*(*e.S()).Store()) = catalog
+	(*(*e.S()).Store()) = statetest.NewStore(catalog)
 	path := "/v1/admin/managed-postgres/accounting/" + target.ID
 	if rec := e.Do(t, http.MethodGet, path, nil, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("nonoperator: %d %s", rec.Code, rec.Body)

@@ -21,7 +21,7 @@ func (s *PgStore) WorkflowCoordinationTimeline(ctx context.Context, account, ten
 	return workflowCoordinationTimeline(ctx, s, account, tenant, opts, operator)
 }
 
-func workflowCoordinationTimeline(ctx context.Context, store readinessSubscriptionBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool) (api.OperationWorkflowCoordinationTimeline, error) {
+func workflowCoordinationTimeline(ctx context.Context, store readinessSubscriptionBackend, account, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool, collectors ...func(api.OperationWorkflowReadinessSubscription, api.OperationWorkflowReadinessNotification)) (api.OperationWorkflowCoordinationTimeline, error) {
 	out := api.OperationWorkflowCoordinationTimeline{Items: []api.OperationWorkflowCoordinationTimelineEvent{}, Sources: []api.OperationWorkflowCoordinationTimelineSource{}, RetentionLimited: true, Subject: api.OperationSubject{Type: opts.SubjectType, ID: opts.SubjectID}, Workflow: opts.Workflow, InstanceID: opts.InstanceID, Scope: opts.Scope, Limitations: []string{
 		"Inbox events project retained subscription notifications; deleted subscriptions, pruned notifications and unattributed failures are not reconstructed. Durable playbook reviews have separate bounded retention.",
 		"Coordination snapshots retain the latest edit, not every past schedule, owner or note. Assignment histories are bounded and first acknowledgment actors may be unavailable.",
@@ -80,11 +80,22 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 			if err = ctx.Err(); err != nil {
 				return out, err
 			}
-			b := readinessNotificationBaseline(n)
-			if b == nil || b.Subject != out.Subject || b.Workflow != opts.Workflow || b.InstanceID != opts.InstanceID {
-				continue
+			for _, collect := range collectors {
+				collect(subscription, n)
 			}
-			evidenceTenant := b.PlatformTenantID
+			b := readinessNotificationBaseline(n)
+			evidenceTenant := ""
+			if event := n.PlaybookEvidence; event != nil {
+				if event.Subject != out.Subject || event.Workflow != opts.Workflow || event.InstanceID != opts.InstanceID {
+					continue
+				}
+				evidenceTenant = event.PlatformTenantID
+			} else {
+				if b == nil || b.Subject != out.Subject || b.Workflow != opts.Workflow || b.InstanceID != opts.InstanceID {
+					continue
+				}
+				evidenceTenant = b.PlatformTenantID
+			}
 			if operator && evidenceTenant == "" {
 				evidenceTenant = subscription.TenantID
 			}
@@ -134,7 +145,11 @@ func workflowCoordinationTimeline(ctx context.Context, store readinessSubscripti
 				for _, e := range change.Item.Evidence {
 					ids = append(ids, e.OperationID)
 				}
-				out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/" + fmt.Sprint(change.Revision), PlaybookProgressID: p.ID, At: change.At, Kind: "playbook_item_reviewed", Summary: change.Item.Label, Actor: change.Actor, Status: change.Item.Status, Note: change.Item.Note, ReportingOperationIDs: ids})
+				kind, summary := "playbook_item_reviewed", change.Item.Label
+				if change.OutcomeCode != "" {
+					kind, summary = "playbook_outcome_step_reviewed", change.OutcomeCode+": "+change.Item.Label
+				}
+				out.Items = append(out.Items, api.OperationWorkflowCoordinationTimelineEvent{ID: p.ID + "/" + fmt.Sprint(change.Revision), PlaybookProgressID: p.ID, At: change.At, Kind: kind, Summary: summary, Actor: change.Actor, Status: change.Item.Status, Note: change.Item.Note, ReportedOutcomeCode: change.OutcomeCode, ReportingOperationIDs: ids})
 			}
 		}
 		out.Limitations = append(out.Limitations, "Pinned playbook starts and bounded review changes are included independently of inbox retention. Checklist completion is human coordination, not business success.")

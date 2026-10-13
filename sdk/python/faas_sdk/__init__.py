@@ -26,6 +26,8 @@ Public surface:
   responses on opt-in pre-auth routes.
 * Runtime flags client, ASGI middleware and HTTPX transport for Python apps.
 * `GregaleOperations` and Customer Operation transaction support for async HTTP handlers.
+* `ai_gateway_url`, `ai_gateway_headers`, `opaque_ai_user_id` - AI gateway
+  relay URLs and end-user / session headers for app calls.
 """
 
 from ._rfc7807 import (
@@ -44,8 +46,17 @@ from ._rfc7807 import (
 from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
+from .ai_gateway import (
+    AI_SESSION_HEADER,
+    AI_USER_HEADER,
+    AIGatewayError,
+    ai_gateway_headers,
+    ai_gateway_url,
+    is_valid_ai_user_id,
+    opaque_ai_user_id,
+)
 from .client import AuthenticatedClient, Client
-from .commit import CommitEventRouting, insert_commit_event
+from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
@@ -131,6 +142,13 @@ from .webhook import (
 __version__ = "0.1.0"
 
 __all__ = (
+    "AI_SESSION_HEADER",
+    "AI_USER_HEADER",
+    "AIGatewayError",
+    "ai_gateway_headers",
+    "ai_gateway_url",
+    "is_valid_ai_user_id",
+    "opaque_ai_user_id",
     "IssueReporter",
     "FaaSClient",
     "FaaSClientOptions",
@@ -200,6 +218,7 @@ __all__ = (
     "current_dev_bridge_context",
     "with_dev_bridge_context",
     "insert_commit_event",
+    "ainsert_commit_event",
     "CommitEventRouting",
     "CustomerOperationRequest",
     "customer_operation_request_from_headers",
@@ -233,32 +252,321 @@ __all__ = (
     "OperationHTTPError",
 )
 
-from .models.operation_workflow_blocker import OperationWorkflowBlocker
-
-from .models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
-
-from .models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
-
 from .models.operation_workflow_attention_group import OperationWorkflowAttentionGroup
-
+from .models.operation_workflow_attention_stats import OperationWorkflowAttentionStats
 from .models.operation_workflow_attention_summary import OperationWorkflowAttentionSummary
+from .models.operation_workflow_blocker import OperationWorkflowBlocker
+from .models.operation_workflow_blocker_resolution import OperationWorkflowBlockerResolution
 
 __all__ += ("OperationWorkflowAttentionStats", "OperationWorkflowAttentionGroup", "OperationWorkflowAttentionSummary")
 
 from .models.operation_workflow_outcome_entry import OperationWorkflowOutcomeEntry
+
 __all__ += ("OperationWorkflowOutcomeEntry",)
 
 from .models.operation_workflow_outcomes_response import OperationWorkflowOutcomesResponse
+
 __all__ += ("OperationWorkflowOutcomesResponse",)
 
 from .models.operation_workflow_outcome_group import OperationWorkflowOutcomeGroup
+
 __all__ += ("OperationWorkflowOutcomeGroup",)
 
 from .models.operation_workflow_outcome_summary import OperationWorkflowOutcomeSummary
+
 __all__ += ("OperationWorkflowOutcomeSummary",)
 
 from .models.operation_workflow_dependency import OperationWorkflowDependency
+
 __all__ += ("OperationWorkflowDependency",)
 
 from .models.operation_workflow_related_instance import OperationWorkflowRelatedInstance
+
 __all__ += ("OperationWorkflowRelatedInstance",)
+
+
+from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
+from .realtime_direct_messages import RealtimeDirectMessage, RealtimeWebSocketDirectMessages
+from .realtime_drain import RealtimeDrainResult
+from .realtime_expiry import RealtimeExpiryDiagnostics, RealtimeExpiryStatus, RealtimeMessageExpiry
+from .realtime_sse import RealtimeSSEClient, RealtimeSSEMessage
+from .realtime_transport import RealtimeFallbackClient, RealtimeTransportStatus
+
+__all__ += (
+    "RealtimeDrainResult",
+    "RealtimeBackpressureMonitor",
+    "RealtimeBackpressureStatus",
+    "RealtimeProcessingStatus",
+    "RealtimeExpiryDiagnostics",
+    "RealtimeExpiryStatus",
+    "RealtimeMessageExpiry",
+    "RealtimeSSEClient",
+    "RealtimeSSEMessage",
+    "RealtimeFallbackClient",
+    "RealtimeTransportStatus",
+    "RealtimeDirectMessage", "RealtimeWebSocketDirectMessages")
+
+
+from .realtime_websocket_reads import RealtimeWebSocketReadProgress
+
+__all__ += ("RealtimeWebSocketReadProgress",)
+
+
+from .realtime_filters import RealtimeEventFilter
+
+__all__ += ("RealtimeEventFilter",)
+
+
+from .realtime_websocket_presence import RealtimeWebSocketPresence, RealtimeWebSocketSignal
+
+__all__ += ("RealtimeWebSocketPresence", "RealtimeWebSocketSignal")
+
+
+from .realtime_channels import RealtimeChannelSubscription, RealtimeMultiChannelClient
+
+__all__ += ("RealtimeChannelSubscription", "RealtimeMultiChannelClient")
+
+
+from .realtime_websocket import RealtimeWebSocketClient, RealtimeWebSocketMessage, RealtimeWebSocketSession
+
+__all__ += ("RealtimeWebSocketClient", "RealtimeWebSocketMessage", "RealtimeWebSocketSession")
+
+
+from .realtime_recovery import (
+    RealtimeRecoveryCoordinator,
+    RealtimeRecoveryError,
+    RealtimeRecoveryEvent,
+    RealtimeRecoveryRetry,
+    RealtimeRecoverySession,
+    RealtimeRecoveryTarget,
+)
+
+__all__ += (
+    "RealtimeRecoveryCoordinator",
+    "RealtimeRecoveryError",
+    "RealtimeRecoveryEvent",
+    "RealtimeRecoveryRetry",
+    "RealtimeRecoverySession",
+    "RealtimeRecoveryTarget",
+)
+
+
+from .realtime_timeline import RealtimeIncidentEvent, RealtimeIncidentTimeline
+
+__all__ += ("RealtimeIncidentEvent", "RealtimeIncidentTimeline")
+
+
+from .realtime_diagnostics import export_realtime_diagnostics
+
+__all__ += ("export_realtime_diagnostics",)
+
+
+from .realtime_readiness import (
+    RealtimeCatchUpRequirement,
+    RealtimeReadinessError,
+    RealtimeReadinessResult,
+    wait_realtime_ready,
+)
+
+__all__ += (
+    "RealtimeCatchUpRequirement",
+    "RealtimeReadinessError",
+    "RealtimeReadinessResult",
+    "wait_realtime_ready",
+)
+
+
+from .realtime_subscriptions import (
+    RealtimeSubscriptionStatus,
+    RealtimeSubscriptionSummary,
+    RealtimeSubscriptionTracker,
+    RealtimeSubscriptionWaitError,
+)
+
+__all__ += (
+    "RealtimeSubscriptionStatus",
+    "RealtimeSubscriptionSummary",
+    "RealtimeSubscriptionTracker",
+    "RealtimeSubscriptionWaitError",
+)
+
+
+from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
+
+__all__ += ("RealtimeCatchUpStatus", "RealtimeCatchUpTracker", "RealtimeCatchUpWaitError")
+
+
+from .realtime_health import RealtimeHealthSummary, summarize_realtime_health
+
+__all__ += ("RealtimeHealthSummary", "summarize_realtime_health")
+
+
+from .realtime_connection_status import (
+    RealtimeConnectionQuality,
+    RealtimeConnectionQualityTracker,
+    RealtimeConnectionStatus,
+    RealtimeConnectionStatusTracker,
+)
+
+__all__ += (
+    "RealtimeConnectionStatus",
+    "RealtimeConnectionStatusTracker",
+    "RealtimeConnectionQuality",
+    "RealtimeConnectionQualityTracker",
+)
+
+
+from .realtime_read_refresh import RealtimeReadRefreshCoordinator, RealtimeReadRefreshError
+
+__all__ += ("RealtimeReadRefreshCoordinator", "RealtimeReadRefreshError")
+
+
+from .realtime_read_publisher import (
+    RealtimeReadProgressPublisher,
+    RealtimeReadPublishError,
+    create_managed_realtime_read_publisher,
+)
+
+__all__ += (
+    "RealtimeReadProgressPublisher",
+    "RealtimeReadPublishError",
+    "create_managed_realtime_read_publisher",
+)
+
+
+from .realtime_read_progress import (
+    RealtimeReadProgress,
+    RealtimeReadProgressFreshness,
+    RealtimeReadProgressTracker,
+    RealtimeUnreadBadge,
+    RealtimeUnreadSummary,
+    format_realtime_unread_badge,
+    summarize_realtime_unread,
+)
+
+__all__ += (
+    "RealtimeReadProgress",
+    "RealtimeReadProgressTracker",
+    "RealtimeReadProgressFreshness",
+    "RealtimeUnreadSummary",
+    "RealtimeUnreadBadge",
+    "format_realtime_unread_badge",
+    "summarize_realtime_unread",
+)
+
+
+from .realtime_scopes import (
+    REALTIME_ACTIVITY_SCOPE_PREFIX,
+    parse_realtime_activity_scope,
+    realtime_activity_scope_channel,
+)
+
+__all__ += (
+    "REALTIME_ACTIVITY_SCOPE_PREFIX",
+    "parse_realtime_activity_scope",
+    "realtime_activity_scope_channel",
+)
+
+
+from .realtime_publisher import (
+    RealtimeActivityPublisher,
+    RealtimeActivityPublishError,
+    create_managed_realtime_activity_publisher,
+)
+
+__all__ += (
+    "RealtimeActivityPublishError",
+    "RealtimeActivityPublisher",
+    "create_managed_realtime_activity_publisher",
+)
+
+
+from .realtime_presence import (
+    RealtimeActivityParticipant,
+    RealtimeActivitySummary,
+    RealtimeLabeledActivityParticipant,
+    RealtimePresenceDirectory,
+    RealtimePresenceEvent,
+    RealtimePresenceMember,
+    RealtimePresenceSummary,
+    format_realtime_typing_summary,
+    summarize_realtime_activity,
+)
+
+__all__ += (
+    "RealtimeActivitySummary",
+    "RealtimeLabeledActivityParticipant",
+    "summarize_realtime_activity",
+    "format_realtime_typing_summary",
+    "RealtimeActivityParticipant",
+    "RealtimePresenceDirectory",
+    "RealtimePresenceEvent",
+    "RealtimePresenceMember",
+    "RealtimePresenceSummary",
+)
+
+
+from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
+
+__all__ += ("RealtimeActivity", "RealtimeActivityTracker")
+
+
+from .realtime_workers import (
+    RealtimeLeaseLostError,
+    RealtimeWorkerContext,
+    RealtimeWorkerError,
+    RealtimeWorkerEvent,
+    RealtimeWorkerOptions,
+    consume_realtime_consumer_group,
+    consume_realtime_consumer_group_with_credential,
+)
+
+__all__ += (
+    "RealtimeLeaseLostError",
+    "RealtimeWorkerContext",
+    "RealtimeWorkerError",
+    "RealtimeWorkerEvent",
+    "RealtimeWorkerOptions",
+    "consume_realtime_consumer_group",
+    "consume_realtime_consumer_group_with_credential",
+)
+
+from .event_consumer_transactions import (
+    EventConsumerCommitUnknownError,
+    EventConsumerConflictError,
+    EventConsumerRequest,
+    EventConsumerTransactionResult,
+    awith_event_consumer_transaction,
+    event_consumer_receipt_schema,
+    event_consumer_request_from_headers,
+    new_event_consumer_request,
+    with_event_consumer_transaction,
+)
+
+__all__ += (
+    "EventConsumerCommitUnknownError", "EventConsumerConflictError", "EventConsumerRequest",
+    "EventConsumerTransactionResult", "awith_event_consumer_transaction", "event_consumer_receipt_schema",
+    "event_consumer_request_from_headers", "new_event_consumer_request", "with_event_consumer_transaction",
+)
+from .commit_subscriber_wait import await_commit_subscriber
+
+__all__ += ("await_commit_subscriber",)
+
+from .commit_delivery_report import CommitDeliveryReportError, aget_commit_delivery_report
+
+__all__ += ("CommitDeliveryReportError", "aget_commit_delivery_report")
+from .commit_recovery_plan import CommitRecoveryPlanError, aplan_commit_recovery
+
+__all__ += ("CommitRecoveryPlanError", "aplan_commit_recovery")
+from .commit_recovery_apply import CommitRecoveryApplyError, aapply_commit_recovery
+
+__all__ += ("CommitRecoveryApplyError", "aapply_commit_recovery")
+from .commit_recovery_status import (
+    CommitRecoveryStatusError,
+    adiagnose_commit_recovery_status,
+    aget_commit_recovery_status,
+    awatch_commit_recovery_status,
+    commit_recovery_status_settled,
+)
+
+__all__ += ("adiagnose_commit_recovery_status", "CommitRecoveryStatusError", "aget_commit_recovery_status", "awatch_commit_recovery_status", "commit_recovery_status_settled")

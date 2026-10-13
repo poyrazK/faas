@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/baggage"
@@ -226,6 +228,55 @@ func TestForwardingReverseProxy_ForwardsTheRequestHost(t *testing.T) {
 	}
 	if got := headerValue(stream.Sends[0].GetInit().GetHeaders(), "Host"); got != "h9-echo.gregale.dev" {
 		t.Fatalf("forwarded Host = %q, want the request host", got)
+	}
+}
+
+// adr: 1150 — the guest learns the request budget left at dispatch, and only
+// from the platform: a customer-supplied deadline header is dropped.
+func TestForwardingReverseProxy_SendsTheRemainingBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		budget   time.Duration
+		wantSent bool
+	}{
+		{name: "budgeted request", budget: 5 * time.Minute, wantSent: true},
+		{name: "no budget", wantSent: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := noContentHTTPStream()
+			proxy := gateway.ForwardingReverseProxy(&fakeNodeLookup{cli: &fakeVmmdClient{Stream: stream}}, nil)
+			ctx := context.Background()
+			if tc.budget > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel, _ = reqbudget.WithRemaining(ctx, tc.budget, tc.budget, "forward", "GET:/")
+				defer cancel()
+			}
+			r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+			r.Header.Set("x-faas-instance", "i-test")
+			r.Header.Set(api.DeadlineHeader, "86400000") // a customer asking for a day
+			rec := httptest.NewRecorder()
+
+			proxy(gateway.Target{NodeID: "node-1", InstanceID: "i-test"}).ServeHTTP(rec, r)
+			var values []string
+			for _, h := range stream.Sends[0].GetInit().GetHeaders() {
+				if strings.EqualFold(h.GetName(), api.DeadlineHeader) {
+					values = append(values, h.GetValue())
+				}
+			}
+			if !tc.wantSent {
+				if len(values) != 0 {
+					t.Fatalf("deadline headers = %v, want none without a budget", values)
+				}
+				return
+			}
+			if len(values) != 1 {
+				t.Fatalf("deadline headers = %v, want exactly the platform's", values)
+			}
+			ms, err := strconv.ParseInt(values[0], 10, 64)
+			if err != nil || ms <= 0 || ms > tc.budget.Milliseconds() {
+				t.Fatalf("deadline = %q, want 0 < ms <= %d", values[0], tc.budget.Milliseconds())
+			}
+		})
 	}
 }
 
@@ -446,6 +497,10 @@ func (f *fakeVmmdClient) RetireEnvironmentQualificationArtifacts(context.Context
 	panic("RetireEnvironmentQualificationArtifacts: not stubbed")
 }
 
+func (f *fakeVmmdClient) RetireManagedPostgresDrain(context.Context, *vmmdpb.RetireManagedPostgresDrainRequest, ...grpc.CallOption) (*vmmdpb.RetireManagedPostgresDrainResponse, error) {
+	panic("RetireManagedPostgresDrain: not stubbed")
+}
+
 func (f *fakeVmmdClient) CaptureEnvironmentQualification(context.Context, *vmmdpb.CaptureEnvironmentQualificationRequest, ...grpc.CallOption) (*vmmdpb.CaptureEnvironmentQualificationResponse, error) {
 	panic("CaptureEnvironmentQualification: not stubbed")
 }
@@ -478,6 +533,9 @@ func (f *fakeVmmdClient) ExecuteAppTask(context.Context, *vmmdpb.ExecuteAppTaskR
 }
 func (f *fakeVmmdClient) ExecuteAppTaskStream(context.Context, *vmmdpb.ExecuteAppTaskRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[vmmdpb.ExecuteAppTaskEvent], error) {
 	panic("ExecuteAppTaskStream: not stubbed")
+}
+func (f *fakeVmmdClient) AttachAppTask(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.AttachAppTaskRequest, vmmdpb.AttachAppTaskEvent], error) {
+	panic("AttachAppTask: not stubbed")
 }
 func (f *fakeVmmdClient) WaitJobExit(context.Context, *vmmdpb.WaitJobExitRequest, ...grpc.CallOption) (*vmmdpb.JobExitResponse, error) {
 	panic("WaitJobExit: not stubbed")

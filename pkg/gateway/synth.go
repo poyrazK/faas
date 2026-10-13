@@ -178,6 +178,9 @@ type SynthServer struct {
 	// takes a context so the request's ctx (with timeout /
 	// cancel chain) flows into the per-app store call.
 	appPublicAuthMode func(ctx context.Context, appID string) string
+	// invocationTimeout returns how long one invocation of an app may run
+	// (ADR-1180). nil keeps every batch record at the 30 s default.
+	invocationTimeout func(ctx context.Context, appID string) time.Duration
 	// workflowAdmission authenticates and replay-checks workflow invocations
 	// before they reach the customer instance. Production wires this to the
 	// gatewayd-internal Postgres store; nil is fail-closed for workflow traffic.
@@ -368,6 +371,27 @@ func (s *SynthServer) WithAudit(emit func(ctx context.Context, kind string, subj
 func (s *SynthServer) WithAppModeLookup(lookup func(ctx context.Context, appID string) string) *SynthServer {
 	s.appPublicAuthMode = lookup
 	return s
+}
+
+// WithInvocationTimeout wires the per-app async invocation timeout
+// (ADR-1180) that sizes trigger batch records.
+func (s *SynthServer) WithInvocationTimeout(lookup func(ctx context.Context, appID string) time.Duration) *SynthServer {
+	s.invocationTimeout = lookup
+	return s
+}
+
+// batchRecordTimeout bounds one trigger batch record, wake included. An app
+// whose invocations may run past the 30 s default gets its own timeout plus
+// the wake allowance (ADR-1180); every other app keeps the 30 s default.
+func (s *SynthServer) batchRecordTimeout(ctx context.Context, appID string) time.Duration {
+	if s.invocationTimeout == nil {
+		return batchDispatchPerRecordTimeout
+	}
+	timeout := s.invocationTimeout(ctx, appID)
+	if timeout <= api.AsyncInvocationTimeoutFloor {
+		return batchDispatchPerRecordTimeout
+	}
+	return api.AsyncInvocationDispatchTimeout(timeout)
 }
 
 // Calls returns the number of synthesize requests served. Metric-only;
@@ -612,7 +636,7 @@ func (s *SynthServer) handleInvocationDispatch(w http.ResponseWriter, r *http.Re
 		// runner never received the body. schedd retries transient
 		// (5s); permanent shapes (no such app) end the row.
 		s.log.Warn("gateway synth: invoke", "inv", logsanitize.Field(req.InvocationID), "err", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		writeSynthDispatchFailure(w, err)
 		return
 	}
 	if statusCode == 0 {
@@ -763,7 +787,7 @@ var batchDispatchPerRecordTimeout = 30 * time.Second
 // Implemented as `var` (not `const`) so tests in the same
 // package can shrink the timeout via a package-local override.
 // Production code reads the var; tests write it.
-var batchDispatchTotalTimeout = 5 * time.Minute
+var batchDispatchTotalTimeout = api.TriggerBatchTimeout
 
 // handleInvocationDispatchBatch is the trigger-driven batch path.
 //
@@ -860,8 +884,12 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 	// Audit round 2 finding #4: wrap the whole loop in a
 	// 5-minute timeout so a stuck Invoke can't pin the gateway
 	// for hours. The ctx is derived from r.Context() so
-	// client-side disconnects still cancel the loop.
-	ctx, cancel := context.WithTimeout(batchCtx, batchDispatchTotalTimeout)
+	// client-side disconnects still cancel the loop. A batch for an
+	// app with a long invocation timeout always has room for at least
+	// one whole record (ADR-1180).
+	recordTimeout := s.batchRecordTimeout(batchCtx, req.AppID)
+	totalTimeout := max(batchDispatchTotalTimeout, recordTimeout)
+	ctx, cancel := context.WithTimeout(batchCtx, totalTimeout)
 	defer cancel()
 
 	results := make([]batchDispatchResult, 0, len(req.Records))
@@ -876,12 +904,12 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 			results = append(results, batchDispatchResult{
 				ItemIdentifier: rec.ItemIdentifier,
 				Status:         batchDispatchStatusRetry,
-				Error:          "batch_timeout: handler exceeded " + batchDispatchTotalTimeout.String(),
+				Error:          "batch_timeout: handler exceeded " + totalTimeout.String(),
 				Code:           "batch_timeout",
 			})
 			continue
 		}
-		results = append(results, s.dispatchBatchRecord(ctx, req, rec))
+		results = append(results, s.dispatchBatchRecordWithin(ctx, req, rec, recordTimeout))
 	}
 	var succeeded, retry, deadLetter int
 	for _, result := range results {
@@ -921,7 +949,13 @@ func (s *SynthServer) handleInvocationDispatchBatch(w http.ResponseWriter, r *ht
 // per-record timeout for the next iteration; ctx.Err() check
 // above catches the next iteration. The two timeouts compose
 // cleanly because context.WithTimeout is short-circuiting.
-func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatchRequest, rec batchDispatchRecord) (result batchDispatchResult) {
+func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatchRequest, rec batchDispatchRecord) batchDispatchResult {
+	return s.dispatchBatchRecordWithin(ctx, req, rec, s.batchRecordTimeout(ctx, req.AppID))
+}
+
+// dispatchBatchRecordWithin is dispatchBatchRecord with the per-record
+// timeout already resolved for the batch's app (ADR-1180).
+func (s *SynthServer) dispatchBatchRecordWithin(ctx context.Context, req batchDispatchRequest, rec batchDispatchRecord, recordTimeout time.Duration) (result batchDispatchResult) {
 	invocationCtx, invocationSpan := otel.GetTracerProvider().Tracer("gregale/trigger").Start(ctx, "gregale.invocation",
 		oteltrace.WithSpanKind(oteltrace.SpanKindConsumer),
 		oteltrace.WithAttributes(attribute.String("gregale.trigger.kind", req.Source)),
@@ -938,7 +972,7 @@ func (s *SynthServer) dispatchBatchRecord(ctx context.Context, req batchDispatch
 	// Per-record timeout (audit round 2 finding #4). Wraps the
 	// Invoke call so a stuck function or stuck dispatcher can't
 	// pin a single record.
-	recCtx, recCancel := context.WithTimeout(invocationCtx, batchDispatchPerRecordTimeout)
+	recCtx, recCancel := context.WithTimeout(invocationCtx, recordTimeout)
 	defer recCancel()
 	var payload []byte
 	if rec.PayloadB64 != "" {
@@ -1177,4 +1211,27 @@ func (s *SynthServer) applyExclusiveServiceAuth(w http.ResponseWriter, r *http.R
 		return true
 	}
 	return false
+}
+
+// writeSynthDispatchFailure answers a dispatch the runner never received. The
+// status stays 502 so schedd keeps treating it as retryable. When the cause is
+// a customer-facing problem (for example plan_limit_concurrency while an older
+// pinned revision cannot get a slot), its code and detail travel as
+// problem+json so the invocation or workflow step can record the reason
+// instead of a bare "gateway returned 502" (production-us hunt #9, H9-153).
+// Other errors keep the plain-text body schedd never surfaces.
+func writeSynthDispatchFailure(w http.ResponseWriter, err error) {
+	var p *api.Problem
+	if !errors.As(err, &p) || p == nil || p.Code == "" {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(http.StatusBadGateway)
+	_ = json.NewEncoder(w).Encode(struct {
+		Code   string `json:"code"`
+		Title  string `json:"title,omitempty"`
+		Detail string `json:"detail,omitempty"`
+		Status int    `json:"status"`
+	}{Code: p.Code, Title: p.Title, Detail: p.Detail, Status: p.Status})
 }

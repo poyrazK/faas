@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -63,6 +63,7 @@ var Names = []string{
 	"event-worker",
 	"queue-worker",
 	"s3-uploader",
+	"object-storage-node",
 	"slack-bot",
 	"rest-api-postgres",
 	"cron-worker",
@@ -78,12 +79,21 @@ var Names = []string{
 	"customer-operation-workflow-export",
 	"data-api",
 	"data-api-starter",
+	"durable-entity-node",
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
 // //go:embed omits such names from a directory pattern, so Materialize
 // writes them instead.
 var generatedDotfiles = map[string]map[string]string{
+	"object-storage-node": {
+		".gitignore":     "node_modules/\n.gregale/\n.env\n.env.*\n*.secrets\n",
+		".gregaleignore": "/test/\n/node_modules/\n/.gregale/\n.env\n.env.*\n*.secrets\n",
+	},
+	"durable-entity-node": {
+		".gitignore":     "node_modules/\n.env\n.env.*\nlocal-checkpoint.json\n.session-frame.json\n",
+		".gregaleignore": "/dev.mjs\n/tools/\n/test/\n/tsconfig.json\n/local-checkpoint.json\n/.session-frame.json\n/.env\n/.env.*\n",
+	},
 	"data-api-starter": {
 		".gitignore":     "node_modules/\nclient/dist/\nclient/browser/client.js\n.gregale-tools/\n.gregale/\n.env\n.env.*\n",
 		".gregaleignore": "/client/\n/tools/\n/test/\n/ci/\n/.github/\n/.gregale-tools/\n/.gregale/\n/data-api-artifacts.json\n/data-api.dev.json\n/data-api.requests.json\n/data-api.requests.json.*.tmp\n",
@@ -410,12 +420,14 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
+	case "s3-uploader", "object-storage-node", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "mcp"
+	case "durable-entity-node":
+		return "durable-entities"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
 		return "operations"
 	}
@@ -424,4 +436,4 @@ func CategoryFor(name string) string {
 
 // CategoryOrder is the canonical order in which `gregale init --list`
 // prints categories. Pins against accidental reorders in CategoryFor.
-var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp", "operations"}
+var CategoryOrder = []string{"hello", "function", "event-driven", "stateless-contract", "ai", "mcp", "operations", "durable-entities"}

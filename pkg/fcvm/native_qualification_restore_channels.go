@@ -71,7 +71,7 @@ func (v *JailerVMM) nativeQualificationRestoreHandlers(ctx context.Context, leas
 		return nil, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
-	if producer == nil || producer.restore == nil || *producer.restore != target || producer.NativeGeneration == "" ||
+	if producer == nil || producer.restore == nil || !sameNativeQualificationRestoreClaim(target, *producer.restore) || producer.NativeGeneration == "" ||
 		!sameNativePhysicalLease(lease, producer.NativeLease) || r.generation(lease.Instance) != producer.NativeGeneration {
 		return nil, errors.New("native restore channels: original live target producer changed")
 	}

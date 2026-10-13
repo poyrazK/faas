@@ -58,7 +58,9 @@ var resumeResyncReasonLabels = [...]string{"cursor_expired", "retention_advanced
 // across instances, while current_connections should be aggregated as a
 // gauge only when the dashboard wants total live sockets.
 type StatsCollector struct {
-	manager *Manager
+	expiredCheckpoints   *prometheus.Desc
+	expiredOutboundDrops *prometheus.Desc
+	manager              *Manager
 
 	currentConnections              *prometheus.Desc
 	currentResumeSubscriptions      *prometheus.Desc
@@ -176,6 +178,8 @@ func (m *Manager) recordAuthOutcome(mode authMetricMode, outcome authMetricOutco
 func NewStatsCollector(manager *Manager) prometheus.Collector {
 	const subsystem = "realtimed"
 	return &StatsCollector{
+		expiredCheckpoints:              prometheus.NewDesc(subsystem+"_expired_checkpoints_total", "Expired retained positions admitted as checkpoints; counts delivery attempts, not unique events or confirmed client receipt.", []string{"transport"}, nil),
+		expiredOutboundDrops:            prometheus.NewDesc(subsystem+"_expired_outbound_drops_total", "Payloads discarded at outbound dequeue after their message delivery deadline.", nil, nil),
 		manager:                         manager,
 		currentConnections:              prometheus.NewDesc(subsystem+"_current_connections", "Current managed realtime connections.", nil, nil),
 		currentResumeSubscriptions:      prometheus.NewDesc(subsystem+"_current_resume_subscriptions", "Current v2 retained-channel subscriptions on this realtime node.", nil, nil),
@@ -234,6 +238,10 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 	stats := c.manager.Stats()
+	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredWebSocketCheckpoints), "websocket")
+	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredInboxCheckpoints), "inbox_websocket")
+	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredSSECheckpoints), "sse")
+	ch <- prometheus.MustNewConstMetric(c.expiredOutboundDrops, prometheus.CounterValue, float64(stats.ExpiredOutboundDrops))
 	ch <- prometheus.MustNewConstMetric(c.currentConnections, prometheus.GaugeValue, float64(stats.CurrentConnections))
 	ch <- prometheus.MustNewConstMetric(c.currentResumeSubscriptions, prometheus.GaugeValue, float64(stats.CurrentResumeSubscriptions))
 	for result := resumeHistoryReadResult(0); result < resumeHistoryReadResultCount; result++ {
@@ -290,6 +298,8 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 
 func (c *StatsCollector) descs() []*prometheus.Desc {
 	return []*prometheus.Desc{
+		c.expiredCheckpoints,
+		c.expiredOutboundDrops,
 		c.currentConnections,
 		c.currentResumeSubscriptions,
 		c.resumeHistoryReads,

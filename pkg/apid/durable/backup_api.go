@@ -19,7 +19,7 @@ func (s *Service) durableEntityBackupIdentity(w http.ResponseWriter, r *http.Req
 		return durableentity.ID{}, "", false
 	}
 	if s.Engine == nil || !s.Apps[app.ID] {
-		writeDurableEntityProblem(w, durableentity.ErrUnsupported)
+		WriteProblem(w, durableentity.ErrUnsupported)
 		return durableentity.ID{}, "", false
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
@@ -29,12 +29,12 @@ func (s *Service) durableEntityBackupIdentity(w http.ResponseWriter, r *http.Req
 	}
 	value := query.Get(extra)
 	query.Del(extra)
-	selectors, err := durableEntityInspectionQuery(query.Encode())
+	selectors, err := InspectionQuery(query.Encode())
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation("backup reads require namespace and key and unique supported selectors"))
 		return durableentity.ID{}, "", false
 	}
-	id, _, problem := s.resolveDurableEntityIdentity(r, acct, app, api.DurableEntityInvokeRequest{Namespace: selectors.Namespace, Key: selectors.Key, Environment: selectors.Environment, PlatformTenantID: selectors.PlatformTenantID}, true)
+	id, _, problem := s.ResolveIdentity(r, acct, app, api.DurableEntityInvokeRequest{Namespace: selectors.Namespace, Key: selectors.Key, Environment: selectors.Environment, PlatformTenantID: selectors.PlatformTenantID}, true)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return id, "", false
@@ -79,7 +79,7 @@ func (s *Service) PreviewRestore(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	if s.Engine == nil || !s.Apps[app.ID] {
-		writeDurableEntityProblem(w, durableentity.ErrUnsupported)
+		WriteProblem(w, durableentity.ErrUnsupported)
 		return
 	}
 	var request api.DurableEntityRestoreRequest
@@ -88,7 +88,7 @@ func (s *Service) PreviewRestore(w http.ResponseWriter, r *http.Request, acct st
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.DurableEntityInvokeTimeout)
 	defer cancel()
-	id, _, problem := s.resolveDurableEntityIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID}, true)
+	id, _, problem := s.ResolveIdentity(r.WithContext(ctx), acct, app, api.DurableEntityInvokeRequest{Namespace: request.Namespace, Key: request.Key, Environment: request.Environment, PlatformTenantID: request.PlatformTenantID}, true)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

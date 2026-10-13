@@ -208,6 +208,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	go runAIUsagePrune(ctx, backend, log)
+	// ADR-997: replays recorded by apid run through this daemon's handler.
+	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
+	go replayWorker.Run(ctx)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, trace.HTTPHandler("outboundd-relay", handler), identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err

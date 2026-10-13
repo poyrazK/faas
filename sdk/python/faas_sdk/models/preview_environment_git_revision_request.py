@@ -10,7 +10,7 @@ T = TypeVar("T", bound="PreviewEnvironmentGitRevisionRequest")
 
 @_attrs_define
 class PreviewEnvironmentGitRevisionRequest:
-    """An exact GitHub commit to fetch and review."""
+    """An exact Git commit to fetch and review."""
 
     commit_sha: str
 

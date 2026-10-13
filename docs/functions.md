@@ -24,6 +24,16 @@ loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
+A function request must start its response within 3 seconds by default.
+For slower work, raise the function's request timeout:
+`gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
+Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
+a streamed response included, may run for the longer of that timeout and
+30 s. The runner passes the time left to the handler in the
+`X-Faas-Deadline-Ms` request header. Async, queue and cron invocations
+of the function may run just as long: the longer of its request timeout
+and 30 s (ADR-1180).
+
 An idle function parks after 30 seconds by default on every plan; set
 `gregale app APP --idle SECONDS` to keep it warm longer (see
 [scale-to-zero](cold-wake.md#when-an-instance-parks)).

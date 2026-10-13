@@ -1288,6 +1288,9 @@ type preBootFileWriter struct {
 	path  string
 	want  []byte
 	mode  os.FileMode
+	// same, when set, decides whether a file already on the drive is as
+	// good as writing want; otherwise it must equal want byte for byte.
+	same func(got []byte) bool
 }
 
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
@@ -1305,10 +1308,19 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 		}, path: secretsEnvPath, want: secretsEnvJSON, mode: 0o400})
 	}
 	if len(apiEnvJSON) > 0 {
-		digest.add("env.json", apiEnvJSON)
-		writers = append(writers, preBootFileWriter{what: "stage env.json", write: func(mp string) error {
+		writer := preBootFileWriter{what: "stage env.json", write: func(mp string) error {
 			return writeAPIEnv(mp, apiEnvJSON)
-		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400})
+		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400}
+		if stable, err := placementStableAPIEnv(apiEnvJSON); err == nil {
+			digest.add("env.json", stable)
+			writer.same = func(got []byte) bool {
+				onDrive, err := placementStableAPIEnv(got)
+				return err == nil && bytes.Equal(onDrive, stable)
+			}
+		} else {
+			digest.add("env.json", apiEnvJSON)
+		}
+		writers = append(writers, writer)
 	}
 	if strings.TrimSpace(serviceDiscoveryIP) != "" {
 		ip, err := parseServiceDiscoveryIP(serviceDiscoveryIP)
@@ -7456,7 +7468,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 	if v.storage == nil {
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
-	rc, err := v.storage.Get(ctx, key)
+	// A wake reads what it fetched from the page cache; the node cache
+	// makes the fill durable and installs it after the wake has it.
+	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}

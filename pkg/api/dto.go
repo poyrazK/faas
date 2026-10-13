@@ -152,18 +152,22 @@ type EventBacklogRecipient struct {
 }
 
 type EventBacklogConsumer struct {
-	OrderingWaitingRecipients int64     `json:"ordering_waiting_recipients"`
-	AppID                     string    `json:"app_id"`
-	AppSlug                   string    `json:"app_slug"`
-	TargetAvailable           bool      `json:"target_available"`
-	SubscriptionID            string    `json:"subscription_id"`
-	ConsumerKind              string    `json:"consumer_kind"`
-	WaitingRecipients         int64     `json:"waiting_recipients"`
-	PendingRecipients         int64     `json:"pending_recipients"`
-	ProcessingRecipients      int64     `json:"processing_recipients"`
-	CapacityWaitingRecipients int64     `json:"capacity_waiting_recipients"`
-	OldestAcceptedAt          time.Time `json:"oldest_accepted_at"`
-	OldestAgeSeconds          float64   `json:"oldest_age_seconds"`
+	PendingWaitingReasons             map[string]int64 `json:"pending_waiting_reasons,omitempty"`
+	CapacityConsumerWaitingRecipients int64            `json:"capacity_consumer_waiting_recipients"`
+	CapacityAppWaitingRecipients      int64            `json:"capacity_app_waiting_recipients"`
+	CapacityAccountWaitingRecipients  int64            `json:"capacity_account_waiting_recipients"`
+	OrderingWaitingRecipients         int64            `json:"ordering_waiting_recipients"`
+	AppID                             string           `json:"app_id"`
+	AppSlug                           string           `json:"app_slug"`
+	TargetAvailable                   bool             `json:"target_available"`
+	SubscriptionID                    string           `json:"subscription_id"`
+	ConsumerKind                      string           `json:"consumer_kind"`
+	WaitingRecipients                 int64            `json:"waiting_recipients"`
+	PendingRecipients                 int64            `json:"pending_recipients"`
+	ProcessingRecipients              int64            `json:"processing_recipients"`
+	CapacityWaitingRecipients         int64            `json:"capacity_waiting_recipients"`
+	OldestAcceptedAt                  time.Time        `json:"oldest_accepted_at"`
+	OldestAgeSeconds                  float64          `json:"oldest_age_seconds"`
 }
 
 // Counts cover matching live recipients, independently of the recipient page.
@@ -451,6 +455,8 @@ type EventDeliveryListResponse struct {
 // published event's scoped identity and its acceptance-time subscription.
 type ReplayEventFanoutFailureRequest struct {
 	RecoveryExpectation *EventRoutingRecoveryExpectation `json:"recovery_expectation,omitempty"`
+	ExpectedGeneration  *int64                           `json:"expected_generation,omitempty"`
+	ExpectedAcceptedAt  *time.Time                       `json:"expected_accepted_at,omitempty"`
 	AllowExpired        bool                             `json:"allow_expired,omitempty"`
 	EventID             string                           `json:"event_id"`
 	EventSource         string                           `json:"event_source"`
@@ -799,10 +805,22 @@ type UpsertDevSessionRequest struct {
 	Runtime     string              `json:"runtime,omitempty"`      // required for functions
 	WorkspaceID string              `json:"workspace_id,omitempty"` // opaque, CLI-derived local workspace identity
 	Postgres    *DevPostgresRequest `json:"postgres,omitempty"`
+	Buckets     []DevBucketRequest  `json:"buckets,omitempty"`
 	// LeaseSeconds chooses how long the environment survives after its
 	// latest sync. Zero (omitted) keeps api.DeveloperLeaseDefault; any other
 	// value must lie within [DeveloperLeaseMin, plan DeveloperLeaseMax].
 	LeaseSeconds int64 `json:"lease_seconds,omitempty"`
+	// Watch opts the environment into watch mode (ADR-1170): it runs Command,
+	// the app's development server, instead of the production build. Omitted
+	// turns watch mode off. Takes effect from the next developer build.
+	Watch *DevWatch `json:"watch,omitempty"`
+}
+
+// DevWatch is a developer environment's watch-mode setting (ADR-1170).
+type DevWatch struct {
+	// Command starts the development server, for example "npm run dev".
+	// At most DevWatchCommandMaxBytes, one line.
+	Command string `json:"command"`
 }
 
 // DevPatchPreview reports whether one developer sync could have been applied
@@ -855,6 +873,9 @@ type DevSessionResponse struct {
 	App       AppResponse          `json:"app"`
 	ExpiresAt time.Time            `json:"expires_at"`
 	Postgres  *DevPostgresResponse `json:"postgres,omitempty"`
+	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
+	// Watch is the stored watch-mode setting (ADR-1170); omitted when off.
+	Watch *DevWatch `json:"watch,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -878,17 +899,19 @@ type InjectScenarioTestChaosRequest struct {
 
 // ScenarioTestChaosRule describes one bounded HTTP, DNS, or TCP fault for scenario service calls.
 type ScenarioTestChaosRule struct {
-	From             string `json:"from,omitempty"`
-	To               string `json:"to"`
-	Kind             string `json:"kind"`
-	Percent          int    `json:"percent"`
-	LatencyMS        int64  `json:"latency_ms,omitempty"`
-	StatusCode       int    `json:"status_code,omitempty"`
-	Seed             uint64 `json:"seed"`
-	Port             int    `json:"port,omitempty"`
-	Direction        string `json:"direction,omitempty"`
-	RateKiBPerSecond int64  `json:"rate_kib_per_second,omitempty"`
-	ResetAfterMS     int64  `json:"reset_after_ms,omitempty"`
+	CorrelationScope  string `json:"correlation_scope,omitempty"`
+	From              string `json:"from,omitempty"`
+	To                string `json:"to"`
+	Kind              string `json:"kind"`
+	Percent           int    `json:"percent"`
+	LatencyMS         int64  `json:"latency_ms,omitempty"`
+	StatusCode        int    `json:"status_code,omitempty"`
+	RetryAfterSeconds int64  `json:"retry_after_seconds,omitempty"`
+	Seed              uint64 `json:"seed"`
+	Port              int    `json:"port,omitempty"`
+	Direction         string `json:"direction,omitempty"`
+	RateKiBPerSecond  int64  `json:"rate_kib_per_second,omitempty"`
+	ResetAfterMS      int64  `json:"reset_after_ms,omitempty"`
 }
 
 type InjectScenarioTestChaosResponse struct {
@@ -9725,13 +9748,12 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // Field-by-field:
 //
 //   - BudgetMs: required per-request budget in milliseconds. Must
-//     be > 0 and ≤ api.RequestBudgetMaxMs (30 s). 0 is rejected
-//     with 422 — a kind=budget rule with no budget is a silent
-//     no-op, worst shape for a safety feature. The hard upper bound
-//     matches api.RequestBudgetMaxMs so a kind=budget rule can
-//     never widen past the platform ceiling; if a customer wants a
-//     longer per-route budget they're mis-using this primitive
-//     (api.RequestBudgetMax is the absolute ceiling).
+//     be > 0 and ≤ api.RequestBudgetPlanMax (15 min, ADR-1150). 0 is
+//     rejected with 422 — a kind=budget rule with no budget is a
+//     silent no-op, worst shape for a safety feature. At request time
+//     the budget is further clamped to the plan's ceiling
+//     (Limits.RequestBudgetMaxDuration), so a rule never widens past
+//     what the account's plan allows.
 //   - AllowOverrideHeader: optional HTTP header name (default
 //     `x-faas-budget-ms`) whose numeric value, if present on the
 //     inbound request, overrides BudgetMs for that single request.
@@ -9761,10 +9783,10 @@ func (a *EdgeRuleBudgetAction) Validate() *Problem {
 			"budget action: budget_ms must be > 0 (got %d) — a kind=budget rule with no budget is a silent no-op; drop the rule if you want the platform default to apply",
 			a.BudgetMs))
 	}
-	if a.BudgetMs > int(RequestBudgetMax.Milliseconds()) {
+	if a.BudgetMs > int(RequestBudgetPlanMax.Milliseconds()) {
 		return ErrValidation(fmt.Sprintf(
 			"budget action: budget_ms (%d) exceeds the platform ceiling (%d ms = %s)",
-			a.BudgetMs, int(RequestBudgetMax.Milliseconds()), RequestBudgetMax))
+			a.BudgetMs, int(RequestBudgetPlanMax.Milliseconds()), RequestBudgetPlanMax))
 	}
 	if a.AllowOverrideHeader != "" {
 		if len(a.AllowOverrideHeader) > 128 {
@@ -11076,6 +11098,10 @@ type DebugTelemetrySpan struct {
 	// span (ADR-958): "SELECT orders", an HTTP host, an RPC method. It never
 	// carries literals, paths, query strings or credentials.
 	DependencyName string `json:"dependency_name,omitempty"`
+	// ErrorType is the failure class of an error span ("QueryTimeout",
+	// "503"), from error.type or the first recorded exception.type. Exception
+	// messages and stack traces are never retained.
+	ErrorType string `json:"error_type,omitempty"`
 }
 
 // DebugRequestCriticalPath is the bounded causal path reconstructed from
@@ -11151,6 +11177,13 @@ type DebugDependencyLatencyItem struct {
 	BaselineErrorRatePct   float64 `json:"baseline_error_rate_pct,omitempty"`
 	CurrentErrorRatePct    float64 `json:"current_error_rate_pct,omitempty"`
 	ErrorRateDeltaPct      float64 `json:"error_rate_delta_pct,omitempty"`
+	// FailureRegression is the error-rate counterpart of Regression: enough
+	// calls on both sides, at least 3 failed current calls, and an error rate
+	// at least 5 points and 2x above baseline.
+	FailureRegression bool `json:"failure_regression"`
+	// TopErrorType is the most frequent span failure class, from the current
+	// side when it has failures.
+	TopErrorType string `json:"top_error_type,omitempty"`
 }
 
 // DebugDependencyImpactEdge is a bounded parent-to-child rollup reconstructed
@@ -11698,6 +11731,13 @@ type DebugSuspectedDependency struct {
 	P95BaseMS        int64   `json:"p95_base_ms"`
 	P95MS            int64   `json:"p95_ms"`
 	RegressionFactor float64 `json:"regression_factor"`
+	// Reason is "latency" when the dependency's p95 regressed and "failures"
+	// when it started failing more often. Empty on suspects stored before
+	// failure attribution, which were all latency suspects.
+	Reason               string  `json:"reason,omitempty"`
+	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
+	ErrorRatePct         float64 `json:"error_rate_pct,omitempty"`
+	ErrorType            string  `json:"error_type,omitempty"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug
