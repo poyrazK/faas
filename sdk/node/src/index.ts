@@ -370,3 +370,5 @@ export type { OperationWorkflowReviewResponseHandoffDeclineRequest, OperationWor
 export type { OperationWorkflowReviewResponseHandoffReassignmentRequest, OperationWorkflowReviewResponseHandoffReassignment, OperationWorkflowReviewResponseHandoffReassignmentEvent } from './customer-operations.js';
 
 export type { OperationWorkflowReviewResponseEscalationAcknowledgmentRequest, OperationWorkflowReviewResponseEscalationAcknowledgment } from './customer-operations.js';
+
+export type { OperationWorkflowReviewResponseEscalationCompletionRequest, OperationWorkflowReviewResponseEscalationCompletion } from './customer-operations.js';

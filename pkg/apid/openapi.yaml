@@ -80798,6 +80798,64 @@ components:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseHealth'
           description: OperationWorkflowReviewResponseDecision.health. Immutable reviewed snapshot including original freshness timestamps.
       required: [kind, reason, owner, at, actor, health]
+    OperationWorkflowReviewResponseEscalationCompletionRequest:
+      type: object
+      additionalProperties: false
+      description: Complete one current escalation coordinator commitment with an action summary and saved review evidence. Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with acknowledgment, decision, acceptance, decline or reassignment. Accepted or declined handoffs can still record completed work for the same retained episode, but replaced or resolved episodes cannot. Does not establish application success.
+      required: [decision_at, required_at, handed_off_at, escalated_at, acknowledged_at, summary, review_indices]
+      properties:
+        decision_at:
+          type: string
+          format: date-time
+        required_at:
+          type: string
+          format: date-time
+        handed_off_at:
+          type: string
+          format: date-time
+        escalated_at:
+          type: string
+          format: date-time
+        acknowledged_at:
+          type: string
+          format: date-time
+        summary:
+          type: string
+          maxLength: 1024
+          description: Nonblank UTF-8 summary of performed coordination work, limited to 1024 bytes; line breaks and tabs are allowed.
+        review_indices:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          description: Zero-based indices into the current parent response reviews. References are copied into immutable evidence; they are not fresh application verification or a claim that blockers cleared.
+          items:
+            type: integer
+            minimum: 0
+            maximum: 15
+    OperationWorkflowReviewResponseEscalationCompletion:
+      type: object
+      additionalProperties: false
+      description: Immutable human completion of escalation coordination work, with linked review references and server actor and time. Existing overdue markers remain historical.
+      required: [acknowledged_at, summary, evidence, at, actor]
+      properties:
+        acknowledged_at:
+          type: string
+          format: date-time
+        summary:
+          type: string
+          maxLength: 1024
+        evidence:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/OperationWorkflowReviewResponseLink'
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
     OperationWorkflowReviewResponseEscalationAcknowledgmentRequest:
       type: object
       additionalProperties: false
@@ -80831,9 +80889,12 @@ components:
     OperationWorkflowReviewResponseEscalationAcknowledgment:
       type: object
       additionalProperties: false
-      description: Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time. Notification acknowledgment alone does not create this record. Only the system overdue delivery marker may change.
+      description: Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time. Notification acknowledgment alone does not create this record. The system overdue marker and explicit human completion may be appended without changing commitment fields.
       required: [coordinator, plan, due_at, at, actor]
       properties:
+        completion:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationCompletion'
+          description: OperationWorkflowReviewResponseEscalationAcknowledgment.completion. Explicit completion of coordinator work, separate from handoff acceptance and business outcomes.
         coordinator:
           type: string
           maxLength: 256
@@ -81057,6 +81118,9 @@ components:
       description: OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
       required: [owner, plan, status]
       properties:
+        escalation_completion:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationCompletionRequest'
+          description: OperationWorkflowReviewResponseRequest.escalation_completion. Explicit completion of coordinator work, separate from handoff acceptance and business outcomes.
         escalation_acknowledgment:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationAcknowledgmentRequest'
           description: OperationWorkflowReviewResponseRequest.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
@@ -81372,6 +81436,9 @@ components:
       description: OperationWorkflowReviewResponseChange. Authenticated response update snapshot.
       required: [owner, plan, status, at, actor]
       properties:
+        escalation_completion:
+          $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationCompletion'
+          description: OperationWorkflowReviewResponseChange.escalation_completion. Explicit completion of coordinator work, separate from handoff acceptance and business outcomes.
         escalation_acknowledgment:
           $ref: '#/components/schemas/OperationWorkflowReviewResponseEscalationAcknowledgment'
           description: OperationWorkflowReviewResponseChange.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
@@ -81412,7 +81479,7 @@ components:
           description: OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change.
         reason:
           type: string
-          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged]
+          enum: [human_update, check_in_overdue, decision_review_overdue, handoff_accepted, handoff_declined, handoff_reassigned, escalation_acknowledged, escalation_commitment_completed]
           description: OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent in older history.
         owner:
           type: string

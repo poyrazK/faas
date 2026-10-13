@@ -16,7 +16,7 @@ func validateReviewHandoffDecline(n api.OperationWorkflowReadinessNotification, 
 	if decline == nil {
 		return nil
 	}
-	if input.HandoffReassignment != nil || input.EscalationAcknowledgment != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.Status != "active" || strings.TrimSpace(decline.Reason) == "" || len(decline.Reason) > 1024 || !utf8.ValidString(decline.Reason) || strings.IndexFunc(decline.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
+	if input.HandoffReassignment != nil || input.EscalationAcknowledgment != nil || input.EscalationCompletion != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.Status != "active" || strings.TrimSpace(decline.Reason) == "" || len(decline.Reason) > 1024 || !utf8.ValidString(decline.Reason) || strings.IndexFunc(decline.Reason, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 {
 		return ErrInvalidArgument
 	}
 	response := n.ReviewResponse

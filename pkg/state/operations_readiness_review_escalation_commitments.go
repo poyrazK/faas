@@ -33,7 +33,7 @@ func validateReviewEscalationAcknowledgment(n api.OperationWorkflowReadinessNoti
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	label := ack.Coordinator
-	if input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.HandoffReassignment != nil || input.Status != "active" || label == "" || strings.TrimSpace(label) != label || len(label) > 256 || !utf8.ValidString(label) || strings.IndexFunc(label, unicode.IsControl) >= 0 || strings.TrimSpace(ack.Plan) == "" || len(ack.Plan) > 1024 || !utf8.ValidString(ack.Plan) || strings.IndexFunc(ack.Plan, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 || !ack.DueAt.After(now) || ack.DueAt.After(now.Add(7*24*time.Hour)) {
+	if input.EscalationCompletion != nil || input.Decision != nil || input.HandoffAcceptance != nil || input.HandoffDecline != nil || input.HandoffReassignment != nil || input.Status != "active" || label == "" || strings.TrimSpace(label) != label || len(label) > 256 || !utf8.ValidString(label) || strings.IndexFunc(label, unicode.IsControl) >= 0 || strings.TrimSpace(ack.Plan) == "" || len(ack.Plan) > 1024 || !utf8.ValidString(ack.Plan) || strings.IndexFunc(ack.Plan, func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' }) >= 0 || !ack.DueAt.After(now) || ack.DueAt.After(now.Add(7*24*time.Hour)) {
 		return ErrInvalidArgument
 	}
 	if !currentReviewEscalation(n) {
@@ -48,7 +48,7 @@ func validateReviewEscalationAcknowledgment(n api.OperationWorkflowReadinessNoti
 }
 
 func pendingReviewEscalationCommitment(n api.OperationWorkflowReadinessNotification) bool {
-	return currentReviewEscalation(n) && n.ReviewResponse.DecisionReview.EscalationAcknowledgment != nil && n.ReviewResponse.DecisionReview.EscalationAcknowledgment.OverdueNotifiedAt == nil
+	return currentReviewEscalation(n) && n.ReviewResponse.DecisionReview.EscalationAcknowledgment != nil && n.ReviewResponse.DecisionReview.EscalationAcknowledgment.Completion == nil && n.ReviewResponse.DecisionReview.EscalationAcknowledgment.OverdueNotifiedAt == nil
 }
 
 // Independent bounded rotation works even when application-state reads fail.

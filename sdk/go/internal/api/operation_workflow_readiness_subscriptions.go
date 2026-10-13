@@ -485,6 +485,7 @@ type OperationWorkflowReadinessImpactEvent struct {
 
 // Review response ownership is explicit human follow-through, separate from alert acknowledgment.
 type OperationWorkflowReviewResponseRequest struct {
+	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletionRequest     `json:"escalation_completion,omitempty"`
 	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgmentRequest `json:"escalation_acknowledgment,omitempty"`
 	HandoffAcceptanceEscalationOwner *string                                                         `json:"handoff_acceptance_escalation_owner,omitempty"`
 	HandoffReassignment              *OperationWorkflowReviewResponseHandoffReassignmentRequest      `json:"handoff_reassignment,omitempty"`
@@ -544,6 +545,7 @@ type OperationWorkflowReviewResponse struct {
 	HistoryTruncated                 bool                                           `json:"history_truncated"`
 }
 type OperationWorkflowReviewResponseChange struct {
+	EscalationCompletion             *OperationWorkflowReviewResponseEscalationCompletion     `json:"escalation_completion,omitempty"`
 	EscalationAcknowledgment         *OperationWorkflowReviewResponseEscalationAcknowledgment `json:"escalation_acknowledgment,omitempty"`
 	HandoffAcceptanceEscalationOwner string                                                   `json:"handoff_acceptance_escalation_owner,omitempty"`
 	HandoffReassignment              *OperationWorkflowReviewResponseHandoffReassignment      `json:"handoff_reassignment,omitempty"`
@@ -728,10 +730,29 @@ type OperationWorkflowReviewResponseEscalationAcknowledgmentRequest struct {
 	DueAt       time.Time `json:"due_at"`
 }
 type OperationWorkflowReviewResponseEscalationAcknowledgment struct {
-	Coordinator       string     `json:"coordinator"`
-	Plan              string     `json:"plan"`
-	DueAt             time.Time  `json:"due_at"`
-	At                time.Time  `json:"at"`
-	Actor             string     `json:"actor"`
-	OverdueNotifiedAt *time.Time `json:"overdue_notified_at,omitempty"`
+	Completion        *OperationWorkflowReviewResponseEscalationCompletion `json:"completion,omitempty"`
+	Coordinator       string                                               `json:"coordinator"`
+	Plan              string                                               `json:"plan"`
+	DueAt             time.Time                                            `json:"due_at"`
+	At                time.Time                                            `json:"at"`
+	Actor             string                                               `json:"actor"`
+	OverdueNotifiedAt *time.Time                                           `json:"overdue_notified_at,omitempty"`
+}
+
+// Completion records human coordination work, not an application outcome.
+type OperationWorkflowReviewResponseEscalationCompletionRequest struct {
+	DecisionAt     time.Time `json:"decision_at"`
+	RequiredAt     time.Time `json:"required_at"`
+	HandedOffAt    time.Time `json:"handed_off_at"`
+	EscalatedAt    time.Time `json:"escalated_at"`
+	AcknowledgedAt time.Time `json:"acknowledged_at"`
+	Summary        string    `json:"summary"`
+	ReviewIndices  []int     `json:"review_indices"`
+}
+type OperationWorkflowReviewResponseEscalationCompletion struct {
+	AcknowledgedAt time.Time                             `json:"acknowledged_at"`
+	Summary        string                                `json:"summary"`
+	Evidence       []OperationWorkflowReviewResponseLink `json:"evidence"`
+	At             time.Time                             `json:"at"`
+	Actor          string                                `json:"actor"`
 }

@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_review_response_escalation_acknowledgment_request import (
         OperationWorkflowReviewResponseEscalationAcknowledgmentRequest,
     )
+    from ..models.operation_workflow_review_response_escalation_completion_request import (
+        OperationWorkflowReviewResponseEscalationCompletionRequest,
+    )
     from ..models.operation_workflow_review_response_handoff_acceptance_request import (
         OperationWorkflowReviewResponseHandoffAcceptanceRequest,
     )
@@ -50,6 +53,12 @@ class OperationWorkflowReviewResponseRequest:
     status: OperationWorkflowReviewResponseRequestStatus
     """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
     check of linked source reviews."""
+    escalation_completion: OperationWorkflowReviewResponseEscalationCompletionRequest | Unset = UNSET
+    """Complete one current escalation coordinator commitment with an action summary and saved review evidence.
+    Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with
+    acknowledgment, decision, acceptance, decline or reassignment. Accepted or declined handoffs can still record
+    completed work for the same retained episode, but replaced or resolved episodes cannot. Does not establish
+    application success."""
     escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgmentRequest | Unset = UNSET
     """One immutable coordination commitment for the current escalated, unaccepted handoff. Preserve the parent
     response owner, plan and exact check-in, even if overdue. Cannot combine with a decision, acceptance, decline or
@@ -101,6 +110,10 @@ class OperationWorkflowReviewResponseRequest:
 
         status: str = self.status
 
+        escalation_completion: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.escalation_completion, Unset):
+            escalation_completion = self.escalation_completion.to_dict()
+
         escalation_acknowledgment: dict[str, Any] | Unset = UNSET
         if not isinstance(self.escalation_acknowledgment, Unset):
             escalation_acknowledgment = self.escalation_acknowledgment.to_dict()
@@ -151,6 +164,8 @@ class OperationWorkflowReviewResponseRequest:
                 "status": status,
             }
         )
+        if escalation_completion is not UNSET:
+            field_dict["escalation_completion"] = escalation_completion
         if escalation_acknowledgment is not UNSET:
             field_dict["escalation_acknowledgment"] = escalation_acknowledgment
         if handoff_acceptance_escalation_owner is not UNSET:
@@ -186,6 +201,9 @@ class OperationWorkflowReviewResponseRequest:
         from ..models.operation_workflow_review_response_escalation_acknowledgment_request import (
             OperationWorkflowReviewResponseEscalationAcknowledgmentRequest,
         )
+        from ..models.operation_workflow_review_response_escalation_completion_request import (
+            OperationWorkflowReviewResponseEscalationCompletionRequest,
+        )
         from ..models.operation_workflow_review_response_handoff_acceptance_request import (
             OperationWorkflowReviewResponseHandoffAcceptanceRequest,
         )
@@ -203,6 +221,15 @@ class OperationWorkflowReviewResponseRequest:
         plan = d.pop("plan")
 
         status = check_operation_workflow_review_response_request_status(d.pop("status"))
+
+        _escalation_completion = d.pop("escalation_completion", UNSET)
+        escalation_completion: OperationWorkflowReviewResponseEscalationCompletionRequest | Unset
+        if isinstance(_escalation_completion, Unset):
+            escalation_completion = UNSET
+        else:
+            escalation_completion = OperationWorkflowReviewResponseEscalationCompletionRequest.from_dict(
+                _escalation_completion
+            )
 
         _escalation_acknowledgment = d.pop("escalation_acknowledgment", UNSET)
         escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgmentRequest | Unset
@@ -273,6 +300,7 @@ class OperationWorkflowReviewResponseRequest:
             owner=owner,
             plan=plan,
             status=status,
+            escalation_completion=escalation_completion,
             escalation_acknowledgment=escalation_acknowledgment,
             handoff_acceptance_escalation_owner=handoff_acceptance_escalation_owner,
             handoff_reassignment=handoff_reassignment,

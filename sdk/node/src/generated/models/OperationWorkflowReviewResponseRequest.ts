@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OperationWorkflowReviewResponseDecisionRequest } from './OperationWorkflowReviewResponseDecisionRequest.js';
 import type { OperationWorkflowReviewResponseEscalationAcknowledgmentRequest } from './OperationWorkflowReviewResponseEscalationAcknowledgmentRequest.js';
+import type { OperationWorkflowReviewResponseEscalationCompletionRequest } from './OperationWorkflowReviewResponseEscalationCompletionRequest.js';
 import type { OperationWorkflowReviewResponseHandoffAcceptanceRequest } from './OperationWorkflowReviewResponseHandoffAcceptanceRequest.js';
 import type { OperationWorkflowReviewResponseHandoffDeclineRequest } from './OperationWorkflowReviewResponseHandoffDeclineRequest.js';
 import type { OperationWorkflowReviewResponseHandoffReassignmentRequest } from './OperationWorkflowReviewResponseHandoffReassignmentRequest.js';
@@ -12,6 +13,10 @@ import type { OperationWorkflowReviewResponseLinkRequest } from './OperationWork
  * OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-impact alert. Saving acknowledges the alert and assigns queue attention to the response owner.
  */
 export type OperationWorkflowReviewResponseRequest = {
+  /**
+   * OperationWorkflowReviewResponseRequest.escalation_completion. Explicit completion of coordinator work, separate from handoff acceptance and business outcomes.
+   */
+  escalation_completion?: OperationWorkflowReviewResponseEscalationCompletionRequest;
   /**
    * OperationWorkflowReviewResponseRequest.escalation_acknowledgment. Explicit escalation coordination commitment, separate from handoff acceptance and decision revalidation.
    */

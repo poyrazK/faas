@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.operation_workflow_review_response_escalation_completion import (
+        OperationWorkflowReviewResponseEscalationCompletion,
+    )
+
 
 T = TypeVar("T", bound="OperationWorkflowReviewResponseEscalationAcknowledgment")
 
@@ -14,7 +20,7 @@ T = TypeVar("T", bound="OperationWorkflowReviewResponseEscalationAcknowledgment"
 @_attrs_define
 class OperationWorkflowReviewResponseEscalationAcknowledgment:
     """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time. Notification
-    acknowledgment alone does not create this record. Only the system overdue delivery marker may change.
+    acknowledgment alone does not create this record. The system overdue marker and explicit human completion may be appended without changing commitment fields.
 
     """
 
@@ -23,6 +29,9 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
     due_at: datetime.datetime
     at: datetime.datetime
     actor: str
+    completion: OperationWorkflowReviewResponseEscalationCompletion | Unset = UNSET
+    """Immutable human completion of escalation coordination work, with linked review references and server actor
+    and time. Existing overdue markers remain historical."""
     overdue_notified_at: datetime.datetime | Unset = UNSET
     """One-time follow-up publication marker. Stored atomically with its inbox notice and mirrored in retained
     history; human update timestamps remain unchanged."""
@@ -37,6 +46,10 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        completion: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.completion, Unset):
+            completion = self.completion.to_dict()
 
         overdue_notified_at: str | Unset = UNSET
         if not isinstance(self.overdue_notified_at, Unset):
@@ -53,6 +66,8 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
                 "actor": actor,
             }
         )
+        if completion is not UNSET:
+            field_dict["completion"] = completion
         if overdue_notified_at is not UNSET:
             field_dict["overdue_notified_at"] = overdue_notified_at
 
@@ -60,6 +75,10 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_workflow_review_response_escalation_completion import (
+            OperationWorkflowReviewResponseEscalationCompletion,
+        )
+
         d = dict(src_dict)
         coordinator = d.pop("coordinator")
 
@@ -70,6 +89,13 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         actor = d.pop("actor")
+
+        _completion = d.pop("completion", UNSET)
+        completion: OperationWorkflowReviewResponseEscalationCompletion | Unset
+        if isinstance(_completion, Unset):
+            completion = UNSET
+        else:
+            completion = OperationWorkflowReviewResponseEscalationCompletion.from_dict(_completion)
 
         _overdue_notified_at = d.pop("overdue_notified_at", UNSET)
         overdue_notified_at: datetime.datetime | Unset
@@ -84,6 +110,7 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
             due_at=due_at,
             at=at,
             actor=actor,
+            completion=completion,
             overdue_notified_at=overdue_notified_at,
         )
 
