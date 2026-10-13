@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -9082,6 +9083,21 @@ func (l Limits) AsyncInvocationTimeout(requestTimeoutS int) time.Duration {
 // invocation that may run for timeout (ADR-1180).
 func AsyncInvocationDispatchTimeout(timeout time.Duration) time.Duration {
 	return AsyncInvocationWakeAllowance + timeout
+}
+
+// GuestDeadline is how long the guest side may take with a request whose
+// DeadlineHeader value is deadlineMs (ADR-1150): that deadline, never less
+// than floor and never more than RequestBudgetPlanMax. An absent or malformed
+// value gives floor. The function runner bounds the handler with it and
+// vmmd's stream bridge its wait for the guest's response headers.
+func GuestDeadline(deadlineMs string, floor time.Duration) time.Duration {
+	wait := floor
+	if ms, err := strconv.ParseInt(deadlineMs, 10, 64); err == nil && ms > 0 {
+		if forwarded := time.Duration(ms) * time.Millisecond; forwarded > wait {
+			wait = forwarded
+		}
+	}
+	return min(wait, RequestBudgetPlanMax)
 }
 
 // TriggerBatchDispatchTimeout bounds one trigger batch for an app whose

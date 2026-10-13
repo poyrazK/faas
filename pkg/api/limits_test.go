@@ -179,6 +179,26 @@ func TestRequestBudgetPlanCeilings(t *testing.T) {
 
 // ADR-1180: an async invocation runs for the app's request timeout, at least
 // 30 s and at most the plan's ceiling, and its lease outlasts the run.
+// The guest may take as long as the forwarded deadline, within [floor,
+// RequestBudgetPlanMax] (ADR-1150).
+func TestGuestDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{value: "", want: 30 * time.Second},
+		{value: "junk", want: 30 * time.Second},
+		{value: "-5", want: 30 * time.Second},
+		{value: "3000", want: 30 * time.Second},
+		{value: "119999", want: 119999 * time.Millisecond},
+		{value: "86400000", want: RequestBudgetPlanMax},
+	} {
+		if got := GuestDeadline(tc.value, 30*time.Second); got != tc.want {
+			t.Errorf("GuestDeadline(%q) = %s, want %s", tc.value, got, tc.want)
+		}
+	}
+}
+
 func TestAsyncInvocationTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		plan            Plan

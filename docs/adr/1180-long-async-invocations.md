@@ -65,6 +65,15 @@ processing.
    bound and inline delivery for an app at the 30 s default, and resolving
    the timeout costs no lookup for it.
 
+7. **The bridge waits for the guest's answer.** vmmd's stream bridge
+   waited at most 30 s for the guest's response headers, then answered
+   502. That also cut ADR-1150's synchronous requests whose handler
+   answers once, without streaming, after more than 30 s; ADR-1150's
+   metal test streamed from the start and so never reached it. The bridge
+   now waits as long as the request's `X-Faas-Deadline-Ms` allows, by the
+   same rule as the runner (`api.GuestDeadline`: at least 30 s, at most
+   15 min). A request without the header keeps 30 s.
+
 ## Consequences
 
 - A Scale function can process a queue message, a cron fire or an async

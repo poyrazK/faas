@@ -174,6 +174,27 @@ func TestFunctionLongRequestMetal(t *testing.T) {
 		t.Fatalf("handler saw X-Faas-Deadline-Ms=%d; want the gateway's budget (60–120 s), not the client's", deadline)
 	}
 
+	// A response that starts only after 40 s, not streamed, also gets the
+	// whole request timeout. vmmd's stream bridge used to wait 30 s for the
+	// guest's response headers and answer 502.
+	workReq, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayAppURL(h, result.slug)+"work", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workReq.Host = result.slug + ".apps.test.example"
+	workReq.Header.Set("Authorization", "Bearer "+key)
+	workStarted := time.Now()
+	workResp, err := (&http.Client{}).Do(workReq)
+	if err != nil {
+		t.Fatalf("GET /work: %v", err)
+	}
+	workBody, err := io.ReadAll(workResp.Body)
+	_ = workResp.Body.Close()
+	t.Logf("long single response: %v, status %d: %q", time.Since(workStarted), workResp.StatusCode, workBody)
+	if err != nil || workResp.StatusCode != http.StatusOK || !strings.Contains(string(workBody), "worked 40s") {
+		t.Fatalf("GET /work after %v: status %d body %q err %v; want the 40 s answer", time.Since(workStarted), workResp.StatusCode, workBody, err)
+	}
+
 	// ADR-1180: an async invocation of the same function may run for its
 	// request timeout too. /work runs for 40 s; before ADR-1180 the runner
 	// cut every async invocation at 30 s.
