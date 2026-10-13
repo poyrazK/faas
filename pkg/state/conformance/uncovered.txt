@@ -283,7 +283,6 @@ ListAllApps
 ListAllCustomDomainsForDoctor
 ListAllDeployments
 ListAllEventsPaged
-ListAllInstances
 ListAppEnv
 ListAppEnvInScope
 ListAppErrorFingerprintsForPurge

@@ -72926,7 +72926,7 @@ components:
       properties:
         instance_id: { type: string, description: "Authorized active runtime instance ID." }
         workload_name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', description: "Sidecar workload name. Omitted for the main workload." }
-        runtime_state: { type: string, enum: [waking, cold_booting, running, draining, snapshotting, migrating, warm], description: "Current active instance state." }
+        runtime_state: { type: string, enum: [waking, cold_booting, running, draining, snapshotting, migrating, warm, frozen], description: "Current active instance state." }
         reload_support: { type: string, enum: [enabled, disabled, unknown], description: "Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted metadata." }
         reported: { type: boolean, description: "Whether this runtime has reported a guest-init outcome. False is unknown, never success." }
         version: { type: integer, format: int64, minimum: 1, description: "Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only when reported is true." }

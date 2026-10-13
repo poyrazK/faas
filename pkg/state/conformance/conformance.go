@@ -92,6 +92,7 @@ func Run(t *testing.T, open Open) {
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
+		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},
 		{"beta_first_success_includes_parked_instances", testBetaFirstSuccess},
 		{"account_credits_issue_list_and_consume", testAccountCredits},
 		{"billing_identity_is_provider_qualified", testBillingIdentity},
@@ -3933,6 +3934,55 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	}
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
+	}
+}
+
+// testFrozenInstanceState pins ADR-1151's FROZEN state: an idle VM kept
+// paused in memory. It is listed with the resident instances (the reaper parks
+// it after FrozenTTL; `gregale ps` shows it), holds no serving concurrency, is
+// left out of the ram_mb+8 node usage (admission books its measured memory),
+// and thaws back to RUNNING.
+func testFrozenInstanceState(t *testing.T, fx *Fixture) {
+	ins, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID, string(state.StateRunning), 256, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, ins.ID, string(state.StateRunning), string(state.StateFrozen)); err != nil {
+		t.Fatalf("freeze RUNNING -> FROZEN: %v", err)
+	}
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil || got != 0 {
+		t.Errorf("ConcurrencyForDeployment = %d, %v; want 0 (frozen holds no concurrency)", got, err)
+	}
+	if got, err := fx.Store.CountLiveInstancesByDeployment(fx.Ctx, fx.Deployment.ID); err != nil || got != 0 {
+		t.Errorf("CountLiveInstancesByDeployment = %d, %v; want 0", got, err)
+	}
+	if got, err := fx.Store.ComputeNodeUsedMB(fx.Ctx, fx.Node.ID); err != nil || got != 0 {
+		t.Errorf("ComputeNodeUsedMB = %d, %v; want 0 (frozen is charged measured memory, not ram_mb+8)", got, err)
+	}
+	listed := func(rows []state.Instance) bool {
+		for _, row := range rows {
+			if row.ID == ins.ID {
+				return row.State == string(state.StateFrozen)
+			}
+		}
+		return false
+	}
+	if all, err := fx.Store.ListAllInstances(fx.Ctx); err != nil || !listed(all) {
+		t.Errorf("ListAllInstances does not list the frozen instance (err %v)", err)
+	}
+	type activeLister interface {
+		ListActiveInstancesForApp(ctx context.Context, appID string, limit int) ([]state.Instance, error)
+	}
+	if lister, ok := fx.Store.(activeLister); ok {
+		if active, err := lister.ListActiveInstancesForApp(fx.Ctx, fx.App.ID, 100); err != nil || !listed(active) {
+			t.Errorf("ListActiveInstancesForApp (the `ps` read) does not list the frozen instance (err %v)", err)
+		}
+	}
+	if err := fx.Store.UpdateInstanceStateIf(fx.Ctx, ins.ID, string(state.StateFrozen), string(state.StateRunning)); err != nil {
+		t.Fatalf("thaw FROZEN -> RUNNING: %v", err)
+	}
+	if got, err := fx.Store.ConcurrencyForDeployment(fx.Ctx, fx.App.ID, fx.Deployment.ID); err != nil || got != 1 {
+		t.Errorf("ConcurrencyForDeployment after thaw = %d, %v; want 1", got, err)
 	}
 }
 
