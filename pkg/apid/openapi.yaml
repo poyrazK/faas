@@ -82746,10 +82746,55 @@ components:
           type: boolean
         current:
           $ref: '#/components/schemas/OperationWorkflowCaseNextAction'
+    OperationWorkflowObligationContext:
+      type: object
+      additionalProperties: false
+      description: Fresh exact-case transition context shared by obligation assessments. Detailed declared requirements and dependency identities remain in instance.readiness, avoiding duplicated evidence payloads. Stale or absent reports never produce a positive transition verdict; a satisfied edge does not grant application execution or bind a free-form plan.
+      required: [status, summary, checked_at, coverage_incomplete, transition_count, evaluated_transition_count]
+      properties:
+        status:
+          type: string
+          enum: [evidence_unavailable, terminal_reported, transition_requirements_satisfied, partial_readiness, no_declared_transition, waiting_on_requirements]
+        summary:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
+        coverage_incomplete:
+          type: boolean
+        transition_count:
+          type: integer
+        evaluated_transition_count:
+          type: integer
+    OperationWorkflowObligationAssessment:
+      type: object
+      additionalProperties: false
+      description: Coordination assessment for one displayed outstanding source action. Human reviews, ownership acceptance and worker checks are distinct from executing application transitions. Free-form response/coordinator plans remain fulfillment_unassessed without a declared binding. Deadlines and histories never create dependency guards or authorize actions.
+      required: [subscription_id, sequence, action_kind, status, summary, checked_at]
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        obligation_id:
+          type: string
+        action_kind:
+          type: string
+        status:
+          type: string
+          enum: [fulfillment_unassessed, acceptance_required, scheduled_check, review_actionable, review_evidence_unavailable, human_action_required]
+        summary:
+          type: string
+        checked_at:
+          type: string
+          format: date-time
     OperationWorkflowCase:
       type: object
       description: OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
       required:
+      - obligation_assessments
       - obligation_history
       - obligation_history_count
       - obligation_history_truncated
@@ -82776,6 +82821,13 @@ components:
       - evaluated_at
       - limitations
       properties:
+        obligation_context:
+          $ref: '#/components/schemas/OperationWorkflowObligationContext'
+        obligation_assessments:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/OperationWorkflowObligationAssessment'
         obligation_history:
           type: array
           maxItems: 100

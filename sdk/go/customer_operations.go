@@ -447,3 +447,7 @@ type OperationWorkflowObligationEvent = api.OperationWorkflowObligationEvent
 type OperationWorkflowCaseObligationHistoryItem = api.OperationWorkflowCaseObligationHistoryItem
 
 type OperationWorkflowObligationReplacement = api.OperationWorkflowObligationReplacement
+
+type OperationWorkflowObligationContext = api.OperationWorkflowObligationContext
+
+type OperationWorkflowObligationAssessment = api.OperationWorkflowObligationAssessment

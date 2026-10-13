@@ -1197,6 +1197,8 @@ export type { OperationWorkflowNextActionDigestCheckItem } from './OperationWork
 export type { OperationWorkflowNextActionDigestExplanation } from './OperationWorkflowNextActionDigestExplanation.js';
 export type { OperationWorkflowNextActionDigestPolicy } from './OperationWorkflowNextActionDigestPolicy.js';
 export type { OperationWorkflowNextActionQueueItem } from './OperationWorkflowNextActionQueueItem.js';
+export type { OperationWorkflowObligationAssessment } from './OperationWorkflowObligationAssessment.js';
+export type { OperationWorkflowObligationContext } from './OperationWorkflowObligationContext.js';
 export type { OperationWorkflowObligationEvent } from './OperationWorkflowObligationEvent.js';
 export type { OperationWorkflowObligationReplacement } from './OperationWorkflowObligationReplacement.js';
 export type { OperationWorkflowOutcomeEntry } from './OperationWorkflowOutcomeEntry.js';

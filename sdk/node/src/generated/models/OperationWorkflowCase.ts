@@ -7,6 +7,8 @@ import type { OperationWorkflowCaseNextAction } from './OperationWorkflowCaseNex
 import type { OperationWorkflowCaseObligationHistoryItem } from './OperationWorkflowCaseObligationHistoryItem.js';
 import type { OperationWorkflowCoordinationTimeline } from './OperationWorkflowCoordinationTimeline.js';
 import type { OperationWorkflowInstanceSnapshot } from './OperationWorkflowInstanceSnapshot.js';
+import type { OperationWorkflowObligationAssessment } from './OperationWorkflowObligationAssessment.js';
+import type { OperationWorkflowObligationContext } from './OperationWorkflowObligationContext.js';
 import type { OperationWorkflowPlaybookGuidance } from './OperationWorkflowPlaybookGuidance.js';
 import type { OperationWorkflowPlaybookProgress } from './OperationWorkflowPlaybookProgress.js';
 import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowReadinessFollowUp.js';
@@ -14,6 +16,8 @@ import type { OperationWorkflowReadinessFollowUp } from './OperationWorkflowRead
  * OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow.
  */
 export type OperationWorkflowCase = {
+  obligation_context?: OperationWorkflowObligationContext;
+  obligation_assessments: Array<OperationWorkflowObligationAssessment>;
   obligation_history: Array<OperationWorkflowCaseObligationHistoryItem>;
   /**
    * Matching obligation groups found in this bounded retained source scan.

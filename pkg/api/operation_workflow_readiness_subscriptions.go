@@ -426,6 +426,8 @@ type OperationWorkflowCaseAction struct {
 	Sequence       int64  `json:"sequence,omitempty"`
 }
 type OperationWorkflowCase struct {
+	ObligationContext          *OperationWorkflowObligationContext          `json:"obligation_context,omitempty"`
+	ObligationAssessments      []OperationWorkflowObligationAssessment      `json:"obligation_assessments"`
 	ObligationHistory          []OperationWorkflowCaseObligationHistoryItem `json:"obligation_history"`
 	ObligationHistoryCount     int                                          `json:"obligation_history_count"`
 	ObligationHistoryTruncated bool                                         `json:"obligation_history_truncated"`
@@ -957,4 +959,22 @@ type OperationWorkflowObligationReplacement struct {
 	SuccessorKind   string `json:"successor_kind"`
 	Reason          string `json:"reason"`
 	ReasonKind      string `json:"reason_kind"`
+}
+
+type OperationWorkflowObligationContext struct {
+	Status                   string    `json:"status"`
+	Summary                  string    `json:"summary"`
+	CheckedAt                time.Time `json:"checked_at"`
+	CoverageIncomplete       bool      `json:"coverage_incomplete"`
+	TransitionCount          int       `json:"transition_count"`
+	EvaluatedTransitionCount int       `json:"evaluated_transition_count"`
+}
+type OperationWorkflowObligationAssessment struct {
+	SubscriptionID string    `json:"subscription_id"`
+	Sequence       int64     `json:"sequence"`
+	ObligationID   string    `json:"obligation_id,omitempty"`
+	ActionKind     string    `json:"action_kind"`
+	Status         string    `json:"status"`
+	Summary        string    `json:"summary"`
+	CheckedAt      time.Time `json:"checked_at"`
 }

@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_case_obligation_history_item import OperationWorkflowCaseObligationHistoryItem
     from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
     from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+    from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
+    from ..models.operation_workflow_obligation_context import OperationWorkflowObligationContext
     from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
     from ..models.operation_workflow_playbook_progress import OperationWorkflowPlaybookProgress
     from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
@@ -31,6 +33,7 @@ T = TypeVar("T", bound="OperationWorkflowCase")
 class OperationWorkflowCase:
     """OperationWorkflowCase. Current evidence and advisory coordination for an exact scoped business workflow."""
 
+    obligation_assessments: list[OperationWorkflowObligationAssessment]
     obligation_history: list[OperationWorkflowCaseObligationHistoryItem]
     obligation_history_count: int
     """Matching obligation groups found in this bounded retained source scan."""
@@ -92,6 +95,11 @@ class OperationWorkflowCase:
     limitations: list[str]
     """OperationWorkflowCase.limitations. Explicit read consistency, retention and application authority
     boundaries."""
+    obligation_context: OperationWorkflowObligationContext | Unset = UNSET
+    """Fresh exact-case transition context shared by obligation assessments. Detailed declared requirements and
+    dependency identities remain in instance.readiness, avoiding duplicated evidence payloads. Stale or absent
+    reports never produce a positive transition verdict; a satisfied edge does not grant application execution or
+    bind a free-form plan."""
     instance: OperationWorkflowInstanceSnapshot | Unset = UNSET
     """Grouped view of the selected contract's declared steps and allowed transitions, current explicit state, and
     transition-history page for one workflow instance. Allowed transitions are contract edges by target Operation;
@@ -101,6 +109,11 @@ class OperationWorkflowCase:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        obligation_assessments = []
+        for obligation_assessments_item_data in self.obligation_assessments:
+            obligation_assessments_item = obligation_assessments_item_data.to_dict()
+            obligation_assessments.append(obligation_assessments_item)
+
         obligation_history = []
         for obligation_history_item_data in self.obligation_history:
             obligation_history_item = obligation_history_item_data.to_dict()
@@ -169,6 +182,10 @@ class OperationWorkflowCase:
 
         limitations = self.limitations
 
+        obligation_context: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.obligation_context, Unset):
+            obligation_context = self.obligation_context.to_dict()
+
         instance: dict[str, Any] | Unset = UNSET
         if not isinstance(self.instance, Unset):
             instance = self.instance.to_dict()
@@ -177,6 +194,7 @@ class OperationWorkflowCase:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "obligation_assessments": obligation_assessments,
                 "obligation_history": obligation_history,
                 "obligation_history_count": obligation_history_count,
                 "obligation_history_truncated": obligation_history_truncated,
@@ -204,6 +222,8 @@ class OperationWorkflowCase:
                 "limitations": limitations,
             }
         )
+        if obligation_context is not UNSET:
+            field_dict["obligation_context"] = obligation_context
         if instance is not UNSET:
             field_dict["instance"] = instance
 
@@ -216,11 +236,22 @@ class OperationWorkflowCase:
         from ..models.operation_workflow_case_obligation_history_item import OperationWorkflowCaseObligationHistoryItem
         from ..models.operation_workflow_coordination_timeline import OperationWorkflowCoordinationTimeline
         from ..models.operation_workflow_instance_snapshot import OperationWorkflowInstanceSnapshot
+        from ..models.operation_workflow_obligation_assessment import OperationWorkflowObligationAssessment
+        from ..models.operation_workflow_obligation_context import OperationWorkflowObligationContext
         from ..models.operation_workflow_playbook_guidance import OperationWorkflowPlaybookGuidance
         from ..models.operation_workflow_playbook_progress import OperationWorkflowPlaybookProgress
         from ..models.operation_workflow_readiness_follow_up import OperationWorkflowReadinessFollowUp
 
         d = dict(src_dict)
+        obligation_assessments = []
+        _obligation_assessments = d.pop("obligation_assessments")
+        for obligation_assessments_item_data in _obligation_assessments:
+            obligation_assessments_item = OperationWorkflowObligationAssessment.from_dict(
+                obligation_assessments_item_data
+            )
+
+            obligation_assessments.append(obligation_assessments_item)
+
         obligation_history = []
         _obligation_history = d.pop("obligation_history")
         for obligation_history_item_data in _obligation_history:
@@ -301,6 +332,13 @@ class OperationWorkflowCase:
 
         limitations = cast(list[str], d.pop("limitations"))
 
+        _obligation_context = d.pop("obligation_context", UNSET)
+        obligation_context: OperationWorkflowObligationContext | Unset
+        if isinstance(_obligation_context, Unset):
+            obligation_context = UNSET
+        else:
+            obligation_context = OperationWorkflowObligationContext.from_dict(_obligation_context)
+
         _instance = d.pop("instance", UNSET)
         instance: OperationWorkflowInstanceSnapshot | Unset
         if isinstance(_instance, Unset):
@@ -309,6 +347,7 @@ class OperationWorkflowCase:
             instance = OperationWorkflowInstanceSnapshot.from_dict(_instance)
 
         operation_workflow_case = cls(
+            obligation_assessments=obligation_assessments,
             obligation_history=obligation_history,
             obligation_history_count=obligation_history_count,
             obligation_history_truncated=obligation_history_truncated,
@@ -334,6 +373,7 @@ class OperationWorkflowCase:
             coordination_checked_at=coordination_checked_at,
             evaluated_at=evaluated_at,
             limitations=limitations,
+            obligation_context=obligation_context,
             instance=instance,
         )
 

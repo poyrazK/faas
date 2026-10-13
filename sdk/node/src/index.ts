@@ -398,3 +398,7 @@ export type { OperationWorkflowObligationEvent } from './customer-operations.js'
 export type { OperationWorkflowCaseObligationHistoryItem } from './customer-operations.js';
 
 export type { OperationWorkflowObligationReplacement } from './customer-operations.js';
+
+export type { OperationWorkflowObligationContext } from './customer-operations.js';
+
+export type { OperationWorkflowObligationAssessment } from './customer-operations.js';
