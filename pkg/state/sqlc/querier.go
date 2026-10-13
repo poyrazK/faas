@@ -3565,6 +3565,18 @@ type Querier interface {
 	RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error)
 	// Requests one consumer sent above a per-minute allowance on one route.
 	RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg RouteAdviceThrottleExcessParams) (int64, error)
+	// Route awake report reads (ADR-1155): which routes keep a scale-to-zero app
+	// awake. usage_minutes is the billed running time; request_telemetry is
+	// retained debugger telemetry. Both are read only.
+	// The app's billed running time and cold boots per minute, summed over its
+	// instances.
+	RouteAwakeMinutes(ctx context.Context, db DBTX, arg RouteAwakeMinutesParams) ([]RouteAwakeMinutesRow, error)
+	// Requests that restart an instance's idle timer, per minute and route, for
+	// the busiest routes; the rest fold into the empty route. Only a 2xx response
+	// from an instance restarts the timer, and a cold-boot request starts it
+	// whatever it returns. Requests the gateway answered itself (cache hits, edge
+	// answers, auth rejections) carry no deployment, instance or wake.
+	RouteAwakeRouteMinutes(ctx context.Context, db DBTX, arg RouteAwakeRouteMinutesParams) ([]RouteAwakeRouteMinutesRow, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.

@@ -9808,6 +9808,27 @@ const (
 	RouteAdviceMaxCriticalRoutes = 3
 )
 
+// RouteAwake bounds the awake-time report (ADR-1155): which routes keep a
+// scale-to-zero app awake. It reads the busiest RouteAwakeMaxRoutes routes
+// (the rest are one "other routes" bucket) over at most the plan's request
+// telemetry retention.
+const (
+	RouteAwakeDefaultSince = 7 * 24 * time.Hour
+	RouteAwakeMaxRoutes    = 10
+	// A route is called periodically when it was called in at least
+	// RouteAwakePeriodicMinMinutes distinct minutes and at least
+	// RouteAwakePeriodicMinShare of the gaps between those minutes are within
+	// one minute of the median gap.
+	RouteAwakePeriodicMinMinutes = 60
+	RouteAwakePeriodicMinShare   = 0.8
+	// A suggestion is made only for a route whose removal would park the app
+	// for at least this share of its attributed awake time.
+	RouteAwakeSuggestMinSavedShare = 0.1
+	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
+	// requests on the route.
+	RouteAwakeCacheMinAnonymousShare = 0.9
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.

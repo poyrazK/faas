@@ -69,3 +69,6 @@ retention as request analytics: the window (default 7 days) is shortened to
 your plan's retention and the response says so. Free plans have no request
 telemetry. Only routes recorded in telemetry are considered; consumer
 identities in throttle suggestions are the request-time API consumer IDs.
+
+To see which routes keep your app awake, and what removing each would save,
+run [`gregale routes awake`](route-awake.md).

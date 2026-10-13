@@ -9141,6 +9141,24 @@ gregale routes advise my-api --cache-max-age 300
 gregale routes advise my-api --apply 3f9a1c2b7d4e
 ```
 
+### routes awake
+
+Show which routes keep a scale-to-zero app awake, what each costs in awake time, and how to let it park
+
+`gregale routes awake [--since <DURATION>] [--until <RFC3339>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION>` | window to analyze (default 7d; clamped to telemetry retention) |  |
+| `--until <RFC3339>` | end of the window (default now) |  |
+
+Examples:
+
+```sh
+gregale routes awake my-api
+gregale routes awake my-api --since 24h --json
+```
+
 ### routes priority
 
 Show or set which routes are served first, and turned away last, when every instance is busy
