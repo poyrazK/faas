@@ -37,13 +37,18 @@ func (s *routeAwakeTestStore) RouteAwakeRouteMinutes(_ context.Context, arg sqlc
 }
 
 // routeAwakeFixture is an app awake for the last two hours, pinged once a
-// minute on GET /health.
-func routeAwakeFixture(e apidserver.TestEnv) *routeAwakeTestStore {
+// minute on GET /health. Each minute bills the app's own RAM + 8 MB.
+func routeAwakeFixture(t *testing.T, e apidserver.TestEnv, appID string) *routeAwakeTestStore {
+	t.Helper()
+	app, err := (*e.Store()).AppByID(t.Context(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &routeAwakeTestStore{MemStore: *e.Store()}
 	start := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Hour)
 	for m := 0; m < 120; m++ {
 		at := pgtype.Timestamptz{Time: start.Add(time.Duration(m) * time.Minute), Valid: true}
-		store.minutes = append(store.minutes, sqlc.RouteAwakeMinutesRow{Minute: at, MbSeconds: 60 * (256 + api.PerVMOverheadMB)})
+		store.minutes = append(store.minutes, sqlc.RouteAwakeMinutesRow{Minute: at, MbSeconds: int64(60 * (app.RAMMB + api.PerVMOverheadMB))})
 		store.routes = append(store.routes, sqlc.RouteAwakeRouteMinutesRow{Minute: at, Route: "GET /health", Method: "GET", Requests: 1, AnonymousRequests: 1})
 	}
 	return store
@@ -51,8 +56,7 @@ func routeAwakeFixture(e apidserver.TestEnv) *routeAwakeTestStore {
 
 func TestRouteAwakeReport(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	apidserver.MustSeedApp(t, e, "shop")
-	store := routeAwakeFixture(e)
+	store := routeAwakeFixture(t, e, apidserver.MustSeedApp(t, e, "shop"))
 	(*(*e.S()).Store()) = statetest.NewMem(store)
 	res := e.Do(t, "GET", "/v1/apps/shop/routes/awake", nil, nil)
 	var out api.RouteAwakeResponse
@@ -80,7 +84,7 @@ func TestRouteAwakeRejectsAndDegrades(t *testing.T) {
 		t.Fatalf("free plan: %d %s", res.Code, res.Body.String())
 	}
 	e := apidserver.Setup(t, api.PlanPro)
-	apidserver.MustSeedApp(t, e, "shop")
+	appID := apidserver.MustSeedApp(t, e, "shop")
 	if res := e.Do(t, "GET", "/v1/apps/shop/routes/awake?since=nope", nil, nil); res.Code != http.StatusBadRequest {
 		t.Fatalf("bad since: %d %s", res.Code, res.Body.String())
 	}
@@ -91,7 +95,7 @@ func TestRouteAwakeRejectsAndDegrades(t *testing.T) {
 	if res := e.Do(t, "GET", "/v1/apps/shop/routes/awake", nil, nil); res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("memstore: %d %s", res.Code, res.Body.String())
 	}
-	store := routeAwakeFixture(e)
+	store := routeAwakeFixture(t, e, appID)
 	store.err = errors.New("boom")
 	(*(*e.S()).Store()) = statetest.NewMem(store)
 	if res := e.Do(t, "GET", "/v1/apps/shop/routes/awake", nil, nil); res.Code != http.StatusServiceUnavailable {
