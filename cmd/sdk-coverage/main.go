@@ -1364,6 +1364,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/health":                                           "GetEventConsumerHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-health":                                  "GetEventConsumerDeliveryHealth",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-preview":           "PreviewEventExecutionLineageRetries",
+	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs":              "ListEventExecutionLineageRetryJobs",
 	"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs":             "CreateEventExecutionLineageRetryJob",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/retry-jobs/{requestID}":  "GetEventExecutionLineageRetryJob",
 	"GET /v1/apps/{slug}/event-subscriptions/{subscriptionID}/execution-reconciliation/cases":                   "ListEventExecutionLineageCases",
