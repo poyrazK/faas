@@ -3330,3 +3330,15 @@ The remaining-slot threshold defaults to zero (disabled); enabled values are 1â€
 Alerts use metric `capacity_command_receipt_budget_used_slots`, with raw retained receipt usage and converted threshold `128 - N + 1`. For N=16, 113 or more retained receipts means 15 or fewer remaining slots. Alerts also carry `minimum_samples: 2` and `sustain_seconds`. This warning can run alongside `--receipt-budget-full-threshold`; each condition has its own incident. Existing checkpoint, resume and acknowledgment handling apply. Resume must use the same threshold and confirmation duration, and older checkpoint readers need upgrading for the new metric.
 
 Missing, stale, incomplete, repeated, future-dated or scope-mismatched evidence remains unknown; active warnings lose confirmation rather than falsely resolving. Gaps reset confirmation and downtime does not count. Warnings do not reserve receipt slots, predict time to exhaustion, extend retention or change capacity.
+
+### Stabilize receipt-budget warning recovery
+
+```sh
+gregale events subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --receipt-budget-recovery-threshold 24 --receipt-budget-recovery-sustain 30s --interval 5s --timeout 10m
+```
+
+This warns below 16 remaining receipt slots and clears only after at least two fresh observations at **24 or more** remaining slots spanning 30 seconds. A confirmed incident remains firing between those boundaries and during pending recovery. Dropping below the recovery boundary resets recovery confirmation. Invalid or unavailable evidence loses confirmation and resets both timers. A resumed incident stays unknown in the middle band until a warning or recovery is freshly confirmed; downtime does not count.
+
+Recovery is opt-in. Set a recovery threshold between the warning threshold and 128, or select only a recovery duration to reuse the warning boundary. Recovery confirmation defaults to 30 seconds when enabled and accepts 100msâ€“24h. Both recovery options zero preserve immediate clearing at the original warning boundary. Go users set `ReceiptBudgetRecoveryRemaining` and `ReceiptBudgetRecoverySustain` in `EventDeliveryHealthWatchOptions`. The separate full-budget duration condition is unaffected.
+
+Conditions and alerts retain the used-slot metric and add `recovery_threshold` (inclusive maximum used slots) and `recovery_sustain_seconds`. In the example, opening usage is at least 113 and recovery usage is at most 104. A zero maximum used-slot recovery threshold may be omitted from JSON when recovery requires all 128 slots; the positive recovery duration identifies the enabled policy. Checkpoints with recovery enabled use **version 2**, which older readers reject. Watches without recovery keep version 1. Resume requires the same opening and recovery settings; use a new checkpoint when changing policy. Alerts remain advisory and perform no capacity or retention changes.

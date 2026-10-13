@@ -512,6 +512,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1181 | [Capacity-command receipt budget diagnostics](1181-capacity-command-receipt-budget-diagnostics.md) | accepted | Advisory retained receipt usage and earliest expiry in status and capacity preview |
 | 1182 | [Capacity-command receipt-budget watch alerts](1182-capacity-command-receipt-budget-watch-alerts.md) | accepted | Opt-in sustained full-budget alerts using existing lifecycle and checkpoint machinery |
 | 1183 | [Capacity-command receipt-budget early warnings](1183-capacity-command-receipt-budget-early-warnings.md) | accepted | Opt-in sustained low remaining-slot warnings before receipt quota exhaustion |
+| 1184 | [Receipt-budget warning recovery hysteresis](1184-receipt-budget-warning-recovery-hysteresis.md) | accepted | Separate recovery boundaries and sustained fresh recovery with versioned checkpoints |
 
 ADR-011 and ADR-012 are required by the UX spec (§11) before git-deploy work
 begins at M7.5; both landed on 2026-07-17 alongside the M7.5 PR open.
