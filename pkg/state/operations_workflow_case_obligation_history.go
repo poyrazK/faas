@@ -158,6 +158,10 @@ func (h *workflowCaseObligationHistory) finish(out *api.OperationWorkflowCase) {
 		item := &h.items[i]
 		if action, ok := current[caseObligationHistoryKey(item.SubscriptionID, item.Sequence, item.ObligationID)]; ok {
 			item.Current = &action
+			if action.FulfillmentReview != nil {
+				value := *action.FulfillmentReview
+				item.FulfillmentReview = &value
+			}
 		}
 	}
 	out.ObligationHistory = h.items

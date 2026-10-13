@@ -9,11 +9,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-var workflowNextActionKinds = []string{"response_check_in", "decision_revalidation", "handoff_acceptance", "handoff_reassignment", "escalation_acknowledgment", "coordinator_completion", "scheduled_evidence_check", "coordinator_evidence_review", "coordinator_revision", "dependency_review", "follow_up"}
+var workflowNextActionKinds = []string{"response_check_in", "decision_revalidation", "handoff_acceptance", "handoff_reassignment", "escalation_acknowledgment", "coordinator_completion", "scheduled_evidence_check", "coordinator_evidence_review", "coordinator_revision", "dependency_review", "follow_up", "fulfillment_review"}
 
 func readinessQueueOffsetMax(view string) int {
 	if view == "next_actions" {
-		return api.OperationWorkflowReadinessFollowUpCandidatesMax * len(workflowNextActionKinds)
+		return api.OperationWorkflowReadinessFollowUpCandidatesMax * (len(workflowNextActionKinds) - 1 + 128)
 	}
 	return api.OperationWorkflowReadinessFollowUpCandidatesMax
 }
@@ -41,11 +41,21 @@ func nextActionWorkQueue(ctx context.Context, rows []api.OperationWorkflowReadin
 		} else if row.Subject != nil {
 			addCase(*row.Subject, row.Workflow, row.InstanceID, row.PlatformTenantID)
 		}
+		for _, review := range row.Coordination.FulfillmentReviews {
+			if review.ReviewRequired {
+				c := review.Binding.Case
+				customer := c.PlatformTenantID
+				if customer == "" {
+					customer = row.PlatformTenantID
+				}
+				addCase(c.Subject, c.Workflow, c.InstanceID, customer)
+			}
+		}
 		byKind := map[string]int{}
 		for _, c := range cases {
 			caseOpts := api.OperationWorkflowCoordinationTimelineOptions{Scope: opts.Scope, SubjectType: c.Subject.Type, SubjectID: c.Subject.ID, Workflow: c.Workflow, InstanceID: c.InstanceID}
 			projected := api.OperationWorkflowCase{CoordinationCheckedAt: out.EvaluatedAt, Timeline: api.OperationWorkflowCoordinationTimeline{Subject: c.Subject}}
-			projectWorkflowCaseNextActions(&projected, []api.OperationWorkflowReadinessFollowUp{row}, c.PlatformTenantID, caseOpts, operator)
+			projectWorkflowCaseNextActionsWithLimit(&projected, []api.OperationWorkflowReadinessFollowUp{row}, c.PlatformTenantID, caseOpts, operator, readinessQueueOffsetMax("next_actions"))
 			for _, action := range projected.NextActions {
 				if opts.Owner != "" && action.Owner != opts.Owner || opts.ActionKind != "" && action.Kind != opts.ActionKind || opts.ActionTrigger != "" && action.Trigger != opts.ActionTrigger || opts.Due == "overdue" && !action.Overdue || opts.Due == "upcoming" && (action.DueAt == nil || action.Overdue) {
 					continue
@@ -54,7 +64,11 @@ func nextActionWorkQueue(ctx context.Context, rows []api.OperationWorkflowReadin
 				if !operator {
 					shown.PlatformTenantID = ""
 				}
-				if index, exists := byKind[action.Kind]; exists {
+				identity := action.Kind
+				if action.Kind == "fulfillment_review" && action.Obligation != nil {
+					identity += "/" + action.Obligation.ID
+				}
+				if index, exists := byKind[identity]; exists {
 					item := &matched[index]
 					item.Cases = append(item.Cases, shown)
 					for _, ref := range action.Evidence {
@@ -68,7 +82,7 @@ func nextActionWorkQueue(ctx context.Context, rows []api.OperationWorkflowReadin
 					if !operator {
 						item.SubscriptionTenantID = ""
 					}
-					byKind[action.Kind] = len(matched)
+					byKind[identity] = len(matched)
 					matched = append(matched, item)
 				}
 			}
@@ -101,7 +115,13 @@ func nextActionWorkQueue(ctx context.Context, rows []api.OperationWorkflowReadin
 		if a.Sequence != b.Sequence {
 			return a.Sequence < b.Sequence
 		}
-		return a.Kind < b.Kind
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Obligation != nil && b.Obligation != nil {
+			return a.Obligation.ID < b.Obligation.ID
+		}
+		return false
 	})
 	out.View = "next_actions"
 	out.TotalCount = len(matched)

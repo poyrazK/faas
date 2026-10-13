@@ -3,13 +3,18 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowActionObligation } from './OperationWorkflowActionObligation.js';
+import type { OperationWorkflowObligationFulfillmentReview } from './OperationWorkflowObligationFulfillmentReview.js';
 import type { OperationWorkflowReviewResponseLink } from './OperationWorkflowReviewResponseLink.js';
 /**
  * One current coordination obligation or suggestion for an exact workflow case, including the responsible label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references matching this case. This does not authorize application execution or infer business completion.
  */
 export type OperationWorkflowCaseNextAction = {
+  /**
+   * Pending exact-case review of separately fulfilled work. Has an independent work-item identity and no inferred deadline.
+   */
+  fulfillment_review?: OperationWorkflowObligationFulfillmentReview;
   obligation?: OperationWorkflowActionObligation;
-  kind: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up';
+  kind: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up' | 'fulfillment_review';
   summary: string;
   owner?: string;
   /**

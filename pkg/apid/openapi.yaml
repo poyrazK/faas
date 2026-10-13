@@ -39211,7 +39211,7 @@ paths:
         description: ListAccountWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
         schema:
           type: string
-          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
+          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up, fulfillment_review]
       - name: action_trigger
         in: query
         required: false
@@ -39268,7 +39268,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 22000
+          maximum: 278000
       - name: limit
         in: query
         description: ListAccountWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
@@ -39351,7 +39351,7 @@ paths:
         description: ListPlatformTenantSelfWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
         schema:
           type: string
-          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
+          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up, fulfillment_review]
       - name: action_trigger
         in: query
         required: false
@@ -39402,7 +39402,7 @@ paths:
         schema:
           type: integer
           minimum: 0
-          maximum: 22000
+          maximum: 278000
       - name: limit
         in: query
         description: ListPlatformTenantSelfWorkflowReadinessFollowUps.limit. Page size, defaults to 20.
@@ -80596,7 +80596,7 @@ components:
         offset:
           type: integer
           minimum: 0
-          maximum: 22000
+          maximum: 278000
           description: OperationWorkflowReadinessFollowUpOptions.offset. Follow-up queue selector; customer tenant derives
             from authentication.
         limit:
@@ -82669,6 +82669,9 @@ components:
       description: Why one delivered action qualified, which projected fields changed since its last delivered snapshot, and advisory next steps. Missing historical snapshots never imply no changes; absence from a digest does not prove completion. Evidence comparisons describe references, not live evidence health or escalation state.
       required: [subscription_id, sequence, action_kind, reasons, comparison, changed_fields, next_step]
       properties:
+        obligation_id:
+          type: string
+          description: Exact work-item identity, distinguishing multiple fulfillment reviews on one shared source.
         subscription_id:
           type: string
           format: uuid
@@ -82683,7 +82686,7 @@ components:
           maxItems: 2
           items:
             type: string
-            enum: [overdue, approaching_deadline, waiting_for_acceptance]
+            enum: [overdue, approaching_deadline, waiting_for_acceptance, waiting_for_fulfillment_review]
         comparison:
           type: string
           enum: [first_delivery, previous_delivery, previous_snapshot_unavailable]
@@ -82692,7 +82695,7 @@ components:
           maxItems: 11
           items:
             type: string
-            enum: [obligation, deadline, overdue, owner, summary, trigger, evidence, cases, shared_plan, scope, subscription_tenant_id]
+            enum: [obligation, deadline, overdue, owner, summary, trigger, evidence, cases, shared_plan, scope, subscription_tenant_id, fulfillment_review]
         next_step:
           type: string
     OperationWorkflowNextActionCase:
@@ -82737,11 +82740,14 @@ components:
       description: One current coordination obligation or suggestion for an exact workflow case, including the responsible label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references matching this case. This does not authorize application execution or infer business completion.
       required: [kind, summary, trigger, overdue, subscription_id, sequence]
       properties:
+        fulfillment_review:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
+          description: Pending exact-case review of separately fulfilled work. Has an independent work-item identity and no inferred deadline.
         obligation:
           $ref: '#/components/schemas/OperationWorkflowActionObligation'
         kind:
           type: string
-          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up]
+          enum: [response_check_in, decision_revalidation, handoff_acceptance, handoff_reassignment, escalation_acknowledgment, coordinator_completion, scheduled_evidence_check, coordinator_evidence_review, coordinator_revision, dependency_review, follow_up, fulfillment_review]
         summary:
           type: string
         owner:

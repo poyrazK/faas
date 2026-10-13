@@ -18410,7 +18410,7 @@ JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
 WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid
  AND s.scope=sqlc.arg(scope)::text AND s.operator=sqlc.arg(operator)::boolean
  AND (s.operator OR s.tenant_id::text=sqlc.arg(tenant)::text)
- AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ AND (n.payload #>> '{coordination,follow_up_at}' IS NOT NULL OR n.payload #> '{coordination,fulfillment_reviews}' @> '[{"review_required":true}]'::jsonb)
 ORDER BY s.id,n.sequence LIMIT sqlc.arg(candidate_limit)::integer;
 
 -- name: LockReadinessNotification :one

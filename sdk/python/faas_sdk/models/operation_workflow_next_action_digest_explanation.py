@@ -18,6 +18,7 @@ from ..models.operation_workflow_next_action_digest_explanation_reasons_item imp
     OperationWorkflowNextActionDigestExplanationReasonsItem,
     check_operation_workflow_next_action_digest_explanation_reasons_item,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OperationWorkflowNextActionDigestExplanation")
 
@@ -37,6 +38,8 @@ class OperationWorkflowNextActionDigestExplanation:
     comparison: OperationWorkflowNextActionDigestExplanationComparison
     changed_fields: list[OperationWorkflowNextActionDigestExplanationChangedFieldsItem]
     next_step: str
+    obligation_id: str | Unset = UNSET
+    """Exact work-item identity, distinguishing multiple fulfillment reviews on one shared source."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)
@@ -59,6 +62,8 @@ class OperationWorkflowNextActionDigestExplanation:
 
         next_step = self.next_step
 
+        obligation_id = self.obligation_id
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -72,6 +77,8 @@ class OperationWorkflowNextActionDigestExplanation:
                 "next_step": next_step,
             }
         )
+        if obligation_id is not UNSET:
+            field_dict["obligation_id"] = obligation_id
 
         return field_dict
 
@@ -104,6 +111,8 @@ class OperationWorkflowNextActionDigestExplanation:
 
         next_step = d.pop("next_step")
 
+        obligation_id = d.pop("obligation_id", UNSET)
+
         operation_workflow_next_action_digest_explanation = cls(
             subscription_id=subscription_id,
             sequence=sequence,
@@ -112,6 +121,7 @@ class OperationWorkflowNextActionDigestExplanation:
             comparison=comparison,
             changed_fields=changed_fields,
             next_step=next_step,
+            obligation_id=obligation_id,
         )
 
         return operation_workflow_next_action_digest_explanation

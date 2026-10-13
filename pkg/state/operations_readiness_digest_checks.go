@@ -47,6 +47,14 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 		if a.Obligation != nil {
 			result.ObligationID = a.Obligation.ID
 		}
+		if a.Kind == "fulfillment_review" {
+			checked, e := checkFulfillmentReviewDigest(ctx, n, source.Subscription, sourceTenant, selectedTenant, workflow, operator, saved, digest.EvaluatedAt, result)
+			if e != nil {
+				return nil, e
+			}
+			out.Items = append(out.Items, checked)
+			continue
+		}
 		lifecycle, terminal := workflowObligationReceipts(n, a, digest.EvaluatedAt)
 		if a.Obligation != nil {
 			all := len(saved.Cases) > 0

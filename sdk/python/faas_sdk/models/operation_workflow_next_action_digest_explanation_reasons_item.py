@@ -1,7 +1,7 @@
 from typing import Literal
 
 OperationWorkflowNextActionDigestExplanationReasonsItem = Literal[
-    "approaching_deadline", "overdue", "waiting_for_acceptance"
+    "approaching_deadline", "overdue", "waiting_for_acceptance", "waiting_for_fulfillment_review"
 ]
 
 OPERATION_WORKFLOW_NEXT_ACTION_DIGEST_EXPLANATION_REASONS_ITEM_VALUES: set[
@@ -10,6 +10,7 @@ OPERATION_WORKFLOW_NEXT_ACTION_DIGEST_EXPLANATION_REASONS_ITEM_VALUES: set[
     "approaching_deadline",
     "overdue",
     "waiting_for_acceptance",
+    "waiting_for_fulfillment_review",
 }
 
 

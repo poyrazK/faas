@@ -69,7 +69,7 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 			return nil, err
 		}
 		action := item.Action
-		if action.Kind != "handoff_acceptance" && (action.DueAt == nil || action.DueAt.After(soon)) {
+		if action.Kind != "handoff_acceptance" && action.Kind != "fulfillment_review" && (action.DueAt == nil || action.DueAt.After(soon)) {
 			continue
 		}
 		matching++
@@ -78,7 +78,7 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 			key += "/" + action.Obligation.ID
 		}
 		live[key] = true
-		fingerprint := readinessDigest(item)
+		fingerprint := nextActionDigestFingerprint(item)
 		if known[key] == fingerprint {
 			continue
 		}
@@ -123,6 +123,9 @@ func evaluateNextActionDigest(ctx context.Context, store readinessSubscriptionBa
 func explainNextActionDigest(item, previous api.OperationWorkflowNextActionQueueItem, available, known bool, now time.Time) api.OperationWorkflowNextActionDigestExplanation {
 	a := item.Action
 	out := api.OperationWorkflowNextActionDigestExplanation{SubscriptionID: a.SubscriptionID, Sequence: a.Sequence, ActionKind: a.Kind, Reasons: []string{}, Comparison: "first_delivery", ChangedFields: []string{}, NextStep: "Inspect current source controls and review the follow-up with current evidence."}
+	if a.Obligation != nil {
+		out.ObligationID = a.Obligation.ID
+	}
 	if a.DueAt != nil {
 		if !a.DueAt.After(now) {
 			out.Reasons = append(out.Reasons, "overdue")
@@ -133,13 +136,16 @@ func explainNextActionDigest(item, previous api.OperationWorkflowNextActionQueue
 	if a.Kind == "handoff_acceptance" {
 		out.Reasons = append(out.Reasons, "waiting_for_acceptance")
 	}
+	if a.Kind == "fulfillment_review" {
+		out.Reasons = append(out.Reasons, "waiting_for_fulfillment_review")
+	}
 	if available {
 		out.Comparison = "previous_delivery"
 		pairs := []struct {
 			name           string
 			current, prior any
 		}{
-			{"obligation", a.Obligation, previous.Action.Obligation}, {"deadline", a.DueAt, previous.Action.DueAt}, {"overdue", a.Overdue, previous.Action.Overdue},
+			{"fulfillment_review", fulfillmentActionFingerprint(a), fulfillmentActionFingerprint(previous.Action)}, {"obligation", a.Obligation, previous.Action.Obligation}, {"deadline", a.DueAt, previous.Action.DueAt}, {"overdue", a.Overdue, previous.Action.Overdue},
 			{"owner", a.Owner, previous.Action.Owner}, {"summary", a.Summary, previous.Action.Summary},
 			{"trigger", a.Trigger, previous.Action.Trigger}, {"evidence", a.Evidence, previous.Action.Evidence},
 			{"cases", item.Cases, previous.Cases}, {"shared_plan", a.SharedPlan, previous.Action.SharedPlan},
@@ -154,6 +160,8 @@ func explainNextActionDigest(item, previous api.OperationWorkflowNextActionQueue
 		out.Comparison = "previous_snapshot_unavailable"
 	}
 	switch a.Kind {
+	case "fulfillment_review":
+		out.NextStep = "Inspect the exact case evidence, then explicitly reaffirm fulfillment or reopen the obligation."
 	case "response_check_in":
 		out.NextStep = "Inspect the response plan and record a check-in with current evidence."
 	case "decision_revalidation":

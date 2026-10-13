@@ -861,17 +861,18 @@ type OperationWorkflowReviewResponseScheduledReviewReschedule struct {
 
 // Current coordination obligations for an exact workflow case, separate from execution permission.
 type OperationWorkflowCaseNextAction struct {
-	Obligation     *OperationWorkflowActionObligation    `json:"obligation,omitempty"`
-	Kind           string                                `json:"kind"`
-	Summary        string                                `json:"summary"`
-	Owner          string                                `json:"owner,omitempty"`
-	Trigger        string                                `json:"trigger"`
-	DueAt          *time.Time                            `json:"due_at,omitempty"`
-	Overdue        bool                                  `json:"overdue"`
-	SubscriptionID string                                `json:"subscription_id"`
-	Sequence       int64                                 `json:"sequence"`
-	Evidence       []OperationWorkflowReviewResponseLink `json:"evidence,omitempty"`
-	SharedPlan     bool                                  `json:"shared_plan,omitempty"`
+	FulfillmentReview *OperationWorkflowObligationFulfillmentReview `json:"fulfillment_review,omitempty"`
+	Obligation        *OperationWorkflowActionObligation            `json:"obligation,omitempty"`
+	Kind              string                                        `json:"kind"`
+	Summary           string                                        `json:"summary"`
+	Owner             string                                        `json:"owner,omitempty"`
+	Trigger           string                                        `json:"trigger"`
+	DueAt             *time.Time                                    `json:"due_at,omitempty"`
+	Overdue           bool                                          `json:"overdue"`
+	SubscriptionID    string                                        `json:"subscription_id"`
+	Sequence          int64                                         `json:"sequence"`
+	Evidence          []OperationWorkflowReviewResponseLink         `json:"evidence,omitempty"`
+	SharedPlan        bool                                          `json:"shared_plan,omitempty"`
 }
 
 type OperationWorkflowNextActionCase struct {
@@ -896,6 +897,7 @@ type OperationWorkflowNextActionDigestPolicy struct {
 	SoonAfterSeconds int64  `json:"soon_after_seconds,omitempty"`
 }
 type OperationWorkflowNextActionDigestExplanation struct {
+	ObligationID   string   `json:"obligation_id,omitempty"`
 	SubscriptionID string   `json:"subscription_id"`
 	Sequence       int64    `json:"sequence"`
 	ActionKind     string   `json:"action_kind"`

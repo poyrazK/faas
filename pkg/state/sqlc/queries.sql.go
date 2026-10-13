@@ -34430,7 +34430,7 @@ JOIN customer_workflow_readiness_notifications n ON n.subscription_id=s.id
 WHERE s.account_id=$1::uuid AND s.app_id=$2::uuid
  AND s.scope=$3::text AND s.operator=$4::boolean
  AND (s.operator OR s.tenant_id::text=$5::text)
- AND n.payload #>> '{coordination,follow_up_at}' IS NOT NULL
+ AND (n.payload #>> '{coordination,follow_up_at}' IS NOT NULL OR n.payload #> '{coordination,fulfillment_reviews}' @> '[{"review_required":true}]'::jsonb)
 ORDER BY s.id,n.sequence LIMIT $6::integer
 `
 

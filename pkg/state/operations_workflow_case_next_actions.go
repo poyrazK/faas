@@ -10,6 +10,9 @@ import (
 
 // Project current source records, never immutable delivery snapshots, before case page truncation.
 func projectWorkflowCaseNextActions(out *api.OperationWorkflowCase, rows []api.OperationWorkflowReadinessFollowUp, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool) {
+	projectWorkflowCaseNextActionsWithLimit(out, rows, tenant, opts, operator, 100)
+}
+func projectWorkflowCaseNextActionsWithLimit(out *api.OperationWorkflowCase, rows []api.OperationWorkflowReadinessFollowUp, tenant string, opts api.OperationWorkflowCoordinationTimelineOptions, operator bool, limit int) {
 	actions := []api.OperationWorkflowCaseNextAction{}
 	match := func(ref api.OperationWorkflowReviewResponseLink) bool {
 		return ref.Subject == out.Timeline.Subject && ref.Workflow == opts.Workflow && ref.InstanceID == opts.InstanceID && (!operator || sameOperationHistoryIdentity(ref.PlatformTenantID, tenant))
@@ -28,6 +31,9 @@ func projectWorkflowCaseNextActions(out *api.OperationWorkflowCase, rows []api.O
 		return selected
 	}
 	for _, row := range rows {
+		if row.Scope == opts.Scope {
+			actions = append(actions, projectFulfillmentReviewActions(row, out.Timeline.Subject, tenant, opts, operator)...)
+		}
 		if row.Scope != opts.Scope || row.Coordination.Completion != nil || row.Coordination.FollowUpAt == nil {
 			continue
 		}
@@ -133,12 +139,18 @@ func projectWorkflowCaseNextActions(out *api.OperationWorkflowCase, rows []api.O
 		if a.Sequence != b.Sequence {
 			return a.Sequence < b.Sequence
 		}
-		return a.Kind < b.Kind
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Obligation != nil && b.Obligation != nil {
+			return a.Obligation.ID < b.Obligation.ID
+		}
+		return false
 	})
 	out.NextActionCount = len(actions)
-	out.NextActionsTruncated = len(actions) > 100
+	out.NextActionsTruncated = len(actions) > limit
 	if out.NextActionsTruncated {
-		actions = actions[:100]
+		actions = actions[:limit]
 	}
 	out.NextActions = slices.Clone(actions)
 	if out.NextActions == nil {

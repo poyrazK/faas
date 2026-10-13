@@ -50,6 +50,9 @@ func projectWorkflowCaseObligationAssessments(out *api.OperationWorkflowCase, ro
 			assessment.ObligationID = action.Obligation.ID
 		}
 		switch action.Kind {
+		case "fulfillment_review":
+			assessment.Status = "review_actionable"
+			assessment.Summary = "Review the saved fulfillment evidence and explicitly reaffirm or reopen it. The original obligation remains fulfilled."
 		case "handoff_acceptance":
 			assessment.Status = "acceptance_required"
 			assessment.Summary = "The handoff is awaiting explicit human acceptance or decline. Inspect its source controls; workflow prerequisites do not establish ownership acceptance."

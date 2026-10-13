@@ -334,7 +334,7 @@ export class GregaleOperationClient {
     if (options.workflow !== undefined) q.set('workflow', options.workflow);
     if (options.due !== undefined) q.set('due', options.due);
     if (options.offset !== undefined) {
-      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > (options.view === 'next_actions' ? 22000 : 2000)) throw new Error('Invalid follow-up offset');
+      if (!Number.isSafeInteger(options.offset) || options.offset < 0 || options.offset > (options.view === 'next_actions' ? 278000 : 2000)) throw new Error('Invalid follow-up offset');
       q.set('offset', String(options.offset));
     }
     if (options.limit !== undefined) {

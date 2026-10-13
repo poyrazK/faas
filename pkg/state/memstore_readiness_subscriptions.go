@@ -256,7 +256,7 @@ func (m *MemStore) readReadinessFollowUps(ctx context.Context, account, tenant, 
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			if n.Coordination != nil && n.Coordination.FollowUpAt != nil {
+			if n.Coordination != nil && (n.Coordination.FollowUpAt != nil || hasPendingFulfillmentReviews(n.Coordination)) {
 				out = append(out, readinessFollowUpProjection(r.Subscription, r.Tenant, n))
 			}
 		}

@@ -5434,7 +5434,7 @@ export class OperationsService {
     /**
      * ListAccountWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
      */
-    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up',
+    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up' | 'fulfillment_review',
     /**
      * ListAccountWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
      */
@@ -5562,7 +5562,7 @@ export class OperationsService {
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.action_kind. Exact action kind in next-action view.
      */
-    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up',
+    actionKind?: 'response_check_in' | 'decision_revalidation' | 'handoff_acceptance' | 'handoff_reassignment' | 'escalation_acknowledgment' | 'coordinator_completion' | 'scheduled_evidence_check' | 'coordinator_evidence_review' | 'coordinator_revision' | 'dependency_review' | 'follow_up' | 'fulfillment_review',
     /**
      * ListPlatformTenantSelfWorkflowReadinessFollowUps.action_trigger. Exact trigger in next-action view.
      */

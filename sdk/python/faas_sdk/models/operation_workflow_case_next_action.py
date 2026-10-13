@@ -19,6 +19,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operation_workflow_action_obligation import OperationWorkflowActionObligation
+    from ..models.operation_workflow_obligation_fulfillment_review import OperationWorkflowObligationFulfillmentReview
     from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
 
@@ -42,6 +43,11 @@ class OperationWorkflowCaseNextAction:
     """This action's own due time is at or before coordination_checked_at. Undated suggestions are never overdue."""
     subscription_id: UUID
     sequence: int
+    fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
+    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
+    Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
+    owner notices."""
     obligation: OperationWorkflowActionObligation | Unset = UNSET
     """Stable source-and-kind identity derived from the persisted obligation epoch, including dependency-review
     revision where available. Ownership changes and deadline edits preserve the identity except a newly scheduled
@@ -65,6 +71,10 @@ class OperationWorkflowCaseNextAction:
         subscription_id = str(self.subscription_id)
 
         sequence = self.sequence
+
+        fulfillment_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review, Unset):
+            fulfillment_review = self.fulfillment_review.to_dict()
 
         obligation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.obligation, Unset):
@@ -97,6 +107,8 @@ class OperationWorkflowCaseNextAction:
                 "sequence": sequence,
             }
         )
+        if fulfillment_review is not UNSET:
+            field_dict["fulfillment_review"] = fulfillment_review
         if obligation is not UNSET:
             field_dict["obligation"] = obligation
         if owner is not UNSET:
@@ -113,6 +125,9 @@ class OperationWorkflowCaseNextAction:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operation_workflow_action_obligation import OperationWorkflowActionObligation
+        from ..models.operation_workflow_obligation_fulfillment_review import (
+            OperationWorkflowObligationFulfillmentReview,
+        )
         from ..models.operation_workflow_review_response_link import OperationWorkflowReviewResponseLink
 
         d = dict(src_dict)
@@ -127,6 +142,13 @@ class OperationWorkflowCaseNextAction:
         subscription_id = UUID(d.pop("subscription_id"))
 
         sequence = d.pop("sequence")
+
+        _fulfillment_review = d.pop("fulfillment_review", UNSET)
+        fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset
+        if isinstance(_fulfillment_review, Unset):
+            fulfillment_review = UNSET
+        else:
+            fulfillment_review = OperationWorkflowObligationFulfillmentReview.from_dict(_fulfillment_review)
 
         _obligation = d.pop("obligation", UNSET)
         obligation: OperationWorkflowActionObligation | Unset
@@ -162,6 +184,7 @@ class OperationWorkflowCaseNextAction:
             overdue=overdue,
             subscription_id=subscription_id,
             sequence=sequence,
+            fulfillment_review=fulfillment_review,
             obligation=obligation,
             owner=owner,
             due_at=due_at,

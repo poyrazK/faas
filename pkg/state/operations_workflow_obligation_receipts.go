@@ -64,9 +64,17 @@ func captureObligationReceipts(id, scope string, before, after api.OperationWork
 			if readinessDigest(previous.DueAt) != readinessDigest(next.DueAt) {
 				add(id, "rescheduled", "The deadline for this obligation changed.")
 			}
-			if previous.Summary != next.Summary || readinessDigest(previous.Evidence) != readinessDigest(next.Evidence) {
+			if fulfillmentActionFingerprint(previous) != fulfillmentActionFingerprint(next) || previous.Summary != next.Summary || readinessDigest(previous.Evidence) != readinessDigest(next.Evidence) {
 				add(id, "changed", "The obligation plan or linked evidence changed.")
 			}
+			continue
+		}
+		if previous.Kind == "fulfillment_review" {
+			terminal := fulfillmentReviewActionTerminal(after, previous)
+			if terminal == "" {
+				terminal = "superseded"
+			}
+			add(id, terminal, "The pending fulfillment review was "+terminal+"; original fulfillment remains separately recorded.")
 			continue
 		}
 		fulfilled := false
