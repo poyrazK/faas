@@ -898,6 +898,11 @@
 # and apid refuses to start without a persisted recovery key. Provision them
 # once, in apid's own file format (hex, 0600 faas-apid); existing keys are
 # never replaced, since rotating them breaks audit joins and recovery codes.
+#
+# ADR-1152 §2: apid runs on every control node of a cell, and a recovery code
+# or audit hash written through one replica is checked by another, so every
+# control node holds the same keys. The first control node in the inventory
+# generates them; the others receive a copy where theirs is missing.
 - name: control_plane_service — provision apid HMAC keys on a fresh control plane
   ansible.builtin.shell: |
     set -euo pipefail
@@ -913,7 +918,68 @@
   loop:
     - audit-hmac.key
     - recovery-hmac.key
+  run_once: true
+  delegate_to: "{{ groups['control_plane'] | default([inventory_hostname]) | first }}"
   no_log: true
+
+- name: control_plane_service — read the cell's apid HMAC keys from the first control node (ADR-1152)
+  ansible.builtin.slurp:
+    src: /var/lib/faas/{{ item }}
+  loop:
+    - audit-hmac.key
+    - recovery-hmac.key
+  register: faas_apid_hmac_key_source
+  run_once: true
+  delegate_to: "{{ groups['control_plane'] | default([inventory_hostname]) | first }}"
+  no_log: true
+
+- name: control_plane_service — copy apid HMAC keys to control nodes that lack them (ADR-1152)
+  ansible.builtin.copy:
+    dest: /var/lib/faas/{{ item.item }}
+    content: "{{ item.content | b64decode }}"
+    owner: faas-apid
+    group: faas
+    mode: "0600"
+    force: false
+  loop: "{{ faas_apid_hmac_key_source.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  no_log: true
+
+- name: control_plane_service — checksum apid HMAC keys and the host HMAC key (ADR-1152)
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: true
+    checksum_algorithm: sha256
+  loop:
+    - /var/lib/faas/audit-hmac.key
+    - /var/lib/faas/recovery-hmac.key
+    - /etc/faas/secrets/host.hmac.key
+  register: faas_shared_key_checksums
+
+# A control node that already held a different key is never overwritten
+# (that would break its audit joins and recovery codes); an operator picks
+# one key for the cell instead. host.hmac.key is operator-provisioned, so the
+# same check covers a host where it was generated separately.
+- name: control_plane_service — assert every control node holds the same shared keys (ADR-1152)
+  ansible.builtin.assert:
+    that:
+      - >-
+        ansible_play_hosts | intersect(groups['control_plane'])
+        | map('extract', hostvars, ['faas_shared_key_checksums', 'results', idx, 'stat', 'checksum'])
+        | unique | length == 1
+    fail_msg: >-
+      Control nodes hold different copies of {{ item }}. Every control node of a
+      cell must share it (ADR-1152): choose one copy, install it on every
+      control node with the same owner and mode, and re-run.
+    quiet: true
+  loop:
+    - /var/lib/faas/audit-hmac.key
+    - /var/lib/faas/recovery-hmac.key
+    - /etc/faas/secrets/host.hmac.key
+  loop_control:
+    index_var: idx
+  run_once: true
 
 - name: control_plane_service — assert FAAS_MAIL_TRANSPORT selected (issue # 246 / ADR-115)
   # apid reads sealed.env; meterd reads only its ADR-127 per-daemon
