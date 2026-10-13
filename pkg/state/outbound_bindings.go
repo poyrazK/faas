@@ -59,6 +59,10 @@ type OutboundAIUsageItem struct {
 	CacheWriteTokens     int64
 	OutputTokens         int64
 	CostMillicents       int64
+	// Media usage (ADR-997).
+	Images       int64
+	AudioSeconds int64
+	Characters   int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.

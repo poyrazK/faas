@@ -105,7 +105,8 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 	_, err := tx.Exec(ctx, `
 		INSERT INTO outbound_ai_usage_daily AS usage
 		    (integration_id, usage_date, caller, model, requests, error_requests, usage_unknown_requests,
-		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents)
+		     input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
+		     images, audio_seconds, characters)
 		SELECT $1, day.today, $2,
 		       CASE WHEN EXISTS (SELECT 1 FROM outbound_ai_usage_daily existing
 		                          WHERE existing.integration_id = $1 AND existing.usage_date = day.today
@@ -113,7 +114,7 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 		              OR (SELECT count(DISTINCT existing.model) FROM outbound_ai_usage_daily existing
 		                   WHERE existing.integration_id = $1 AND existing.usage_date = day.today) < $4
 		            THEN $3 ELSE $5 END,
-		       1, $6, $7, $8, $9, $10, $11, $12
+		       1, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 		  FROM (SELECT (now() AT TIME ZONE 'UTC')::date AS today) day
 		ON CONFLICT (integration_id, usage_date, caller, model) DO UPDATE SET
 		    requests = usage.requests + 1,
@@ -124,10 +125,13 @@ func insertAIUsageRollup(ctx context.Context, tx pgx.Tx, integrationID uuid.UUID
 		    cache_write_tokens = usage.cache_write_tokens + EXCLUDED.cache_write_tokens,
 		    output_tokens = usage.output_tokens + EXCLUDED.output_tokens,
 		    cost_millicents = usage.cost_millicents + EXCLUDED.cost_millicents,
+		    images = usage.images + EXCLUDED.images,
+		    audio_seconds = usage.audio_seconds + EXCLUDED.audio_seconds,
+		    characters = usage.characters + EXCLUDED.characters,
 		    updated_at = now()`,
 		integrationID, record.Caller, usage.Model, api.OutboundAIUsageModelsPerDay, aiUsageOverflowModel,
 		errorRequests, unknownRequests, usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens,
-		usage.OutputTokens, record.CostMillicents)
+		usage.OutputTokens, record.CostMillicents, usage.Images, usage.AudioSeconds, usage.Characters)
 	return err
 }
 

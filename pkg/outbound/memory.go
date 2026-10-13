@@ -74,6 +74,8 @@ type AIUsageTotals struct {
 	Requests, ErrorRequests, UsageUnknownRequests                  int64
 	InputTokens, CachedInputTokens, CacheWriteTokens, OutputTokens int64
 	CostMillicents                                                 int64
+	// Media usage (ADR-997).
+	Images, AudioSeconds, Characters int64
 }
 
 // AIUserUsageTotals is one end user's UTC-day rollup (ADR-994).
@@ -568,6 +570,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	row.CacheWriteTokens += record.Usage.CacheWriteTokens
 	row.OutputTokens += record.Usage.OutputTokens
 	row.CostMillicents += record.CostMillicents
+	row.Images += record.Usage.Images
+	row.AudioSeconds += record.Usage.AudioSeconds
+	row.Characters += record.Usage.Characters
 	state.aiUsage[key] = row
 	crossings := []aiBudgetCrossing{
 		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount, ""},

@@ -146,6 +146,11 @@ type OutboundAIUsageItem struct {
 	// CostMillicents is priced from the price list effective at each call,
 	// rounded up per call; zero without a price list (ADR-990).
 	CostMillicents int64 `json:"cost_millicents"`
+	// Media usage (ADR-997): images billed per image, seconds of
+	// transcribed audio and characters of synthesized speech.
+	Images       int64 `json:"images"`
+	AudioSeconds int64 `json:"audio_seconds"`
+	Characters   int64 `json:"characters"`
 }
 
 // OutboundAIUsageResponse reports one UTC day of AI usage for an integration.

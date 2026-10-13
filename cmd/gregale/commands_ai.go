@@ -200,6 +200,24 @@ func cmdAIPolicy(args []string) int {
 	return 0
 }
 
+// formatMediaUsage lists a rollup's images, audio seconds and characters
+// (ADR-997), or "-".
+func formatMediaUsage(item api.OutboundAIUsageItem) string {
+	var parts []string
+	for _, count := range []struct {
+		value int64
+		unit  string
+	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}} {
+		if count.value > 0 {
+			parts = append(parts, strconv.FormatInt(count.value, 10)+" "+count.unit)
+		}
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ", ")
+}
+
 func displayProvider(provider string) string {
 	if provider == "" {
 		return "off"
@@ -272,10 +290,10 @@ func cmdAIUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Cost today: %s / %s   %s month to date: %s / %s\n", financialMoney(usage.DailyCostMillicents),
 		formatOptionalMoney(usage.DailyCostLimitMillicents), usage.Month, financialMoney(usage.MonthlyCostMillicents), formatOptionalMoney(usage.MonthlyCostLimitMillicents))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tERRORS\tINPUT\tCACHED\tOUTPUT\tCOST")
+	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST")
 	for _, item := range usage.Items {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\n", item.Caller, item.Model, item.Requests, item.ErrorRequests,
-			item.InputTokens, item.CachedInputTokens, item.OutputTokens, financialMoney(item.CostMillicents))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.ErrorRequests,
+			item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item), financialMoney(item.CostMillicents))
 	}
 	_ = tw.Flush()
 	return 0

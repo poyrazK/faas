@@ -219,7 +219,9 @@ func (r *PostgresResolver) Integration(ctx context.Context, id string) (Integrat
 func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uuid.UUID) ([]AIPrice, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT entry.model_prefix, entry.input_millicents_per_mtok, entry.cached_input_millicents_per_mtok,
-		       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok
+		       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
+		       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
+		       entry.millicents_per_audio_minute, entry.millicents_per_million_characters
 		  FROM outbound_ai_price_entries entry
 		 WHERE entry.price_list_id = (
 		       SELECT list.id FROM outbound_ai_price_lists list
@@ -234,7 +236,9 @@ func (r *PostgresResolver) currentAIPrices(ctx context.Context, integrationID uu
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
-			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok); err != nil {
+			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
+			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
+			&entry.MillicentsPerMillionCharacters); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

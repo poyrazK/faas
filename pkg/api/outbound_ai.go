@@ -29,6 +29,14 @@ type OutboundAIPriceEntry struct {
 	CachedInputMillicentsPerMTok *int64 `json:"cached_input_millicents_per_mtok,omitempty"`
 	CacheWriteMillicentsPerMTok  *int64 `json:"cache_write_millicents_per_mtok,omitempty"`
 	OutputMillicentsPerMTok      int64  `json:"output_millicents_per_mtok"`
+	// Media prices (ADR-997). Image-token prices fall back to the input and
+	// output prices. The per-image, per-audio-minute and per-character
+	// prices are zero when absent.
+	InputImageMillicentsPerMTok    *int64 `json:"input_image_millicents_per_mtok,omitempty"`
+	OutputImageMillicentsPerMTok   *int64 `json:"output_image_millicents_per_mtok,omitempty"`
+	MillicentsPerImage             *int64 `json:"millicents_per_image,omitempty"`
+	MillicentsPerAudioMinute       *int64 `json:"millicents_per_audio_minute,omitempty"`
+	MillicentsPerMillionCharacters *int64 `json:"millicents_per_million_characters,omitempty"`
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -42,10 +50,15 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 		if !validAIModelText(entry.ModelPrefix) || !validPrice(entry.InputMillicentsPerMTok) || !validPrice(entry.OutputMillicentsPerMTok) {
 			return false
 		}
-		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok} {
+		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok,
+			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters} {
 			if optional != nil && !validPrice(*optional) {
 				return false
 			}
+		}
+		if !optionalWithin(entry.MillicentsPerImage, MaxOutboundAIPriceMillicentsPerImage) ||
+			!optionalWithin(entry.MillicentsPerAudioMinute, MaxOutboundAIPriceMillicentsPerAudioMinute) {
+			return false
 		}
 		if _, dup := seen[entry.ModelPrefix]; dup {
 			return false
@@ -53,6 +66,10 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 		seen[entry.ModelPrefix] = struct{}{}
 	}
 	return true
+}
+
+func optionalWithin(value *int64, maximum int64) bool {
+	return value == nil || (*value >= 0 && *value <= maximum)
 }
 
 // validAIModelText bounds model names and prefixes to printable ASCII.

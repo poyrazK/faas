@@ -55,8 +55,9 @@ type aiBudgetLimits struct {
 // aiReservation is one call's admission-time estimate (ADR-991).
 type aiReservation struct {
 	tokens, cost int64
-	// input and output split tokens; unknown usage settles at them (ADR-996).
-	input, output int64
+	// estimate is the usage the reservation priced; a billable call whose
+	// usage cannot be read settles at it (ADR-996, ADR-997).
+	estimate AIUsage
 }
 
 // positiveLimit maps a stored COALESCE(limit, 0) value to an optional limit.

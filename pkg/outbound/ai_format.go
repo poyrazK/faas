@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -23,6 +25,21 @@ const (
 	aiFormatBedrockInvoke
 )
 
+// aiMediaKind marks an endpoint billed for media rather than, or besides,
+// tokens (ADR-997).
+type aiMediaKind int
+
+const (
+	aiMediaNone aiMediaKind = iota
+	// aiMediaImage is image generation, edits and variations, and Imagen
+	// predict.
+	aiMediaImage
+	// aiMediaTranscription is audio transcription and translation.
+	aiMediaTranscription
+	// aiMediaSpeech is text to speech.
+	aiMediaSpeech
+)
+
 // aiEndpoint is what the path says about one AI call.
 type aiEndpoint struct {
 	format aiWireFormat
@@ -38,6 +55,8 @@ type aiEndpoint struct {
 	pathModel string
 	// openAIOutputField is the OpenAI-format ceiling field for this path.
 	openAIOutputField string
+	// media marks an image, transcription or speech endpoint (ADR-997).
+	media aiMediaKind
 }
 
 // classifyAIEndpoint maps a provider path to its wire format.
@@ -53,8 +72,12 @@ func classifyAIEndpoint(provider, path string) aiEndpoint {
 		return aiEndpoint{format: aiFormatAnthropic, generation: strings.HasSuffix(path, "/messages")}
 	case api.OutboundAIProviderGemini:
 		model, verb := modelAndVerb(path)
-		return aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
+		endpoint := aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
 			embedding: verb == "embedContent" || verb == "batchEmbedContents"}
+		if verb == "predict" && imagenModel(model) {
+			endpoint.media = aiMediaImage
+		}
+		return endpoint
 	case api.OutboundAIProviderVertex:
 		return vertexEndpoint(path)
 	case api.OutboundAIProviderBedrock:
@@ -74,13 +97,26 @@ func openAIEndpoint(path string) aiEndpoint {
 		endpoint.generation, endpoint.openAIOutputField = true, "max_tokens"
 	case strings.HasSuffix(path, "/embeddings"):
 		endpoint.embedding = true
+	case strings.HasSuffix(path, "/images/generations") || strings.HasSuffix(path, "/images/edits") ||
+		strings.HasSuffix(path, "/images/variations"):
+		endpoint.media = aiMediaImage
+	case strings.HasSuffix(path, "/audio/transcriptions") || strings.HasSuffix(path, "/audio/translations"):
+		endpoint.media = aiMediaTranscription
+	case strings.HasSuffix(path, "/audio/speech"):
+		endpoint.media = aiMediaSpeech
 	}
 	return endpoint
 }
 
 // billable reports whether a call through the endpoint is charged by the
-// provider: generation and embeddings, not token counting or listings.
-func (e aiEndpoint) billable() bool { return e.generation || e.embedding }
+// provider: generation, embeddings and media, not token counting or
+// listings.
+func (e aiEndpoint) billable() bool { return e.generation || e.embedding || e.media != aiMediaNone }
+
+// imagenModel reports an Imagen image model served by predict (ADR-997).
+func imagenModel(model string) bool {
+	return strings.Contains(model, "imagen") || strings.HasPrefix(model, "imagegeneration")
+}
 
 func vertexEndpoint(path string) aiEndpoint {
 	if strings.Contains(path, "/endpoints/openapi/") {
@@ -92,10 +128,14 @@ func vertexEndpoint(path string) aiEndpoint {
 	case strings.Contains(path, "/publishers/anthropic/"):
 		return aiEndpoint{format: aiFormatAnthropic, pathModel: model, generation: verb == "rawPredict" || verb == "streamRawPredict"}
 	case strings.Contains(path, "/publishers/google/"):
-		// predict also serves non-token models (images); only embedding
-		// models are billed in tokens.
-		return aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
+		// predict serves embedding models, billed in tokens, and Imagen,
+		// billed per image (ADR-997).
+		endpoint := aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
 			embedding: verb == "embedContent" || verb == "batchEmbedContents" || (verb == "predict" && strings.Contains(model, "embedding"))}
+		if verb == "predict" && imagenModel(model) {
+			endpoint.media = aiMediaImage
+		}
+		return endpoint
 	}
 	return aiEndpoint{}
 }
@@ -154,6 +194,10 @@ type aiCallFacts struct {
 	// ceilingKnown reports that the format has a ceiling field the gateway
 	// can read and add.
 	ceilingKnown bool
+	// images is the image count an image call asks for; characters is the
+	// length of a speech call's input text (ADR-997).
+	images     int64
+	characters int64
 }
 
 // readAICallFacts reads the model and output ceiling from a JSON body.
@@ -184,7 +228,44 @@ func readAICallFacts(endpoint aiEndpoint, body []byte) aiCallFacts {
 			facts.ceilingKnown, facts.outputCeiling = true, jsonInt(fields["max_tokens"])
 		}
 	}
+	switch endpoint.media {
+	case aiMediaImage:
+		count := jsonInt(fields["n"])
+		if endpoint.format == aiFormatGemini {
+			count = jsonInt(jsonObjectField(fields["parameters"], "sampleCount"))
+		}
+		facts.images = imageCount(endpoint, count)
+	case aiMediaSpeech:
+		facts.characters = int64(utf8.RuneCountInString(jsonString(fields["input"])))
+	}
 	return facts
+}
+
+// imageCount bounds a requested image count. OpenAI defaults to one image
+// and Imagen to four.
+func imageCount(endpoint aiEndpoint, requested int64) int64 {
+	if requested <= 0 {
+		requested = 1
+		if endpoint.format == aiFormatGemini {
+			requested = 4
+		}
+	}
+	return min(requested, api.OutboundAIImagesPerCallMax)
+}
+
+// applyFormFacts fills the model and image count of a multipart call from
+// its form fields (ADR-997).
+func applyFormFacts(endpoint aiEndpoint, facts *aiCallFacts, form map[string]string) {
+	if len(form) == 0 {
+		return
+	}
+	if facts.model == "" {
+		facts.model = sanitizeAIModel(form["model"])
+	}
+	if endpoint.media == aiMediaImage {
+		requested, _ := strconv.ParseInt(form["n"], 10, 64)
+		facts.images = imageCount(endpoint, requested)
+	}
 }
 
 // withOutputCeiling adds the format's output ceiling field to a JSON body

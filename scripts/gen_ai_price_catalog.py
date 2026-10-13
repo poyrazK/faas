@@ -3,10 +3,16 @@
 
 Input is LiteLLM's model_prices_and_context_window.json (MIT, Copyright (c)
 2023 Berri AI; see pkg/outbound/aiprices/NOTICE) at a pinned commit. The
-output keeps the token-priced chat, completion, responses and embedding
-models of the providers the AI gateway speaks to, converted from USD per
-token to EUR millicents per million tokens at a recorded ECB reference rate
-and rounded up, so a budget never under-counts.
+output keeps the chat, completion, responses, embedding, image generation,
+transcription and speech models of the providers the AI gateway speaks to
+(ADR-994, ADR-997), converted from USD to EUR millicents at a recorded ECB
+reference rate and rounded up, so a budget never under-counts:
+
+- token prices (input, cached input, cache write, output, input and output
+  image tokens) per million tokens;
+- image prices per image;
+- audio prices per minute of input audio;
+- character prices per million input characters.
 
 Run it with an isolated interpreter on a downloaded file kept in its own
 directory, for example:
@@ -44,8 +50,11 @@ PROVIDERS = {
         ("vertex_ai/",),
     ),
 }
-MODES = {"chat", "completion", "responses", "embedding"}
+MODES = {"chat", "completion", "responses", "embedding", "image_generation", "audio_transcription", "audio_speech"}
+AUDIO_MODES = {"audio_transcription", "audio_speech"}
 MAX_PRICE = 1_000_000_000  # api.MaxOutboundAIPriceMillicentsPerMTok
+MAX_UNIT_PRICE = 10_000_000  # api.MaxOutboundAIPriceMillicentsPerImage and ...PerAudioMinute
+MILLICENTS_PER_USD = Decimal(10) ** 5
 MAX_MODEL_BYTES = 128  # api.OutboundAIModelNameMaxBytes
 MILLICENTS_PER_MTOK_PER_USD_PER_TOKEN = Decimal(10) ** 11
 
@@ -53,6 +62,34 @@ MILLICENTS_PER_MTOK_PER_USD_PER_TOKEN = Decimal(10) ** 11
 def convert(usd_per_token, usd_per_eur):
     value = (Decimal(usd_per_token) * MILLICENTS_PER_MTOK_PER_USD_PER_TOKEN / usd_per_eur).to_integral_value(ROUND_CEILING)
     return int(value)
+
+
+def convert_unit(usd_per_unit, usd_per_eur):
+    value = (Decimal(usd_per_unit) * MILLICENTS_PER_USD / usd_per_eur).to_integral_value(ROUND_CEILING)
+    return int(value)
+
+
+def optional(entry, field, convert_fn, usd_per_eur, scale=1):
+    value = entry.get(field)
+    if value is None or isinstance(value, (dict, list)):
+        return None
+    return convert_fn(Decimal(value) * scale, usd_per_eur)
+
+
+def media_prices(entry, usd_per_eur):
+    """input_image, output_image, image, audio_minute, characters (ADR-997)."""
+    return [
+        optional(entry, "input_cost_per_image_token", convert, usd_per_eur),
+        optional(entry, "output_cost_per_image_token", convert, usd_per_eur),
+        optional(entry, "output_cost_per_image", convert_unit, usd_per_eur),
+        optional(entry, "input_cost_per_second", convert_unit, usd_per_eur, 60),
+        optional(entry, "input_cost_per_character", convert, usd_per_eur),
+    ]
+
+
+def within_limits(row):
+    limits = [MAX_PRICE] * 6 + [MAX_UNIT_PRICE, MAX_UNIT_PRICE, MAX_PRICE]
+    return all(value is None or 0 <= value <= limit for value, limit in zip(row, limits))
 
 
 def model_name(key, prefixes):
@@ -75,9 +112,17 @@ def build(data, usd_per_eur):
             if not isinstance(entry, dict) or entry.get("litellm_provider") not in sources or entry.get("mode") not in MODES:
                 continue
             name = model_name(key, prefixes)
-            if name is None or entry.get("input_cost_per_token") is None:
+            if name is None:
                 continue
-            input_price = convert(entry["input_cost_per_token"], usd_per_eur)
+            media = media_prices(entry, usd_per_eur)
+            token_input = entry.get("input_cost_per_token")
+            if token_input is None and not any(media):
+                continue
+            # Audio models bill audio tokens as input; the dearer of the two
+            # input prices keeps a cap from under-counting.
+            if entry.get("mode") in AUDIO_MODES and entry.get("input_cost_per_audio_token") is not None:
+                token_input = max(Decimal(token_input or 0), Decimal(entry["input_cost_per_audio_token"]))
+            input_price = 0 if token_input is None else convert(token_input, usd_per_eur)
             cached = entry.get("cache_read_input_token_cost")
             write = entry.get("cache_creation_input_token_cost")
             output = entry.get("output_cost_per_token")
@@ -86,17 +131,21 @@ def build(data, usd_per_eur):
                 input_price if cached is None else convert(cached, usd_per_eur),
                 input_price if write is None else convert(write, usd_per_eur),
                 0 if output is None else convert(output, usd_per_eur),
-            ]
+            ] + media
             # Free experimental entries say nothing about spend; without a
             # row the call stays unpriced exactly as before the catalog.
-            if any(price < 0 or price > MAX_PRICE for price in row) or not any(row):
+            if not within_limits(row) or not any(row):
                 continue
             # The same model under two LiteLLM providers keeps the dearer
             # entry: a spend cap must not under-count.
-            if name not in models or sum(row) > sum(models[name]):
+            if name not in models or price_weight(row) > price_weight(models[name]):
                 models[name] = row
         providers[gateway] = dict(sorted(models.items()))
     return providers
+
+
+def price_weight(row):
+    return sum(value for value in row if value is not None)
 
 
 def render(meta, providers):
@@ -137,8 +186,8 @@ def main():
         "generated": args.generated,
         "usd_per_eur": args.usd_per_eur,
         "fx_source": "ECB euro foreign exchange reference rate of " + args.fx_date,
-        "unit": "EUR millicents per million tokens, rounded up",
-        "fields": ["input", "cached_input", "cache_write", "output"],
+        "unit": "EUR millicents, rounded up: per million tokens or characters, per image, per audio minute",
+        "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters"],
     }
     with open(args.output, "w", encoding="utf-8") as handle:
         handle.write(render(meta, build(data, usd_per_eur)))

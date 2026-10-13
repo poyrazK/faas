@@ -60,7 +60,7 @@ func TestUnknownUsageSettlesAtTheReservation(t *testing.T) {
 	if got := backend.DailyAITokenCount("integration-1"); got != want {
 		t.Fatalf("countTokens changed the token count to %d", got)
 	}
-	usage, _, ok := estimatedAIUsage(AIUsageOutcomeError, AIUsage{Model: "m"}, aiSettlement{billable: true, reserve: aiReservation{tokens: 5, input: 5}})
+	usage, _, ok := estimatedAIUsage(AIUsageOutcomeError, AIUsage{Model: "m"}, aiSettlement{billable: true, reserve: aiReservation{tokens: 5, estimate: AIUsage{InputTokens: 5}}})
 	if ok || usage.InputTokens != 0 {
 		t.Fatalf("an error settled the estimate: %+v", usage)
 	}

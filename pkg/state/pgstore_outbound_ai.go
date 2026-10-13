@@ -85,7 +85,8 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 	usage.MonthlyCostLimit = outboundAITokenLimit(monthlyCostLimit)
 	rows, err := s.pool.Query(ctx, `
 		SELECT caller, model, requests, error_requests, usage_unknown_requests,
-		       input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents
+		       input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents,
+		       images, audio_seconds, characters
 		  FROM outbound_ai_usage_daily
 		 WHERE integration_id = $1 AND usage_date = $2::date
 		 ORDER BY caller, model
@@ -98,7 +99,8 @@ func (s *PgStore) GetOutboundAIUsage(ctx context.Context, accountID, integration
 	for rows.Next() {
 		var item OutboundAIUsageItem
 		if err := rows.Scan(&item.Caller, &item.Model, &item.Requests, &item.ErrorRequests, &item.UsageUnknownRequests,
-			&item.InputTokens, &item.CachedInputTokens, &item.CacheWriteTokens, &item.OutputTokens, &item.CostMillicents); err != nil {
+			&item.InputTokens, &item.CachedInputTokens, &item.CacheWriteTokens, &item.OutputTokens, &item.CostMillicents,
+			&item.Images, &item.AudioSeconds, &item.Characters); err != nil {
 			return OutboundAIUsage{}, mapErr(err)
 		}
 		rollupTokens += item.InputTokens + item.OutputTokens
@@ -166,7 +168,9 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 	list.EffectiveFrom = &effectiveFrom
 	rows, err := s.pool.Query(ctx, `
 		SELECT model_prefix, input_millicents_per_mtok, cached_input_millicents_per_mtok,
-		       cache_write_millicents_per_mtok, output_millicents_per_mtok
+		       cache_write_millicents_per_mtok, output_millicents_per_mtok,
+		       input_image_millicents_per_mtok, output_image_millicents_per_mtok, millicents_per_image,
+		       millicents_per_audio_minute, millicents_per_million_characters
 		  FROM outbound_ai_price_entries WHERE price_list_id = $1
 		 ORDER BY model_prefix`, listID)
 	if err != nil {
@@ -176,7 +180,9 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
-			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok); err != nil {
+			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
+			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
+			&entry.MillicentsPerMillionCharacters); err != nil {
 			return OutboundAIPriceList{}, mapErr(err)
 		}
 		list.Entries = append(list.Entries, entry)
@@ -213,9 +219,13 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO outbound_ai_price_entries
 			    (price_list_id, model_prefix, input_millicents_per_mtok, cached_input_millicents_per_mtok,
-			     cache_write_millicents_per_mtok, output_millicents_per_mtok)
-			VALUES ($1, $2, $3, $4, $5, $6)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
-			entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok, entry.OutputMillicentsPerMTok); err != nil {
+			     cache_write_millicents_per_mtok, output_millicents_per_mtok, input_image_millicents_per_mtok,
+			     output_image_millicents_per_mtok, millicents_per_image, millicents_per_audio_minute,
+			     millicents_per_million_characters)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
+			entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok, entry.OutputMillicentsPerMTok,
+			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerImage,
+			entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters); err != nil {
 			return mapErr(err)
 		}
 	}

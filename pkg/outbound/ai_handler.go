@@ -82,6 +82,7 @@ func observeAIResponse(integration Integration, r *http.Request, resp *http.Resp
 	if plan != nil && plan.endpoint.format != aiFormatNone {
 		observer = newAIUsageObserverFormat(plan.endpoint.format, resp.Header.Get("Content-Type"), time.Now)
 		observer.fallbackModel = plan.facts.model
+		observer.media = plan.endpoint.media
 	} else {
 		observer = newAIUsageObserver(integration.AIProvider, resp.Header.Get("Content-Type"), time.Now)
 	}
@@ -111,17 +112,36 @@ type aiSettlement struct {
 	// settle at its admission estimate instead of zero (ADR-996).
 	reserve  aiReservation
 	billable bool
+	// media and characters let a speech call settle its input characters,
+	// which the binary audio response does not report (ADR-997).
+	media      aiMediaKind
+	characters int64
+}
+
+// speechUsage settles a successful speech call at its input characters when
+// the model is priced per character. Other speech calls stay unknown and
+// settle at their reservation.
+func speechUsage(integration Integration, settlement aiSettlement, status int, usage AIUsage,
+	outcome AIUsageOutcome) (AIUsage, AIUsageOutcome) {
+	if settlement.media != aiMediaSpeech || outcome != AIUsageOutcomeUnknown || status < 200 || status > 299 {
+		return usage, outcome
+	}
+	if price, ok := aiPriceFor(integration, usage.Model); ok && price.Characters > 0 {
+		return AIUsage{Model: usage.Model, Known: true, Characters: settlement.characters}, AIUsageOutcomeKnown
+	}
+	return usage, outcome
 }
 
 // estimatedAIUsage is what a billable call with unreadable usage settles
 // at: its reservation, priced as reserved. Errors and non-billable calls
 // keep zero.
 func estimatedAIUsage(outcome AIUsageOutcome, usage AIUsage, settlement aiSettlement) (AIUsage, int64, bool) {
-	if outcome != AIUsageOutcomeUnknown || !settlement.billable || settlement.reserve.tokens <= 0 {
+	if outcome != AIUsageOutcomeUnknown || !settlement.billable || (settlement.reserve.tokens <= 0 && settlement.reserve.cost <= 0) {
 		return usage, 0, false
 	}
-	return AIUsage{Model: usage.Model, InputTokens: settlement.reserve.input, OutputTokens: settlement.reserve.output},
-		settlement.reserve.cost, true
+	estimate := settlement.reserve.estimate
+	estimate.Model, estimate.Known = usage.Model, false
+	return estimate, settlement.reserve.cost, true
 }
 
 // settleAIUsage records one finished AI call. It runs after the response copy,
@@ -138,6 +158,7 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 	if first := observer.FirstByteAt(); !first.IsZero() && first.After(upstreamStarted) {
 		timeToFirstByte = first.Sub(upstreamStarted)
 	}
+	usage, outcome = speechUsage(integration, settlement, status, usage, outcome)
 	cost := aiCallCostMillicents(integration, usage)
 	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
 		usage, cost = estimated, estimatedCost

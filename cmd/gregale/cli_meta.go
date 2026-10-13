@@ -798,7 +798,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
 			{Name: "prices", Short: "Show the price list, or replace it with: prices set <integration-id> --price ...", Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
-				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR] per million tokens (repeat; none clears)", Value: "SPEC"},
+				{Name: "price", Short: "model=PREFIX,input=EUR,output=EUR[,cached=EUR][,cache-write=EUR][,input-image=EUR][,output-image=EUR] per million tokens, [,image=EUR] per image, [,audio-minute=EUR] per minute, [,characters=EUR] per million characters (repeat; none clears)", Value: "SPEC"},
 			}},
 			{Name: "catalog", Short: "Show the built-in prices that apply to models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
 				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},

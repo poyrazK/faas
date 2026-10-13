@@ -749,7 +749,12 @@ const (
 	// per million tokens; cost limits are millicents per UTC day or month.
 	MaxOutboundAICostMillicents         int64 = 1_000_000_000_000
 	MaxOutboundAIPriceMillicentsPerMTok int64 = 1_000_000_000
-	OutboundAIPriceEntriesMax                 = 64
+	// Media prices (ADR-997): the ceiling of a per-image and a per-audio-
+	// minute price. Character prices are per million characters and share
+	// the per-million-token ceiling.
+	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
+	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
+	OutboundAIPriceEntriesMax                        = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
@@ -786,6 +791,21 @@ const (
 	OutboundAIRequestContentMaxBytes      = 32 << 10
 	OutboundAIContentCapturesPerDay       = 1_000
 	OutboundAIRequestContentRetentionDays = 3
+	// Media metering (ADR-997): the images one call may reserve, the output
+	// tokens reserved per image when a model is not priced per image, the
+	// audio bitrate and audio tokens per second used to reserve an upload
+	// before its duration is known, and the response tail read for usage
+	// when a JSON response is larger than the parse limit.
+	OutboundAIImagesPerCallMax                  = 10
+	OutboundAIImageReserveOutputTokens    int64 = 8_192
+	OutboundAIAudioReserveBytesPerSecond  int64 = 2_000
+	OutboundAIAudioReserveTokensPerSecond int64 = 50
+	OutboundAIUsageTailBytes                    = 64 << 10
+	// The start of a multipart upload larger than the buffer that is read
+	// for its model field, and the size reserved for an audio upload of
+	// unknown length.
+	OutboundAIFormPrefixMaxBytes         = 64 << 10
+	OutboundAIAudioReserveMaxBytes int64 = 25 << 20
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not

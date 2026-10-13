@@ -281,7 +281,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the same cap applies when the caller omits a length or lies about it.
 		r.Body = http.MaxBytesReader(w, r.Body, h.MaxBodyBytes)
 	}
-	aiReq, err := readAIRequest(r, integration, path)
+	aiReq, aiForm, err := readAIRequest(r, integration, path)
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -301,7 +301,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// ADR-991: guardrails run before admission; the plan carries the call's
 	// reservation into it.
-	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq)
+	aiPlan, rejection := planAICall(r, integration, bindingAppID, path, aiReq, aiForm)
 	if rejection != nil {
 		h.Metrics.ObserveRejection(metricIntegrationID, rejection.code)
 		writeProblem(w, rejection.status, rejection.code, rejection.title, "")
@@ -579,6 +579,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if aiPlan != nil {
 			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
+			settlement.media, settlement.characters = aiPlan.endpoint.media, aiPlan.facts.characters
 		}
 		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
 	}

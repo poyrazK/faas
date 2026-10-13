@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"mime"
 	"net/http"
 	"strconv"
@@ -23,6 +24,15 @@ type AIUsage struct {
 	CachedInputTokens int64
 	CacheWriteTokens  int64
 	OutputTokens      int64
+	// Media usage (ADR-997). InputImageTokens and OutputImageTokens are the
+	// image parts of InputTokens and OutputTokens. Images counts images a
+	// call is billed for per image, AudioSeconds the input audio of a
+	// transcription, rounded up, and Characters the input text of speech.
+	InputImageTokens  int64
+	OutputImageTokens int64
+	Images            int64
+	AudioSeconds      int64
+	Characters        int64
 }
 
 // BudgetTokens is the amount a response consumes from a daily token limit.
@@ -158,7 +168,8 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if usage.Model == "" || len(usage.Model) > api.OutboundAIModelNameMaxBytes || sanitizeAIModel(usage.Model) != usage.Model {
 		return fmt.Errorf("%w: AI usage model is invalid", ErrInvalidIntegration)
 	}
-	for _, value := range []int64{usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens} {
+	for _, value := range []int64{usage.InputTokens, usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens,
+		usage.InputImageTokens, usage.OutputImageTokens, usage.Images, usage.AudioSeconds, usage.Characters} {
 		if value < 0 || value > 3*api.OutboundAIMaxTokensPerResponse {
 			return fmt.Errorf("%w: AI usage token count is out of range", ErrInvalidIntegration)
 		}
@@ -185,7 +196,15 @@ type aiUsageFields struct {
 	} `json:"prompt_tokens_details"`
 	InputTokensDetails *struct {
 		CachedTokens *int64 `json:"cached_tokens"`
+		ImageTokens  *int64 `json:"image_tokens"`
 	} `json:"input_tokens_details"`
+	// OpenAI image generation output and transcription duration usage
+	// (ADR-997).
+	OutputTokensDetails *struct {
+		ImageTokens *int64 `json:"image_tokens"`
+	} `json:"output_tokens_details"`
+	Seconds *float64 `json:"seconds"`
+
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
 	// Gemini usageMetadata.
@@ -193,6 +212,9 @@ type aiUsageFields struct {
 	CandidatesTokenCount    *int64 `json:"candidatesTokenCount"`
 	CachedContentTokenCount *int64 `json:"cachedContentTokenCount"`
 	ThoughtsTokenCount      *int64 `json:"thoughtsTokenCount"`
+	// Gemini token counts by modality (ADR-997).
+	PromptTokensByModality     []geminiModalityCount `json:"promptTokensDetails"`
+	CandidatesTokensByModality []geminiModalityCount `json:"candidatesTokensDetails"`
 	// Bedrock Converse usage.
 	BedrockInputTokens      *int64 `json:"inputTokens"`
 	BedrockOutputTokens     *int64 `json:"outputTokens"`
@@ -203,6 +225,27 @@ type aiUsageFields struct {
 	OutputTokenCount          *int64 `json:"outputTokenCount"`
 	CacheReadInputTokenCount  *int64 `json:"cacheReadInputTokenCount"`
 	CacheWriteInputTokenCount *int64 `json:"cacheWriteInputTokenCount"`
+}
+
+type geminiModalityCount struct {
+	Modality   string `json:"modality"`
+	TokenCount *int64 `json:"tokenCount"`
+}
+
+// geminiImageTokens sums the IMAGE modality counts, or returns nil.
+func geminiImageTokens(counts []geminiModalityCount) *int64 {
+	var total int64
+	seen := false
+	for _, count := range counts {
+		if count.Modality == "IMAGE" && count.TokenCount != nil {
+			total += max(*count.TokenCount, 0)
+			seen = true
+		}
+	}
+	if !seen {
+		return nil
+	}
+	return &total
 }
 
 type aiEnvelopeInner struct {
@@ -224,6 +267,10 @@ type aiEnvelope struct {
 	Message       *aiEnvelopeInner `json:"message"`
 	Response      *aiEnvelopeInner `json:"response"`
 	Bytes         []byte           `json:"bytes"`
+	// Type names an OpenAI stream event; Duration is a verbose
+	// transcription's audio length (ADR-997).
+	Type     string   `json:"type"`
+	Duration *float64 `json:"duration"`
 	// Predictions carries Vertex AI text-embedding token counts (ADR-995).
 	Predictions []struct {
 		Embeddings *struct {
@@ -261,6 +308,10 @@ type aiRawUsage struct {
 	bedrockInput, bedrockOutput, bedrockCacheRead, bedrockCacheWrite int64
 	metricInput, metricOutput, metricCacheRead, metricCacheWrite     int64
 	seenMetrics                                                      bool
+	// Media counts (ADR-997).
+	inputImage, outputImage, geminiPromptImage, geminiCandidatesImage int64
+	seenOutputImage                                                   bool
+	images, audioSeconds                                              int64
 }
 
 func (r *aiRawUsage) merge(fields *aiUsageFields) {
@@ -308,6 +359,17 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	take(&r.bedrockOutput, fields.BedrockOutputTokens)
 	take(&r.bedrockCacheRead, fields.BedrockCacheReadTokens)
 	take(&r.bedrockCacheWrite, fields.BedrockCacheWriteTokens)
+	if fields.InputTokensDetails != nil {
+		take(&r.inputImage, fields.InputTokensDetails.ImageTokens)
+	}
+	if fields.OutputTokensDetails != nil && take(&r.outputImage, fields.OutputTokensDetails.ImageTokens) {
+		r.seenOutputImage = true
+	}
+	take(&r.geminiPromptImage, geminiImageTokens(fields.PromptTokensByModality))
+	take(&r.geminiCandidatesImage, geminiImageTokens(fields.CandidatesTokensByModality))
+	if fields.Seconds != nil {
+		r.noteAudioSeconds(*fields.Seconds)
+	}
 	for _, metric := range []bool{
 		take(&r.metricInput, fields.InputTokenCount), take(&r.metricOutput, fields.OutputTokenCount),
 		take(&r.metricCacheRead, fields.CacheReadInputTokenCount), take(&r.metricCacheWrite, fields.CacheWriteInputTokenCount),
@@ -316,7 +378,34 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 }
 
-func (r aiRawUsage) normalize(format aiWireFormat) AIUsage {
+// noteAudioSeconds keeps the longest reported audio duration, rounded up.
+func (r *aiRawUsage) noteAudioSeconds(seconds float64) {
+	if math.IsNaN(seconds) || seconds <= 0 {
+		return
+	}
+	rounded := int64(math.Ceil(min(seconds, float64(api.OutboundAIMaxTokensPerResponse))))
+	r.audioSeconds = max(r.audioSeconds, rounded)
+	r.seen = true
+}
+
+// noteImages counts images billed per image.
+func (r *aiRawUsage) noteImages(count int64) {
+	if count > 0 {
+		r.images = min(r.images+count, api.OutboundAIMaxTokensPerResponse)
+		r.seen = true
+	}
+}
+
+func (r aiRawUsage) normalize(format aiWireFormat, media aiMediaKind) AIUsage {
+	usage := r.normalizeTokens(format, media)
+	usage.Images = r.images
+	if media == aiMediaTranscription {
+		usage.AudioSeconds = r.audioSeconds
+	}
+	return usage
+}
+
+func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUsage {
 	usage := AIUsage{Known: r.seen}
 	switch {
 	case format == aiFormatBedrockInvoke && r.seenMetrics:
@@ -335,6 +424,8 @@ func (r aiRawUsage) normalize(format aiWireFormat) AIUsage {
 		usage.InputTokens = r.geminiPrompt
 		usage.CachedInputTokens = min(r.geminiCached, r.geminiPrompt)
 		usage.OutputTokens = r.geminiCandidates + r.geminiThoughts
+		usage.InputImageTokens = min(r.geminiPromptImage, usage.InputTokens)
+		usage.OutputImageTokens = min(r.geminiCandidatesImage, usage.OutputTokens)
 	case format == aiFormatBedrockConverse:
 		usage.InputTokens = r.bedrockInput + r.bedrockCacheRead + r.bedrockCacheWrite
 		usage.CachedInputTokens = r.bedrockCacheRead
@@ -350,6 +441,13 @@ func (r aiRawUsage) normalize(format aiWireFormat) AIUsage {
 			usage.OutputTokens = r.completion
 		}
 		usage.CachedInputTokens = min(r.cached, usage.InputTokens)
+		usage.InputImageTokens = min(r.inputImage, usage.InputTokens)
+		// Image generation output is image tokens unless the response
+		// splits it (ADR-997).
+		usage.OutputImageTokens = min(r.outputImage, usage.OutputTokens)
+		if media == aiMediaImage && !r.seenOutputImage {
+			usage.OutputImageTokens = usage.OutputTokens
+		}
 	}
 	return usage
 }
@@ -387,6 +485,13 @@ type aiUsageObserver struct {
 	// capture keeps the call's bodies when the integration opted in
 	// (ADR-996); observedBody feeds it.
 	capture *aiContentCapture
+	// media is the endpoint's media kind. A JSON response larger than the
+	// parse limit is read from its tail for usage, and its images are
+	// counted by marker (ADR-997).
+	media        aiMediaKind
+	tail         []byte
+	imageMarkers markerCounter
+	parsedImages bool
 }
 
 // newAIUsageObserver observes a call in the provider's default format.
@@ -468,6 +573,9 @@ func (o *aiUsageObserver) Write(p []byte) (int, error) {
 	if len(p) > 0 && o.firstByteAt.IsZero() {
 		o.firstByteAt = o.now()
 	}
+	if o.media == aiMediaImage && o.mode == aiBodyJSON {
+		o.imageMarkers.write(p)
+	}
 	switch o.mode {
 	case aiBodyJSON:
 		o.writeJSON(p)
@@ -481,13 +589,49 @@ func (o *aiUsageObserver) Write(p []byte) (int, error) {
 
 func (o *aiUsageObserver) writeJSON(p []byte) {
 	if o.bodyOverflow {
+		o.keepTail(p)
 		return
 	}
 	if len(o.body)+len(p) > api.OutboundAIUsageJSONParseMaxBytes {
+		// Keep only the end, where providers put usage (ADR-997).
+		o.keepTail(o.body)
+		o.keepTail(p)
 		o.body, o.bodyOverflow = nil, true
 		return
 	}
 	o.body = append(o.body, p...)
+}
+
+func (o *aiUsageObserver) keepTail(p []byte) {
+	if len(p) >= api.OutboundAIUsageTailBytes {
+		o.tail = append(o.tail[:0], p[len(p)-api.OutboundAIUsageTailBytes:]...)
+		return
+	}
+	if excess := len(o.tail) + len(p) - api.OutboundAIUsageTailBytes; excess > 0 {
+		o.tail = append(o.tail[:0], o.tail[excess:]...)
+	}
+	o.tail = append(o.tail, p...)
+}
+
+// applyTail reads the last usage or usageMetadata object of an oversized
+// JSON response from its tail.
+func (o *aiUsageObserver) applyTail() {
+	for _, key := range []string{`"usage"`, `"usageMetadata"`} {
+		index := bytes.LastIndex(o.tail, []byte(key))
+		if index < 0 {
+			continue
+		}
+		rest := bytes.TrimLeft(o.tail[index+len(key):], " \t\r\n")
+		rest, ok := bytes.CutPrefix(rest, []byte{':'})
+		if !ok {
+			continue
+		}
+		var fields aiUsageFields
+		if json.NewDecoder(bytes.NewReader(rest)).Decode(&fields) == nil {
+			o.raw.merge(&fields)
+		}
+	}
+	o.tail = nil
 }
 
 func (o *aiUsageObserver) writeEventStream(p []byte) {
@@ -567,12 +711,43 @@ func (o *aiUsageObserver) applyJSON(data []byte) {
 		return
 	}
 	o.applyEnvelope(envelope)
+	if o.media == aiMediaImage && o.mode == aiBodyJSON {
+		o.applyImageCount(trimmed)
+	}
+}
+
+// applyImageCount counts the images of an OpenAI images response ("data")
+// or an Imagen predict response (predictions with image bytes).
+func (o *aiUsageObserver) applyImageCount(body []byte) {
+	var images struct {
+		Data        []json.RawMessage `json:"data"`
+		Predictions []struct {
+			Image json.RawMessage `json:"bytesBase64Encoded"`
+		} `json:"predictions"`
+	}
+	if json.Unmarshal(body, &images) != nil {
+		return
+	}
+	count := int64(len(images.Data))
+	for _, prediction := range images.Predictions {
+		if len(prediction.Image) > 0 {
+			count++
+		}
+	}
+	o.raw.noteImages(count)
+	o.parsedImages = true
 }
 
 func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 	o.raw.merge(envelope.Usage)
 	o.raw.merge(envelope.UsageMetadata)
 	o.raw.merge(envelope.Metrics)
+	switch {
+	case o.media == aiMediaImage && (envelope.Type == "image_generation.completed" || envelope.Type == "image_edit.completed"):
+		o.raw.noteImages(1)
+	case o.media == aiMediaTranscription && envelope.Duration != nil:
+		o.raw.noteAudioSeconds(*envelope.Duration)
+	}
 	if tokens := vertexPredictionTokens(envelope); tokens != nil {
 		o.raw.merge(&aiUsageFields{PromptTokenCount: tokens})
 	}
@@ -600,6 +775,12 @@ func (o *aiUsageObserver) Finish() AIUsage {
 		if !o.bodyOverflow && len(o.body) > 0 {
 			o.applyJSON(o.body)
 		}
+		if o.bodyOverflow {
+			o.applyTail()
+		}
+		if o.media == aiMediaImage && !o.parsedImages {
+			o.raw.noteImages(o.imageMarkers.count)
+		}
 		o.body = nil
 	case aiBodyEventStream:
 		if len(o.line) > 0 || o.lineOverflow {
@@ -607,7 +788,7 @@ func (o *aiUsageObserver) Finish() AIUsage {
 		}
 		o.dispatchEvent()
 	}
-	usage := o.raw.normalize(o.format)
+	usage := o.raw.normalize(o.format, o.media)
 	usage.Model = o.model
 	if usage.Model == "" {
 		usage.Model = sanitizeAIModel(o.fallbackModel)
@@ -652,4 +833,38 @@ func streamingMediaType(contentType string) bool {
 		return false
 	}
 	return mediaType == "text/event-stream" || mediaType == "application/x-ndjson" || mediaType == awsEventStreamMediaType
+}
+
+// markerCounter counts the image markers of an OpenAI images ("b64_json")
+// or Imagen ("bytesBase64Encoded") response across write boundaries.
+// Base64 data cannot contain a quote, so a marker is never found inside an
+// image (ADR-997).
+type markerCounter struct {
+	carry []byte
+	count int64
+}
+
+var imageMarkers = [][]byte{[]byte(`"b64_json"`), []byte(`"bytesBase64Encoded"`)}
+
+const imageMarkerMaxBytes = len(`"bytesBase64Encoded"`)
+
+func (m *markerCounter) write(p []byte) {
+	carried := len(m.carry)
+	window := append(m.carry, p...)
+	for _, marker := range imageMarkers {
+		for offset := 0; ; {
+			index := bytes.Index(window[offset:], marker)
+			if index < 0 {
+				break
+			}
+			// A marker that ends inside the carried bytes was counted by
+			// the previous write.
+			if offset+index+len(marker) > carried {
+				m.count++
+			}
+			offset += index + 1
+		}
+	}
+	keep := min(len(window), imageMarkerMaxBytes-1)
+	m.carry = append(m.carry[:0:0], window[len(window)-keep:]...)
 }
