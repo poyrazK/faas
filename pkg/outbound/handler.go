@@ -573,10 +573,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if aiObserver := observeAIResponse(integration, r, resp, cacheHit, aiReq, aiPlan); aiObserver != nil {
 		// Deferred so an aborted stream still settles the tokens it used.
-		defer h.settleAIUsage(ctx, integration, appID, aiSettlement{
+		settlement := aiSettlement{
 			status: resp.StatusCode, attempts: attempts, started: upstreamStarted, routeID: routeIDFromContext(r.Context()),
 			endUser: aiEndUser,
-		}, aiObserver, dependencySpan, metricIntegrationID)
+		}
+		if aiPlan != nil {
+			settlement.reserve, settlement.billable = aiPlan.reserve, aiPlan.endpoint.billable()
+		}
+		defer h.settleAIUsage(ctx, integration, appID, settlement, aiObserver, dependencySpan, metricIntegrationID)
 	}
 	if workflowIdentity != nil {
 		writeWorkflowOutboundResponse(w, r, resp, managedAuthorization)

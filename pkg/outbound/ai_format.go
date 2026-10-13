@@ -29,6 +29,10 @@ type aiEndpoint struct {
 	// generation marks an endpoint that produces output tokens, so output
 	// ceilings and reservations apply.
 	generation bool
+	// embedding marks an endpoint that bills input tokens for embeddings;
+	// with generation it makes a call billable, so unknown usage settles
+	// at the reservation (ADR-996).
+	embedding bool
 	// pathModel is the model named by the path (Gemini, Vertex, Bedrock and
 	// Azure deployments); empty when the body names it.
 	pathModel string
@@ -49,7 +53,8 @@ func classifyAIEndpoint(provider, path string) aiEndpoint {
 		return aiEndpoint{format: aiFormatAnthropic, generation: strings.HasSuffix(path, "/messages")}
 	case api.OutboundAIProviderGemini:
 		model, verb := modelAndVerb(path)
-		return aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb)}
+		return aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
+			embedding: verb == "embedContent" || verb == "batchEmbedContents"}
 	case api.OutboundAIProviderVertex:
 		return vertexEndpoint(path)
 	case api.OutboundAIProviderBedrock:
@@ -67,9 +72,15 @@ func openAIEndpoint(path string) aiEndpoint {
 		endpoint.generation, endpoint.openAIOutputField = true, "max_output_tokens"
 	case strings.HasSuffix(path, "/completions"):
 		endpoint.generation, endpoint.openAIOutputField = true, "max_tokens"
+	case strings.HasSuffix(path, "/embeddings"):
+		endpoint.embedding = true
 	}
 	return endpoint
 }
+
+// billable reports whether a call through the endpoint is charged by the
+// provider: generation and embeddings, not token counting or listings.
+func (e aiEndpoint) billable() bool { return e.generation || e.embedding }
 
 func vertexEndpoint(path string) aiEndpoint {
 	if strings.Contains(path, "/endpoints/openapi/") {
@@ -81,7 +92,10 @@ func vertexEndpoint(path string) aiEndpoint {
 	case strings.Contains(path, "/publishers/anthropic/"):
 		return aiEndpoint{format: aiFormatAnthropic, pathModel: model, generation: verb == "rawPredict" || verb == "streamRawPredict"}
 	case strings.Contains(path, "/publishers/google/"):
-		return aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb)}
+		// predict also serves non-token models (images); only embedding
+		// models are billed in tokens.
+		return aiEndpoint{format: aiFormatGemini, pathModel: model, generation: geminiGenerationVerb(verb),
+			embedding: verb == "embedContent" || verb == "batchEmbedContents" || (verb == "predict" && strings.Contains(model, "embedding"))}
 	}
 	return aiEndpoint{}
 }

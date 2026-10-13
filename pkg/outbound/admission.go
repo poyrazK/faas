@@ -40,6 +40,10 @@ const (
 	// Per-end-user UTC-day AI limits (ADR-994).
 	ReasonUserDailyTokenLimit = "user_daily_token_limit"
 	ReasonUserDailyCostLimit  = "user_daily_cost_limit"
+	// ReasonUserTrackingFull refuses a new end user once the day already
+	// tracks the maximum number of end users and per-user limits are set
+	// (ADR-996).
+	ReasonUserTrackingFull = "user_tracking_full"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"

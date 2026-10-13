@@ -101,6 +101,21 @@ type aiSettlement struct {
 	routeID  string
 	// endUser is the call's X-Gregale-AI-User value (ADR-994).
 	endUser string
+	// reserve and billable let a billable call whose usage cannot be read
+	// settle at its admission estimate instead of zero (ADR-996).
+	reserve  aiReservation
+	billable bool
+}
+
+// estimatedAIUsage is what a billable call with unreadable usage settles
+// at: its reservation, priced as reserved. Errors and non-billable calls
+// keep zero.
+func estimatedAIUsage(outcome AIUsageOutcome, usage AIUsage, settlement aiSettlement) (AIUsage, int64, bool) {
+	if outcome != AIUsageOutcomeUnknown || !settlement.billable || settlement.reserve.tokens <= 0 {
+		return usage, 0, false
+	}
+	return AIUsage{Model: usage.Model, InputTokens: settlement.reserve.input, OutputTokens: settlement.reserve.output},
+		settlement.reserve.cost, true
 }
 
 // settleAIUsage records one finished AI call. It runs after the response copy,
@@ -118,6 +133,10 @@ func (h *Handler) settleAIUsage(ctx context.Context, integration Integration, ap
 		timeToFirstByte = first.Sub(upstreamStarted)
 	}
 	cost := aiCallCostMillicents(integration, usage)
+	if estimated, estimatedCost, ok := estimatedAIUsage(outcome, usage, settlement); ok {
+		usage, cost = estimated, estimatedCost
+		span.SetAttributes(attribute.Bool("gregale.ai.usage_estimated", true))
+	}
 	h.Metrics.ObserveAIUsage(metricIntegrationID, outcome, usage, timeToFirstByte)
 	h.Metrics.ObserveAICost(metricIntegrationID, cost)
 	span.SetAttributes(aiSpanAttributes(integration.AIProvider, outcome, usage, timeToFirstByte)...)

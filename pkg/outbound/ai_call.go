@@ -103,5 +103,5 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 	input = min(input, api.OutboundAIMaxTokensPerResponse)
 	output = min(output, api.OutboundAIMaxTokensPerResponse)
 	cost := aiCallCostMillicents(integration, AIUsage{Model: plan.facts.model, Known: true, InputTokens: input, OutputTokens: output})
-	return aiReservation{tokens: input + output, cost: cost}
+	return aiReservation{tokens: input + output, cost: cost, input: input, output: output}
 }
