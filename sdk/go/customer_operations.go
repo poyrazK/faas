@@ -472,3 +472,5 @@ type OperationWorkflowFulfillmentReviewCoordinationRequest = api.OperationWorkfl
 type OperationWorkflowFulfillmentReviewCoordinationChange = api.OperationWorkflowFulfillmentReviewCoordinationChange
 
 type OperationWorkflowFulfillmentReviewReminder = api.OperationWorkflowFulfillmentReviewReminder
+
+type OperationWorkflowFulfillmentReviewEscalation = api.OperationWorkflowFulfillmentReviewEscalation

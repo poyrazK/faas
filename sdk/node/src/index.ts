@@ -418,3 +418,5 @@ export type { OperationWorkflowObligationFulfillmentReview, OperationWorkflowObl
 export type { OperationWorkflowFulfillmentReviewCoordinationRequest, OperationWorkflowFulfillmentReviewCoordinationChange } from './customer-operations.js';
 
 export type { OperationWorkflowFulfillmentReviewReminder } from './customer-operations.js';
+
+export type { OperationWorkflowFulfillmentReviewEscalation } from './customer-operations.js';

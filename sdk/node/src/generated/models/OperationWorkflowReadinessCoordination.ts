@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OperationWorkflowFulfillmentReviewCoordinationChange } from './OperationWorkflowFulfillmentReviewCoordinationChange.js';
+import type { OperationWorkflowFulfillmentReviewEscalation } from './OperationWorkflowFulfillmentReviewEscalation.js';
 import type { OperationWorkflowFulfillmentReviewReminder } from './OperationWorkflowFulfillmentReviewReminder.js';
 import type { OperationWorkflowObligationFulfillment } from './OperationWorkflowObligationFulfillment.js';
 import type { OperationWorkflowObligationFulfillmentReview } from './OperationWorkflowObligationFulfillmentReview.js';
@@ -14,6 +15,10 @@ import type { OperationWorkflowReadinessCompletion } from './OperationWorkflowRe
  * OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission of a follow-up time clears it.
  */
 export type OperationWorkflowReadinessCoordination = {
+  /**
+   * Immutable escalation delivery receipts. One delivery per review ID/deadline across destination/policy edits and restoring deadlines; capacity exhaustion stops further escalation delivery for this retained source.
+   */
+  fulfillment_review_escalations?: Array<OperationWorkflowFulfillmentReviewEscalation>;
   /**
    * Immutable delivery receipts; each review deadline is notified once, even if restored later. At capacity no further reminders are published for this retained source.
    */

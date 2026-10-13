@@ -79365,6 +79365,8 @@ components:
       description: Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
       additionalProperties: false
       properties:
+        fulfillment_review_escalation:
+          $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewEscalation'
         fulfillment_review_reminder:
           $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewReminder'
         fulfillment_review:
@@ -79454,6 +79456,7 @@ components:
           - review_response_handoff_declined
           - fulfillment_review_required
           - fulfillment_review_overdue
+          - fulfillment_review_escalated
           - obligation_reopened
           - obligation_target_changed
           - next_action_digest
@@ -79605,6 +79608,12 @@ components:
         omission of a follow-up time clears it.
       additionalProperties: false
       properties:
+        fulfillment_review_escalations:
+          type: array
+          maxItems: 128
+          description: Immutable escalation delivery receipts. One delivery per review ID/deadline across destination/policy edits and restoring deadlines; capacity exhaustion stops further escalation delivery for this retained source.
+          items:
+            $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewEscalation'
         fulfillment_review_reminders:
           type: array
           maxItems: 128
@@ -82595,6 +82604,8 @@ components:
       description: Retained source receipt anchored to the saved obligation; observed_assignment describes the delivered assignment snapshot, not a newly audited write. Available event coverage is partial.
       required: [kind, at, explanation]
       properties:
+        fulfillment_review_escalation:
+          $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewEscalation'
         fulfillment_review_reminder:
           $ref: '#/components/schemas/OperationWorkflowFulfillmentReviewReminder'
         review_coordination:
@@ -82625,7 +82636,7 @@ components:
           description: Exact obligation identity for mutation-time receipts; older inferred observations may omit it.
         kind:
           type: string
-          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed, fulfillment_review_coordinated, fulfillment_review_overdue]
+          enum: [observed_assignment, accepted, declined, reassigned, completed, canceled, rescheduled, assigned, changed, superseded, replaces, replaced_by, target_bound, target_cleared, fulfilled, reopened, fulfillment_review_required, fulfillment_reaffirmed, fulfillment_review_coordinated, fulfillment_review_overdue, fulfillment_review_escalated]
         at:
           type: string
           format: date-time
@@ -83002,6 +83013,15 @@ components:
       description: Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof. Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation. Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress owner notices.
       required: [action_kind, binding, fulfilled_at, basis_at, source_sequence, owner, review_required, reasons, current_reasons, checked_at, fingerprint, current_contract_version, current_state_revision]
       properties:
+        escalation_owner:
+          type: string
+          maxLength: 256
+          description: Optional escalation team, distinct from the review owner. Requires an explicit review deadline and positive grace period.
+        escalate_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          description: Grace period after actual overdue-reminder delivery. Positive values require an escalation owner; zero disables escalation.
         manual_owner:
           type: boolean
           description: Explicit review-cycle owner, preserved across worker observations without altering original work ownership.
@@ -83126,6 +83146,34 @@ components:
           format: date-time
         reaffirmed_by:
           type: string
+    OperationWorkflowFulfillmentReviewEscalation:
+      type: object
+      additionalProperties: false
+      description: Immutable destination delivery receipt for an unresolved review after its actual overdue reminder and configured grace period. Reassignment after that reminder cancels escalation for that deadline, including reverting an owner change; a new deadline starts a new window. Reaffirmation, reopening, supersession and changed policy/deadline suppress stale delivery. Delivery preserves review ownership and original fulfillment and does not execute application work.
+      required: [review_id, notification_id, reminder_notification_id, due_at, escalate_at, notified_at, escalation_owner, review]
+      properties:
+        review_id:
+          type: string
+        notification_id:
+          type: string
+          format: uuid
+        reminder_notification_id:
+          type: string
+          format: uuid
+        due_at:
+          type: string
+          format: date-time
+        escalate_at:
+          type: string
+          format: date-time
+        notified_at:
+          type: string
+          format: date-time
+        escalation_owner:
+          type: string
+          maxLength: 256
+        review:
+          $ref: '#/components/schemas/OperationWorkflowObligationFulfillmentReview'
     OperationWorkflowFulfillmentReviewReminder:
       type: object
       additionalProperties: false
@@ -83148,9 +83196,18 @@ components:
     OperationWorkflowFulfillmentReviewCoordinationRequest:
       type: object
       additionalProperties: false
-      description: Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review fingerprint fence stale edits. Preserve source status, owner, note and deadline; do not combine with other actions. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original fulfillment remains intact.
+      description: Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review fingerprint fence stale edits. Preserve source status, owner, note and deadline; do not combine with other actions. Configure an optional escalation team/grace period; reassignment after an overdue reminder cancels escalation for that deadline, including reverted routing. Removing the deadline disables escalation when policy fields are omitted. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original fulfillment remains intact.
       required: [review_id, review_fingerprint, owner, reason]
       properties:
+        escalation_owner:
+          type: string
+          maxLength: 256
+          description: Omission preserves existing policy when the review owner is unchanged and a deadline remains. Empty string clears escalation. Nonempty team must differ from the review owner and requires an explicit deadline and positive grace period.
+        escalate_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          description: Optional grace period after actual overdue-reminder delivery. Omission preserves the existing value; zero clears escalation. Owner reassignment or removing the deadline clears policy when both policy fields are omitted.
         review_id:
           type: string
           minLength: 1
@@ -83175,6 +83232,21 @@ components:
       description: Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and authenticated actor/reason. Does not modify original work or execute an application transition.
       required: [review_id, binding, fulfilled_at, from_owner, owner, reason, at, actor]
       properties:
+        from_escalation_owner:
+          type: string
+        previous_escalate_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+        escalation_owner:
+          type: string
+          maxLength: 256
+          description: New escalation team recorded by this review coordination change; empty or absent means escalation is disabled.
+        escalate_after_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          description: New grace period in seconds recorded by this review coordination change; zero or absent means escalation is disabled.
         review_id:
           type: string
         binding:

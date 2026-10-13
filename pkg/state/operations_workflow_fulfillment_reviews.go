@@ -196,6 +196,8 @@ func mergeFulfillmentReview(coord *api.OperationWorkflowReadinessCoordination, c
 		current.RequiredAt = previous.RequiredAt
 		current.DueAt = previous.DueAt
 		current.ManualOwner = previous.ManualOwner
+		current.EscalationOwner = previous.EscalationOwner
+		current.EscalateAfterSeconds = previous.EscalateAfterSeconds
 		if previous.ManualOwner {
 			current.Owner = previous.Owner
 		}

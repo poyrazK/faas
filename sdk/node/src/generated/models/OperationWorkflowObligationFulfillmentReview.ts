@@ -8,6 +8,14 @@ import type { OperationWorkflowObligationTargetBinding } from './OperationWorkfl
  */
 export type OperationWorkflowObligationFulfillmentReview = {
   /**
+   * Optional escalation team, distinct from the review owner. Requires an explicit review deadline and positive grace period.
+   */
+  escalation_owner?: string;
+  /**
+   * Grace period after actual overdue-reminder delivery. Positive values require an escalation owner; zero disables escalation.
+   */
+  escalate_after_seconds?: number;
+  /**
    * Explicit review-cycle owner, preserved across worker observations without altering original work ownership.
    */
   manual_owner?: boolean;

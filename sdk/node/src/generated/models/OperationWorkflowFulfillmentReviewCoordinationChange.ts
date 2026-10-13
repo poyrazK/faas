@@ -7,6 +7,16 @@ import type { OperationWorkflowObligationTargetBinding } from './OperationWorkfl
  * Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and authenticated actor/reason. Does not modify original work or execute an application transition.
  */
 export type OperationWorkflowFulfillmentReviewCoordinationChange = {
+  from_escalation_owner?: string;
+  previous_escalate_after_seconds?: number;
+  /**
+   * New escalation team recorded by this review coordination change; empty or absent means escalation is disabled.
+   */
+  escalation_owner?: string;
+  /**
+   * New grace period in seconds recorded by this review coordination change; zero or absent means escalation is disabled.
+   */
+  escalate_after_seconds?: number;
   review_id: string;
   binding: OperationWorkflowObligationTargetBinding;
   fulfilled_at: string;

@@ -71,6 +71,11 @@ func (h *workflowCaseObligationHistory) collect(subscription api.OperationWorkfl
 			event.Reaffirmation = &value
 		}
 
+		if !h.operator && event.FulfillmentReviewEscalation != nil {
+			value := *event.FulfillmentReviewEscalation
+			value.Review.Binding.Case.PlatformTenantID = ""
+			event.FulfillmentReviewEscalation = &value
+		}
 		if !h.operator && event.FulfillmentReviewReminder != nil {
 			value := *event.FulfillmentReviewReminder
 			value.Review.Binding.Case.PlatformTenantID = ""

@@ -16,6 +16,9 @@ func fulfillmentReviewFingerprint(r api.OperationWorkflowObligationFulfillmentRe
 	if r.ManualOwner || r.DueAt != nil {
 		fields = append(fields, r.ManualOwner, r.DueAt)
 	}
+	if r.EscalationOwner != "" || r.EscalateAfterSeconds != 0 {
+		fields = append(fields, r.EscalationOwner, r.EscalateAfterSeconds)
+	}
 	return readinessDigest(fields)
 }
 func pendingReviewByID(n api.OperationWorkflowReadinessNotification, id, reviewID string) (api.OperationWorkflowObligationFulfillmentReview, int, error) {
@@ -65,7 +68,30 @@ func prepareFulfillmentReviewCoordination(ctx context.Context, store readinessSu
 	if r.Fingerprint != input.ReviewFingerprint {
 		return nil, ErrConflict
 	}
-	return &api.OperationWorkflowFulfillmentReviewCoordinationChange{ReviewID: input.ReviewID, Binding: r.Binding, FulfilledAt: r.FulfilledAt, FromOwner: r.Owner, Owner: input.Owner, PreviousDueAt: r.DueAt, DueAt: input.DueAt, Reason: input.Reason}, nil
+
+	escalationOwner, grace := r.EscalationOwner, r.EscalateAfterSeconds
+	if input.Owner != r.Owner && input.EscalationOwner == nil && input.EscalateAfterSeconds == nil {
+		escalationOwner, grace = "", 0
+	}
+	if input.DueAt == nil && input.EscalationOwner == nil && input.EscalateAfterSeconds == nil {
+		escalationOwner, grace = "", 0
+	}
+	if input.EscalationOwner != nil {
+		escalationOwner = *input.EscalationOwner
+		if escalationOwner == "" && input.EscalateAfterSeconds == nil {
+			grace = 0
+		}
+	}
+	if input.EscalateAfterSeconds != nil {
+		grace = *input.EscalateAfterSeconds
+		if grace == 0 && input.EscalationOwner == nil {
+			escalationOwner = ""
+		}
+	}
+	if len(escalationOwner) > 256 || strings.TrimSpace(escalationOwner) != escalationOwner || !utf8.ValidString(escalationOwner) || strings.IndexFunc(escalationOwner, unicode.IsControl) >= 0 || grace < 0 || grace > 604800 || (escalationOwner == "") != (grace == 0) || escalationOwner != "" && (escalationOwner == input.Owner || input.DueAt == nil) {
+		return nil, ErrInvalidArgument
+	}
+	return &api.OperationWorkflowFulfillmentReviewCoordinationChange{FromEscalationOwner: r.EscalationOwner, EscalationOwner: escalationOwner, PreviousEscalateAfterSeconds: r.EscalateAfterSeconds, EscalateAfterSeconds: grace, ReviewID: input.ReviewID, Binding: r.Binding, FulfilledAt: r.FulfilledAt, FromOwner: r.Owner, Owner: input.Owner, PreviousDueAt: r.DueAt, DueAt: input.DueAt, Reason: input.Reason}, nil
 }
 func applyFulfillmentReviewCoordination(n api.OperationWorkflowReadinessNotification, req readinessCoordinationUpdate, actor string, now time.Time) (api.OperationWorkflowReadinessNotification, error) {
 	if req.ReviewCoordination == nil {
@@ -83,6 +109,7 @@ func applyFulfillmentReviewCoordination(n api.OperationWorkflowReadinessNotifica
 		return n, ErrConflict
 	}
 	r.Owner, r.DueAt, r.ManualOwner = prepared.Owner, prepared.DueAt, true
+	r.EscalationOwner, r.EscalateAfterSeconds = prepared.EscalationOwner, prepared.EscalateAfterSeconds
 	r.Fingerprint = fulfillmentReviewFingerprint(r)
 	change := *prepared
 	change.At, change.Actor = now, actor
@@ -95,5 +122,5 @@ func applyFulfillmentReviewCoordination(n api.OperationWorkflowReadinessNotifica
 }
 func reviewCoordinationEvent(c api.OperationWorkflowFulfillmentReviewCoordinationChange) api.OperationWorkflowObligationEvent {
 	value := c
-	return api.OperationWorkflowObligationEvent{ReviewCoordination: &value, ObligationID: c.ReviewID, ActionKind: "fulfillment_review", Cases: []api.OperationWorkflowNextActionCase{c.Binding.Case}, Kind: "fulfillment_review_coordinated", At: c.At, Actor: c.Actor, Explanation: "Fulfillment review ownership/deadline explicitly updated: " + c.Reason}
+	return api.OperationWorkflowObligationEvent{ReviewCoordination: &value, ObligationID: c.ReviewID, ActionKind: "fulfillment_review", Cases: []api.OperationWorkflowNextActionCase{c.Binding.Case}, Kind: "fulfillment_review_coordinated", At: c.At, Actor: c.Actor, Explanation: "Fulfillment review assignment, deadline or escalation policy explicitly updated: " + c.Reason}
 }

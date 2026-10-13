@@ -1175,6 +1175,7 @@ export type { OperationWorkflowEffectRequirement } from './OperationWorkflowEffe
 export type { OperationWorkflowEvidenceMilestone } from './OperationWorkflowEvidenceMilestone.js';
 export type { OperationWorkflowFulfillmentReviewCoordinationChange } from './OperationWorkflowFulfillmentReviewCoordinationChange.js';
 export type { OperationWorkflowFulfillmentReviewCoordinationRequest } from './OperationWorkflowFulfillmentReviewCoordinationRequest.js';
+export type { OperationWorkflowFulfillmentReviewEscalation } from './OperationWorkflowFulfillmentReviewEscalation.js';
 export type { OperationWorkflowFulfillmentReviewReminder } from './OperationWorkflowFulfillmentReviewReminder.js';
 export type { OperationWorkflowGapProgressGroup } from './OperationWorkflowGapProgressGroup.js';
 export type { OperationWorkflowGapQueueGuidance } from './OperationWorkflowGapQueueGuidance.js';

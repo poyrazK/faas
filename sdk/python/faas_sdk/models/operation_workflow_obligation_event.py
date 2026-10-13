@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ..models.operation_workflow_fulfillment_review_coordination_change import (
         OperationWorkflowFulfillmentReviewCoordinationChange,
     )
+    from ..models.operation_workflow_fulfillment_review_escalation import OperationWorkflowFulfillmentReviewEscalation
     from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
     from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
     from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
@@ -39,6 +40,12 @@ class OperationWorkflowObligationEvent:
     kind: OperationWorkflowObligationEventKind
     at: datetime.datetime
     explanation: str
+    fulfillment_review_escalation: OperationWorkflowFulfillmentReviewEscalation | Unset = UNSET
+    """Immutable destination delivery receipt for an unresolved review after its actual overdue reminder and
+    configured grace period. Reassignment after that reminder cancels escalation for that deadline, including
+    reverting an owner change; a new deadline starts a new window. Reaffirmation, reopening, supersession and
+    changed policy/deadline suppress stale delivery. Delivery preserves review ownership and original fulfillment
+    and does not execute application work."""
     fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset = UNSET
     """Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
     reasons, case and evidence context. Identical deadlines do not repeat within the same review cycle; a new
@@ -88,6 +95,10 @@ class OperationWorkflowObligationEvent:
         at = self.at.isoformat()
 
         explanation = self.explanation
+
+        fulfillment_review_escalation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.fulfillment_review_escalation, Unset):
+            fulfillment_review_escalation = self.fulfillment_review_escalation.to_dict()
 
         fulfillment_review_reminder: dict[str, Any] | Unset = UNSET
         if not isinstance(self.fulfillment_review_reminder, Unset):
@@ -145,6 +156,8 @@ class OperationWorkflowObligationEvent:
                 "explanation": explanation,
             }
         )
+        if fulfillment_review_escalation is not UNSET:
+            field_dict["fulfillment_review_escalation"] = fulfillment_review_escalation
         if fulfillment_review_reminder is not UNSET:
             field_dict["fulfillment_review_reminder"] = fulfillment_review_reminder
         if review_coordination is not UNSET:
@@ -179,6 +192,9 @@ class OperationWorkflowObligationEvent:
         from ..models.operation_workflow_fulfillment_review_coordination_change import (
             OperationWorkflowFulfillmentReviewCoordinationChange,
         )
+        from ..models.operation_workflow_fulfillment_review_escalation import (
+            OperationWorkflowFulfillmentReviewEscalation,
+        )
         from ..models.operation_workflow_fulfillment_review_reminder import OperationWorkflowFulfillmentReviewReminder
         from ..models.operation_workflow_next_action_case import OperationWorkflowNextActionCase
         from ..models.operation_workflow_obligation_fulfillment import OperationWorkflowObligationFulfillment
@@ -196,6 +212,15 @@ class OperationWorkflowObligationEvent:
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
         explanation = d.pop("explanation")
+
+        _fulfillment_review_escalation = d.pop("fulfillment_review_escalation", UNSET)
+        fulfillment_review_escalation: OperationWorkflowFulfillmentReviewEscalation | Unset
+        if isinstance(_fulfillment_review_escalation, Unset):
+            fulfillment_review_escalation = UNSET
+        else:
+            fulfillment_review_escalation = OperationWorkflowFulfillmentReviewEscalation.from_dict(
+                _fulfillment_review_escalation
+            )
 
         _fulfillment_review_reminder = d.pop("fulfillment_review_reminder", UNSET)
         fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset
@@ -276,6 +301,7 @@ class OperationWorkflowObligationEvent:
             kind=kind,
             at=at,
             explanation=explanation,
+            fulfillment_review_escalation=fulfillment_review_escalation,
             fulfillment_review_reminder=fulfillment_review_reminder,
             review_coordination=review_coordination,
             fulfillment_review=fulfillment_review,

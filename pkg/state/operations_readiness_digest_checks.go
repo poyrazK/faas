@@ -125,7 +125,7 @@ func checkNextActionDigest(ctx context.Context, store readinessSubscriptionBacke
 func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEvent, saved api.OperationWorkflowNextActionQueueItem, tenant, selectedTenant, sourceTenant string, operator bool) []api.OperationWorkflowObligationEvent {
 	out := []api.OperationWorkflowObligationEvent{}
 	for _, event := range events {
-		visible := event.Replacement == nil && event.TargetBinding == nil && event.Fulfillment == nil && event.Reopening == nil && event.FulfillmentReview == nil && event.Reaffirmation == nil && event.ReviewCoordination == nil && event.FulfillmentReviewReminder == nil
+		visible := event.Replacement == nil && event.TargetBinding == nil && event.Fulfillment == nil && event.Reopening == nil && event.FulfillmentReview == nil && event.Reaffirmation == nil && event.ReviewCoordination == nil && event.FulfillmentReviewReminder == nil && event.FulfillmentReviewEscalation == nil
 		if !visible {
 			for _, covered := range event.Cases {
 				for _, delivered := range saved.Cases {
@@ -174,6 +174,11 @@ func scopedDigestObligationLifecycle(events []api.OperationWorkflowObligationEve
 				event.Reaffirmation = &value
 			}
 
+			if !operator && event.FulfillmentReviewEscalation != nil {
+				value := *event.FulfillmentReviewEscalation
+				value.Review.Binding.Case.PlatformTenantID = ""
+				event.FulfillmentReviewEscalation = &value
+			}
 			if !operator && event.FulfillmentReviewReminder != nil {
 				value := *event.FulfillmentReviewReminder
 				value.Review.Binding.Case.PlatformTenantID = ""

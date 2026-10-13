@@ -49,6 +49,12 @@ class OperationWorkflowObligationFulfillmentReview:
     """Semantic comparison identity; timestamps and ordinary reporting revisions do not create new notices."""
     current_contract_version: int
     current_state_revision: int
+    escalation_owner: str | Unset = UNSET
+    """Optional escalation team, distinct from the review owner. Requires an explicit review deadline and positive
+    grace period."""
+    escalate_after_seconds: int | Unset = UNSET
+    """Grace period after actual overdue-reminder delivery. Positive values require an escalation owner; zero
+    disables escalation."""
     manual_owner: bool | Unset = UNSET
     """Explicit review-cycle owner, preserved across worker observations without altering original work ownership."""
     due_at: datetime.datetime | Unset = UNSET
@@ -83,6 +89,10 @@ class OperationWorkflowObligationFulfillmentReview:
         current_contract_version = self.current_contract_version
 
         current_state_revision = self.current_state_revision
+
+        escalation_owner = self.escalation_owner
+
+        escalate_after_seconds = self.escalate_after_seconds
 
         manual_owner = self.manual_owner
 
@@ -119,6 +129,10 @@ class OperationWorkflowObligationFulfillmentReview:
                 "current_state_revision": current_state_revision,
             }
         )
+        if escalation_owner is not UNSET:
+            field_dict["escalation_owner"] = escalation_owner
+        if escalate_after_seconds is not UNSET:
+            field_dict["escalate_after_seconds"] = escalate_after_seconds
         if manual_owner is not UNSET:
             field_dict["manual_owner"] = manual_owner
         if due_at is not UNSET:
@@ -163,6 +177,10 @@ class OperationWorkflowObligationFulfillmentReview:
 
         current_state_revision = d.pop("current_state_revision")
 
+        escalation_owner = d.pop("escalation_owner", UNSET)
+
+        escalate_after_seconds = d.pop("escalate_after_seconds", UNSET)
+
         manual_owner = d.pop("manual_owner", UNSET)
 
         _due_at = d.pop("due_at", UNSET)
@@ -202,6 +220,8 @@ class OperationWorkflowObligationFulfillmentReview:
             fingerprint=fingerprint,
             current_contract_version=current_contract_version,
             current_state_revision=current_state_revision,
+            escalation_owner=escalation_owner,
+            escalate_after_seconds=escalate_after_seconds,
             manual_owner=manual_owner,
             due_at=due_at,
             required_at=required_at,

@@ -32,6 +32,14 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
     reason: str
     at: datetime.datetime
     actor: str
+    from_escalation_owner: str | Unset = UNSET
+    previous_escalate_after_seconds: int | Unset = UNSET
+    escalation_owner: str | Unset = UNSET
+    """New escalation team recorded by this review coordination change; empty or absent means escalation is
+    disabled."""
+    escalate_after_seconds: int | Unset = UNSET
+    """New grace period in seconds recorded by this review coordination change; zero or absent means escalation is
+    disabled."""
     previous_due_at: datetime.datetime | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET
 
@@ -51,6 +59,14 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
         at = self.at.isoformat()
 
         actor = self.actor
+
+        from_escalation_owner = self.from_escalation_owner
+
+        previous_escalate_after_seconds = self.previous_escalate_after_seconds
+
+        escalation_owner = self.escalation_owner
+
+        escalate_after_seconds = self.escalate_after_seconds
 
         previous_due_at: str | Unset = UNSET
         if not isinstance(self.previous_due_at, Unset):
@@ -74,6 +90,14 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
                 "actor": actor,
             }
         )
+        if from_escalation_owner is not UNSET:
+            field_dict["from_escalation_owner"] = from_escalation_owner
+        if previous_escalate_after_seconds is not UNSET:
+            field_dict["previous_escalate_after_seconds"] = previous_escalate_after_seconds
+        if escalation_owner is not UNSET:
+            field_dict["escalation_owner"] = escalation_owner
+        if escalate_after_seconds is not UNSET:
+            field_dict["escalate_after_seconds"] = escalate_after_seconds
         if previous_due_at is not UNSET:
             field_dict["previous_due_at"] = previous_due_at
         if due_at is not UNSET:
@@ -102,6 +126,14 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
 
         actor = d.pop("actor")
 
+        from_escalation_owner = d.pop("from_escalation_owner", UNSET)
+
+        previous_escalate_after_seconds = d.pop("previous_escalate_after_seconds", UNSET)
+
+        escalation_owner = d.pop("escalation_owner", UNSET)
+
+        escalate_after_seconds = d.pop("escalate_after_seconds", UNSET)
+
         _previous_due_at = d.pop("previous_due_at", UNSET)
         previous_due_at: datetime.datetime | Unset
         if isinstance(_previous_due_at, Unset):
@@ -125,6 +157,10 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
             reason=reason,
             at=at,
             actor=actor,
+            from_escalation_owner=from_escalation_owner,
+            previous_escalate_after_seconds=previous_escalate_after_seconds,
+            escalation_owner=escalation_owner,
+            escalate_after_seconds=escalate_after_seconds,
             previous_due_at=previous_due_at,
             due_at=due_at,
         )

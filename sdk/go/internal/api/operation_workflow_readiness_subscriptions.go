@@ -45,6 +45,7 @@ type OperationWorkflowReadinessSubscriptionsResponse struct {
 	Items []OperationWorkflowReadinessSubscription `json:"items"`
 }
 type OperationWorkflowReadinessNotification struct {
+	FulfillmentReviewEscalation *OperationWorkflowFulfillmentReviewEscalation            `json:"fulfillment_review_escalation,omitempty"`
 	FulfillmentReviewReminder   *OperationWorkflowFulfillmentReviewReminder              `json:"fulfillment_review_reminder,omitempty"`
 	FulfillmentReview           *OperationWorkflowObligationFulfillmentReview            `json:"fulfillment_review,omitempty"`
 	ObligationReopening         *OperationWorkflowObligationReopening                    `json:"obligation_reopening,omitempty"`
@@ -92,23 +93,24 @@ type OperationWorkflowReadinessInboxResponse struct {
 
 // Coordination is shared inbox bookkeeping, never business workflow evidence.
 type OperationWorkflowReadinessCoordination struct {
-	FulfillmentReviewReminders []OperationWorkflowFulfillmentReviewReminder           `json:"fulfillment_review_reminders,omitempty"`
-	ReviewCoordinationChanges  []OperationWorkflowFulfillmentReviewCoordinationChange `json:"review_coordination_changes,omitempty"`
-	FulfillmentReviews         []OperationWorkflowObligationFulfillmentReview         `json:"fulfillment_reviews,omitempty"`
-	Reaffirmations             []OperationWorkflowObligationReaffirmation             `json:"reaffirmations,omitempty"`
-	Reopenings                 []OperationWorkflowObligationReopening                 `json:"reopenings,omitempty"`
-	Fulfillments               []OperationWorkflowObligationFulfillment               `json:"fulfillments,omitempty"`
-	TargetBindings             []OperationWorkflowObligationTargetBinding             `json:"target_bindings,omitempty"`
-	Completion                 *OperationWorkflowReadinessCompletion                  `json:"completion,omitempty"`
-	Revision                   int64                                                  `json:"revision"`
-	Status                     string                                                 `json:"status"`
-	Owner                      string                                                 `json:"owner"`
-	Note                       string                                                 `json:"note"`
-	FollowUpAt                 *time.Time                                             `json:"follow_up_at,omitempty"`
-	UpdatedAt                  time.Time                                              `json:"updated_at"`
-	UpdatedBy                  string                                                 `json:"updated_by"`
-	AcknowledgedAt             *time.Time                                             `json:"acknowledged_at,omitempty"`
-	AcknowledgedBy             string                                                 `json:"acknowledged_by,omitempty"`
+	FulfillmentReviewEscalations []OperationWorkflowFulfillmentReviewEscalation         `json:"fulfillment_review_escalations,omitempty"`
+	FulfillmentReviewReminders   []OperationWorkflowFulfillmentReviewReminder           `json:"fulfillment_review_reminders,omitempty"`
+	ReviewCoordinationChanges    []OperationWorkflowFulfillmentReviewCoordinationChange `json:"review_coordination_changes,omitempty"`
+	FulfillmentReviews           []OperationWorkflowObligationFulfillmentReview         `json:"fulfillment_reviews,omitempty"`
+	Reaffirmations               []OperationWorkflowObligationReaffirmation             `json:"reaffirmations,omitempty"`
+	Reopenings                   []OperationWorkflowObligationReopening                 `json:"reopenings,omitempty"`
+	Fulfillments                 []OperationWorkflowObligationFulfillment               `json:"fulfillments,omitempty"`
+	TargetBindings               []OperationWorkflowObligationTargetBinding             `json:"target_bindings,omitempty"`
+	Completion                   *OperationWorkflowReadinessCompletion                  `json:"completion,omitempty"`
+	Revision                     int64                                                  `json:"revision"`
+	Status                       string                                                 `json:"status"`
+	Owner                        string                                                 `json:"owner"`
+	Note                         string                                                 `json:"note"`
+	FollowUpAt                   *time.Time                                             `json:"follow_up_at,omitempty"`
+	UpdatedAt                    time.Time                                              `json:"updated_at"`
+	UpdatedBy                    string                                                 `json:"updated_by"`
+	AcknowledgedAt               *time.Time                                             `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy               string                                                 `json:"acknowledged_by,omitempty"`
 }
 type OperationWorkflowReadinessCoordinationRequest struct {
 	ReviewCoordination *OperationWorkflowFulfillmentReviewCoordinationRequest `json:"review_coordination,omitempty"`
@@ -946,22 +948,23 @@ type OperationWorkflowActionObligation struct {
 	StartedAt time.Time `json:"started_at"`
 }
 type OperationWorkflowObligationEvent struct {
-	FulfillmentReviewReminder *OperationWorkflowFulfillmentReviewReminder           `json:"fulfillment_review_reminder,omitempty"`
-	ReviewCoordination        *OperationWorkflowFulfillmentReviewCoordinationChange `json:"review_coordination,omitempty"`
-	FulfillmentReview         *OperationWorkflowObligationFulfillmentReview         `json:"fulfillment_review,omitempty"`
-	Reaffirmation             *OperationWorkflowObligationReaffirmation             `json:"reaffirmation,omitempty"`
-	Reopening                 *OperationWorkflowObligationReopening                 `json:"reopening,omitempty"`
-	Fulfillment               *OperationWorkflowObligationFulfillment               `json:"fulfillment,omitempty"`
-	TargetBinding             *OperationWorkflowObligationTargetBinding             `json:"target_binding,omitempty"`
-	Replacement               *OperationWorkflowObligationReplacement               `json:"replacement,omitempty"`
-	Cases                     []OperationWorkflowNextActionCase                     `json:"cases,omitempty"`
-	ActionKind                string                                                `json:"action_kind,omitempty"`
-	SharedPlan                bool                                                  `json:"shared_plan,omitempty"`
-	ObligationID              string                                                `json:"obligation_id,omitempty"`
-	Kind                      string                                                `json:"kind"`
-	At                        time.Time                                             `json:"at"`
-	Actor                     string                                                `json:"actor,omitempty"`
-	Explanation               string                                                `json:"explanation"`
+	FulfillmentReviewEscalation *OperationWorkflowFulfillmentReviewEscalation         `json:"fulfillment_review_escalation,omitempty"`
+	FulfillmentReviewReminder   *OperationWorkflowFulfillmentReviewReminder           `json:"fulfillment_review_reminder,omitempty"`
+	ReviewCoordination          *OperationWorkflowFulfillmentReviewCoordinationChange `json:"review_coordination,omitempty"`
+	FulfillmentReview           *OperationWorkflowObligationFulfillmentReview         `json:"fulfillment_review,omitempty"`
+	Reaffirmation               *OperationWorkflowObligationReaffirmation             `json:"reaffirmation,omitempty"`
+	Reopening                   *OperationWorkflowObligationReopening                 `json:"reopening,omitempty"`
+	Fulfillment                 *OperationWorkflowObligationFulfillment               `json:"fulfillment,omitempty"`
+	TargetBinding               *OperationWorkflowObligationTargetBinding             `json:"target_binding,omitempty"`
+	Replacement                 *OperationWorkflowObligationReplacement               `json:"replacement,omitempty"`
+	Cases                       []OperationWorkflowNextActionCase                     `json:"cases,omitempty"`
+	ActionKind                  string                                                `json:"action_kind,omitempty"`
+	SharedPlan                  bool                                                  `json:"shared_plan,omitempty"`
+	ObligationID                string                                                `json:"obligation_id,omitempty"`
+	Kind                        string                                                `json:"kind"`
+	At                          time.Time                                             `json:"at"`
+	Actor                       string                                                `json:"actor,omitempty"`
+	Explanation                 string                                                `json:"explanation"`
 }
 
 type OperationWorkflowCaseObligationHistoryItem struct {
@@ -1064,6 +1067,8 @@ type OperationWorkflowObligationReopening struct {
 }
 
 type OperationWorkflowObligationFulfillmentReview struct {
+	EscalationOwner        string                                   `json:"escalation_owner,omitempty"`
+	EscalateAfterSeconds   int                                      `json:"escalate_after_seconds,omitempty"`
 	ManualOwner            bool                                     `json:"manual_owner,omitempty"`
 	DueAt                  *time.Time                               `json:"due_at,omitempty"`
 	ActionKind             string                                   `json:"action_kind"`
@@ -1106,23 +1111,29 @@ type OperationWorkflowObligationReaffirmation struct {
 }
 
 type OperationWorkflowFulfillmentReviewCoordinationRequest struct {
-	ReviewID          string     `json:"review_id"`
-	ReviewFingerprint string     `json:"review_fingerprint"`
-	Owner             string     `json:"owner"`
-	DueAt             *time.Time `json:"due_at,omitempty"`
-	Reason            string     `json:"reason"`
+	EscalationOwner      *string    `json:"escalation_owner,omitempty"`
+	EscalateAfterSeconds *int       `json:"escalate_after_seconds,omitempty"`
+	ReviewID             string     `json:"review_id"`
+	ReviewFingerprint    string     `json:"review_fingerprint"`
+	Owner                string     `json:"owner"`
+	DueAt                *time.Time `json:"due_at,omitempty"`
+	Reason               string     `json:"reason"`
 }
 type OperationWorkflowFulfillmentReviewCoordinationChange struct {
-	ReviewID      string                                   `json:"review_id"`
-	Binding       OperationWorkflowObligationTargetBinding `json:"binding"`
-	FulfilledAt   time.Time                                `json:"fulfilled_at"`
-	FromOwner     string                                   `json:"from_owner"`
-	Owner         string                                   `json:"owner"`
-	PreviousDueAt *time.Time                               `json:"previous_due_at,omitempty"`
-	DueAt         *time.Time                               `json:"due_at,omitempty"`
-	Reason        string                                   `json:"reason"`
-	At            time.Time                                `json:"at"`
-	Actor         string                                   `json:"actor"`
+	FromEscalationOwner          string                                   `json:"from_escalation_owner,omitempty"`
+	EscalationOwner              string                                   `json:"escalation_owner,omitempty"`
+	PreviousEscalateAfterSeconds int                                      `json:"previous_escalate_after_seconds,omitempty"`
+	EscalateAfterSeconds         int                                      `json:"escalate_after_seconds,omitempty"`
+	ReviewID                     string                                   `json:"review_id"`
+	Binding                      OperationWorkflowObligationTargetBinding `json:"binding"`
+	FulfilledAt                  time.Time                                `json:"fulfilled_at"`
+	FromOwner                    string                                   `json:"from_owner"`
+	Owner                        string                                   `json:"owner"`
+	PreviousDueAt                *time.Time                               `json:"previous_due_at,omitempty"`
+	DueAt                        *time.Time                               `json:"due_at,omitempty"`
+	Reason                       string                                   `json:"reason"`
+	At                           time.Time                                `json:"at"`
+	Actor                        string                                   `json:"actor"`
 }
 
 // OperationWorkflowFulfillmentReviewReminder records one durable delivery for an exact review deadline.
@@ -1132,4 +1143,16 @@ type OperationWorkflowFulfillmentReviewReminder struct {
 	DueAt          time.Time                                    `json:"due_at"`
 	NotifiedAt     time.Time                                    `json:"notified_at"`
 	Review         OperationWorkflowObligationFulfillmentReview `json:"review"`
+}
+
+// OperationWorkflowFulfillmentReviewEscalation records delivery after an unanswered review reminder.
+type OperationWorkflowFulfillmentReviewEscalation struct {
+	ReviewID               string                                       `json:"review_id"`
+	NotificationID         string                                       `json:"notification_id"`
+	ReminderNotificationID string                                       `json:"reminder_notification_id"`
+	DueAt                  time.Time                                    `json:"due_at"`
+	EscalateAt             time.Time                                    `json:"escalate_at"`
+	NotifiedAt             time.Time                                    `json:"notified_at"`
+	EscalationOwner        string                                       `json:"escalation_owner"`
+	Review                 OperationWorkflowObligationFulfillmentReview `json:"review"`
 }
