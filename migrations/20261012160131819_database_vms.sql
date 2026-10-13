@@ -69,6 +69,37 @@ CREATE TABLE IF NOT EXISTS database_vms (
 CREATE INDEX IF NOT EXISTS database_vms_node_state_idx
     ON database_vms (node_id, state);
 
+-- Usage of each native database (ADR-1027 metering), written by schedd and
+-- kept past the database's deletion so its last windows can be collected.
+-- compute, storage and history rows are intervals at a constant
+-- per-second rate (vCPUs while the VM runs, provisioned volume bytes,
+-- archive bytes); an open interval has no end. egress rows count the bytes
+-- pgproxyd sent to clients in the hour starting at started_at.
+CREATE TABLE IF NOT EXISTS database_usage (
+    database_id uuid NOT NULL,
+    meter text NOT NULL
+        CHECK (meter IN ('compute', 'storage', 'history', 'egress')),
+    started_at timestamptz NOT NULL,
+    ended_at timestamptz,
+    rate bigint NOT NULL
+        CHECK (rate >= 0),
+    CONSTRAINT database_usage_interval
+        CHECK (ended_at IS NULL OR ended_at >= started_at),
+    CONSTRAINT database_usage_egress_open
+        CHECK (meter <> 'egress' OR ended_at IS NULL)
+);
+
+CREATE INDEX IF NOT EXISTS database_usage_lookup_idx
+    ON database_usage (database_id, started_at);
+
+-- At most one open interval per database and rate meter.
+CREATE UNIQUE INDEX IF NOT EXISTS database_usage_open_idx
+    ON database_usage (database_id, meter) WHERE ended_at IS NULL AND meter <> 'egress';
+
+-- One egress row per database and hour.
+CREATE UNIQUE INDEX IF NOT EXISTS database_usage_egress_idx
+    ON database_usage (database_id, started_at) WHERE meter = 'egress';
+
 -- The SCRAM-SHA-256 verifier of each customer role, in pg_authid format.
 -- apid writes it when it sets the role's password inside the VM; pgproxyd
 -- reads it to authenticate a client before waking the database and then
@@ -86,6 +117,7 @@ CREATE TABLE IF NOT EXISTS database_role_verifiers (
 
 -- +goose Down
 -- +goose StatementBegin
+DROP TABLE IF EXISTS database_usage;
 DROP TABLE IF EXISTS database_role_verifiers;
 DROP TABLE IF EXISTS database_vms;
 DROP TABLE IF EXISTS database_nodes;

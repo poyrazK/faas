@@ -40,6 +40,7 @@ type Scheduler interface {
 	// ParkDatabase suspends a database; only the scale-to-zero prober uses it.
 	ParkDatabase(ctx context.Context, in *scheddpb.DatabaseRef, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 	RestoreDatabase(ctx context.Context, in *scheddpb.RestoreDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+	DatabaseUsage(ctx context.Context, in *scheddpb.DatabaseUsageRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseUsageResponse, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore
@@ -186,9 +187,10 @@ func (p *Provider) WithConnector(c Connector) *Provider {
 var _ managedpostgres.Provider = (*Provider)(nil)
 
 // Capabilities states what the backend does today. Point-in-time restore is
-// on where the deployment archives WAL (max_restore_window_seconds); there
-// are no usage meters yet (ADR-1027 phasing). A database switches between
-// scale-to-zero and always-on in place.
+// on where the deployment archives WAL (max_restore_window_seconds). Usage
+// comes from schedd's ledger, and a restore is its own database, metered
+// apart from its source. A database switches between scale-to-zero and
+// always-on in place.
 func (p *Provider) Capabilities() managedpostgres.Capabilities {
 	classes := make([]managedpostgres.ServiceClass, 0, len(p.cfg.Classes))
 	for _, class := range []managedpostgres.ServiceClass{managedpostgres.ClassDevelopment, managedpostgres.ClassBurstable, managedpostgres.ClassProduction} {
@@ -206,7 +208,17 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		MaxStorageBytes:         p.cfg.MaxStorageBytes,
 		PointInTimeRestore:      p.cfg.MaxRestoreWindowSeconds > 0,
 		MaxRestoreWindowSeconds: p.cfg.MaxRestoreWindowSeconds,
+		RestoreUsageIsolated:    p.cfg.MaxRestoreWindowSeconds > 0,
+		UsageMeters:             append([]managedpostgres.Meter(nil), usageMeters...),
 	}
+}
+
+// usageMeters are the meters schedd's ledger answers for (ADR-1027): VM run
+// time, vCPU-seconds, provisioned volume byte-seconds, archive byte-seconds
+// and bytes pgproxyd sent to clients.
+var usageMeters = []managedpostgres.Meter{
+	managedpostgres.MeterActiveSeconds, managedpostgres.MeterComputeUnitSeconds, managedpostgres.MeterStorageByteSeconds,
+	managedpostgres.MeterHistoryByteSeconds, managedpostgres.MeterEgressBytes,
 }
 
 // Provision creates the database VM and its customer database. Schedd
@@ -431,9 +443,30 @@ func (p *Provider) RevokeCredentials(ctx context.Context, req managedpostgres.Cr
 	return err
 }
 
-// Usage reports no meters yet (ADR-1027 phasing: metering).
-func (p *Provider) Usage(_ context.Context, _ string, window managedpostgres.UsageWindow) (managedpostgres.Usage, error) {
-	return managedpostgres.Usage{Window: window}, nil
+// Usage reads the window from schedd's ledger, which outlives the database
+// so its last windows stay collectable after deletion. Asking again for a
+// past window gives the same answer.
+func (p *Provider) Usage(ctx context.Context, providerResourceID string, window managedpostgres.UsageWindow) (managedpostgres.Usage, error) {
+	if providerResourceID == "" || window.From.IsZero() || !window.To.After(window.From) {
+		return managedpostgres.Usage{}, managedpostgres.ErrInvalid
+	}
+	resp, err := p.scheduler.DatabaseUsage(ctx, &scheddpb.DatabaseUsageRequest{
+		DatabaseId: providerResourceID, From: timestamppb.New(window.From), To: timestamppb.New(window.To),
+	})
+	if err != nil {
+		return managedpostgres.Usage{}, providerError(err)
+	}
+	usage := managedpostgres.Usage{Window: window, Readings: []managedpostgres.MeterReading{
+		{Meter: managedpostgres.MeterActiveSeconds, Quantity: resp.GetActiveSeconds()},
+		{Meter: managedpostgres.MeterComputeUnitSeconds, Quantity: resp.GetComputeUnitSeconds()},
+		{Meter: managedpostgres.MeterStorageByteSeconds, Quantity: resp.GetStorageByteSeconds()},
+		{Meter: managedpostgres.MeterHistoryByteSeconds, Quantity: resp.GetHistoryByteSeconds()},
+		{Meter: managedpostgres.MeterEgressBytes, Quantity: resp.GetEgressBytes()},
+	}}
+	if err := usage.Validate(); err != nil {
+		return managedpostgres.Usage{}, managedpostgres.ErrUnavailable
+	}
+	return usage, nil
 }
 
 // admin runs a batch through schedd, which wakes the database first.

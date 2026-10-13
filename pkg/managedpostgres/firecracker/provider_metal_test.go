@@ -126,6 +126,7 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = sched.Delete(context.Background(), id) })
 
 	started := time.Now()
+	provisionStarted := started
 	obs, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: id, Spec: devSpec()})
 	if err != nil {
 		t.Fatalf("provision: %v", err)
@@ -223,12 +224,54 @@ func TestMetalDriverEndToEnd(t *testing.T) {
 		t.Fatalf("revoked login = %v, want 28P01 at the proxy", err)
 	}
 
+	// Metering: the VM ran, the volume exists, the archive holds the first
+	// backup, and pgproxyd reported what it sent the clients.
+	if n, err := st.sched.SampleArchives(ctx); err != nil || n != 1 {
+		t.Fatalf("sample archives = %d, %v", n, err)
+	}
+	time.Sleep(1100 * time.Millisecond) // let the sampled archive accrue byte-seconds
+	window := managedpostgres.UsageWindow{From: provisionStarted.UTC().Truncate(time.Hour), To: time.Now().UTC().Truncate(time.Hour).Add(time.Hour)}
+	readings := func() map[managedpostgres.Meter]int64 {
+		t.Helper()
+		usage, err := p.Usage(ctx, id, window)
+		if err != nil {
+			t.Fatalf("usage: %v", err)
+		}
+		out := map[managedpostgres.Meter]int64{}
+		for _, r := range usage.Readings {
+			out[r.Meter] = r.Quantity
+		}
+		return out
+	}
+	var used map[managedpostgres.Meter]int64
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		if used = readings(); used[managedpostgres.MeterEgressBytes] > 0 || time.Now().After(deadline) {
+			break
+		}
+	}
+	for _, meter := range []managedpostgres.Meter{managedpostgres.MeterActiveSeconds, managedpostgres.MeterComputeUnitSeconds,
+		managedpostgres.MeterStorageByteSeconds, managedpostgres.MeterHistoryByteSeconds, managedpostgres.MeterEgressBytes} {
+		if used[meter] <= 0 {
+			t.Errorf("meter %s = %d after a provisioned, queried database", meter, used[meter])
+		}
+	}
+	// Nothing is counted past now, though the window runs to the hour's end.
+	lived := int64(time.Since(provisionStarted).Seconds()) + 1
+	if used[managedpostgres.MeterActiveSeconds] > lived || used[managedpostgres.MeterStorageByteSeconds] > lived*(1<<30) {
+		t.Errorf("usage counted beyond the %d s the database existed: %v", lived, used)
+	}
+
 	if res, err := p.Delete(ctx, managedpostgres.DeleteRequest{ResourceID: id, ProviderResourceID: id}); err != nil || !res.Done {
 		t.Fatalf("delete = %+v, %v", res, err)
 	}
 	if _, err := p.Inspect(ctx, id); !errors.Is(err, managedpostgres.ErrNotFound) {
 		t.Fatalf("inspect after delete = %v", err)
 	}
+	// The ledger outlives the database: its last windows stay collectable.
+	if after := readings(); after[managedpostgres.MeterEgressBytes] < used[managedpostgres.MeterEgressBytes] {
+		t.Fatalf("usage after delete = %v", after)
+	}
+	t.Logf("usage: %v", used)
 	if _, err := os.Stat(filepath.Join(workdir, "drivervolumes", id+".img")); !os.IsNotExist(err) {
 		t.Fatalf("volume survived delete: %v", err)
 	}

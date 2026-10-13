@@ -51,6 +51,7 @@ const (
 	Schedd_GetDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/GetDatabase"
 	Schedd_SetDatabaseAlwaysOn_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/SetDatabaseAlwaysOn"
 	Schedd_RestoreDatabase_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
+	Schedd_DatabaseUsage_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -344,7 +345,7 @@ type ScheddClient interface {
 	ProvisionDatabase(ctx context.Context, in *ProvisionDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 	WakeDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
 	ParkDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*DatabaseRuntime, error)
-	TouchDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*TouchDatabaseResponse, error)
+	TouchDatabase(ctx context.Context, in *TouchDatabaseRequest, opts ...grpc.CallOption) (*TouchDatabaseResponse, error)
 	// DatabaseAdmin runs SQL as the superuser, waking the database first.
 	// The SQL can carry role passwords and is never logged.
 	DatabaseAdmin(ctx context.Context, in *DatabaseAdminRequest, opts ...grpc.CallOption) (*DatabaseAdminResponse, error)
@@ -357,6 +358,9 @@ type ScheddClient interface {
 	// another (ADR-1027). It returns at once with the database provisioning;
 	// schedd restores it in the background. apid only.
 	RestoreDatabase(ctx context.Context, in *RestoreDatabaseRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// DatabaseUsage reports a database's metered consumption over a window,
+	// also after it was deleted (ADR-1027). apid only.
+	DatabaseUsage(ctx context.Context, in *DatabaseUsageRequest, opts ...grpc.CallOption) (*DatabaseUsageResponse, error)
 }
 
 type scheddClient struct {
@@ -558,7 +562,7 @@ func (c *scheddClient) ParkDatabase(ctx context.Context, in *DatabaseRef, opts .
 	return out, nil
 }
 
-func (c *scheddClient) TouchDatabase(ctx context.Context, in *DatabaseRef, opts ...grpc.CallOption) (*TouchDatabaseResponse, error) {
+func (c *scheddClient) TouchDatabase(ctx context.Context, in *TouchDatabaseRequest, opts ...grpc.CallOption) (*TouchDatabaseResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TouchDatabaseResponse)
 	err := c.cc.Invoke(ctx, Schedd_TouchDatabase_FullMethodName, in, out, cOpts...)
@@ -612,6 +616,16 @@ func (c *scheddClient) RestoreDatabase(ctx context.Context, in *RestoreDatabaseR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DatabaseRuntime)
 	err := c.cc.Invoke(ctx, Schedd_RestoreDatabase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *scheddClient) DatabaseUsage(ctx context.Context, in *DatabaseUsageRequest, opts ...grpc.CallOption) (*DatabaseUsageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DatabaseUsageResponse)
+	err := c.cc.Invoke(ctx, Schedd_DatabaseUsage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +923,7 @@ type ScheddServer interface {
 	ProvisionDatabase(context.Context, *ProvisionDatabaseRequest) (*DatabaseRuntime, error)
 	WakeDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
 	ParkDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error)
-	TouchDatabase(context.Context, *DatabaseRef) (*TouchDatabaseResponse, error)
+	TouchDatabase(context.Context, *TouchDatabaseRequest) (*TouchDatabaseResponse, error)
 	// DatabaseAdmin runs SQL as the superuser, waking the database first.
 	// The SQL can carry role passwords and is never logged.
 	DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error)
@@ -922,6 +936,9 @@ type ScheddServer interface {
 	// another (ADR-1027). It returns at once with the database provisioning;
 	// schedd restores it in the background. apid only.
 	RestoreDatabase(context.Context, *RestoreDatabaseRequest) (*DatabaseRuntime, error)
+	// DatabaseUsage reports a database's metered consumption over a window,
+	// also after it was deleted (ADR-1027). apid only.
+	DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -983,7 +1000,7 @@ func (UnimplementedScheddServer) WakeDatabase(context.Context, *DatabaseRef) (*D
 func (UnimplementedScheddServer) ParkDatabase(context.Context, *DatabaseRef) (*DatabaseRuntime, error) {
 	return nil, status.Error(codes.Unimplemented, "method ParkDatabase not implemented")
 }
-func (UnimplementedScheddServer) TouchDatabase(context.Context, *DatabaseRef) (*TouchDatabaseResponse, error) {
+func (UnimplementedScheddServer) TouchDatabase(context.Context, *TouchDatabaseRequest) (*TouchDatabaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TouchDatabase not implemented")
 }
 func (UnimplementedScheddServer) DatabaseAdmin(context.Context, *DatabaseAdminRequest) (*DatabaseAdminResponse, error) {
@@ -1000,6 +1017,9 @@ func (UnimplementedScheddServer) SetDatabaseAlwaysOn(context.Context, *SetDataba
 }
 func (UnimplementedScheddServer) RestoreDatabase(context.Context, *RestoreDatabaseRequest) (*DatabaseRuntime, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreDatabase not implemented")
+}
+func (UnimplementedScheddServer) DatabaseUsage(context.Context, *DatabaseUsageRequest) (*DatabaseUsageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DatabaseUsage not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -1304,7 +1324,7 @@ func _Schedd_ParkDatabase_Handler(srv interface{}, ctx context.Context, dec func
 }
 
 func _Schedd_TouchDatabase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DatabaseRef)
+	in := new(TouchDatabaseRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1316,7 +1336,7 @@ func _Schedd_TouchDatabase_Handler(srv interface{}, ctx context.Context, dec fun
 		FullMethod: Schedd_TouchDatabase_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ScheddServer).TouchDatabase(ctx, req.(*DatabaseRef))
+		return srv.(ScheddServer).TouchDatabase(ctx, req.(*TouchDatabaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1411,6 +1431,24 @@ func _Schedd_RestoreDatabase_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_DatabaseUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DatabaseUsageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).DatabaseUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_DatabaseUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).DatabaseUsage(ctx, req.(*DatabaseUsageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1497,6 +1535,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RestoreDatabase",
 			Handler:    _Schedd_RestoreDatabase_Handler,
+		},
+		{
+			MethodName: "DatabaseUsage",
+			Handler:    _Schedd_DatabaseUsage_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

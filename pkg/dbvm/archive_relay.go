@@ -90,6 +90,24 @@ func (r *Runtime) PruneArchive(ctx context.Context, id string, windowSeconds int
 	return res, nil
 }
 
+// ArchiveBytes sizes each database's archive on this node through
+// dbbackupd. Databases it could not size are left out.
+func (r *Runtime) ArchiveBytes(ctx context.Context, ids []string) (map[string]int64, error) {
+	if r.cfg.ArchiveSocket == "" {
+		return nil, ErrNoArchive
+	}
+	out := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		if validID(id) != nil {
+			continue
+		}
+		if n, err := dbarchive.ArchiveBytes(ctx, r.cfg.ArchiveSocket, id); err == nil {
+			out[id] = n
+		}
+	}
+	return out, nil
+}
+
 // ErrNoArchive reports a runtime without dbbackupd.
 var ErrNoArchive = errors.New("dbvm: archiving is off on this node")
 

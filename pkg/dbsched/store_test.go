@@ -331,3 +331,86 @@ func TestStoreRestorePlacementAndLease(t *testing.T) {
 		})
 	}
 }
+
+// TestStoreUsageLedger: storage from placement to deletion, compute while
+// the VM is active, sampled history and hourly egress, all answerable after
+// the record is gone.
+func TestStoreUsageLedger(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30, Lifecycle: NodeActive})
+			if _, err := s.Usage(ctx, uuid.NewString(), time.Now().Add(-time.Hour), time.Now()); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("usage of an unknown database = %v", err)
+			}
+			vm := newVM(1<<30, 384)
+			vm.VcpuCount = 2
+			t0 := time.Now()
+			if _, err := s.Place(ctx, vm); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(1100 * time.Millisecond)
+			if err := s.SampleUsage(ctx, vm.DatabaseID, MeterHistory, 1000, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SampleUsage(ctx, vm.DatabaseID, MeterHistory, 1000, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range []State{StateParking, StateParked} {
+				from := []State{StateRunning, StateParking}
+				if err := s.Transition(ctx, vm.DatabaseID, from, step, TransitionOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := s.AddEgress(ctx, vm.DatabaseID, 300, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.AddEgress(ctx, vm.DatabaseID, 200, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(1100 * time.Millisecond)
+			if err := s.Transition(ctx, vm.DatabaseID, []State{StateParked}, StateDeleting, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Delete(ctx, vm.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			t2 := time.Now()
+
+			from, to := usageHour(t0), usageHour(t2).Add(time.Hour)
+			u, err := s.Usage(ctx, vm.DatabaseID, from, to)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lived := t2.Sub(t0).Seconds()
+			if u.ActiveSeconds < 1 || u.ActiveSeconds > 2 || u.ComputeUnitSeconds < 2*u.ActiveSeconds || u.ComputeUnitSeconds > 2*(u.ActiveSeconds+1) {
+				t.Fatalf("compute = %+v", u)
+			}
+			if float64(u.StorageByteSeconds) < float64(int64(1)<<30)*(lived-0.5) || float64(u.StorageByteSeconds) > float64(int64(1)<<30)*(lived+0.5) {
+				t.Fatalf("storage = %d over %.2f s", u.StorageByteSeconds, lived)
+			}
+			if u.HistoryByteSeconds < 1000 || u.HistoryByteSeconds > 3000 || u.EgressBytes != 500 {
+				t.Fatalf("history/egress = %+v", u)
+			}
+			// After the deletion nothing accrues.
+			if later, err := s.Usage(ctx, vm.DatabaseID, to, to.Add(time.Hour)); err != nil || later != (Usage{}) {
+				t.Fatalf("usage after deletion = %+v, %v", later, err)
+			}
+			if n, err := s.PruneUsage(ctx, to.Add(time.Hour)); err != nil || n < 4 {
+				t.Fatalf("prune = %d, %v", n, err)
+			}
+			if _, err := s.Usage(ctx, vm.DatabaseID, from, to); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("usage after prune = %v", err)
+			}
+		})
+	}
+}

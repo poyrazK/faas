@@ -55,6 +55,13 @@ func (f *fakeDatabaseRuntime) PruneArchive(_ context.Context, _ string, windowSe
 	f.calls = append(f.calls, fmt.Sprintf("prune_archive:%d", windowSeconds))
 	return dbarchive.PruneResult{Backups: 1, WAL: 7}, f.err
 }
+func (f *fakeDatabaseRuntime) ArchiveBytes(_ context.Context, ids []string) (map[string]int64, error) {
+	out := map[string]int64{}
+	for i, id := range ids {
+		out[id] = int64(i + 1)
+	}
+	return out, f.err
+}
 func (f *fakeDatabaseRuntime) ListVolumes() ([]dbvm.Volume, error) {
 	return f.volumes, f.err
 }
@@ -198,6 +205,17 @@ func TestPruneDatabaseArchive(t *testing.T) {
 	}
 	if _, err := s.PruneDatabaseArchive(tlsCaller("pgproxyd.faas"), &vmmdpb.PruneDatabaseArchiveRequest{DatabaseId: testDatabaseID}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("pgproxyd pruning = %v", err)
+	}
+}
+
+func TestDatabaseArchiveBytes(t *testing.T) {
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(&fakeDatabaseRuntime{})
+	resp, err := s.DatabaseArchiveBytes(unixCaller(), &vmmdpb.DatabaseArchiveBytesRequest{DatabaseIds: []string{testDatabaseID}})
+	if err != nil || resp.GetBytes()[testDatabaseID] != 1 {
+		t.Fatalf("archive bytes = %v, %v", resp, err)
+	}
+	if _, err := s.DatabaseArchiveBytes(unixCaller(), &vmmdpb.DatabaseArchiveBytesRequest{DatabaseIds: make([]string, maxArchiveSizeBatch+1)}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("oversized batch = %v", err)
 	}
 }
 

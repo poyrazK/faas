@@ -36,8 +36,8 @@ func (w *ScheddWaker) Wake(ctx context.Context, databaseID string) (string, erro
 	return rt.GetVmmdTarget(), nil
 }
 
-func (w *ScheddWaker) Touch(ctx context.Context, databaseID string) error {
-	_, err := w.client.TouchDatabase(ctx, &scheddpb.DatabaseRef{DatabaseId: databaseID})
+func (w *ScheddWaker) Touch(ctx context.Context, databaseID string, egressBytes int64) error {
+	_, err := w.client.TouchDatabase(ctx, &scheddpb.TouchDatabaseRequest{DatabaseId: databaseID, EgressBytes: egressBytes})
 	return err
 }
 

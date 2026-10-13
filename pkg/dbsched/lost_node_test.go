@@ -157,3 +157,37 @@ func TestPruneLostArchives(t *testing.T) {
 		t.Fatalf("without a shared archive = %d", n)
 	}
 }
+
+// A database active on a lost node stops billing compute: its record parks
+// (closing the compute interval) and its wakes fail until the node returns.
+func TestSettleLostNodesStopsCompute(t *testing.T) {
+	ctx := context.Background()
+	s, store, _, db := twoNodeScheduler(t, true)
+	hour := time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC)
+	clock := hour.Add(5 * time.Minute)
+	now := func() time.Time { return clock }
+	store.now, s.now = now, now
+	if _, err := s.Wake(ctx, db.DatabaseID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.SettleLostNodes(ctx); err != nil || n != 0 {
+		t.Fatalf("settle with no lost node = %d, %v", n, err)
+	}
+	clock = clock.Add(10 * time.Minute)
+	markNode(t, store, "db-a", NodeUnavailable)
+	if n, err := s.SettleLostNodes(ctx); err != nil || n != 1 {
+		t.Fatalf("settle = %d, %v", n, err)
+	}
+	got, _ := store.Get(ctx, db.DatabaseID)
+	if got.State != StateParked || got.LastError != errCodeNodeLost {
+		t.Fatalf("record = %s/%s", got.State, got.LastError)
+	}
+	clock = hour.Add(2 * time.Hour)
+	u, err := s.Usage(ctx, db.DatabaseID, hour, hour.Add(time.Hour))
+	if err != nil || u.ActiveSeconds != 600 {
+		t.Fatalf("usage = %+v, %v; want the 10 minutes before the loss only", u, err)
+	}
+	if _, err := s.Wake(ctx, db.DatabaseID); !errors.Is(err, ErrNodeUnavailable) {
+		t.Fatalf("wake on the lost node = %v", err)
+	}
+}

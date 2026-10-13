@@ -280,3 +280,32 @@ func (s *TieredStore) Drop(ctx context.Context, databaseID string) error {
 	s.windowsMu.Unlock()
 	return nil
 }
+
+// LocalBytes is the size of the database's archive on this node: its WAL
+// and base backups. A database with no local archive has zero.
+func (s *LocalStore) LocalBytes(databaseID string) (int64, error) {
+	if !ValidDatabaseID(databaseID) {
+		return 0, fmt.Errorf("dbarchive: invalid database id %q", databaseID)
+	}
+	var total int64
+	for _, sub := range []string{"wal", "base"} {
+		entries, err := os.ReadDir(filepath.Join(s.dir, databaseID, sub))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), ".") {
+				continue // an upload or backup in flight
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue // pruned meanwhile
+			}
+			total += info.Size()
+		}
+	}
+	return total, nil
+}

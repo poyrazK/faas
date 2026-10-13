@@ -125,6 +125,19 @@ type Store interface {
 	ClaimRestore(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
 	// RecordRestore stamps a provisioning restore's last replayed commit.
 	RecordRestore(ctx context.Context, id string, recoveredTo time.Time) error
+	// Place opens the storage interval, compute opens on entering an
+	// active state and closes on leaving it, and Delete closes every
+	// interval; the ledger itself outlives the record (usage.go).
+	//
+	// SampleUsage moves a rate meter (history) to rate from at; an equal
+	// rate is a no-op.
+	SampleUsage(ctx context.Context, id, meter string, rate int64, at time.Time) error
+	// AddEgress adds bytes to the hour at falls in.
+	AddEgress(ctx context.Context, id string, bytes int64, at time.Time) error
+	// Usage totals [from, to); a database with no ledger is ErrNotFound.
+	Usage(ctx context.Context, id string, from, to time.Time) (Usage, error)
+	// PruneUsage drops ledger rows that ended before before.
+	PruneUsage(ctx context.Context, before time.Time) (int64, error)
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
 }

@@ -528,6 +528,9 @@ service Vmmd {
   // to its restore window, through this node's dbbackupd. schedd sends it
   // for databases whose own node is lost.
   rpc PruneDatabaseArchive(PruneDatabaseArchiveRequest) returns (PruneDatabaseArchiveResponse);
+  // DatabaseArchiveBytes reports the size of each database's archive on
+  // this node, for the restore-history usage meter.
+  rpc DatabaseArchiveBytes(DatabaseArchiveBytesRequest) returns (DatabaseArchiveBytesResponse);
   // StartDatabase cold-boots the database VM and returns once guest-init
   // answers. Database VMs are never snapshotted.
   rpc StartDatabase(StartDatabaseRequest) returns (StartDatabaseResponse);
@@ -2613,6 +2616,15 @@ message PruneDatabaseArchiveRequest {
 message PruneDatabaseArchiveResponse {
   int32 backups = 1;
   int32 wal = 2;
+}
+
+message DatabaseArchiveBytesRequest {
+  repeated string database_ids = 1;
+}
+
+message DatabaseArchiveBytesResponse {
+  // Bytes by database id; a database this node could not size is absent.
+  map<string, int64> bytes = 1;
 }
 
 message ListDatabaseVolumesRequest {}

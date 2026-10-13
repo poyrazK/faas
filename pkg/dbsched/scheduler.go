@@ -28,6 +28,9 @@ type VMM interface {
 	// PruneArchive prunes a database's archive in the shared bucket to its
 	// restore window, through node's dbbackupd.
 	PruneArchive(ctx context.Context, node Node, id string, windowSeconds int64) error
+	// ArchiveBytes sizes the databases' archives on node; ones it could
+	// not size are absent.
+	ArchiveBytes(ctx context.Context, node Node, ids []string) (map[string]int64, error)
 	Start(ctx context.Context, node Node, vm VM) error
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
@@ -43,6 +46,9 @@ const (
 	// errCodeVMLost marks a running database whose VM vmmd no longer has
 	// (for example after a database node rebooted).
 	errCodeVMLost = "vm_lost"
+	// errCodeNodeLost marks a database parked because the operator marked
+	// its node unavailable.
+	errCodeNodeLost = "node_lost"
 )
 
 // NodeVolume is one database volume on a node.
@@ -316,6 +322,12 @@ func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
 			}
 			if _, err := s.PruneLostArchives(ctx); err != nil {
 				s.log.Warn("dbsched: lost-node prune sweep failed", "err", err)
+			}
+			if _, err := s.SampleArchives(ctx); err != nil {
+				s.log.Warn("dbsched: archive size sweep failed", "err", err)
+			}
+			if _, err := s.store.PruneUsage(ctx, s.now().Add(-usageRetention)); err != nil {
+				s.log.Warn("dbsched: usage ledger prune failed", "err", err)
 			}
 		}
 	}
@@ -713,6 +725,42 @@ func (s *Scheduler) KeepWarm(ctx context.Context) (int, error) {
 	return woke, nil
 }
 
+// SettleLostNodes parks the records of databases that were active on a node
+// the operator has marked unavailable: their VMs went with the node, and an
+// active record would keep billing compute (an always-on one forever). Its
+// next wake fails until the node returns. It reports how many it parked.
+func (s *Scheduler) SettleLostNodes(ctx context.Context) (int, error) {
+	nodes, err := s.store.Nodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	lost, known := map[string]bool{}, map[string]bool{}
+	for _, n := range nodes {
+		known[n.ID] = true
+		lost[n.ID] = n.Lifecycle == NodeUnavailable
+	}
+	vms, err := s.store.List(ctx, activeStates...)
+	if err != nil {
+		return 0, err
+	}
+	settled := 0
+	for _, vm := range vms {
+		if known[vm.NodeID] && !lost[vm.NodeID] {
+			continue
+		}
+		unlock := s.lock(vm.DatabaseID)
+		err := s.store.Transition(ctx, vm.DatabaseID, activeStates, StateParked, TransitionOptions{LastError: errCodeNodeLost})
+		unlock()
+		if err != nil {
+			s.log.Warn("dbsched: park a lost node's database", "database_id", vm.DatabaseID, "err", err)
+			continue
+		}
+		s.log.Warn("dbsched: parked a database whose node is lost", "database_id", vm.DatabaseID, "node_id", vm.NodeID)
+		settled++
+	}
+	return settled, nil
+}
+
 // vmLost probes a running database and, when vmmd reports no VM, parks the
 // record so the next wake boots it again. Any other failure (an
 // unreachable node) leaves it alone: restarting a healthy database on a
@@ -773,6 +821,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if _, err := s.SettleLostNodes(ctx); err != nil {
+				s.log.Warn("dbsched: lost-node sweep failed", "err", err)
+			}
 			if n, err := s.ParkIdle(ctx); err != nil {
 				s.log.Warn("dbsched: idle sweep failed", "err", err)
 			} else if n > 0 {

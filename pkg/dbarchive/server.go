@@ -25,6 +25,7 @@ type RetentionStore interface {
 	NoteWindow(databaseID string, seconds int64) error
 	Drop(ctx context.Context, databaseID string) error
 	PruneBucket(ctx context.Context, databaseID string, windowSeconds int64) (PruneResult, error)
+	LocalBytes(databaseID string) (int64, error)
 }
 
 // Server answers relayed guest streams on dbbackupd's socket.
@@ -144,8 +145,13 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 	if err := ReadLine(br, &req); err != nil {
 		return
 	}
-	if s.Retention == nil || (req.Op != OpDrop && req.Op != OpPrune) || req.WindowSeconds < 0 {
+	if s.Retention == nil || (req.Op != OpDrop && req.Op != OpPrune && req.Op != OpSize) || req.WindowSeconds < 0 {
 		_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
+		return
+	}
+	if req.Op == OpSize {
+		size, err := s.Retention.LocalBytes(header.DatabaseID)
+		_ = WriteLine(conn, Response{Error: codeFor(err), Size: size})
 		return
 	}
 	if req.Op == OpPrune {
@@ -182,6 +188,13 @@ func PruneArchive(ctx context.Context, socketPath, databaseID string, windowSeco
 		return PruneResult{}, err
 	}
 	return *resp.Pruned, nil
+}
+
+// ArchiveBytes asks dbbackupd at socketPath for the size of a database's
+// archive on its node.
+func ArchiveBytes(ctx context.Context, socketPath, databaseID string) (int64, error) {
+	resp, err := admin(ctx, socketPath, databaseID, Request{Op: OpSize})
+	return resp.Size, err
 }
 
 func admin(ctx context.Context, socketPath, databaseID string, req Request) (Response, error) {

@@ -30,6 +30,12 @@ type fakeDatabases struct {
 	adminSQL  string
 	provision dbsched.ProvisionRequest
 	restore   dbsched.RestoreRequest
+	// usage answers Usage; egress sums RecordEgress.
+	usage       dbsched.Usage
+	usageWindow [2]time.Time
+	egress      int64
+	egressErr   error
+	touchErr    error
 }
 
 func (f *fakeDatabases) Provision(_ context.Context, req dbsched.ProvisionRequest) (dbsched.VM, error) {
@@ -38,13 +44,26 @@ func (f *fakeDatabases) Provision(_ context.Context, req dbsched.ProvisionReques
 }
 func (f *fakeDatabases) Wake(context.Context, string) (dbsched.VM, error) { return f.vm, f.err }
 func (f *fakeDatabases) Park(context.Context, string) error               { return f.err }
-func (f *fakeDatabases) Touch(context.Context, string) error              { return f.err }
+func (f *fakeDatabases) Touch(context.Context, string) error {
+	if f.touchErr != nil {
+		return f.touchErr
+	}
+	return f.err
+}
 func (f *fakeDatabases) Admin(_ context.Context, _, sql string) (dbguest.Response, error) {
 	f.adminSQL = sql
 	return f.admin, f.err
 }
 func (f *fakeDatabases) Delete(context.Context, string) error            { return f.err }
 func (f *fakeDatabases) Get(context.Context, string) (dbsched.VM, error) { return f.vm, f.err }
+func (f *fakeDatabases) Usage(_ context.Context, _ string, from, to time.Time) (dbsched.Usage, error) {
+	f.usageWindow = [2]time.Time{from, to}
+	return f.usage, f.err
+}
+func (f *fakeDatabases) RecordEgress(_ context.Context, _ string, bytes int64) error {
+	f.egress += bytes
+	return f.egressErr
+}
 func (f *fakeDatabases) Restore(_ context.Context, req dbsched.RestoreRequest) (dbsched.VM, error) {
 	f.restore = req
 	return f.vm, f.err
@@ -83,7 +102,14 @@ func TestDatabaseRPCCallerIdentity(t *testing.T) {
 	}{
 		{"apid wakes", callerAPID, func(c context.Context) error { _, err := s.WakeDatabase(c, ref); return err }, codes.OK},
 		{"pgproxyd wakes", callerPgproxy, func(c context.Context) error { _, err := s.WakeDatabase(c, ref); return err }, codes.OK},
-		{"pgproxyd touches", callerPgproxy, func(c context.Context) error { _, err := s.TouchDatabase(c, ref); return err }, codes.OK},
+		{"pgproxyd touches", callerPgproxy, func(c context.Context) error {
+			_, err := s.TouchDatabase(c, &scheddpb.TouchDatabaseRequest{DatabaseId: testDBID})
+			return err
+		}, codes.OK},
+		{"pgproxyd cannot read usage", callerPgproxy, func(c context.Context) error {
+			_, err := s.DatabaseUsage(c, &scheddpb.DatabaseUsageRequest{DatabaseId: testDBID})
+			return err
+		}, codes.PermissionDenied},
 		{"gateway cannot wake", "gatewayd-internal-public.faas", func(c context.Context) error { _, err := s.WakeDatabase(c, ref); return err }, codes.PermissionDenied},
 		{"pgproxyd cannot run admin sql", callerPgproxy, func(c context.Context) error {
 			_, err := s.DatabaseAdmin(c, &scheddpb.DatabaseAdminRequest{DatabaseId: testDBID, Sql: "select 1"})
@@ -198,5 +224,28 @@ func TestRestoreDatabaseValidatesAndMapsLineage(t *testing.T) {
 	}
 	if f.restore.Source != sourceID || !f.restore.Target.Equal(target) || f.restore.MemMiB != 512 || f.restore.RestoreWindowSeconds != 3600 {
 		t.Fatalf("request not relayed: %+v", f.restore)
+	}
+}
+
+func TestTouchRecordsEgressBeforeActivity(t *testing.T) {
+	f := &fakeDatabases{touchErr: dbsched.ErrConflict}
+	s := New(nil, nil, nil).WithDatabases(f)
+	_, err := s.TouchDatabase(asCaller(callerPgproxy), &scheddpb.TouchDatabaseRequest{DatabaseId: testDBID, EgressBytes: 4096})
+	if status.Code(err) != codes.FailedPrecondition || f.egress != 4096 {
+		t.Fatalf("touch of a parked database = %v, egress %d; the bytes must still land", err, f.egress)
+	}
+}
+
+func TestDatabaseUsageMapsTheWindow(t *testing.T) {
+	from := time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC)
+	f := &fakeDatabases{usage: dbsched.Usage{ActiveSeconds: 1, ComputeUnitSeconds: 2, StorageByteSeconds: 3, HistoryByteSeconds: 4, EgressBytes: 5}}
+	s := New(nil, nil, nil).WithDatabases(f)
+	resp, err := s.DatabaseUsage(asCaller(callerAPID), &scheddpb.DatabaseUsageRequest{DatabaseId: testDBID, From: timestamppb.New(from), To: timestamppb.New(from.Add(time.Hour))})
+	if err != nil || resp.GetActiveSeconds() != 1 || resp.GetComputeUnitSeconds() != 2 || resp.GetStorageByteSeconds() != 3 ||
+		resp.GetHistoryByteSeconds() != 4 || resp.GetEgressBytes() != 5 || !f.usageWindow[0].Equal(from) {
+		t.Fatalf("usage = %v, %v", resp, err)
+	}
+	if _, err := s.DatabaseUsage(asCaller(callerAPID), &scheddpb.DatabaseUsageRequest{DatabaseId: testDBID}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("usage without a window = %v", err)
 	}
 }

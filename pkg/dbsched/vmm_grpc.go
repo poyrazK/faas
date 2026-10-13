@@ -120,6 +120,19 @@ func (g *GRPCVMM) PruneArchive(ctx context.Context, node Node, id string, window
 	return err
 }
 
+// ArchiveBytes sizes the databases' archives on node.
+func (g *GRPCVMM) ArchiveBytes(ctx context.Context, node Node, ids []string) (map[string]int64, error) {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.DatabaseArchiveBytes(ctx, &vmmdpb.DatabaseArchiveBytesRequest{DatabaseIds: ids})
+	if err != nil {
+		return nil, err
+	}
+	return resp.GetBytes(), nil
+}
+
 // ListVolumes reports node's database volumes.
 func (g *GRPCVMM) ListVolumes(ctx context.Context, node Node) ([]NodeVolume, error) {
 	c, err := g.client(ctx, node)

@@ -441,6 +441,10 @@ func (f *fakeVmmdClient) PruneDatabaseArchive(context.Context, *vmmdpb.PruneData
 	panic("PruneDatabaseArchive: not stubbed")
 }
 
+func (f *fakeVmmdClient) DatabaseArchiveBytes(context.Context, *vmmdpb.DatabaseArchiveBytesRequest, ...grpc.CallOption) (*vmmdpb.DatabaseArchiveBytesResponse, error) {
+	panic("DatabaseArchiveBytes: not stubbed")
+}
+
 func (f *fakeVmmdClient) StartDatabase(context.Context, *vmmdpb.StartDatabaseRequest, ...grpc.CallOption) (*vmmdpb.StartDatabaseResponse, error) {
 	panic("StartDatabase: not stubbed")
 }

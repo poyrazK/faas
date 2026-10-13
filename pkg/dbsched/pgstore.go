@@ -173,6 +173,9 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if _, err := s.q.InsertDatabaseVM(ctx, tx, params); err != nil {
 			return VM{}, fmt.Errorf("dbsched: insert %s: %w", vm.DatabaseID, err)
 		}
+		if err := s.open(ctx, tx, key, MeterStorage, vm.VolumeBytes, time.Now()); err != nil {
+			return VM{}, err
+		}
 		return s.get(ctx, tx, vm.DatabaseID)
 	})
 }
@@ -212,7 +215,10 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
 }
 
 func (s *PgStore) Transition(ctx context.Context, id string, from []State, to State, opts TransitionOptions) error {
-	return s.transition(ctx, s.pool, id, from, to, opts)
+	_, err := inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		return VM{}, s.transition(ctx, tx, id, from, to, opts)
+	})
+	return err
 }
 
 func (s *PgStore) transition(ctx context.Context, db sqlc.DBTX, id string, from []State, to State, opts TransitionOptions) error {
@@ -233,7 +239,16 @@ func (s *PgStore) transition(ctx context.Context, db sqlc.DBTX, id string, from 
 		}
 		return ErrConflict
 	}
-	return nil
+	// Compute is metered while the VM runs: from waking until it leaves
+	// the active states.
+	if !isActive(to) {
+		return s.close(ctx, db, key, MeterCompute, time.Now())
+	}
+	vm, err := s.get(ctx, db, id)
+	if err != nil {
+		return err
+	}
+	return s.open(ctx, db, key, MeterCompute, computeRate(vm), time.Now())
 }
 
 func (s *PgStore) RecordBackup(ctx context.Context, id string, at time.Time) error {
@@ -324,17 +339,106 @@ func (s *PgStore) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	n, err := s.q.DeleteDatabaseVM(ctx, s.pool, key)
-	if err != nil {
-		return fmt.Errorf("dbsched: delete %s: %w", id, err)
-	}
-	if n == 0 {
-		if _, err := s.Get(ctx, id); errors.Is(err, ErrNotFound) {
-			return nil
+	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		n, err := s.q.DeleteDatabaseVM(ctx, tx, key)
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: delete %s: %w", id, err)
 		}
-		return ErrConflict
+		if n == 0 {
+			if _, err := s.get(ctx, tx, id); errors.Is(err, ErrNotFound) {
+				return VM{}, nil
+			}
+			return VM{}, ErrConflict
+		}
+		for _, meter := range []string{MeterCompute, MeterStorage, MeterHistory} {
+			if err := s.close(ctx, tx, key, meter, time.Now()); err != nil {
+				return VM{}, err
+			}
+		}
+		return VM{}, nil
+	})
+	return err
+}
+
+func (s *PgStore) open(ctx context.Context, db sqlc.DBTX, key pgtype.UUID, meter string, rate int64, at time.Time) error {
+	err := s.q.OpenDatabaseUsage(ctx, db, sqlc.OpenDatabaseUsageParams{DatabaseID: key, Meter: meter, At: pgtype.Timestamptz{Time: at, Valid: true}, Rate: rate})
+	if err != nil {
+		return fmt.Errorf("dbsched: open %s usage: %w", meter, err)
 	}
 	return nil
+}
+
+func (s *PgStore) close(ctx context.Context, db sqlc.DBTX, key pgtype.UUID, meter string, at time.Time) error {
+	if _, err := s.q.CloseDatabaseUsage(ctx, db, sqlc.CloseDatabaseUsageParams{At: pgtype.Timestamptz{Time: at, Valid: true}, DatabaseID: key, Meter: meter}); err != nil {
+		return fmt.Errorf("dbsched: close %s usage: %w", meter, err)
+	}
+	return nil
+}
+
+func (s *PgStore) SampleUsage(ctx context.Context, id, meter string, rate int64, at time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		current, err := s.q.OpenDatabaseUsageRate(ctx, tx, sqlc.OpenDatabaseUsageRateParams{DatabaseID: key, Meter: meter})
+		switch {
+		case err == nil && current == rate:
+			return VM{}, nil
+		case err != nil && !errors.Is(err, pgx.ErrNoRows):
+			return VM{}, fmt.Errorf("dbsched: %s usage rate: %w", meter, err)
+		}
+		if err := s.close(ctx, tx, key, meter, at); err != nil {
+			return VM{}, err
+		}
+		return VM{}, s.open(ctx, tx, key, meter, rate, at)
+	})
+	return err
+}
+
+func (s *PgStore) AddEgress(ctx context.Context, id string, bytes int64, at time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	err = s.q.AddDatabaseEgress(ctx, s.pool, sqlc.AddDatabaseEgressParams{DatabaseID: key, Hour: pgtype.Timestamptz{Time: usageHour(at), Valid: true}, Bytes: bytes})
+	if err != nil {
+		return fmt.Errorf("dbsched: add egress %s: %w", id, err)
+	}
+	return nil
+}
+
+func (s *PgStore) Usage(ctx context.Context, id string, from, to time.Time) (Usage, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return Usage{}, err
+	}
+	known, err := s.q.DatabaseHasUsage(ctx, s.pool, key)
+	if err != nil {
+		return Usage{}, fmt.Errorf("dbsched: usage %s: %w", id, err)
+	}
+	if !known {
+		return Usage{}, ErrNotFound
+	}
+	rows, err := s.q.DatabaseUsageRows(ctx, s.pool, sqlc.DatabaseUsageRowsParams{
+		DatabaseID: key, WindowFrom: pgtype.Timestamptz{Time: from, Valid: true}, WindowTo: pgtype.Timestamptz{Time: to, Valid: true},
+	})
+	if err != nil {
+		return Usage{}, fmt.Errorf("dbsched: usage %s: %w", id, err)
+	}
+	ledger := make([]UsageRow, len(rows))
+	for i, r := range rows {
+		ledger[i] = UsageRow{Meter: r.Meter, Start: r.StartedAt.Time, End: r.EndedAt.Time, Rate: r.Rate}
+	}
+	return sumUsage(ledger, from, to, time.Now()), nil
+}
+
+func (s *PgStore) PruneUsage(ctx context.Context, before time.Time) (int64, error) {
+	n, err := s.q.PruneDatabaseUsage(ctx, s.pool, pgtype.Timestamptz{Time: before, Valid: true})
+	if err != nil {
+		return 0, fmt.Errorf("dbsched: prune usage: %w", err)
+	}
+	return n, nil
 }
 
 func inTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) (VM, error)) (VM, error) {

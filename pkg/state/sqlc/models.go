@@ -1901,6 +1901,14 @@ type DatabaseRoleVerifier struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type DatabaseUsage struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+	Rate       int64
+}
+
 type DatabaseVm struct {
 	DatabaseID           pgtype.UUID
 	NodeID               string

@@ -20,6 +20,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,7 +54,10 @@ type Credentials interface {
 type Waker interface {
 	// Wake returns the vmmd target of the node running the database.
 	Wake(ctx context.Context, databaseID string) (string, error)
-	Touch(ctx context.Context, databaseID string) error
+	// Touch records activity and the bytes sent to the database's clients
+	// since the last touch (the egress meter). The bytes are reported at
+	// most once: a failed touch drops them.
+	Touch(ctx context.Context, databaseID string, egressBytes int64) error
 }
 
 // SessionDialer opens a byte stream to a database VM's data port.
@@ -446,29 +450,49 @@ func relayUntilReady(backend *pgproto3.Frontend, client *pgproto3.Backend) error
 }
 
 // splice copies bytes both ways and keeps the database awake while the
-// session lasts.
+// session lasts. Every touch carries the bytes sent to the client since the
+// previous one; the last goes out when the session ends.
 func (p *Proxy) splice(ctx context.Context, client net.Conn, session io.ReadWriteCloser, databaseID string) {
 	done := make(chan struct{})
 	var once sync.Once
 	finish := func() { once.Do(func() { close(done) }) }
+	var egress atomic.Int64
 	go func() { _, _ = io.Copy(session, client); finish() }()
-	go func() { _, _ = io.Copy(client, session); finish() }()
+	go func() { _, _ = io.Copy(&countingWriter{w: client, n: &egress}, session); finish() }()
 	ticker := time.NewTicker(p.cfg.TouchInterval)
 	defer ticker.Stop()
+	touch := func(ctx context.Context) {
+		if err := p.waker.Touch(ctx, databaseID, egress.Swap(0)); err != nil {
+			p.log.Warn("pgproxy: touch failed", "database_id", databaseID, "err", err)
+		}
+	}
 	for {
 		select {
 		case <-done:
-			_ = session.Close()
-			_ = client.Close()
-			return
 		case <-ctx.Done():
-			_ = session.Close()
-			_ = client.Close()
-			return
 		case <-ticker.C:
-			if err := p.waker.Touch(ctx, databaseID); err != nil {
-				p.log.Warn("pgproxy: touch failed", "database_id", databaseID, "err", err)
-			}
+			touch(ctx)
+			continue
 		}
+		_ = session.Close()
+		_ = client.Close()
+		if egress.Load() > 0 {
+			final, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			touch(final)
+			cancel()
+		}
+		return
 	}
+}
+
+// countingWriter counts the bytes written through it.
+type countingWriter struct {
+	w io.Writer
+	n *atomic.Int64
+}
+
+func (c *countingWriter) Write(b []byte) (int, error) {
+	n, err := c.w.Write(b)
+	c.n.Add(int64(n))
+	return n, err
 }

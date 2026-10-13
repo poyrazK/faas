@@ -17621,6 +17621,23 @@ CREATE TABLE public.database_role_verifiers (
 
 
 --
+-- Name: database_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.database_usage (
+    database_id uuid NOT NULL,
+    meter text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
+    rate bigint NOT NULL,
+    CONSTRAINT database_usage_egress_open CHECK (((meter <> 'egress'::text) OR (ended_at IS NULL))),
+    CONSTRAINT database_usage_interval CHECK (((ended_at IS NULL) OR (ended_at >= started_at))),
+    CONSTRAINT database_usage_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'storage'::text, 'history'::text, 'egress'::text]))),
+    CONSTRAINT database_usage_rate_check CHECK ((rate >= 0))
+);
+
+
+--
 -- Name: database_vms; Type: TABLE; Schema: public; Owner: -
 --
 

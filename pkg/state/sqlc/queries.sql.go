@@ -537,6 +537,24 @@ func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, pu
 	return i, err
 }
 
+const addDatabaseEgress = `-- name: AddDatabaseEgress :exec
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES ($1, 'egress', $2, $3)
+ON CONFLICT (database_id, started_at) WHERE meter = 'egress'
+DO UPDATE SET rate = database_usage.rate + EXCLUDED.rate
+`
+
+type AddDatabaseEgressParams struct {
+	DatabaseID pgtype.UUID
+	Hour       pgtype.Timestamptz
+	Bytes      int64
+}
+
+func (q *Queries) AddDatabaseEgress(ctx context.Context, db DBTX, arg AddDatabaseEgressParams) error {
+	_, err := db.Exec(ctx, addDatabaseEgress, arg.DatabaseID, arg.Hour, arg.Bytes)
+	return err
+}
+
 const adoptProjectEnvironmentClonePostgresSnapshotRestore = `-- name: AdoptProjectEnvironmentClonePostgresSnapshotRestore :one
 UPDATE project_environment_clone_postgres_snapshot_restores r SET state='adopted',adopted_database_id=r.target_owner_id,
     adopted_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -5624,6 +5642,25 @@ func (q *Queries) CloseCustomerOperationWorkflowAttempts(ctx context.Context, db
 	return err
 }
 
+const closeDatabaseUsage = `-- name: CloseDatabaseUsage :execrows
+UPDATE database_usage SET ended_at = greatest($1::timestamptz, started_at)
+WHERE database_id = $2 AND meter = $3 AND ended_at IS NULL
+`
+
+type CloseDatabaseUsageParams struct {
+	At         pgtype.Timestamptz
+	DatabaseID pgtype.UUID
+	Meter      string
+}
+
+func (q *Queries) CloseDatabaseUsage(ctx context.Context, db DBTX, arg CloseDatabaseUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, closeDatabaseUsage, arg.At, arg.DatabaseID, arg.Meter)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const closeLegacyWorkflowOutboundUnknownAttempts = `-- name: CloseLegacyWorkflowOutboundUnknownAttempts :exec
 UPDATE workflow_step_attempts t SET status='failed',finished_at=now(),
 error=CASE WHEN s.status='dead' THEN s.error
@@ -9312,6 +9349,17 @@ func (q *Queries) CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, tar
 	return err
 }
 
+const databaseHasUsage = `-- name: DatabaseHasUsage :one
+SELECT EXISTS (SELECT 1 FROM database_usage WHERE database_id = $1)
+`
+
+func (q *Queries) DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, databaseHasUsage, databaseID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
@@ -9342,6 +9390,52 @@ func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNod
 			&i.VolumeBytes,
 			&i.ActiveMemMib,
 			&i.ActiveVms,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const databaseUsageRows = `-- name: DatabaseUsageRows :many
+SELECT meter, started_at, ended_at, rate FROM database_usage
+WHERE database_id = $1 AND started_at < $2
+  AND (ended_at IS NULL OR ended_at > $3)
+`
+
+type DatabaseUsageRowsParams struct {
+	DatabaseID pgtype.UUID
+	WindowTo   pgtype.Timestamptz
+	WindowFrom pgtype.Timestamptz
+}
+
+type DatabaseUsageRowsRow struct {
+	Meter     string
+	StartedAt pgtype.Timestamptz
+	EndedAt   pgtype.Timestamptz
+	Rate      int64
+}
+
+// Rows that can overlap [from, to): intervals crossing it and egress hours
+// starting before its end (the caller drops earlier hours).
+func (q *Queries) DatabaseUsageRows(ctx context.Context, db DBTX, arg DatabaseUsageRowsParams) ([]DatabaseUsageRowsRow, error) {
+	rows, err := db.Query(ctx, databaseUsageRows, arg.DatabaseID, arg.WindowTo, arg.WindowFrom)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DatabaseUsageRowsRow{}
+	for rows.Next() {
+		var i DatabaseUsageRowsRow
+		if err := rows.Scan(
+			&i.Meter,
+			&i.StartedAt,
+			&i.EndedAt,
+			&i.Rate,
 		); err != nil {
 			return nil, err
 		}
@@ -50905,6 +50999,47 @@ func (q *Queries) ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const openDatabaseUsage = `-- name: OpenDatabaseUsage :exec
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (database_id, meter) WHERE ended_at IS NULL AND meter <> 'egress' DO NOTHING
+`
+
+type OpenDatabaseUsageParams struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+	At         pgtype.Timestamptz
+	Rate       int64
+}
+
+// Starts a rate interval unless one is open for the meter.
+func (q *Queries) OpenDatabaseUsage(ctx context.Context, db DBTX, arg OpenDatabaseUsageParams) error {
+	_, err := db.Exec(ctx, openDatabaseUsage,
+		arg.DatabaseID,
+		arg.Meter,
+		arg.At,
+		arg.Rate,
+	)
+	return err
+}
+
+const openDatabaseUsageRate = `-- name: OpenDatabaseUsageRate :one
+SELECT rate FROM database_usage
+WHERE database_id = $1 AND meter = $2 AND ended_at IS NULL
+`
+
+type OpenDatabaseUsageRateParams struct {
+	DatabaseID pgtype.UUID
+	Meter      string
+}
+
+func (q *Queries) OpenDatabaseUsageRate(ctx context.Context, db DBTX, arg OpenDatabaseUsageRateParams) (int64, error) {
+	row := db.QueryRow(ctx, openDatabaseUsageRate, arg.DatabaseID, arg.Meter)
+	var rate int64
+	err := row.Scan(&rate)
+	return rate, err
+}
+
 const operationEffectDeliveryAllowed = `-- name: OperationEffectDeliveryAllowed :one
 WITH exclusive_effect AS (
  SELECT EXISTS(SELECT 1 FROM exclusive_work_effects e
@@ -52164,6 +52299,19 @@ DELETE FROM data_upstream_probes WHERE sampled_at < $1
 func (q *Queries) PruneDataUpstreamProbesOlderThan(ctx context.Context, db DBTX, sampledAt pgtype.Timestamptz) error {
 	_, err := db.Exec(ctx, pruneDataUpstreamProbesOlderThan, sampledAt)
 	return err
+}
+
+const pruneDatabaseUsage = `-- name: PruneDatabaseUsage :execrows
+DELETE FROM database_usage
+WHERE ended_at < $1 OR (meter = 'egress' AND started_at < $1)
+`
+
+func (q *Queries) PruneDatabaseUsage(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, pruneDatabaseUsage, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const pruneDevBridgeSessions = `-- name: PruneDevBridgeSessions :exec

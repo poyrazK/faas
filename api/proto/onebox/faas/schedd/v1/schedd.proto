@@ -319,7 +319,7 @@ service Schedd {
   rpc ProvisionDatabase(ProvisionDatabaseRequest) returns (DatabaseRuntime);
   rpc WakeDatabase(DatabaseRef) returns (DatabaseRuntime);
   rpc ParkDatabase(DatabaseRef) returns (DatabaseRuntime);
-  rpc TouchDatabase(DatabaseRef) returns (TouchDatabaseResponse);
+  rpc TouchDatabase(TouchDatabaseRequest) returns (TouchDatabaseResponse);
   // DatabaseAdmin runs SQL as the superuser, waking the database first.
   // The SQL can carry role passwords and is never logged.
   rpc DatabaseAdmin(DatabaseAdminRequest) returns (DatabaseAdminResponse);
@@ -332,6 +332,9 @@ service Schedd {
   // another (ADR-1027). It returns at once with the database provisioning;
   // schedd restores it in the background. apid only.
   rpc RestoreDatabase(RestoreDatabaseRequest) returns (DatabaseRuntime);
+  // DatabaseUsage reports a database's metered consumption over a window,
+  // also after it was deleted (ADR-1027). apid only.
+  rpc DatabaseUsage(DatabaseUsageRequest) returns (DatabaseUsageResponse);
 }
 
 message LivenessFailedReport {
@@ -1206,7 +1209,30 @@ message DatabaseRuntime {
   google.protobuf.Timestamp restore_recovered_to = 15;
 }
 
+// TouchDatabaseRequest keeps field 1 of DatabaseRef, so a DatabaseRef is
+// a valid touch without egress.
+message TouchDatabaseRequest {
+  string database_id = 1;
+  // Bytes pgproxyd sent the database's clients since its last touch.
+  // Reported at most once: pgproxyd does not resend them on an error.
+  int64 egress_bytes = 2;
+}
+
 message TouchDatabaseResponse {}
+
+message DatabaseUsageRequest {
+  string database_id = 1;
+  google.protobuf.Timestamp from = 2;
+  google.protobuf.Timestamp to = 3;
+}
+
+message DatabaseUsageResponse {
+  int64 active_seconds = 1;
+  int64 compute_unit_seconds = 2;
+  int64 storage_byte_seconds = 3;
+  int64 history_byte_seconds = 4;
+  int64 egress_bytes = 5;
+}
 
 message DatabaseAdminRequest {
   string database_id = 1;

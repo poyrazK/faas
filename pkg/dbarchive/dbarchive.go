@@ -34,6 +34,9 @@ const (
 	// OpPrune prunes the database's archive in the bucket to
 	// Request.WindowSeconds (see TieredStore.PruneBucket). Admin only.
 	OpPrune = "prune"
+	// OpSize reports the bytes of the database's archive on this node
+	// (Response.Size), for the restore-history meter. Admin only.
+	OpSize = "size"
 )
 
 // Stable error codes in Response.Error.

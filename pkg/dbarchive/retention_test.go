@@ -307,3 +307,25 @@ func TestPruneBucketForALostNode(t *testing.T) {
 		t.Fatal("a bucket prune without a bucket succeeded")
 	}
 }
+
+func TestArchiveBytesThroughTheAdminHeader(t *testing.T) {
+	local := newStore(t)
+	store := &TieredStore{LocalStore: local}
+	putFile(t, local, dbA, segName(1), "12345")
+	putBackup(t, local, dbA, 2, t0, true)
+	var want int64
+	for _, sub := range []string{"wal", "base"} {
+		entries, _ := os.ReadDir(filepath.Join(local.dir, dbA, sub))
+		for _, e := range entries {
+			info, _ := e.Info()
+			want += info.Size()
+		}
+	}
+	sock := serveSocket(t, &Server{Store: store, Backups: store, Retention: store})
+	if got, err := ArchiveBytes(context.Background(), sock, dbA); err != nil || got != want || got == 0 {
+		t.Fatalf("archive bytes = %d, %v; want %d", got, err, want)
+	}
+	if got, err := ArchiveBytes(context.Background(), sock, dbB); err != nil || got != 0 {
+		t.Fatalf("a database without an archive = %d, %v", got, err)
+	}
+}

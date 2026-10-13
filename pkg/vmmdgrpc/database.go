@@ -36,6 +36,7 @@ type DatabaseRuntime interface {
 	DropArchive(ctx context.Context, id string) error
 	ListVolumes() ([]dbvm.Volume, error)
 	PruneArchive(ctx context.Context, id string, windowSeconds int64) (dbarchive.PruneResult, error)
+	ArchiveBytes(ctx context.Context, ids []string) (map[string]int64, error)
 	Start(ctx context.Context, req dbvm.BootRequest) error
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
@@ -152,6 +153,25 @@ func (s *Server) PruneDatabaseArchive(ctx context.Context, req *vmmdpb.PruneData
 	}
 	return &vmmdpb.PruneDatabaseArchiveResponse{Backups: int32(res.Backups), Wal: int32(res.WAL)}, nil
 }
+
+// DatabaseArchiveBytes sizes the node's database archives for schedd.
+func (s *Server) DatabaseArchiveBytes(ctx context.Context, req *vmmdpb.DatabaseArchiveBytesRequest) (*vmmdpb.DatabaseArchiveBytesResponse, error) {
+	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)
+	if err != nil {
+		return nil, err
+	}
+	if len(req.GetDatabaseIds()) > maxArchiveSizeBatch {
+		return nil, status.Error(codes.InvalidArgument, "too many databases")
+	}
+	sizes, err := rt.ArchiveBytes(ctx, req.GetDatabaseIds())
+	if err != nil {
+		return nil, s.databaseStatus("archive bytes", err)
+	}
+	return &vmmdpb.DatabaseArchiveBytesResponse{Bytes: sizes}, nil
+}
+
+// maxArchiveSizeBatch bounds one DatabaseArchiveBytes request.
+const maxArchiveSizeBatch = 1000
 
 func (s *Server) StartDatabase(ctx context.Context, req *vmmdpb.StartDatabaseRequest) (*vmmdpb.StartDatabaseResponse, error) {
 	rt, err := s.databaseRuntime(ctx, databaseCallerSchedd)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -34,6 +35,8 @@ type DatabaseScheduler interface {
 	Get(ctx context.Context, id string) (dbsched.VM, error)
 	SetAlwaysOn(ctx context.Context, id string, alwaysOn bool) (dbsched.VM, error)
 	Restore(ctx context.Context, req dbsched.RestoreRequest) (dbsched.VM, error)
+	Usage(ctx context.Context, id string, from, to time.Time) (dbsched.Usage, error)
+	RecordEgress(ctx context.Context, id string, bytes int64) error
 }
 
 // WithDatabases enables the database RPCs.
@@ -159,15 +162,41 @@ func (s *Server) ParkDatabase(ctx context.Context, req *scheddpb.DatabaseRef) (*
 	return databaseRuntime(vm), nil
 }
 
-func (s *Server) TouchDatabase(ctx context.Context, req *scheddpb.DatabaseRef) (*scheddpb.TouchDatabaseResponse, error) {
+// TouchDatabase records activity and the egress pgproxyd counted since its
+// last touch. The egress lands first: pgproxyd never resends it, and a
+// database that stopped running still sent those bytes.
+func (s *Server) TouchDatabase(ctx context.Context, req *scheddpb.TouchDatabaseRequest) (*scheddpb.TouchDatabaseResponse, error) {
 	d, err := s.databaseScheduler(ctx, callerAPID, callerPgproxy)
 	if err != nil {
 		return nil, err
+	}
+	if err := d.RecordEgress(ctx, req.GetDatabaseId(), req.GetEgressBytes()); err != nil {
+		return nil, s.databaseStatus("record egress", err)
 	}
 	if err := d.Touch(ctx, req.GetDatabaseId()); err != nil {
 		return nil, s.databaseStatus("touch", err)
 	}
 	return &scheddpb.TouchDatabaseResponse{}, nil
+}
+
+// DatabaseUsage reports metered consumption for the managed-Postgres
+// driver.
+func (s *Server) DatabaseUsage(ctx context.Context, req *scheddpb.DatabaseUsageRequest) (*scheddpb.DatabaseUsageResponse, error) {
+	d, err := s.databaseScheduler(ctx, callerAPID)
+	if err != nil {
+		return nil, err
+	}
+	if req.GetFrom().CheckValid() != nil || req.GetTo().CheckValid() != nil {
+		return nil, status.Error(codes.InvalidArgument, "usage needs a window")
+	}
+	u, err := d.Usage(ctx, req.GetDatabaseId(), req.GetFrom().AsTime(), req.GetTo().AsTime())
+	if err != nil {
+		return nil, s.databaseStatus("usage", err)
+	}
+	return &scheddpb.DatabaseUsageResponse{
+		ActiveSeconds: u.ActiveSeconds, ComputeUnitSeconds: u.ComputeUnitSeconds, StorageByteSeconds: u.StorageByteSeconds,
+		HistoryByteSeconds: u.HistoryByteSeconds, EgressBytes: u.EgressBytes,
+	}, nil
 }
 
 // DatabaseAdmin relays a superuser SQL batch. The SQL can carry role

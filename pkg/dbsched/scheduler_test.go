@@ -40,9 +40,10 @@ type fakeVMM struct {
 	flushes      map[string]time.Time
 	// onNode records node-scoped calls as "op@node"; volNode is where each
 	// volume was created.
-	onNode   []string
-	volNode  map[string]string
-	pruneErr map[string]error
+	onNode       []string
+	volNode      map[string]string
+	pruneErr     map[string]error
+	archiveBytes map[string]int64
 }
 
 func newFakeVMM() *fakeVMM {
@@ -105,6 +106,19 @@ func (f *fakeVMM) PruneArchive(_ context.Context, node Node, id string, windowSe
 	defer f.mu.Unlock()
 	f.onNode = append(f.onNode, fmt.Sprintf("prune:%s:%d@%s", id, windowSeconds, node.ID))
 	return f.pruneErr[node.ID]
+}
+
+func (f *fakeVMM) ArchiveBytes(_ context.Context, node Node, ids []string) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, "size@"+node.ID)
+	out := map[string]int64{}
+	for _, id := range ids {
+		if n, ok := f.archiveBytes[id]; ok {
+			out[id] = n
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeVMM) ListVolumes(_ context.Context, node Node) ([]NodeVolume, error) {

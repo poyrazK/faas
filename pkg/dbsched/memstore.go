@@ -15,12 +15,14 @@ type MemStore struct {
 	vms   map[string]VM
 	// leases are restore leases by database id.
 	leases map[string]time.Time
+	// ledger is the usage ledger by database id.
+	ledger map[string][]UsageRow
 	now    func() time.Time
 }
 
 // NewMemStore returns an empty MemStore.
 func NewMemStore() *MemStore {
-	return &MemStore{nodes: map[string]Node{}, vms: map[string]VM{}, leases: map[string]time.Time{}, now: time.Now}
+	return &MemStore{nodes: map[string]Node{}, vms: map[string]VM{}, leases: map[string]time.Time{}, ledger: map[string][]UsageRow{}, now: time.Now}
 }
 
 var _ Store = (*MemStore)(nil)
@@ -97,6 +99,7 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 	vm.NodeID, vm.State, vm.Bootstrapped, vm.LastError = node.ID, StateProvisioning, false, ""
 	vm.CreatedAt, vm.StateChangedAt, vm.LastActiveAt = now, now, time.Time{}
 	m.vms[vm.DatabaseID] = vm
+	m.openLocked(vm.DatabaseID, MeterStorage, vm.VolumeBytes, now)
 	return vm, nil
 }
 
@@ -122,6 +125,7 @@ func (m *MemStore) AdmitWake(_ context.Context, id string) (VM, error) {
 	}
 	vm.State, vm.StateChangedAt = StateWaking, m.now()
 	m.vms[id] = vm
+	m.openLocked(id, MeterCompute, computeRate(vm), vm.StateChangedAt)
 	return vm, nil
 }
 
@@ -142,6 +146,11 @@ func (m *MemStore) Transition(_ context.Context, id string, from []State, to Sta
 		vm.LastActiveAt = now
 	}
 	m.vms[id] = vm
+	if isActive(to) {
+		m.openLocked(id, MeterCompute, computeRate(vm), now)
+	} else {
+		m.closeLocked(id, MeterCompute, now)
+	}
 	return nil
 }
 
@@ -195,6 +204,9 @@ func (m *MemStore) Delete(_ context.Context, id string) error {
 		return ErrConflict
 	}
 	delete(m.vms, id)
+	for _, meter := range []string{MeterCompute, MeterStorage, MeterHistory} {
+		m.closeLocked(id, meter, m.now())
+	}
 	return nil
 }
 
@@ -225,4 +237,84 @@ func (m *MemStore) RecordRestore(_ context.Context, id string, recoveredTo time.
 	vm.RestoreRecoveredTo = recoveredTo
 	m.vms[id] = vm
 	return nil
+}
+
+func (m *MemStore) openLocked(id, meter string, rate int64, at time.Time) {
+	for _, r := range m.ledger[id] {
+		if r.Meter == meter && r.End.IsZero() {
+			return
+		}
+	}
+	m.ledger[id] = append(m.ledger[id], UsageRow{Meter: meter, Start: at, Rate: rate})
+}
+
+func (m *MemStore) closeLocked(id, meter string, at time.Time) {
+	for i, r := range m.ledger[id] {
+		if r.Meter == meter && r.End.IsZero() {
+			if at.Before(r.Start) {
+				at = r.Start
+			}
+			m.ledger[id][i].End = at
+		}
+	}
+}
+
+func (m *MemStore) SampleUsage(_ context.Context, id, meter string, rate int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.ledger[id] {
+		if r.Meter == meter && r.End.IsZero() && r.Rate == rate {
+			return nil
+		}
+	}
+	m.closeLocked(id, meter, at)
+	m.openLocked(id, meter, rate, at)
+	return nil
+}
+
+func (m *MemStore) AddEgress(_ context.Context, id string, bytes int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	hour := usageHour(at)
+	for i, r := range m.ledger[id] {
+		if r.Meter == MeterEgress && r.Start.Equal(hour) {
+			m.ledger[id][i].Rate += bytes
+			return nil
+		}
+	}
+	m.ledger[id] = append(m.ledger[id], UsageRow{Meter: MeterEgress, Start: hour, Rate: bytes})
+	return nil
+}
+
+func (m *MemStore) Usage(_ context.Context, id string, from, to time.Time) (Usage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rows, ok := m.ledger[id]
+	if !ok {
+		return Usage{}, ErrNotFound
+	}
+	return sumUsage(rows, from, to, m.now()), nil
+}
+
+func (m *MemStore) PruneUsage(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for id, rows := range m.ledger {
+		kept := rows[:0]
+		for _, r := range rows {
+			old := (r.Meter == MeterEgress && r.Start.Before(before)) || (!r.End.IsZero() && r.End.Before(before))
+			if old {
+				n++
+				continue
+			}
+			kept = append(kept, r)
+		}
+		if len(kept) == 0 {
+			delete(m.ledger, id)
+		} else {
+			m.ledger[id] = kept
+		}
+	}
+	return n, nil
 }

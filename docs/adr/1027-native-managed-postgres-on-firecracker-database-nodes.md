@@ -100,9 +100,12 @@ Transaction pooling follows later.
   ADR-677 restore proofs). Standard databases accept up to the archive
   interval (60 s) of loss on node failure; a production class adds a standby
   VM on a second node.
-- Metering maps cgroup CPU time to `compute_unit_seconds`, volume bytes to
-  `storage_byte_seconds` and proxy bytes to `egress_bytes`, so the existing
-  usage ledger and guardrails apply unchanged.
+- Metering bills allocation, not sampled consumption, like app billing
+  (plan RAM per running second): a running VM's vCPUs to
+  `compute_unit_seconds`, the provisioned volume to `storage_byte_seconds`,
+  archive bytes to `history_byte_seconds` and proxy bytes to
+  `egress_bytes`, so the existing usage ledger and guardrails apply
+  unchanged. See "Usage metering" below.
 - Customers get no superuser. The existing role model (ADR-461) applies, with
   an extension allowlist. Free and unverified accounts are placed on separate
   database nodes from paying accounts.
@@ -494,7 +497,7 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   unbounded volume and other regions with `ErrUnsupported`, and a restore
   window unless the backend's settings carry `max_restore_window_seconds`
   (set only where dbbackupd archives). The window round-trips through
-  `database_vms.restore_window_seconds`. No usage meters yet.
+  `database_vms.restore_window_seconds`.
 - **Restore** calls `RestoreDatabase` and reports the database pending
   until schedd parks it. A resource id that is not a UUID (qualification
   names restores `qualification-restore-<hash>`) maps to a name-based UUID,
@@ -548,7 +551,35 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
     `TestMetalQualifyProvider` runs them against real database VMs, and
     `TestMetalQualifyProviderWithRestore` adds the restore checks.
 
-Not yet: class/storage resize and usage.
+Not yet: class/storage resize.
+
+### Usage metering
+
+schedd keeps a usage ledger per database (`database_usage`) that outlives
+the database, so the collector can read its last windows after deletion and
+re-read recent ones for corrections with the same answer. Rows are
+intervals at a constant per-second rate, or hourly counts:
+
+| Meter | Ledger | Written when |
+| --- | --- | --- |
+| `active_seconds`, `compute_unit_seconds` | `compute`: vCPUs | opened on entering waking, closed on leaving waking/running/parking, in the same transaction as the state change |
+| `storage_byte_seconds` | `storage`: provisioned volume bytes | opened at placement, closed at deletion |
+| `history_byte_seconds` | `history`: archive bytes | sampled from each node's dbbackupd (`DatabaseArchiveBytes`, admin `size`) by the 10-minute maintenance sweep; a new size closes the interval and opens another |
+| `egress_bytes` | `egress`: bytes per hour | pgproxyd counts bytes sent to clients and reports them on its 30 s touches and at session end (`TouchDatabase.egress_bytes`), at most once |
+
+- A window's usage is the overlap of the rows with it (`DatabaseUsage`, apid
+  only); a database with no ledger is `NotFound`. Provisioning and restore
+  VM time is not billed, since it is not the customer's compute.
+- A restore is its own database with its own ledger
+  (`RestoreUsageIsolated`, only where point-in-time restore is on).
+- When the operator marks a node unavailable, schedd's 30-second sweep
+  parks the records of its active databases (`node_lost`), which closes
+  their compute intervals; otherwise an always-on database would bill
+  compute forever. Their wakes fail until the node returns. They keep
+  their last history sample until deleted.
+- The ledger keeps closed rows 90 days.
+- Metal: `TestMetalDriverEndToEnd` reads all five meters after a
+  provisioned, queried database, and again after its deletion.
 
 Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
 

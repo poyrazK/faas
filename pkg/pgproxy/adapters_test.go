@@ -90,14 +90,16 @@ type fakeSchedd struct {
 	scheddpb.UnimplementedScheddServer
 	target  string
 	touched string
+	egress  int64
 }
 
 func (f *fakeSchedd) WakeDatabase(_ context.Context, req *scheddpb.DatabaseRef) (*scheddpb.DatabaseRuntime, error) {
 	return &scheddpb.DatabaseRuntime{DatabaseId: req.GetDatabaseId(), State: "running", VmmdTarget: f.target}, nil
 }
 
-func (f *fakeSchedd) TouchDatabase(_ context.Context, req *scheddpb.DatabaseRef) (*scheddpb.TouchDatabaseResponse, error) {
+func (f *fakeSchedd) TouchDatabase(_ context.Context, req *scheddpb.TouchDatabaseRequest) (*scheddpb.TouchDatabaseResponse, error) {
 	f.touched = req.GetDatabaseId()
+	f.egress += req.GetEgressBytes()
 	return &scheddpb.TouchDatabaseResponse{}, nil
 }
 
@@ -112,8 +114,8 @@ func TestScheddWaker(t *testing.T) {
 	if target, err := w.Wake(context.Background(), "db"); err != nil || target != "tcp://10.0.2.10:7443" {
 		t.Fatalf("Wake = %q, %v", target, err)
 	}
-	if err := w.Touch(context.Background(), "db"); err != nil || srv.touched != "db" {
-		t.Fatalf("Touch = %v (touched %q)", err, srv.touched)
+	if err := w.Touch(context.Background(), "db", 512); err != nil || srv.touched != "db" || srv.egress != 512 {
+		t.Fatalf("Touch = %v (touched %q, egress %d)", err, srv.touched, srv.egress)
 	}
 	srv.target = ""
 	if _, err := w.Wake(context.Background(), "db"); err == nil {

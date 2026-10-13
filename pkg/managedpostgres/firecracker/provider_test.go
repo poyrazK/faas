@@ -31,7 +31,10 @@ type fakeScheduler struct {
 	vms       map[string]*scheddpb.DatabaseRuntime
 	provision []*scheddpb.ProvisionDatabaseRequest
 	restores  []*scheddpb.RestoreDatabaseRequest
-	admin     []string
+	// usage answers DatabaseUsage (nil: NotFound); usageReq is the last ask.
+	usage    *scheddpb.DatabaseUsageResponse
+	usageReq *scheddpb.DatabaseUsageRequest
+	admin    []string
 	// adminRun, when set, executes admin batches (the pg test runs them
 	// through psql); otherwise they succeed.
 	adminRun     func(sql string) (*scheddpb.DatabaseAdminResponse, error)
@@ -59,7 +62,20 @@ func (f *fakeScheduler) ProvisionDatabase(_ context.Context, in *scheddpb.Provis
 		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes(), AlwaysOn: in.GetAlwaysOn(),
 		RestoreWindowSeconds: in.GetRestoreWindowSeconds()}
 	f.vms[in.GetDatabaseId()] = rt
+	if f.usage == nil {
+		f.usage = &scheddpb.DatabaseUsageResponse{} // the ledger opens at placement
+	}
 	return rt, nil
+}
+
+func (f *fakeScheduler) DatabaseUsage(_ context.Context, in *scheddpb.DatabaseUsageRequest, _ ...grpc.CallOption) (*scheddpb.DatabaseUsageResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.usageReq = in
+	if f.usage == nil {
+		return nil, status.Error(codes.NotFound, "dbsched: database not found")
+	}
+	return f.usage, nil
 }
 
 // RestoreDatabase places the restore provisioning, as schedd does before
@@ -314,7 +330,7 @@ func TestCapabilitiesAreValidAndHonest(t *testing.T) {
 	if err := caps.Validate(); err != nil {
 		t.Fatalf("capabilities invalid: %v", err)
 	}
-	if caps.PointInTimeRestore || len(caps.UsageMeters) != 0 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || caps.ClassResize {
+	if caps.PointInTimeRestore || caps.RestoreUsageIsolated || len(caps.UsageMeters) != 5 || !caps.ScaleToZero || !caps.ScaleToZeroUpdate || caps.ClassResize {
 		t.Fatalf("capabilities claim more than the backend does: %+v", caps)
 	}
 	if err := caps.Supports(devSpec()); err != nil {
@@ -625,9 +641,41 @@ func TestUnsupportedOperations(t *testing.T) {
 	if _, err := p.Restore(ctx, restore); !errors.Is(err, managedpostgres.ErrUnsupported) {
 		t.Errorf("restore without point-in-time restore configured = %v", err)
 	}
-	usage, err := p.Usage(ctx, testDatabaseID, managedpostgres.UsageWindow{})
-	if err != nil || len(usage.Readings) != 0 {
-		t.Errorf("usage = %+v, %v", usage, err)
+	if _, err := p.Usage(ctx, testDatabaseID, managedpostgres.UsageWindow{}); !errors.Is(err, managedpostgres.ErrInvalid) {
+		t.Errorf("usage without a window = %v", err)
+	}
+}
+
+// TestUsageReadsTheLedger: every advertised meter comes back for the exact
+// window asked, and an unknown database is ErrNotFound.
+func TestUsageReadsTheLedger(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	from := time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC)
+	window := managedpostgres.UsageWindow{From: from, To: from.Add(time.Hour)}
+	sched.usage = &scheddpb.DatabaseUsageResponse{ActiveSeconds: 600, ComputeUnitSeconds: 1200, StorageByteSeconds: 7, HistoryByteSeconds: 8, EgressBytes: 9}
+	usage, err := p.Usage(ctx, testDatabaseID, window)
+	if err != nil || usage.Window != window {
+		t.Fatalf("usage = %+v, %v", usage, err)
+	}
+	got := map[managedpostgres.Meter]int64{}
+	for _, r := range usage.Readings {
+		got[r.Meter] = r.Quantity
+	}
+	for _, meter := range p.Capabilities().UsageMeters {
+		if _, ok := got[meter]; !ok {
+			t.Errorf("advertised meter %s missing", meter)
+		}
+	}
+	if got[managedpostgres.MeterComputeUnitSeconds] != 1200 || got[managedpostgres.MeterEgressBytes] != 9 {
+		t.Fatalf("readings = %v", got)
+	}
+	if !sched.usageReq.GetFrom().AsTime().Equal(from) || sched.usageReq.GetDatabaseId() != testDatabaseID {
+		t.Fatalf("request = %v", sched.usageReq)
+	}
+	sched.usage = nil
+	if _, err := p.Usage(ctx, testDatabaseID, window); !errors.Is(err, managedpostgres.ErrNotFound) {
+		t.Fatalf("unknown database = %v", err)
 	}
 }
 

@@ -62,6 +62,7 @@ func (m *mapCredentials) Verifier(_ context.Context, databaseID, role string) (p
 
 type countingWaker struct {
 	wakes, touches atomic.Int32
+	egress         atomic.Int64
 	fail           atomic.Bool
 }
 
@@ -73,8 +74,9 @@ func (w *countingWaker) Wake(context.Context, string) (string, error) {
 	return "backend", nil
 }
 
-func (w *countingWaker) Touch(context.Context, string) error {
+func (w *countingWaker) Touch(_ context.Context, _ string, egress int64) error {
 	w.touches.Add(1)
+	w.egress.Add(egress)
 	return nil
 }
 
@@ -207,6 +209,14 @@ func TestProxyAuthenticatesBeforeWaking(t *testing.T) {
 	_ = conn.Close(ctx)
 	if h.waker.wakes.Load() != 1 || h.waker.touches.Load() == 0 {
 		t.Fatalf("wakes=%d touches=%d after one session", h.waker.wakes.Load(), h.waker.touches.Load())
+	}
+	// The bytes sent to the client reach schedd as egress, the last of
+	// them when the session ends.
+	for deadline := time.Now().Add(5 * time.Second); h.waker.egress.Load() == 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("no egress reported for a session that returned rows")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	refused := []struct {

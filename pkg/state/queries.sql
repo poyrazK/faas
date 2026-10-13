@@ -18485,6 +18485,40 @@ VALUES (sqlc.arg(database_id), sqlc.arg(node_id), sqlc.arg(postgres_major), sqlc
     sqlc.narg(restore_source), sqlc.narg(restore_target), 'provisioning')
 ON CONFLICT (database_id) DO NOTHING;
 
+-- name: OpenDatabaseUsage :exec
+-- Starts a rate interval unless one is open for the meter.
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES (sqlc.arg(database_id), sqlc.arg(meter), sqlc.arg(at), sqlc.arg(rate))
+ON CONFLICT (database_id, meter) WHERE ended_at IS NULL AND meter <> 'egress' DO NOTHING;
+
+-- name: CloseDatabaseUsage :execrows
+UPDATE database_usage SET ended_at = greatest(sqlc.arg(at)::timestamptz, started_at)
+WHERE database_id = sqlc.arg(database_id) AND meter = sqlc.arg(meter) AND ended_at IS NULL;
+
+-- name: OpenDatabaseUsageRate :one
+SELECT rate FROM database_usage
+WHERE database_id = sqlc.arg(database_id) AND meter = sqlc.arg(meter) AND ended_at IS NULL;
+
+-- name: AddDatabaseEgress :exec
+INSERT INTO database_usage (database_id, meter, started_at, rate)
+VALUES (sqlc.arg(database_id), 'egress', sqlc.arg(hour), sqlc.arg(bytes))
+ON CONFLICT (database_id, started_at) WHERE meter = 'egress'
+DO UPDATE SET rate = database_usage.rate + EXCLUDED.rate;
+
+-- name: DatabaseUsageRows :many
+-- Rows that can overlap [from, to): intervals crossing it and egress hours
+-- starting before its end (the caller drops earlier hours).
+SELECT meter, started_at, ended_at, rate FROM database_usage
+WHERE database_id = sqlc.arg(database_id) AND started_at < sqlc.arg(window_to)
+  AND (ended_at IS NULL OR ended_at > sqlc.arg(window_from));
+
+-- name: DatabaseHasUsage :one
+SELECT EXISTS (SELECT 1 FROM database_usage WHERE database_id = sqlc.arg(database_id));
+
+-- name: PruneDatabaseUsage :execrows
+DELETE FROM database_usage
+WHERE ended_at < sqlc.arg(before) OR (meter = 'egress' AND started_at < sqlc.arg(before));
+
 -- name: RecordDatabaseVMRestore :execrows
 UPDATE database_vms SET restore_recovered_to = sqlc.arg(recovered_to)
 WHERE database_id = sqlc.arg(database_id) AND state = 'provisioning' AND restore_source IS NOT NULL;
