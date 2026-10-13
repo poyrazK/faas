@@ -5,7 +5,7 @@ caller, meters their requests, prices them with versioned rate cards, and
 produces auditable usage statements that you invoice through your own billing
 system. Gregale does not collect payment from your customers.
 
-API monetization is a preview. It is available on Hobby, Pro, and Scale; see
+API monetization is in beta. It is available on Hobby, Pro, and Scale; see
 [Plans and pricing](plans.md) for consumer key limits.
 
 ## 1. Identify your consumers

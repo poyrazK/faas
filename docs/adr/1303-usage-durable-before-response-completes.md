@@ -12,7 +12,13 @@
   - **Zero loss for served responses.** A client can only see a complete response after its usage record is fsynced, and the outbox replays it until apid commits it. A crash before that point leaves the response incomplete; the request is then treated like any other platform failure and is not billed.
   - **Fail closed.** If the outbox cannot take the event (full, broken or I/O error), the gateway refuses the completing write or aborts the handler with `http.ErrAbortHandler`, so the client sees a truncated response or a closed connection rather than an unrecorded success. Such a request is not billed. `gateway_usage_commit_aborts_total` counts these. Readiness already turns false when the outbox is unhealthy or 90% full (ADR-234), so the node drains rather than failing requests for long.
   - **Small overbilling window.** A gateway crash after the commit but before the final bytes reach the client bills a request the client did not fully receive. The window is the time to write one buffer after an fsync.
-  - **Latency.** The group-committed fsync (one millisecond window plus the disk flush) now precedes the last byte of a monetized response instead of following it. Anonymous traffic, and traffic carrying only audit or discovery evidence, keeps the observe-time append and pays nothing extra.
+  - **Latency.** The group-committed fsync now precedes the last byte of a monetized response instead of following it. Anonymous traffic, and traffic carrying only audit or discovery evidence, keeps the observe-time append and pays nothing extra.
+    - **Measured.** `TestEnqueueLatencyProfile` ran three times on `gregale-internal-test-1`'s pd-ssd root disk (ext4, where the spool lives), with the shared node at load 4–8 on 2 vCPUs (2026-10-14). A durable append took:
+      - p50 3–4 ms, p95 4–6 ms and p99 6–7 ms for one request at a time;
+      - p50 2.5–4.7 ms, p95 4–10 ms and p99 5–17 ms at 8–32 concurrent requests;
+      - p50 4–5 ms and p99 10–16 ms at 128 concurrent requests.
+    - **Throughput.** Group commit keeps it at 21–29k events/s at 128 concurrent requests.
+    - **Where the time goes.** At low concurrency, the 1 ms group-commit window is about a third of the wait. The rest is the disk flush.
   - **One event per request.** The commit and the request-telemetry row share one event ID, so apid's idempotent usage write and the debugger row still deduplicate. `observe` does not append the event again once the commit has run.
   - **Unchanged.** Billing rules (ADR-949 platform failures, tenant budget rejections), attribution, and the outbox's delivery guarantees are unchanged. The completeness check (ADR-954) remains useful for detecting ledger gaps from other causes, such as a spool deleted against ADR-234's guidance.
 - **Rejected alternatives:**
