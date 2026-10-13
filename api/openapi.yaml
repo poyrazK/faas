@@ -11416,17 +11416,45 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/release-review:
+    get:
+      operationId: getAppReleaseReview
+      summary: Read an atomic app configuration and release review
+      tags: [apps]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: false
+          description: Registered named environment in the app's project; omit for default.
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,32}$' }
+      responses:
+        '200':
+          description: Configuration and selected-scope release identities for reviewed staging
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppReleaseReview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/health:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Registered named environment in the app's project; omit for default.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,32}$' }
     get:
       tags: [apps]
       operationId: getAppHealth
       summary: Explain observed app serving health.
       description: |
-        Read-only assessment of default-scope HTTP serving deployments,
+        Read-only assessment of selected-scope HTTP serving deployments,
         replica readiness, node evidence and the last 5 minutes of request
-        telemetry scoped to current traffic-bearing default releases. It never wakes
+        telemetry scoped to current traffic-bearing releases in the selected scope. It never wakes
         or probes a workload. Structural evidence is available on every plan;
         request telemetry follows the existing Hobby+ metrics entitlement.
         Missing, failed, stale or truncated evidence cannot confirm health.
@@ -11980,6 +12008,14 @@ paths:
 
   /v1/apps/{slug}/routes:
     parameters:
+      - name: environment
+        in: query
+        schema: { type: string }
+        description: Registered named environment; mutually exclusive with scope.
+      - name: scope
+        in: query
+        schema: { type: string, enum: [default] }
+        description: Explicit default scope. Omitting both selectors retains legacy aggregation.
       - $ref: '#/components/parameters/Slug'
     get:
       tags: [apps]
@@ -13965,6 +14001,35 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/source-review:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [apps]
+      operationId: reviewSourceRef
+      summary: Resolve a connected GitHub branch or commit and review target release configuration without building.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceReviewRequest' }
+      responses:
+        '200':
+          description: Immutable source and configuration review, excluding credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SourceReviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/deployments/source-ref:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -14810,14 +14875,53 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/rollouts/{id}/observation:
+    get:
+      operationId: getWorkerRolloutObservation
+      summary: Read a coherent worker-generation residency snapshot
+      tags: [deployments]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: environment
+          in: query
+          schema: { type: string }
+          description: Registered named environment; mutually exclusive with scope.
+        - name: scope
+          in: query
+          schema: { type: string, enum: [default] }
+          description: Explicit default scope. Exactly one selector is required.
+      responses:
+        '200':
+          description: Database snapshot of selected and retired worker residents. Does not establish queue processing or external consumer completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkerRolloutObservation' }
+        default:
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/apps/{slug}/operational-summary:
     parameters:
+      - name: environment
+        in: query
+        schema: { type: string }
+        description: Registered named environment; mutually exclusive with scope.
+      - name: scope
+        in: query
+        schema: { type: string, enum: [default] }
+        description: Explicit default scope. Omitting both selectors retains legacy aggregation.
       - $ref: '#/components/parameters/Slug'
     get:
       tags: [apps]
       operationId: getAppOperationalSummary
       summary: Read current production monitoring and recovery progress.
-      description: "Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. No query parameters are accepted."
+      description: "Requires app read access and completed MFA. Joins current default-scope production route evidence, metadata for the saved open incident, pending checked rollbacks across app scopes, and pending or failed restart handoffs. Reads do not wake workloads, change traffic, or declare incident recovery. Component availability and bounded-list truncation are explicit. Deployment smoke verification remains a separate launch-time result. Customer identities, request evidence, free-form rollback reasons and internal restart errors are omitted. An environment selector or scope=default returns an attributed scoped summary, scoped health and explicitly scoped recovery records; aggregate route-monitor evaluations and unscoped restart handoffs are omitted."
       responses:
         '200':
           description: Independently observed operational facts; unavailable components remain explicit.
@@ -14829,6 +14933,62 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/route-budgets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        schema: { type: string, enum: [default] }
+        description: Select scope=default or one registered environment, exactly one selector is required.
+      - name: environment
+        in: query
+        schema: { type: string }
+        description: Registered named environment; cannot be combined with scope.
+    get:
+      tags: [apps]
+      operationId: getEnvironmentRouteBudgets
+      summary: Read effective advisory budgets for one environment.
+      description: Requires app read access and completed MFA. Defaults to app-budget inheritance. Reports immutable identity, override revision and parent revision. Excludes customer grouping and recovery actions.
+      responses:
+        '200':
+          description: Effective advisory route budgets and their policy source.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentRouteBudgets' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setEnvironmentRouteBudgets
+      summary: Save a reviewed environment budget override or restore inheritance.
+      description: Requires deployment write access, completed MFA and account admission. Enabling requires telemetry entitlement. Pins app/environment identities and both revisions atomically. A save increments the override revision and resets completed observation windows, including return to inheritance. Request UUID and body are bound to a durable native receipt; replay returns the original result after later edits. No traffic, release gate, production monitor, incident or automatic rollback changes. Body limit is 16 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetEnvironmentRouteBudgetsRequest' }
+      responses:
+        '200':
+          description: Saved intent or original replay receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentRouteBudgets' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Enabling requires telemetry entitlement and account admission.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/apps/{slug}/route-monitor:
     parameters:
@@ -24705,6 +24865,72 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/approval-requests:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: requestBrowserPromotionApproval
+      summary: Request signed-in human review of an exact protected promotion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrowserPromotionApprovalRequest' }
+      responses:
+        '201':
+          description: Private bridge response; credentials must never be returned to an agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BrowserPromotionApprovalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/approval-requests/exchange:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: exchangeBrowserPromotionApproval
+      summary: Privately poll a browser-approved promotion; retry returns the same unconsumed credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BrowserPromotionApprovalExchange' }
+      responses:
+        '200':
+          description: Private bridge response; credentials must never be returned to an agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentApprovalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '410': { $ref: '#/components/responses/Gone' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/approvals:
@@ -42826,11 +43052,34 @@ components:
         requirements_sha256: { type: string }
         configuration_sha256: { type: string }
         report: { $ref: '#/components/schemas/RouteRequirementsReport' }
+    WorkerRolloutObservation:
+      type: object
+      required: [app_id, deployment_id, scope, checked_at, basis, running, starting, draining, other_residents, retired_residents, generation_converged, queue_processing_confirmed]
+      properties:
+        app_id: { type: string }
+        deployment_id: { type: string }
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        checked_at: { type: string, format: date-time }
+        basis: { type: string, enum: [resident_generation_snapshot] }
+        selected_deployment_id: { type: string }
+        running: { type: integer, format: int64, minimum: 0 }
+        starting: { type: integer, format: int64, minimum: 0 }
+        draining: { type: integer, format: int64, minimum: 0 }
+        other_residents: { type: integer, format: int64, minimum: 0 }
+        retired_residents: { type: integer, format: int64, minimum: 0 }
+        generation_converged: { type: boolean }
+        queue_processing_confirmed: { type: boolean, enum: [false] }
     AppOperationalSummary:
       type: object
       description: Read-only current production route health, open incident metadata and pending recovery work, shared by inspect and the app dashboard.
       required: [version, app_id, checked_at, monitoring, recovery, recommendations]
       properties:
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        health: { $ref: '#/components/schemas/AppHealthResponse' }
         version: { type: integer, enum: [1] }
         app_id: { type: string }
         checked_at: { type: string, format: date-time }
@@ -42839,11 +43088,53 @@ components:
         recommendations:
           type: array
           items: { $ref: '#/components/schemas/AppOperationalRecommendation' }
+    EnvironmentRouteBudgets:
+      type: object
+      required: [app_id, scope, budget_source, revision, app_revision, config]
+      properties:
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        budget_source: { type: string, enum: [app_policy, environment_policy] }
+        revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        config: { $ref: '#/components/schemas/RouteMonitorConfig' }
+    SetEnvironmentRouteBudgetsRequest:
+      type: object
+      additionalProperties: false
+      required: [app_id, request_id, expected_revision, expected_app_revision, inherit, enabled, routes]
+      properties:
+        app_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        expected_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        expected_app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        inherit: { type: boolean, description: Requires enabled=false and empty routes; restores current app thresholds. }
+        enabled: { type: boolean }
+        routes:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/RouteMonitorRoute' }
+    ScopedRouteBudgetReport:
+      type: object
+      description: Read-only evaluation of inherited or overridden budgets against one selected environment serving release. Completed current windows only; no pooled history, customer cohorts, scoped incidents or automatic rollback.
+      required: [scope, budget_source, report]
+      properties:
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        budget_source: { type: string, enum: [app_policy, environment_policy] }
+        budget_revision: { type: integer, format: int64, minimum: 0 }
+        app_budget_revision: { type: integer, format: int64, minimum: 0 }
+        report: { $ref: '#/components/schemas/RouteMonitorReport' }
     AppOperationalMonitoring:
       type: object
-      description: Recent default-scope route-monitor evaluation with observed-only coverage. Unknown or unavailable health is independent of deployment smoke verification.
+      description: Recent default-scope or explicitly scoped route-monitor evaluation with observed-only coverage. Unknown or unavailable health is independent of deployment smoke verification.
       required: [available, status, reason, coverage, incidents_available]
       properties:
+        route_budgets: { $ref: '#/components/schemas/ScopedRouteBudgetReport' }
         available: { type: boolean }
         status: { type: string }
         reason: { type: string }
@@ -42867,6 +43158,7 @@ components:
       description: Bounded app-scoped pending rollbacks and pending or failed restart handoffs. Availability and truncation are explicit; accepted work does not establish completed recovery.
       required: [rollbacks_available, restarts_available, rollbacks_truncated, restarts_truncated, rollbacks, restarts]
       properties:
+        coverage: { type: string, description: Explicit scoped summaries include only attributable operations; app-wide restarts are excluded. }
         rollbacks_available: { type: boolean }
         restarts_available: { type: boolean }
         rollbacks_truncated: { type: boolean }
@@ -52374,6 +52666,9 @@ components:
       type: object
       required: [id, app_id, image_digest, kind, status, created_at]
       properties:
+        staged_review:
+          $ref: '#/components/schemas/AppReleaseReview'
+          description: Intent snapshot committed with a zero-traffic reviewed candidate.
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -52851,6 +53146,9 @@ components:
       type: object
       required: [traffic_percent]
       properties:
+        expected_review:
+          $ref: '#/components/schemas/AppReleaseReview'
+          description: Atomically require this named-environment review at promotion. Requires 100% traffic and expected_serving_deployment_id; protected targets cannot use manual promotion.
         traffic_percent:
           type: integer
           minimum: 0
@@ -53001,6 +53299,8 @@ components:
       type: object
       required: [action]
       properties:
+        expected_review:
+          $ref: '#/components/schemas/AppReleaseReview'
         action:
           type: string
           enum: [advance, promote, abort]
@@ -57690,10 +57990,33 @@ components:
         status: { type: string, enum: [received, ignored] }
         duplicate: { type: boolean }
 
+    AppReleaseReview:
+      type: object
+      required: [app_id, configuration_hash, latest_deployment_id, serving_deployment_ids]
+      properties:
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        workload_revision: { type: integer, format: int64, minimum: 0 }
+        workload_config_hash: { type: string }
+        protected: { type: boolean }
+        app_id: { type: string }
+        configuration_hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        latest_deployment_id: { type: string }
+        serving_deployment_ids:
+          type: array
+          items: { type: string }
     CreateDeploymentRequest:
       description: "Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients."
       type: object
       properties:
+        native_rollout:
+          type: string
+          enum: [service, worker]
+          description: Reviewed native activation. Requires expected_review, matching target execution mode, an unprotected environment and omitted traffic_percent. Services switch through readiness, routing acknowledgement and drain barriers. Workers activate the newest live generation; this is not zero-traffic staging.
+        expected_review:
+          $ref: '#/components/schemas/AppReleaseReview'
+          description: Atomically require this review before zero-traffic image staging or native_rollout activation in the reviewed default or named environment. A changed review returns 409 release_review_changed.
         image:
           type: string
           description: 'registry.gregale.dev/...@sha256:... — digest-pinned OCI reference.'
@@ -60600,6 +60923,30 @@ components:
           default: false
           description: Explicitly attach fresh target-scoped credentials to the source environment's managed database and object-storage resources; data remains shared.
 
+    BrowserPromotionApprovalRequest:
+      type: object
+      required: [promotion_token, reason]
+      properties:
+        promotion_token: { type: string, minLength: 1, maxLength: 16384 }
+        reason: { type: string, minLength: 1, maxLength: 280 }
+
+    BrowserPromotionApprovalResponse:
+      description: Five-minute human review link with separate private polling material. Only review_url and expires_at may be exposed to agents.
+      type: object
+      required: [review_url, ticket, exchange_code, expires_at]
+      properties:
+        review_url: { type: string, format: uri }
+        ticket: { type: string }
+        exchange_code: { type: string, minLength: 43, maxLength: 43 }
+        expires_at: { type: string, format: date-time }
+
+    BrowserPromotionApprovalExchange:
+      type: object
+      required: [ticket, exchange_code]
+      properties:
+        ticket: { type: string, maxLength: 32768 }
+        exchange_code: { type: string, minLength: 43, maxLength: 43 }
+
     CreateProjectEnvironmentApprovalRequest:
       description: Request to approve one exact plan for a protected environment. Provide exactly one of plan_token or promotion_token.
       type: object
@@ -60608,7 +60955,7 @@ components:
         promotion_token: { type: string, minLength: 1, description: Exact promotion token returned by the environment promotion preview. }
 
     ProjectEnvironmentApprovalResponse:
-      description: Short-lived, single-use credential for applying the approved plan. The approval token is returned only here.
+      description: Short-lived, single-use credential for applying the approved plan. The approval token is returned only to the approving caller or the private browser-review exchange.
       type: object
       required: [approval_id, approval_token, environment, token_kind, status, expires_at]
       properties:
@@ -60884,6 +61231,26 @@ components:
           type: boolean
           default: false
 
+    SourceReviewRequest:
+      type: object
+      required: [repo, ref]
+      properties:
+        repo: { type: string, maxLength: 200 }
+        ref: { type: string, maxLength: 200, description: GitHub branch or full lowercase commit SHA; use the commit SHA for tags. }
+        environment: { type: string, description: Registered target environment; omitted selects default. }
+
+    SourceReviewResponse:
+      type: object
+      required: [app_id, repo, commit_sha, installation_id, repository_id, source_root, release_review]
+      properties:
+        app_id: { type: string, format: uuid }
+        repo: { type: string }
+        commit_sha: { type: string, pattern: '^[a-f0-9]{40}$' }
+        installation_id: { type: integer, format: int64, minimum: 1 }
+        repository_id: { type: integer, format: int64, minimum: 1 }
+        source_root: { type: string }
+        release_review: { $ref: '#/components/schemas/AppReleaseReview' }
+
     SourceRefDeployRequest:
       description: |
         JSON body for POST /v1/apps/{slug}/deployments/source-ref
@@ -60894,6 +61261,13 @@ components:
       type: object
       required: [repo, ref]
       properties:
+        native_rollout:
+          type: string
+          enum: [service, worker]
+          description: Reviewed native service handoff or worker generation activation. Requires expected_source, omitted traffic, an unprotected target and matching workload mode.
+        expected_source:
+          $ref: '#/components/schemas/SourceReviewResponse'
+          description: Commit-pinned staging or native rollout guard. Requires no_triggers, an exact commit, and no rollout overrides. Repository declarations are not imported. Named targets freeze reviewed settings; the response includes staged_review.
         healthcheck:
           $ref: '#/components/schemas/DeploymentHealthcheck'
           description: "Startup readiness for this source-ref deployment. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference."
@@ -65078,11 +65452,13 @@ components:
           enum: [healthy, degraded, unhealthy, unknown]
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
     AppHealthResponse:
-      description: Read-only observed health of default-scope HTTP serving workloads.
+      description: Read-only observed health of selected-scope HTTP serving workloads.
       type: object
       additionalProperties: false
       required: [app_id, status, phase, summary, scope, evaluated_at, valid_for_seconds, serving_deployment_ids, capacity, checks]
       properties:
+        project_id: { type: string }
+        environment_id: { type: string }
         app_id:
           type: string
         status:
@@ -65095,7 +65471,7 @@ components:
           type: string
         scope:
           type: string
-          enum: [default]
+          pattern: '^[a-z0-9][a-z0-9-]{0,39}$'
         evaluated_at:
           type: string
           format: date-time
@@ -65859,6 +66235,12 @@ components:
       type: object
       required: [slug, routes, source, collectors_expected, collectors_healthy, cap_hit]
       properties:
+        scope: { type: string }
+        project_id: { type: string }
+        environment_id: { type: string }
+        coverage: { type: string, description: Explicit scopes use deployment_attributed_history over the supplied observation window. }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
         slug: {type: string, x-since: "2026-08", x-issue: "273"}
         app_id: {type: string, x-since: "2026-08", x-issue: "273"}
         routes:

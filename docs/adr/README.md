@@ -795,3 +795,46 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-967: Scenario TCP fault injection](967-scenario-tcp-fault-injection.md)
 
 - [ADR-977: Decompose cmd/apid into pkg/apid domain packages](977-apid-package-decomposition.md)
+
+- [ADR-981: Local management MCP server](981-local-management-mcp.md)
+- [ADR-982: Reviewed management MCP releases and delegated OAuth](982-management-mcp-releases-and-oauth.md)
+
+- [ADR-983: Native browser authorization and durable management MCP connections](983-management-mcp-browser-login-and-durability.md)
+- [ADR-984: Management MCP environment consent and real-client CI](984-management-mcp-environments-and-client-ci.md)
+- [ADR-985: Reviewed named-environment staging and scoped health](985-management-mcp-named-staging-and-scoped-health.md)
+- [ADR-986: Human browser approval for management MCP promotions](986-management-mcp-browser-promotion-approval.md)
+- [ADR-987: Reviewed Git source staging through management MCP](987-management-mcp-reviewed-git-source.md)
+
+- [ADR-988: Native service and worker rollouts through management MCP](988-management-mcp-native-workload-rollouts.md)
+
+- [ADR-989: Environment-attributed management MCP observations](989-management-mcp-scoped-telemetry.md)
+
+- [ADR-990: Reviewed native source rollouts through management MCP](990-management-mcp-native-source-rollouts.md)
+
+- [ADR-991: Retained GitHub source rollback through management MCP](991-management-mcp-retained-source-rollback.md)
+
+- [ADR-992: Current environment route-budget observations](992-management-mcp-scoped-route-budgets.md)
+
+- [ADR-993: Bounded passive management MCP rollout watch](993-management-mcp-rollout-watch.md)
+
+- [ADR-994: Consent-scoped management MCP resources and prompts](994-management-mcp-context-resources-prompts.md)
+
+- [ADR-995: Read-only management MCP preflight](995-management-mcp-preflight.md)
+
+- [ADR-996: Independent advisory environment route budgets](996-environment-route-budgets.md)
+
+- [ADR-997: Bounded management MCP rollout progress](997-management-mcp-rollout-progress.md)
+
+- [ADR-998: Consent-scoped management MCP resource subscriptions](998-management-mcp-resource-subscriptions.md)
+
+- [ADR-999: Consent-scoped management MCP argument completion](999-management-mcp-argument-completion.md)
+
+- [ADR-1000: Bounded management MCP request admission](1000-management-mcp-request-admission.md)
+
+- [ADR-1001: Private aggregate management MCP telemetry](1001-management-mcp-operational-telemetry.md)
+
+- [ADR-1002: Graceful management MCP drain and journal cleanup](1002-management-mcp-graceful-drain.md)
+
+- [ADR-1003: Owner-protected management MCP connection controls](1003-management-mcp-local-connection-controls.md)
+
+- [ADR-1004: Authorization-bounded management MCP request leases](1004-management-mcp-authorization-request-leases.md)

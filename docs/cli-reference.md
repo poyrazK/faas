@@ -6,7 +6,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 
 | Command | What it does |
 |---|---|
-| [`mcp`](#mcp) | Scaffold, deploy and verify stateless MCP servers |
+| [`mcp`](#mcp) | Connect agents to Gregale, or scaffold and deploy MCP servers |
 | [`start`](#start) | Get your first app live with a few guided prompts |
 | [`account`](#account) | Manage the local account (account export\|delete\|restore\|status\|dpa\|slo) |
 | [`add`](#add) | Provision and bind managed resources to an app |
@@ -117,9 +117,54 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 
 ## mcp
 
-Scaffold, deploy and verify stateless MCP servers
+Connect agents to Gregale, or scaffold and deploy MCP servers
 
 `gregale mcp [<subcommand>]`
+
+### mcp serve
+
+Expose Gregale management tools over stdio or OAuth HTTP
+
+`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
+| `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
+| `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
+| `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
+| `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
+| `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
+| `--state-file <PATH>` | private encrypted remote state file |  |
+| `--admin-socket <PATH>` | optional owner-protected Unix socket for listing and revoking HTTP grants |  |
+| `--metrics-listen <ADDR>` | optional literal loopback IP:port for private management MCP Prometheus metrics |  |
+| `--state-key-file <PATH>` | independent private 32-byte state encryption key file |  |
+| `--oauth-redirect-uri <URI>` | allowed OAuth callback; repeat; omit loopback HTTP port for ephemeral ports |  |
+
+Examples:
+
+```sh
+gregale mcp serve --transport stdio
+gregale --profile staging mcp serve --timeout 15s
+```
+
+### mcp connections list
+
+List bounded, credential-free connection metadata through the bridge owner's socket.
+
+`gregale mcp connections list --socket <PATH> [--limit <N>] [--offset <N>]`
+
+The socket parent must be owned by the current user with mode 0700, and the socket
+must have mode 0600. Page size defaults to 20 and accepts 1–100; offset must be non-negative.
+
+### mcp connections revoke
+
+Revoke one exact bridge grant and cancel its active requests.
+
+`gregale mcp connections revoke --socket <PATH> --grant-id <ID>`
+
+Durable bridges acknowledge revocation after committing encrypted state. Native API
+keys and already accepted operations remain authoritative.
 
 ### mcp init
 

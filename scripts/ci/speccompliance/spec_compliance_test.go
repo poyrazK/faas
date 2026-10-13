@@ -365,6 +365,7 @@ var dtoExclude = map[string]bool{
 	"ObjectNotificationTarget":          true,
 	"ObjectWriteConditions":             true, // internal S3 protocol validators, not a JSON wire DTO
 	"ApplyResponseApp":                  true, // inline {slug,id} row in ApplyResponse.apis schema
+	"CliAuthCodeRequest":                true, // Optional purpose on the private browser/device-code mint
 	"CliAuthCodeResponse":               true, // POST /v1/cli-auth/code (anonymous)
 	"CliAuthExchangeRequest":            true, // POST /v1/cli-auth/exchange
 	"CliAuthExchangeResponse":           true, // POST /v1/cli-auth/exchange
@@ -1142,6 +1143,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_validate_params.go"), // kind=validate parameter schemas
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),             // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", cliauthFile),
+		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
+		filepath.Join(root, "pkg", "api", "source_review.go"),
+		filepath.Join(root, "pkg", "api", "scoped_telemetry.go"),
 		filepath.Join(root, "pkg", "api", mfaFile),
 		filepath.Join(root, "pkg", "api", sessionsFile),
 		filepath.Join(root, "pkg", "api", errorsFile),

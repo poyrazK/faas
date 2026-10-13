@@ -15094,7 +15094,13 @@ UPDATE deployments SET service_rollout_handoff = sqlc.arg(handoff)::jsonb WHERE 
 SELECT traffic_percent FROM deployments WHERE id = sqlc.arg(deployment_id) AND status = 'live';
 
 -- name: ServiceRolloutRecipientReady :one
-SELECT (count(*) >= CASE WHEN sqlc.arg(action)::text = 'promote' THEN coalesce((SELECT (a.manifest->'service_replicas'->>'desired')::integer FROM apps a WHERE a.id = sqlc.arg(app_id)), 1) ELSE 1 END)::boolean
+SELECT (count(*) >= CASE WHEN sqlc.arg(action)::text = 'promote' THEN coalesce((
+    SELECT (coalesce(s.settings::jsonb->'manifest',a.manifest)->'service_replicas'->>'desired')::integer
+    FROM deployments d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN project_environment_workload_deployment_specs p ON p.deployment_id=d.id
+    LEFT JOIN project_environment_workload_specs s ON s.id=p.spec_id AND s.app_id=d.app_id
+    WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)
+), 1) ELSE 1 END)::boolean
 FROM (SELECT i.id FROM instances i WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.mode = 'service' AND i.state = 'running' FOR SHARE) ready;
 
 -- name: AppendServiceRolloutBindingAudit :one

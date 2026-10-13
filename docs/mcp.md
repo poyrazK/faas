@@ -1,4 +1,565 @@
-# MCP servers on Gregale
+# Gregale management and MCP hosting
+
+## Connect a local agent to Gregale
+
+`gregale mcp serve` exposes Gregale management tools over stdio, with writes
+disabled by default.
+The agent launches the installed CLI as a subprocess and uses your selected
+connection profile and its existing login. It does not deploy an MCP app or
+require the MCP hosting entitlement.
+
+```sh
+gregale login
+gregale mcp serve --transport stdio
+```
+
+The second command waits for MCP messages on stdin. Configure the agent to
+launch it rather than running it manually alongside the agent. For a Claude
+Desktop-style configuration:
+
+```json
+{
+  "mcpServers": {
+    "gregale": {
+      "command": "gregale",
+      "args": ["mcp", "serve", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+For Codex, add a local server to its MCP configuration:
+
+```toml
+[mcp_servers.gregale]
+command = "gregale"
+args = ["mcp", "serve", "--transport", "stdio"]
+```
+
+Use an absolute executable path if the client cannot find `gregale` on its PATH.
+To select a named connection, place the prefix before the command, for example
+`["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
+`FAAS_API` and `FAAS_TOKEN` retain their normal precedence over saved settings.
+Use the profile's stored login or supply a scoped token through the client's
+environment; do not put tokens in command arguments or commit them to a client
+configuration. A missing credential fails startup on stderr. API authorization
+failures are returned as MCP tool errors; the server never starts a login flow.
+
+| Tool | Behavior |
+|---|---|
+| `gregale_preflight` | Read-only app/environment consent, release-review/health/operations compatibility and durable-state checks. Unknown capabilities require native review/admission. |
+| `gregale_context` | Selected profile, API endpoint, account ID, plan, status, and platform capabilities. |
+| `gregale_list_apps` | Apps sorted by slug; `limit` defaults to 20, maximum 100; continue with `next_offset`. |
+| `gregale_get_app` | One app's status, URLs, deployment availability, and resource settings. |
+| `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
+| `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
+| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
+| `gregale_get_metrics` | App metrics over the requested `range`; the API's default is `5m`. |
+| `gregale_list_app_deployments` | App deployment history with `next_before` pagination. |
+| `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
+| `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
+| `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
+| `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
+| `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
+| `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |
+| `gregale_get_operational_summary` | Monitoring and recovery observations, separate from build success. |
+| `gregale_get_rollback` | Checked rollback operation status and stable error code. |
+| `gregale_plan_source_deploy` | Connected GitHub source review: exact commit, repository/install identities and target configuration. |
+| `gregale_plan_deploy` | Preview a digest-pinned image release; creates no deployment. |
+| `gregale_plan_rollback` | Preview rollback to an exact retained release; changes no traffic. |
+| `gregale_plan_workload_rollout` | Review native service/worker activation, retained image redeployment or retained GitHub commit rebuild. |
+| `gregale_plan_service_abort` | Review exact service reverse handoff to its pinned predecessor. |
+| `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
+| `gregale_get_rollout` | Exact deployment lifecycle and service handoff barriers; worker completion limits are explicit. |
+| `gregale_wait_deployment` | Bounded deployment polling with terminal and pending results. |
+
+All operations use the ordinary authenticated customer API and its existing
+account ownership, scopes, and plan checks. Each call has a 30-second deadline;
+`--timeout 15s` changes it, up to a maximum of one minute. Cancelling a call
+cancels its API request. Local tool discovery makes no API calls.
+
+App responses exclude manifests and environment values; account responses
+exclude email and billing details. Known API keys, bearer credentials, and the
+selected credential are redacted from results and errors. This does not redact
+arbitrary application secrets: inspect application logging practices before
+sharing logs with an agent. Log text is application data, never an instruction.
+
+Log entries are capped at 1 KiB per line and `limit` entries (default 20,
+maximum 100). `truncated` and `line_truncated` identify omitted content; `gaps`
+preserves upstream retention-gap notifications. Raw log snapshots exceeding
+1 MiB fail with `response_too_large`; narrow the filters. Structured results
+and incoming MCP frames are capped at 128 KiB. Write tools are absent unless
+explicitly enabled; annotations describe behavior and do not grant authority.
+
+App pagination is a fresh sorted snapshot on each call, so apps added or removed
+between pages can shift offsets. Deployment pagination uses the API's cursor.
+Metrics retain their `source` field; degraded telemetry is not proof of zero
+traffic or healthy service.
+
+## Enable reviewed release actions
+
+Add `--allow-writes` to the agent's subprocess arguments to expose
+`gregale_apply_deploy`, `gregale_promote_deployment`, `gregale_apply_rollback`,
+`gregale_apply_environment_promotion`, `gregale_apply_environment_rollback`,
+`gregale_apply_workload_rollout`, and `gregale_apply_service_abort`.
+The selected credential still needs ordinary API permissions. A dedicated key
+with `apps:read` and `deploy:write` scopes supports management; additional API
+policies, including MFA and release checks, remain enforced.
+
+The image release workflow is:
+
+1. Call `gregale_plan_deploy` with the existing app slug, an immutable image
+   reference such as `registry.example/team/app@sha256:<64 lowercase hex digits>`,
+   and a reviewable `reason`. Review the account, API endpoint, profile, app ID,
+   default scope, source, current release, and traffic effect in the plan.
+2. Call `gregale_apply_deploy` with its `plan_id`. The server rechecks account,
+   app configuration, latest deployment, and current serving release before
+   staging a revision at **0% traffic**. This can incur build/runtime costs.
+3. Call `gregale_wait_deployment` with the app and returned deployment ID.
+   `wait_seconds` defaults to 20 and is capped at 45, within the tool deadline.
+   `pending: true` means poll again. A `live` revision at zero traffic is staged;
+   it does not establish current production health.
+4. Call `gregale_promote_deployment` with the original `plan_id` after reviewing
+   the staged revision. Gregale atomically sends 100% traffic to it only if the
+   original serving release still owns production traffic. A concurrent release
+   returns `traffic_serving_changed`; the adapter never retries without the guard.
+
+For rollback, call `gregale_plan_rollback` with the app, exact
+`target_deployment_id`, and reason, then review and apply its `plan_id` through
+`gregale_apply_rollback`. Checked rollback verifies the current release, artifact
+integrity, and bindings. If the result includes `rollback_operation`, follow its
+`id` using `gregale_get_rollback`; acceptance is not completion.
+
+Image and rollout plans expire after 15 minutes and belong to this connection.
+Source plans use the thirty-minute window described below. Each action has a
+stable idempotency key derived from the plan. Retry with the **same plan ID**,
+including after a timeout or ambiguous upstream error. Remote OAuth refresh
+preserves the connection's plans. With encrypted remote state configured, a
+restart also preserves the grant's unexpired plans and retry keys. A fresh
+connection has its own plans. Stdio and ephemeral HTTP restarts lose plans;
+inspect deployment history before creating another plan. A connection holds at
+most 256 plans. Staging, promotion and checked rollback use API transactional
+checks. Reviewed image staging requires an API that implements
+`GET /v1/apps/{slug}/release-review`; it never falls back to an unguarded insert.
+
+Deploy tools support immutable OCI images for existing request-mode apps in the
+default scope or a selected named project environment. Connected GitHub source
+builds use the source workflow below. Mutable image tags, local uploads,
+and app creation retain their CLI release workflows.
+Image and reviewed source service/worker rollouts use the native workflow below. Apps with multiple serving
+releases require explicit traffic-split review in the CLI. Secret-value and
+arbitrary configuration mutation APIs are not exposed.
+
+## Reviewed Git source deployments
+
+Call `gregale_plan_source_deploy` with `app`, connected GitHub `repo` as
+`owner/repository`, a branch or full lowercase 40-character commit SHA in `ref`,
+and `reason`. For a named target, also provide `project` and `environment`.
+Planning checks repository access and resolves a branch once; it does not fetch
+an archive or enqueue a build. For a tag, supply its exact commit SHA.
+
+Review the returned account, app/environment IDs, `source.commit_sha`, immutable
+repository/installation identities, source root, configuration hash and traffic
+impact. Source plans last thirty minutes: the normal fifteen-minute review
+window plus Gregale's fifteen-minute build budget. Image plans retain their
+fifteen-minute lifetime. Connection expiry and consent gates still apply.
+
+Use the same `gregale_apply_deploy` with `plan_id`. Gregale fetches that exact
+commit using the connected installation, verifies provider identity and stream
+metadata, scans the archive, and atomically stages it at zero traffic with the
+reviewed configuration. Moving a branch afterward cannot replace the commit.
+The build runs through existing builderd microVMs and normal quotas. Repository
+manifest configuration, triggers, workflows, operation definitions and release
+commands are not imported by this mode. Current target workflow and operation
+declarations are retained from the reviewed serving release. Manage declaration
+changes through their native configuration workflows.
+
+For an existing service or worker, explicitly supply `rollout_mode: "service"`
+or `rollout_mode: "worker"` to the same source planning tool. It must match the
+reviewed target mode. Apply that plan with `gregale_apply_workload_rollout`.
+Traffic must remain omitted: services retain their predecessor through native
+readiness, gateway acknowledgement and drain; workers become the newest live
+generation after the build and replace consumers under the reviewed stop policy.
+These plans cannot use `gregale_apply_deploy` or manual traffic promotion.
+Protected environments require their approved environment promotion workflow.
+The same plan ID retains the commit, build/deployment receipt and retry payload
+across bridge restart; never replan an ambiguous write without inspecting history.
+Worker residency observations do not confirm queue delivery or acknowledgements.
+For service and worker rollback, `gregale_plan_workload_rollout` accepts an exact
+`retained_deployment_id` for an image or a GitHub source release. Source releases
+need canonical `github://owner/repository@<40-character-commit>` provenance and
+a matching commit field. The build root must still match. Planning reviews the
+retained commit through the currently connected installation and pins current
+target settings; apply rebuilds it as a new generation through builderd.
+This rebuild does not restore the original artifact: mutable build dependencies
+can produce different binaries. Uploads, branch-only provenance and inaccessible
+repositories are rejected. Protected targets retain environment approval gates.
+
+`gregale_wait_deployment` returns bounded build lifecycle data as `build`, along
+with deployment state. Build success is not serving readiness: wait for the
+zero-traffic deployment to become live before `gregale_promote_deployment`.
+Protected targets retain the human-approved environment-promotion workflow.
+Retry apply using the original plan ID after an ambiguous response; encrypted
+bridge state preserves the exact source and payload across restart. Admission
+fails closed if native configuration or repository identity changed. Inspect
+existing deployments before replanning after a partial enqueue failure; retries
+must not create duplicate work.
+
+## Native service and worker image rollouts
+
+Call `gregale_plan_workload_rollout` with `app`, digest-pinned `image`, and
+`reason`. For a named target, provide `project` and `environment`. Review the
+execution mode, per-replica resources, replica policy, readiness path, stop signal/grace period,
+configuration hash, exact release baseline and `traffic_effect`. Plans last
+fifteen minutes and require the same app/environment consent as other releases.
+An active deployment must finish or be recovered before another generation is
+planned. Protected environments require approved environment promotion.
+
+Apply through `gregale_apply_workload_rollout` with the same `plan_id`. This
+**activates a native rollout** and can change serving traffic or consumers
+without another promotion call. The native API checks the review under its
+admission locks, freezes named workload settings, and retains normal image,
+signature, billing, quota and binding checks. Retry the same plan ID after an
+ambiguous response; remote encrypted state retains the original key and body.
+
+For services, the candidate begins at zero traffic with the native `rolling_out`
+marker. Gregale waits for desired ready replicas, checks bindings, switches
+routing, waits for gateway acknowledgements and drains previous requests.
+`gregale_get_rollout` exposes the handoff phase, generation and binding blockers.
+`gregale_wait_deployment` keeps a live service image pending while its handoff is
+still rolling out. MCP does not force service traffic or bypass readiness.
+
+To recover an active service rollout, call `gregale_plan_service_abort` with
+`app`, exact `deployment_id`, exact `predecessor_deployment_id`, and `reason`
+(and the named project/environment when applicable), then
+`gregale_apply_service_abort`. The native transaction checks the configuration
+and exact generation pair again. Its `service_recovery.status: accepted` receipt
+confirms reverse-handoff intent; observe the rollout until the native barriers
+finish. A completed service rollout can be recovered by redeploying a retained
+image as described below, or through native checked rollback.
+
+Workers select the newest live generation per environment regardless of HTTP
+traffic weights. A live image can therefore start consumer replacement
+immediately. Gregale stops retired consumers using its native stop policy and
+reconciles queue-driven replicas, including retirement lease holds.
+`gregale_get_rollout` includes a native `worker_observation` with the selected
+live generation, running/starting/draining counts and retired resident count.
+The native reader takes one database snapshot, including other deployments only
+within the selected scope. `completion_basis: resident_generation_snapshot` and
+`consumer_switch_confirmed` describe **generation residency at `checked_at`**.
+Convergence requires a running selected generation, no starting/draining/other
+resident rows on it and no residents from retired generations. An idle pool is
+not reported as confirmed. `queue_processing_confirmed` remains false: these
+observations do not prove replica policy satisfaction, delivery acknowledgement,
+external consumer shutdown or queue processing. Use scoped health and native
+queue evidence for those facts.
+
+For service or worker rollback, use `retained_deployment_id` instead of
+`image` in `gregale_plan_workload_rollout`. It selects the exact retained image or
+canonical GitHub commit
+in the same app/environment and creates a **new generation with current
+reviewed configuration**. It does not restore historical settings or undo
+external queue effects. GitHub source releases rebuild through the reviewed
+source workflow described above. Upload provenance and retained image digests
+without a full immutable OCI reference require the native CLI release workflow. Worker
+rollback through HTTP traffic weights is unavailable in MCP.
+
+## Advisory route budgets per environment
+
+Use `gregale_get_route_budgets` with `app` and optional `project`/`environment`.
+Without a named selection it reads the explicit default scope. Every scope inherits
+the app policy until an override is saved. Customer grouping and production recovery
+actions are excluded from scoped evaluation.
+
+Call `gregale_plan_route_budgets` with the same selectors, `reason`, `inherit: false`,
+`enabled`, and `routes`. Each route selects an exact normalized `method`/`path`,
+`max_5xx_rate_bps` (0–10000) and/or `max_p95_ms`. Error thresholds are basis points:
+100 is 1%. Omit a signal to disable it. Supply an empty routes array with
+`inherit: true` and `enabled: false` to restore app-budget inheritance.
+
+The 15-minute plan shows the current effective policy and exact proposed update.
+Apply its `plan_id` with `gregale_apply_route_budgets`; writes must be enabled and
+separately consented for the selected environment. Native admission atomically
+checks immutable IDs and both policy revisions. Changes to either policy reject
+stale plans. Retry the same plan after an uncertain response; an encrypted bridge
+journal and a durable native receipt preserve the exact proposal and original result.
+
+Saving requires fresh completed observation windows, including restoring inheritance.
+The update is advisory: it changes neither traffic nor canary/release gates, and does
+not enable incidents or automatic rollback. Production's existing app monitor keeps
+its own configuration and recovery behavior. Environment budget overrides remain
+bound to their registered identity; release promotion does not copy them.
+
+## Release between named environments
+
+Registered project environments use Gregale's guarded promotion workflow. These
+tools reuse existing immutable source releases. Direct image staging also accepts
+an explicit project/environment. `gregale_preflight` accepts the same app and
+optional project/environment selection. It reports each read compatibility and consent
+check independently; unknown results do not grant write permission. It creates no
+plans or source reviews. Store status describes an open encrypted journal, not a
+restart qualification or a guarantee that future writes will succeed.
+The tool catalog has 29 read/planning tools, or
+37 with writes.
+
+To prepare a new staging release, call `gregale_plan_deploy` with `app`, `image`,
+`reason`, `project`, and `environment: "staging"`. Review the immutable registry
+IDs, `configuration_hash`, workload revision/hash and serving release in the plan.
+Apply its `plan_id` through `gregale_apply_deploy`; the API atomically freezes the
+reviewed target configuration and inserts a zero-traffic candidate. The first
+reviewed deployment also freezes a desired revision when the environment has no
+head yet. Configuration or registry changes reject the stale plan.
+
+Call `gregale_wait_deployment` with that same project/environment and deployment
+ID. A live zero-traffic candidate is staged; it does not confirm serving health.
+For an unprotected staging environment, explicitly call
+`gregale_promote_deployment` with the original plan ID to send 100% of **staging**
+traffic to it. Promotion checks the committed configuration and original serving
+release in the write transaction. Traffic in other scopes remains unchanged.
+Protected targets use an approved environment promotion instead of manual traffic
+promotion.
+
+Call `gregale_get_health` with `app`, `project`, and `environment` after staging
+traffic is exercised. `gregale_get_metrics` accepts the same selection and returns
+scoped request counters from the fixed five-minute health window; `requests.known`,
+coverage and sample time identify unavailable or stale evidence. Read exact
+deployment logs with `gregale_get_logs`. Health reads never issue smoke requests,
+wake instances or certify source qualification. Named staging and health require
+the updated scoped-review API; default-scope responses are never substituted.
+
+1. Call `gregale_list_environments` to see available project/environment pairs and
+   this connection's write access. Call `gregale_get_environment` with `project`
+   and `environment` to inspect consented workload release inventory.
+2. Call `gregale_plan_environment_promotion` with `project`, `from_environment`,
+   `to_environment`, and `reason`. Review the account, project/environment IDs,
+   exact release changes, `promotion_hash`, and traffic effect. Target settings
+   and secrets are preserved. Gregale's source qualification checks still apply.
+3. Call `gregale_apply_environment_promotion` with `plan_id`. For a protected
+   target, it returns `status: "approval_pending"`, `review_url`, `expires_at`,
+   and `retry_after_seconds: 5`, without changing deployments. Ask the human to
+   open that link, sign in to the matching Gregale account, and review the exact
+   source/target releases, environment identities, reason, and promotion hash.
+   The form requires account-bound CSRF and expires after five minutes. Closing
+   the page leaves the request unapproved until expiry.
+4. Retry apply with the same `plan_id`, no more frequently than the returned
+   interval. While waiting, it returns the same pending review. After human
+   approval, the bridge exchanges a separate private polling secret and keeps
+   the approval credential out of MCP output. It rechecks consent, registry and
+   workload identities, and the preview hash, then uses Gregale's guarded promote
+   endpoint. Expired or changed reviews require a new plan. With encrypted bridge
+   state configured, pending reviews and approved retries survive restart. Use
+   `gregale_get_environment_promotion` with the returned `promotion_id` to follow
+   progress; acceptance is not completion. The manual `approval_token` argument
+   remains available for existing CLI/API approval workflows. MCP has no tool
+   that can approve a review on behalf of the human.
+5. To restore a promotion's captured predecessor, call
+   `gregale_plan_environment_rollback` with that project, target environment,
+   exact promotion ID, and reason; review and call
+   `gregale_apply_environment_rollback` with its `plan_id`. Gregale stops rollback
+   if a target release changed after promotion.
+
+These plans expire after 15 minutes and use the same connection-owned retry rules
+as default releases. Retry the same plan ID after an ambiguous error. The encrypted
+journal preserves environment plans, original approval credentials and request
+keys. Whole-project promotion/status/rollback requires consent for every current
+workload in both source and target; a partially selected project can still inspect
+its consented workload inventory.
+
+## Connect a remote agent with OAuth
+
+Streamable HTTP includes a self-hosted OAuth authorization bridge, independent
+of the API's existing OIDC token-exchange issuer. Browser onboarding is the
+default: start sign-in on the bridge, authorize in Gregale's signed-in dashboard,
+and return to review the resolved account, agent, callback, and apps. Gregale
+issues a dedicated eight-hour `mcp-login` credential with `apps:read` and optional
+`deploy:write`; it cannot administer keys, read secrets or change account settings.
+The existing dashboard session chooses the account. To connect another account,
+switch accounts in Gregale before authorizing.
+
+Choose all apps (including future apps) or only selected apps. Selection binds
+slugs to immutable app IDs; recreated slugs do not inherit permission. Inspection
+covers the selected apps. Default inspection is included; default writes and each
+named environment's read/write access require separate checked consent. Named
+grants pin project, environment and workload IDs; future environments/workloads
+require reconnecting to review access. Write scope also requires checked consent
+and `--allow-writes` on the bridge. The bridge
+never uses the host's saved CLI login.
+
+Remote deployment and instance lists filter environment access, and ID-only reads
+cannot bypass consent. Remote logs require an exact consented deployment ID.
+Remote metrics use attributed request evidence from the selected scope and accept
+only the fixed `5m` window. Routes and operational summaries also select an
+explicit environment; default reads send `scope=default`. Responses bind app,
+project and environment IDs, and old aggregate-only servers fail closed.
+
+Scoped routes use deployment-attributed stored request observations from the
+last five minutes. `coverage: deployment_attributed_history` and `source: partial`
+identify this limited history; it is not a complete live collector or route
+catalog. Missing telemetry support or plan access returns `source: unavailable`.
+Unknown deployment identities and neighboring scopes never contribute routes.
+No app-wide route counter or discovered-route catalog is used as a fallback.
+
+Scoped operational summaries include scoped health, attributed incident metadata,
+and bounded recovery lists filtered **before** their limit. Recovery coverage is
+`explicit_scope_only`. Restart handoffs without an explicit scope are excluded,
+including app-wide requests; unavailable readers are marked unavailable rather
+than treated as an empty successful queue. The latest handoff is selected before
+scope/state filtering so a completed or moved operation cannot revive an older
+pending record.
+
+Scoped monitoring evaluates the saved **app route budgets** against one exact
+serving deployment in the selected environment. `monitoring.route_budgets`
+includes the scope, immutable environment identities, `budget_source: app_policy` or `environment_policy`,
+and a route report with error rates, weighted p95, sample counts and reasons.
+Scopes inherit app thresholds by default. An environment override uses its own
+thresholds and enabled state; `gregale_get_route_budgets` reports the effective
+configuration, policy source, override revision and parent app revision.
+The two completed one-minute windows retain the native ingestion allowance and
+minimum samples (20 requests for errors, 100 for latency, and at least two
+observed errors before confirming an error-budget violation). Both windows must
+settle after the deployment and budget observation anchor. Sparse, ambiguous,
+unsettled or old observations remain unknown. Historical pooled windows and
+customer cohorts are excluded. MCP rejects reports older than the existing
+two-minute health evidence age limit or with inconsistent check timestamps. Named releases without a binding to the current
+environment identity cannot establish monitored health.
+
+App-wide stored reports are not reused as scoped reports; unavailable readers
+retain `environment_monitor_unavailable`. Scoped evaluation is read-only and
+does not persist incidents or trigger automatic rollback. Reads do not wake
+workloads, probe customer endpoints or mutate recovery work.
+
+Browser onboarding requires the updated API device-code flow. Operators can
+explicitly select `--oauth-onboarding api-key` for dedicated-key onboarding. That
+fallback still requires account/app review; API keys are never MCP access tokens.
+
+Run one bridge process behind HTTPS ingress that preserves the public Host header:
+
+```sh
+gregale mcp serve --transport streamable-http \
+  --listen 127.0.0.1:8787 \
+  --resource-url https://management.example.com/mcp \
+  --oauth-redirect-uri https://client.example/oauth/callback \
+  --oauth-redirect-uri 'http://127.0.0.1/callback/*'
+```
+
+Replace the public resource and callback addresses with those used by your
+client. HTTPS callbacks must match the operator's allowlist exactly. A loopback
+HTTP entry without a port permits the client's ephemeral port on that same
+hostname, path, and query. The registered redirect is then bound exactly through
+authorization and code exchange. Codex adds a random final path component; the
+operator can allow `http://127.0.0.1/callback/*` for that single component and
+ephemeral port. This rule accepts only letters, digits, hyphens and underscores
+under `/callback/`, with no nested path or query. It cannot be used for HTTPS or
+non-loopback addresses. Configure the client with the public `/mcp` URL
+and use its OAuth connect/login flow. Codex's remote MCP configuration uses
+`url = "https://management.example.com/mcp"` in `[mcp_servers.gregale]`.
+
+Clients discover OAuth metadata from the 401 challenge, register an allowed
+callback, and use authorization-code **S256 PKCE** with the exact resource URL.
+Read scope is `gregale:read`; optional write scope is `gregale:write`. API keys
+are accepted only by browser account review, never as MCP access tokens. Gregale
+API scopes remain authoritative for every tool call.
+The default challenge requests read access. To expose remote write tools, request
+both scopes in the client's OAuth settings as well as enabling bridge writes.
+
+Each grant has its own SDK server, API credential, and plan store. Every remote
+request rechecks its account credential through the API. Access tokens expire
+after 15 minutes; refresh rotates both tokens, and reusing a spent refresh token
+revokes the grant. Grants expire after eight hours. `POST /oauth/revoke` disconnects
+a grant using its token and registered client ID. Token/code lookups use hashes.
+Revoking the backing `mcp-login` credential in Gregale also disables the connection
+on its next request. Without a state file, restarting disconnects clients. Durable
+state supports one bridge process; shared multi-replica grants remain separate work.
+
+Ingress must route `/mcp`, `/oauth/*`,
+`/.well-known/oauth-protected-resource` and its `/mcp` variant, and
+`/.well-known/oauth-authorization-server` to the bridge, terminate TLS, and avoid
+logging request bodies, Authorization headers, or token response bodies. Apply
+ingress rate limits to registration and authorization. The bridge enforces Host
+and Origin checks, browser-bound consent cookies, CSRF, request-size bounds, and
+bounded authorization stores. These tools use stateless request/response HTTP;
+standalone SSE subscriptions are unnecessary. On Gregale control-plane hosts,
+use existing public ingress; the bridge listener defaults to loopback.
+
+
+### Retain connections across restarts
+
+Create a private state directory and an independent 32-byte encryption key once:
+
+```sh
+install -d -m 700 ./mcp-state
+umask 077
+openssl rand -hex 32 > ./mcp-state/key
+```
+
+Add `--state-file ./mcp-state/state --state-key-file ./mcp-state/key` to the HTTP
+serve command. Keep the same key across restarts and store backups separately
+from the key. The journal seals account credentials, OAuth registrations/grants,
+refresh replay history, browser flows and release plans with AES-256-GCM. Files
+must be private regular files. Atomic replacement and fsync precede successful
+OAuth responses; mutation attempts are committed before the API request.
+
+One process holds an exclusive state lease. A second writer, modified journal,
+wrong key, endpoint mismatch or unsafe permissions fails startup. Storage failure
+returns 503 and disables further access until storage is repaired and the server
+restarts. This supports process restart, not multiple replicas or rollback to
+older backups. Restoring an old backup can restore old token state; use a fresh
+state file and reconnect clients after disaster recovery. CLI stderr emits JSON
+authorization and mutation audit events containing identifiers, never credentials
+or tool arguments. Apply ingress rate limits as described above.
+
+### Validate a real agent client
+
+With Codex installed and a built Gregale binary, run the actual Codex MCP client
+against a local, isolated API fixture:
+
+```sh
+python3 scripts/ops/management-mcp-client-acceptance.py --fixture
+```
+
+The MCP contract workflow runs management race tests, private metrics/listener
+checks, SIGTERM/drain/state-reopening checks, and both stdio and remote HTTPS/OAuth
+real-client fixtures automatically for relevant changes. Metrics and drain checks
+run independently after a successful build, and their JSON reports join the
+`management-mcp-client-acceptance` artifact even when another check fails. Its Codex version is pinned to
+`0.159.0-alpha.3` with npm lockfile integrity. To run the same client locally:
+
+```sh
+npm ci --prefix scripts/ci/management-mcp-client --ignore-scripts --no-audit --no-fund
+python3 scripts/ops/management-mcp-client-acceptance.py --fixture \
+  --codex-binary scripts/ci/management-mcp-client/node_modules/.bin/codex
+```
+
+Remote acceptance runs the real Codex login, dynamic client registration,
+PKCE callback, tool discovery and reads, reconnect after bridge and client
+restart, token refresh, and grant revocation. It uses a temporary certificate
+chain trusted only by the child client and an isolated API/profile; expiry is
+advanced only inside fixture state and the disposable client credential file.
+Run it locally with the pinned client:
+
+```sh
+GREGALE_MCP_CODEX_BINARY="$PWD/scripts/ci/management-mcp-client/node_modules/.bin/codex" \
+  go test -race ./pkg/mcpmanagement -run TestCodexRemoteOAuthAcceptance -count=1 -v
+```
+
+The published CI report contains discovery/read results and tool count. Client
+diagnostics, keys, and live account data are not uploaded.
+
+To use an existing test account, run with `--profile staging` instead of
+`--fixture`. The check discovers tools and calls context/app listing without a
+model request or deployment mutation. For a remote bridge, first log in with
+Codex's OAuth flow and run with `--remote-url https://management.example.com/mcp`
+and `--codex-config-dir` pointing to that writable Codex profile. By default the
+check uses a disposable client profile and does not change the current chat's
+configuration. Alternatively provide an existing access token through
+`GREGALE_MCP_ACCESS_TOKEN`; tokens are never put in command arguments or reports.
+Claude Desktop acceptance uses the stdio configuration above and still needs a
+machine with that client installed. Passing fixture acceptance is protocol
+compatibility evidence, not a live-account or production deployment certificate.
+
+The hosting commands below manage your own MCP applications.
+
+## Host an MCP server on Gregale
 
 The MCP hosting profile is preview for stateless servers that advertise at least
 one MCP catalog: tools, resources (including resource templates), or prompts.
@@ -1234,3 +1795,320 @@ the journal before retrying: replacement may already have happened. Existing
 version-1 journals without a revision remain readable and receive a revision on
 their next save. Temporary `.mcp-release-*` files left by an interrupted process
 are ignored; the journal remains the recovery source of truth.
+
+For native management deployment acceptance, see the
+[nonproduction KVM harness](ops/management-mcp-native-acceptance.md).
+
+## Watch one rollout
+
+`gregale_watch_rollout` accepts `app`, `deployment_id`, optional `project` and
+`environment`, and `wait_seconds` (1–45; default 20, shortened by the connection's
+per-tool deadline). It polls passive API observations and returns the last valid
+snapshot with `watch_timed_out: true` when the observation budget expires. It
+never probes customer endpoints, changes traffic or invokes recovery.
+
+The response separates `accepted` (the exact deployment exists), `live`
+(artifact lifecycle), `healthy` (fresh healthy observations attributed solely to
+that serving deployment), and `completed`. Current request releases require
+100% traffic, completed native rollout state and fresh health. Services also
+require a completed promote handoff with no missing gateway acknowledgements;
+an absent handoff cannot establish completion. Workers require the selected
+running generation with no starting, draining or retired resident rows;
+`completion_basis` explicitly limits this to residency, not queue processing,
+delivery acknowledgements or desired replica counts. A queued/running build
+cannot establish completion. Historical releases are not reported completed.
+
+`basis: sequential_passive_reads` means these independently collected facts are
+not an atomic snapshot. `blockers` contains fixed identifiers and `next_read`
+names a read-only tool. Build progress and native handoff details stay in their
+own fields; acceptance is not successful serving readiness. Malformed or
+cross-environment responses fail closed, rather than falling back to aggregates.
+
+For progress-capable clients, add `_meta: {"progressToken": "watch-123"}` to
+`tools/call` parameters alongside `name` and `arguments`. The token is a finite
+number or nonempty UTF-8 string of at most 128 bytes. Progress is opt-in; ordinary
+calls keep the same bounded response.
+
+The server sends standard `notifications/progress` for the initial validated state
+and subsequent changes, with strictly increasing update numbers and no total.
+These numbers count observations that changed, not percent completion. The JSON
+message summarizes build status, readiness counts, service handoff/binding state
+and worker residency. It contains no logs, raw errors or gateway/resource names.
+Counts are bounded at one million. Unchanged states emit no heartbeat; a watch
+sends at most 46 updates and starts no background subscription. The final tool
+result remains authoritative for timeout and native completion semantics.
+
+Cancel the MCP call to stop its observation and in-flight API reads. HTTP watches
+use MCP 2026-07-28 or later for request-disconnect cancellation; legacy stateless
+HTTP clients can stop waiting, while server observation ends at the bounded watch
+deadline. Stdio cancellation uses its existing request session. This leaves
+the underlying deployment/build running; stopping a service rollout remains a
+separate reviewed action. Consent is rechecked before each emitted update, and
+notification or consent failures end the watch. Each notification has a bounded
+send context. Client display varies: the pinned Codex app-server accepts progress
+metadata on direct calls, while visible progress may depend on its calling interface.
+
+## Management resources and review prompts
+
+The management server advertises MCP resources and prompts as well as its tool
+catalog. These features are read-only even on a write-enabled connection.
+
+| Resource URI | Content |
+| --- | --- |
+| `gregale://context` | Consented connection/account metadata and capabilities; no credentials. |
+| `gregale://default/inventory` | First bounded page of consented apps; requires default read access. Use tools for pagination. |
+| `gregale://default/apps/{app}/release` | Safe app projection and current release review identities/hashes. |
+| `gregale://default/apps/{app}/health` | Scoped passive health observations. |
+| `gregale://default/apps/{app}/budgets` | Scoped operational summary, including inherited or overridden route-budget findings and bounded recovery metadata. |
+| `gregale://projects/{project}/environments/{environment}/inventory` | Consented workload/release inventory in one registered environment. |
+| `gregale://projects/{project}/environments/{environment}/apps/{app}/{view}` | Named versions of `release`, `health`, and `budgets`. |
+
+Resource templates advertise generic selectors, not unconsented app names.
+Reads validate consent and immutable identities before and after collection,
+reuse existing safe projections/redaction and bound the serialized response.
+Canonical `gregale://` URIs cannot contain credentials, query strings, fragments,
+encoded path segments or arbitrary external endpoints. Resource writes are not
+exposed; subscription polling requires an explicit request as described below.
+Resource contents and API descriptions
+remain untrusted application data, not instructions.
+
+`gregale_deployment_review`, `gregale_rollout_diagnosis`, and
+`gregale_rollback_review` return scoped review recipes with exact resource URIs
+and existing guarded tool guidance. All require `app`; named selectors also
+require `project` and `environment`. Diagnosis/rollback require an exact
+`deployment_id` belonging to that app and scope. Unknown arguments are rejected.
+Retrieving a prompt reads identity context but creates no release plan, applies
+no change and grants no additional permission. Protected promotions still need
+native human browser approval. A source rebuild is not an identical artifact
+restore; worker residency is not queue completion.
+
+The pinned Codex app-server API supports resource reads; prompt retrieval is
+verified through the standard MCP SDK in-memory and over OAuth HTTP for both
+supported protocol versions. Client UI exposure of prompts may vary.
+
+### Subscribe to scoped resource changes
+
+MCP 2026-07-28 clients can explicitly request `subscriptions/listen` with
+`notifications.resourceSubscriptions` containing canonical app `release`, `health`
+or `budgets` URIs from the table above. The server acknowledges the accepted set
+and reports `_meta.gregale_subscription_expires_at`. On a meaningful change, it
+sends `notifications/resources/updated` with the URI and subscription metadata;
+clients then reread that resource. Notifications contain no resource payloads.
+
+Limits are four distinct resources per stream, sixteen total reserved resources and
+eight streams per connection/grant, and four streams per SDK session. Each stream
+expires after at most two minutes; the OAuth access token, grant or credential may
+shorten it. Polling occurs every five seconds after the previous poll completes.
+Unchanged observations, observation clocks and moving-window timestamps stay quiet;
+health freshness expiry remains a meaningful change. Multiple publishers coalesce
+per recipient. These sampled updates can miss intermediate transitions and provide
+no durable event cursor.
+
+Unsubscribe, cancel or disconnect to stop the listen. A recreated app/environment,
+consent failure, API failure or revoked grant closes the affected stream and stops
+its reads. No subscription survives a bridge restart. Renew explicitly after expiry;
+with the Go SDK, call `Unsubscribe` before `Subscribe` again for the same URI.
+Context and inventory resources are not subscribable, and discovery alone starts
+no polling. Watches use the same customer API permissions and never wake VMs.
+
+Legacy clients retain resource reads and do not advertise subscription support.
+The pinned Codex app-server offers resource reads but has no resource-subscribe
+method; its event-stream API is separate. Resource subscription delivery is verified
+with modern SDK clients over session and stateless HTTP transports.
+
+### Complete prompt and resource arguments
+
+Clients that support MCP `completion/complete` can request prefix suggestions for
+Gregale's three review prompts and seven resource templates. Suggestions cover
+`app`, `project` and `environment`; diagnosis and rollback prompts also complete
+`deployment_id`. Resource references use the exact URI **template** returned by
+`resources/templates/list`, including `{app}` placeholders, rather than a resolved URI.
+
+Send previously selected values in `context.arguments`. Named-resource app suggestions
+require both project and environment. Deployment suggestions require an app and,
+for named scope, both project and environment. Project and environment suggestions
+revalidate the connection's consented identities; app suggestions exclude workloads
+outside consent. Completion is read-only and grants no additional access.
+
+Results are sorted, deduplicated, case-sensitive literal prefix matches with at most
+100 values. Deployment completion examines one recent history page and filters it
+to the selected scope. `hasMore` indicates additional values or unexamined history;
+`total` is omitted when the result is incomplete. Use deployment-history tools to
+search older pages. Empty suggestions can mean the selector is incomplete or the
+prefix has no matches. Unknown references and malformed arguments are rejected.
+Client interfaces may not expose completion even when ordinary MCP reads work.
+
+### Concurrent requests and overload
+
+Each stdio management connection or remote OAuth grant allows eight concurrent
+short requests and two concurrent `gregale_watch_rollout` calls. All HTTP requests
+and SDK sessions for the same grant share these limits. Separate grants have
+independent capacity. These bridge limits do not change Gregale plan quotas.
+
+Short requests include ordinary tools, resource reads, prompt retrieval and
+argument completion. Subscription baseline reads, polls and notification-recipient
+checks use the same short capacity; idle subscription streams do not. A busy
+subscription poll is skipped, and pending changes can notify after capacity returns.
+The existing subscription lifetime and stream limits still apply.
+
+Admission has no queue. Saturation returns `mcp_busy`, `status: 429` and
+`retry_after_seconds: 1` before any customer API call. Tools return `isError`;
+other methods return an RPC error with sanitized diagnostics. The diagnostic
+status does not imply an HTTP 429 response. Retry after at least one second with
+jitter. For mutations, reuse the same plan ID to preserve retry safety.
+
+Completion, failure, deadlines and cancellation release capacity when the handler
+exits. Modern HTTP clients propagate disconnection to active short reads, watches
+and listens; legacy clients may hold capacity until the bounded handler deadline.
+Discovery, initialization, ping and control notifications remain available during
+overload, including cancellation and unsubscribe. Capacity is per grant/process;
+these limits do not replace gateway controls for aggregate traffic.
+
+### Observe management MCP operations
+
+Enable a private Prometheus listener for either transport:
+
+```sh
+gregale mcp serve --transport stdio --metrics-listen 127.0.0.1:8788
+curl http://127.0.0.1:8788/metrics
+```
+
+`--metrics-listen` is optional and disabled by default. It accepts a literal
+loopback IP and port, including `[::1]:8788`; wildcard addresses, public IPs and
+hostnames are rejected. The metrics listener is separate from the OAuth/MCP
+endpoint, has bounded HTTP timeouts, and closes when the serving command exits.
+Startup diagnostics go to stderr, preserving stdio protocol output.
+
+| Metric | Meaning |
+|---|---|
+| `gregale_management_mcp_requests_total` | Completed requests/snapshots by fixed `operation`, registered `tool` (or `none`/`unknown`), and `outcome`. |
+| `gregale_management_mcp_request_duration_seconds` | Handler-duration histogram by operation/tool, including validation and customer API reads. |
+| `gregale_management_mcp_active` | Aggregate reservations by `kind`: `short_requests`, `rollout_watches`, `listen_streams`, `resource_slots`. |
+| `gregale_management_mcp_resource_updates_total` | Invalidation notifications successfully sent to individual recipients. |
+
+Outcomes are `success`, `error`, `busy`, `cancelled` and `timeout`. Tool results
+with `isError` count as failures even when their RPC completed successfully.
+Operations cover tools, resources, prompts, completions, listen RPCs and
+`subscription/read` snapshots. Snapshots include baselines, polls and recipient
+checks; busy skips are counted. Listen duration includes its lifetime, and listen
+outcomes follow the SDK RPC result rather than asserting a termination cause.
+
+Metrics aggregate all grants in this process and reset on restart. They contain
+no app/project/environment/account/grant identifiers, URIs, arguments, logs,
+credentials, arbitrary error codes or resource contents. No global Go/process
+collectors are registered. Gauges include setup/cleanup reservations; sent
+notifications do not prove client processing or rereads.
+
+For overload, inspect the rate of requests with `outcome="busy"` alongside active
+short requests and watches. For slow operations, compare histogram latency by
+operation/tool; watch and listen lifetimes are expected to exceed ordinary reads.
+Scrape this listener locally. Embedders can share `mcpmanagement.NewTelemetry()`
+through server options and mount its `Handler()` on their own private listener.
+
+To verify the CLI listener against an isolated local API fixture without customer
+writes, run `python3 scripts/ops/management-mcp-metrics-acceptance.py --gregale-binary /path/to/gregale`.
+It checks bind validation, protocol framing, private labels and listener cleanup.
+
+### Restart and drain the management bridge
+
+SIGTERM and SIGINT stop new MCP work, cancel read-only observations, rollout
+watches and subscriptions, and give accepted mutations five seconds to finish.
+Remaining work is then canceled, with up to five more seconds for cleanup.
+HTTP listener shutdown runs concurrently; stalled connections are force-closed
+at the grace deadline. Stdio keeps the transport alive through handler drain.
+Client disconnection can still cancel its own request earlier.
+
+New MCP work on an existing session returns `mcp_draining` with status 503 and
+retry guidance. New HTTP requests receive HTTP 503 and `Retry-After: 1`.
+Drain cancels subscription polling workers and waits for handlers and the final
+HTTP journal commit before releasing the encrypted state's single-writer lease.
+If cleanup cannot finish, the command reports failure and retains that lease
+until process exit. Successful cleanup leaves active-capacity gauges at zero;
+the metrics listener remains available during drain and closes on exit.
+
+Cancellation does not undo native operations already accepted by Gregale. For an
+ambiguous remote mutation, restart with the same state/key files and retry the
+same plan ID. Plans and grants retain their original expiry and consent checks.
+Ephemeral stdio plans do not survive restart. Subscriptions always require explicit
+resubscription after reconnect. Shutdown does not revoke the account's native keys.
+
+Library embedders can share `mcpmanagement.NewLifecycle()` through `Options` and
+`HTTPOptions`, call `Shutdown(graceContext)`, and close their state only after
+successful cleanup. Use a fresh coordinator when restarting; drained instances
+never admit new work again.
+
+Run `python3 scripts/ops/management-mcp-drain-acceptance.py --gregale-binary /path/to/gregale`
+for isolated CLI SIGTERM, native-read cancellation, metrics cleanup and encrypted
+state reopening checks. SDK tests additionally cover mutation grace, lost replies,
+durable retry keys and journal commits during drain.
+
+### Inspect and revoke agent connections locally
+
+For an HTTP management bridge, enable `--admin-socket /path/to/private/control.sock`.
+Its parent directory must already exist, be owned by the bridge user with mode
+0700, and contain no symlink components. The bridge creates a mode-0600 Unix socket
+and refuses any existing path. The flag is disabled by default and requires HTTP
+transport; the public OAuth/MCP listener has no connection-management routes.
+
+Run these commands as the bridge owner; no customer API key or agent token is needed:
+
+```sh
+gregale mcp connections list --socket /path/to/private/control.sock
+gregale mcp connections list --socket /path/to/private/control.sock --limit 10 --offset 10
+gregale mcp connections revoke --socket /path/to/private/control.sock --grant-id gmcp_grant_example
+```
+
+Commands print JSON. Listing shows active grant/client/account IDs, consent scopes,
+expiry, default-write access, selected apps, and named/writable environments. Lists
+are sorted snapshots with `next_offset` when applicable. Selector arrays include at
+most twenty entries, plus full counts and truncation flags. The page size defaults
+to twenty and accepts 1–100; overly large metadata pages require a smaller limit.
+Keys, tokens, hashes, browser codes and resource contents are excluded.
+
+Revocation stops the selected grant's active requests, watches and subscriptions,
+including requests authenticated before revocation. Other grants remain usable.
+A success response includes `durable: true` only after the encrypted OAuth snapshot
+is committed. Without state files, it returns `durable: false`. Unknown or already
+revoked grant IDs return 404. Storage failure returns 503 and disables further
+bridge access until repaired; failed revocation is not reported as durable success.
+
+Revocation does not revoke native account API keys or undo operations Gregale has
+already accepted. Inspect native deployment state before issuing replacement plans
+for an ambiguous operation. A revoked agent must reconnect and review new consent.
+Both HTTP listeners participate in bounded draining, and normal exit removes the
+owned socket. After an abnormal exit, verify a remaining socket is stale before
+removing it; the bridge never overwrites it automatically.
+
+Library embedders can use `NewHTTPService` for separate `Handler()` and
+`AdminHandler()` endpoints and `ListenAdminSocket` for the protected listener.
+The admin handler belongs on a private owner-controlled endpoint. CI runs
+`management-mcp-admin-acceptance.py` for socket permissions, CLI access, public
+isolation, collision protection and cleanup; SDK tests cover scoped revocation and
+restart persistence.
+
+### Authorization expiry during a request
+
+Remote MCP requests are bounded by the earliest expiry of their presented access
+token, OAuth grant and native credential. The bridge applies that bound during
+account verification and throughout tools, resources, prompts, completions,
+rollout watches and subscriptions. It rechecks token membership, revocation and
+expiry after account verification before dispatching work.
+
+This applies to legacy and current MCP HTTP clients. Expiry cancels active native
+reads and handlers and releases capacity during cleanup, without waiting for
+another request to trigger pruning. Existing request/watch timeouts can end an
+observation earlier. Local stdio keeps its existing timeout behavior.
+
+Refresh authorizes subsequent requests; it cannot extend one already running under
+an older token. A rejected or expired verification gets the OAuth 401 challenge.
+Work that expires after dispatch follows existing timeout/cancellation diagnostics.
+Access-token expiry alone does not revoke an otherwise refreshable grant.
+
+Expiry does not undo native operations already accepted by Gregale. After an
+ambiguous durable mutation, refresh authorization and retry the same plan ID while
+its grant and plan are still valid. Expired grants or native credentials require
+renewal and consent checks. The bridge may finish journal cleanup after request
+expiry to retain its attempt/retry key; that cleanup grants no new API access.
+SDK checks cover all read views in legacy/current HTTP, verification races,
+refresh isolation, grant/credential expiry and a lost mutation reply with one native
+write after restart and retry.

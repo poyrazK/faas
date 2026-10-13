@@ -591,6 +591,19 @@ type AppEnv struct {
 	Scope     string
 }
 
+type AppEnvironmentRouteBudget struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Scope         string
+	ProjectID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Inherit       bool
+	Enabled       bool
+	Revision      int64
+	Routes        []byte
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AppEnvironmentSecretRef struct {
 	AccountID     pgtype.UUID
 	ProjectID     pgtype.UUID
@@ -2646,6 +2659,15 @@ type EnvironmentQualificationSnapshotReceipt struct {
 	Snapshot   []byte
 	Inputs     []byte
 	RecordedAt pgtype.Timestamptz
+}
+
+type EnvironmentRouteBudgetReceipt struct {
+	AccountID   pgtype.UUID
+	RequestID   pgtype.UUID
+	AppID       pgtype.UUID
+	RequestHash string
+	Response    []byte
+	CreatedAt   pgtype.Timestamptz
 }
 
 type EnvironmentWorkloadGraph struct {

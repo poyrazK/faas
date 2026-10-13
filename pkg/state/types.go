@@ -2293,6 +2293,12 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// Admission metadata only: checked under the parent lock, never persisted.
+	ExpectedReview      *api.AppReleaseReview `json:"-"`
+	ReviewedRolloutMode string                `json:"-"`
+	StagedReview        *api.AppReleaseReview `json:"-"`
+	// ReviewedSettings is resolved by apid, then frozen on first named staging.
+	ReviewedSettings *ProjectEnvironmentWorkloadSettings `json:"-"`
 	// EnvironmentWorkloadRuntime freezes reviewed, scoped inputs for a held
 	// GitOps candidate. It remains attached after activation so serving runtime
 	// configuration is preserved; it is internal metadata, never a receipt.

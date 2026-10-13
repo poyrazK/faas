@@ -630,8 +630,21 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 // createImageDeployment keeps published-image triggers on normal deployment
 // admission and notification behavior. Only triggers assign a durable identity.
 func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, limits api.Limits, req api.CreateDeploymentRequest, published bool) {
+	if p := validateReviewedStage(req); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if p := s.applyDeploymentEnvironment(r.Context(), acct, app, &req); p != nil {
 		api.WriteProblem(w, p)
+		return
+	}
+	app, reviewedSettings, reviewProblem := s.reviewedEnvironmentApp(w, r, acct, app, req)
+	if reviewProblem != nil {
+		api.WriteProblem(w, reviewProblem)
+		return
+	}
+	if req.NativeRollout != "" && app.Manifest.ExecutionMode != req.NativeRollout {
+		api.WriteProblem(w, api.ErrValidation("native_rollout must match the reviewed target execution mode"))
 		return
 	}
 	var publishedPrevious state.Deployment
@@ -755,6 +768,9 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	// server-resolved and never client-supplied; the
 	// closed-set CHECK on deployed_via (migration 00303) rejects
 	// any out-of-set value the helper chain might emit.
+	dep.ExpectedReview = req.ExpectedReview
+	dep.ReviewedRolloutMode = req.NativeRollout
+	dep.ReviewedSettings = reviewedSettings
 	stampDeploymentActor(&dep, acct, r)
 	if !s.admitAccountDeploy(w, r, acct) {
 		return
@@ -775,6 +791,9 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		d, err = s.store.CreateDeployment(r.Context(), dep)
 	}
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		if published && errors.Is(err, state.ErrConflict) && s.replyPublishedImageReplay(w, r, app, req) {
 			return
 		}
@@ -930,6 +949,9 @@ func (s *server) appResponseWithContext(ctx context.Context, a state.App, plan a
 			User:                         a.Manifest.User,
 			ExecutionMode:                a.Manifest.ExecutionMode,
 			RestartPolicy:                a.Manifest.RestartPolicy,
+			StopSignal:                   a.Manifest.StopSignal,
+			StopGracePeriod:              time.Duration(a.Manifest.StopGracePeriodS) * time.Second,
+			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
 			Profiling:                    a.Manifest.Profiling,

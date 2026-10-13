@@ -48,7 +48,24 @@ func mcpCLICommand() cliCommand {
 			taskWaitFlags[i].Short = "total task wait timeout (default 5m)"
 		}
 	}
-	return cliCommand{Name: "mcp", DocSlug: "mcp", Short: "Scaffold, deploy and verify stateless MCP servers", Subcommands: []cliSub{
+	return cliCommand{Name: "mcp", DocSlug: "mcp", Short: "Connect agents to Gregale, or scaffold and deploy MCP servers", Subcommands: []cliSub{
+		{Name: "serve", Short: "Expose Gregale management tools over stdio or OAuth HTTP", Flags: []cliFlag{
+			{Name: "transport", Short: "management MCP transport (default stdio)", Value: "TRANSPORT", ClosedSet: []string{"stdio", "streamable-http"}},
+			{Name: "timeout", Short: "per-tool API timeout (default 30s, maximum 1m)", Value: "DURATION"},
+			{Name: "allow-writes", Short: "enable reviewed deploy, promotion, and rollback actions", Bool: true},
+			{Name: "listen", Short: "HTTP listen address behind TLS proxy (default 127.0.0.1:8787)", Value: "ADDR"},
+			{Name: "resource-url", Short: "public HTTPS URL ending in /mcp (required for HTTP)", Value: "URL"},
+			{Name: "oauth-onboarding", Short: "remote onboarding (default browser)", Value: "MODE", ClosedSet: []string{"browser", "api-key"}},
+			{Name: "state-file", Short: "private encrypted remote state file", Value: "PATH"},
+			{Name: "admin-socket", Short: "optional owner-protected Unix socket for listing and revoking HTTP grants", Value: "PATH"},
+			{Name: "metrics-listen", Short: "optional literal loopback IP:port for private management MCP Prometheus metrics", Value: "ADDR"},
+			{Name: "state-key-file", Short: "independent private 32-byte state encryption key file", Value: "PATH"},
+			{Name: "oauth-redirect-uri", Short: "allowed OAuth callback; repeat; omit loopback HTTP port for ephemeral ports", Value: "URI"},
+		}, Examples: []string{"gregale mcp serve --transport stdio", "gregale --profile staging mcp serve --timeout 15s"}},
+		{Name: "connections", Short: "Inspect or revoke agent grants through a local operator socket", Subcommands: []cliSub{
+			{Name: "list", Short: "List bounded connection metadata without credentials", Flags: []cliFlag{{Name: "socket", Short: "owner-protected management control socket", Value: "PATH", Req: true}, {Name: "limit", Short: "page size from 1 to 100 (default 20)", Value: "N"}, {Name: "offset", Short: "non-negative page offset", Value: "N"}}},
+			{Name: "revoke", Short: "Revoke one exact bridge grant and stop its observations", Flags: []cliFlag{{Name: "socket", Short: "owner-protected management control socket", Value: "PATH", Req: true}, {Name: "grant-id", Short: "exact active bridge grant ID to revoke", Value: "ID", Req: true}}},
+		}},
 		{Name: "init", Short: "Create a Node, Go, or Python MCP starter", Flags: []cliFlag{{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true}, {Name: "language", Short: "starter language (default node)", Value: "LANGUAGE", ClosedSet: []string{"node", "go", "python"}}}, Examples: []string{"gregale mcp init --path ./my-mcp", "gregale mcp init --language go --path ./my-mcp-go", "gregale mcp init --language python --path ./my-mcp-python"}},
 		{Name: "deploy", Short: "Deploy the worktree, enable streaming and verify MCP discovery", Flags: []cliFlag{{Name: "path", Short: "source directory (default .)", Value: "DIR"}, {Name: "name", Short: "app slug", Value: "SLUG", Req: true}, {Name: "profile", Short: "app resource profile", Value: "NAME", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}}, {Name: "token-env", Short: "client token for external OAuth verification", Value: "ENV"}, {Name: "secrets-file", Short: "sealed app secrets", Value: "PATH"}, {Name: "timeout", Short: "deployment wait timeout in seconds (default 1200)", Value: "SECONDS"}}, Examples: []string{"gregale mcp deploy --path ./my-mcp --name my-mcp --profile small"}},
 		{Name: "doctor", Short: "Check discovery, Origin rejection, compatibility and optional streaming", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp doctor --app my-mcp --legacy --stream-tool stream_demo"}},

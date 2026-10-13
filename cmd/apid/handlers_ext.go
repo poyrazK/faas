@@ -2207,10 +2207,20 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	}
 	prev := d.TrafficPercent
 	var updated state.Deployment
+	if req.ExpectedReview != nil && (req.TrafficPercent != 100 || req.ExpectedServingDeploymentID == nil || req.ExpectedReview.AppID != app.ID || req.ExpectedReview.Scope != d.Scope || req.ExpectedReview.EnvironmentID == "") {
+		api.WriteProblem(w, api.ErrValidation("reviewed promotion requires the exact named environment at 100% traffic and a serving guard"))
+		return
+	}
 	var gateProblem *api.Problem
 	gateProblem, err = s.withBindingReleaseTraffic(r, acct, app, d, req.TrafficPercent, func(ctx context.Context) error {
 		var writeErr error
-		if req.ExpectedServingDeploymentID != nil {
+		if req.ExpectedReview != nil {
+			store, ok := s.store.(state.ReviewedTrafficStore)
+			if !ok {
+				return state.ErrReleaseReviewChanged
+			}
+			updated, writeErr = store.UpdateDeploymentTrafficReviewed(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID, *req.ExpectedReview)
+		} else if req.ExpectedServingDeploymentID != nil {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent, *req.ExpectedServingDeploymentID)
 		} else {
 			updated, writeErr = s.store.UpdateDeploymentTraffic(ctx, id, req.TrafficPercent)
@@ -2222,6 +2232,9 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if err != nil {
+		if writeReleaseReviewError(w, err) {
+			return
+		}
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such deployment")
@@ -5802,6 +5815,7 @@ func (s *server) deploymentResponse(d state.Deployment, app state.App) api.Deplo
 		len(d.OverrideReadinessProbe) > 0 ||
 		len(d.OverrideMainDependsOn) > 0
 	resp := api.DeploymentResponse{
+		StagedReview:      d.StagedReview,
 		StageState:        append(json.RawMessage(nil), d.StageState...),
 		ID:                d.ID,
 		AppID:             d.AppID,

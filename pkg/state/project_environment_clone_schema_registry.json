@@ -484,6 +484,22 @@
     "kind": "operational"
   },
   {
+    "table": "app_environment_route_budgets",
+    "kind": "configuration",
+    "columns": [
+      "account_id",
+      "app_id",
+      "enabled",
+      "environment_id",
+      "inherit",
+      "project_id",
+      "revision",
+      "routes",
+      "scope",
+      "updated_at"
+    ]
+  },
+  {
     "table": "app_environment_secret_ref_suppressions",
     "columns": [
       "account_id",
@@ -3049,6 +3065,18 @@
       "snapshot"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "environment_route_budget_receipts",
+    "kind": "operational",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "request_hash",
+      "request_id",
+      "response"
+    ]
   },
   {
     "table": "environment_workload_graphs",

@@ -100,6 +100,10 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 	// text and jsonb writes downstream both reject (SQLSTATE 22021 / 22P02),
 	// rolling back the recovery this endpoint exists to perform.
 	req.Reason = safetext.Truncate(req.Reason, api.AuditReasonMaxBytes)
+	if req.ExpectedReview != nil && (req.DeploymentID == "" || req.ExpectedPredecessorDeploymentID == "" || req.Action != "abort") {
+		api.WriteProblem(w, api.ErrValidation("reviewed recovery requires exact abort selectors"))
+		return
+	}
 	if req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "" {
 		s.recoverPinnedCanaryRollout(w, r, acct, app, req)
 		return

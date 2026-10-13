@@ -2264,8 +2264,27 @@ type Companions = Sidecars
 
 // CreateDeploymentRequest ships a version (JSON variant; the multipart
 // variant is used for tarball/dockerfile deploys).
+// AppReleaseReview binds a candidate insert to an observed app configuration,
+// exact latest revision and serving set. Empty latest/serving require none.
+type AppReleaseReview struct {
+	Scope                string   `json:"scope,omitempty"`
+	ProjectID            string   `json:"project_id,omitempty"`
+	EnvironmentID        string   `json:"environment_id,omitempty"`
+	WorkloadRevision     int64    `json:"workload_revision,omitempty"`
+	WorkloadConfigHash   string   `json:"workload_config_hash,omitempty"`
+	Protected            bool     `json:"protected,omitempty"`
+	AppID                string   `json:"app_id"`
+	ConfigurationHash    string   `json:"configuration_hash"`
+	LatestDeploymentID   string   `json:"latest_deployment_id"`
+	ServingDeploymentIDs []string `json:"serving_deployment_ids"`
+}
+
 type CreateDeploymentRequest struct {
-	Image string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
+	// ExpectedReview is checked atomically before staging or admitting a native rollout.
+	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
+	// NativeRollout selects reviewed service or worker activation. Traffic must be omitted.
+	NativeRollout string `json:"native_rollout,omitempty"`
+	Image         string `json:"image,omitempty"` // registry.gregale.dev/...@sha256:...
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -3051,6 +3070,8 @@ type ListDeploymentAuditResponse struct {
 
 // DeploymentResponse is a deployment as returned by the API.
 type DeploymentResponse struct {
+	// StagedReview is the intent snapshot committed with a reviewed candidate.
+	StagedReview           *AppReleaseReview                     `json:"staged_review,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
@@ -3481,7 +3502,8 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	TrafficPercent int `json:"traffic_percent"`
+	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
+	TrafficPercent int               `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
 }
@@ -6354,12 +6376,18 @@ type RouteRow struct {
 // total bridge failure. Single-box development retains the loopback gateway
 // control endpoint when Prometheus is not configured.
 type AppRoutesResponse struct {
-	Slug               string   `json:"slug"`
-	AppID              string   `json:"app_id,omitempty"`
-	Routes             []string `json:"routes"`
-	Source             string   `json:"source"`
-	CollectorsExpected int      `json:"collectors_expected"`
-	CollectorsHealthy  int      `json:"collectors_healthy"`
+	Scope              string     `json:"scope,omitempty"`
+	ProjectID          string     `json:"project_id,omitempty"`
+	EnvironmentID      string     `json:"environment_id,omitempty"`
+	Coverage           string     `json:"coverage,omitempty"`
+	WindowStart        *time.Time `json:"window_start,omitempty"`
+	WindowEnd          *time.Time `json:"window_end,omitempty"`
+	Slug               string     `json:"slug"`
+	AppID              string     `json:"app_id,omitempty"`
+	Routes             []string   `json:"routes"`
+	Source             string     `json:"source"`
+	CollectorsExpected int        `json:"collectors_expected"`
+	CollectorsHealthy  int        `json:"collectors_healthy"`
 	// CapHit is true when a collector emitted __route_other__ or the fleet
 	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
 	// unavailable, where cap state is unknown.
@@ -6814,9 +6842,14 @@ type ProjectApplyRequest struct {
 // reserved for future wire shapes (zipball, git bundle); v1
 // only ships "tarball". Empty Format defaults to "tarball".
 type SourceRefDeployRequest struct {
-	Repo   string `json:"repo"`
-	Ref    string `json:"ref"`
-	Format string `json:"format,omitempty"`
+	// ExpectedSource opts into commit-pinned reviewed staging or native rollout.
+	// Repository declarations are not applied in this mode.
+	ExpectedSource *SourceReviewResponse `json:"expected_source,omitempty"`
+	// NativeRollout requires ExpectedSource and omitted traffic for service/worker activation.
+	NativeRollout string `json:"native_rollout,omitempty"`
+	Repo          string `json:"repo"`
+	Ref           string `json:"ref"`
+	Format        string `json:"format,omitempty"`
 	// SourceBranch associates an immutable commit ref with the branch that
 	// triggered a GitHub Actions push. The server verifies this branch still
 	// points at the commit and carries the provenance through final promotion.
@@ -11802,6 +11835,8 @@ func AllowedRecoverRolloutAction(v string) bool {
 //     serving siblings regain the residual weight. Exact recovery restores
 //     the selected predecessor to 100%. Requires an active rollout.
 type RecoverRolloutRequest struct {
+	// ExpectedReview is an optional atomic guard for exact service recovery.
+	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
 	// Action is the closed-set verb ∈ {advance, promote, abort}.
 	Action string `json:"action"`
 	// Reason is a free-form operator note captured into the
@@ -12537,9 +12572,11 @@ type EventReceiptRecoveryAction struct {
 	Body   *ReplayEventFanoutFailureRequest `json:"body,omitempty"`
 }
 
-// AppHealthResponse describes observed default-scope HTTP serving health.
+// AppHealthResponse describes observed HTTP serving health in one scope.
 // Unknown evidence is explicit; this is not an uptime or reachability guarantee.
 type AppHealthResponse struct {
+	ProjectID            string             `json:"project_id,omitempty"`
+	EnvironmentID        string             `json:"environment_id,omitempty"`
 	AppID                string             `json:"app_id"`
 	Status               string             `json:"status"`
 	Phase                string             `json:"phase"`
