@@ -178,7 +178,9 @@ func TestOperationApprovalRejectionFailsWithoutReconciliation(t *testing.T) {
 		if _, err := f.decide(context.Background(), waiting, api.OperationApproverAccount, api.OperationApprovalRejected); err != nil {
 			t.Fatal(err)
 		}
-		done := f.drive(t, op.ID, "rejection", func(op state.Operation) bool { return op.State.Terminal() || op.State == api.OperationRequiresReconciliation })
+		done := f.drive(t, op.ID, "rejection", func(op state.Operation) bool {
+			return op.State.Terminal() || op.State == api.OperationRequiresReconciliation
+		})
 		if done.State != api.OperationFailed || done.FailureCode != api.OperationFailureApprovalDenied || f.finished.Load() != 0 {
 			t.Fatalf("rejected approval settled %s %q finished=%d", done.State, done.FailureCode, f.finished.Load())
 		}
@@ -190,7 +192,9 @@ func TestOperationApprovalExpiresWithoutReconciliation(t *testing.T) {
 		f := waitOperationSetup(t, store, api.OperationApproverAccount, time.Second)
 		op := f.start(t)
 		waiting := f.drive(t, op.ID, "approval wait", waitingFor(api.OperationWaitApproval, "review"))
-		done := f.drive(t, op.ID, "expiry", func(op state.Operation) bool { return op.State.Terminal() || op.State == api.OperationRequiresReconciliation })
+		done := f.drive(t, op.ID, "expiry", func(op state.Operation) bool {
+			return op.State.Terminal() || op.State == api.OperationRequiresReconciliation
+		})
 		if done.State != api.OperationFailed || done.FailureCode != api.OperationFailureApprovalExpiry || f.finished.Load() != 0 {
 			t.Fatalf("expired approval settled %s %q", done.State, done.FailureCode)
 		}
