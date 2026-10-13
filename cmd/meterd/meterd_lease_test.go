@@ -39,8 +39,8 @@ func TestMeterdLeaseStandbyWaitsForHolder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if standby, _, err := acquireMeterdLease(ctx, store, log); err == nil {
-		standby.Release()
+		standby.Release(context.Background())
 		t.Fatal("a second meterd acquired the lease while the first held it")
 	}
-	active.Release()
+	active.Release(context.Background())
 }

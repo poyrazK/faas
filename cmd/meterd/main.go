@@ -844,9 +844,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 			return fmt.Errorf("meterd: acquire meterd lease: %w", err)
 		}
 		meterdHold, stopStandbyWatchdog = hold, stop
-		defer hold.Release()
+		defer hold.Release(ctx)
 		defer stop()
-		ctx = hold.Context()
+		leaseCtx, endLease := hold.Scope(ctx)
+		defer endLease()
+		ctx = leaseCtx
 	}
 	pn := db.PoolNotifier{Pool: pool}
 

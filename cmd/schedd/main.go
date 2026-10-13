@@ -484,9 +484,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) (runErr er
 			return fmt.Errorf("schedd: acquire central-scheduler lease: %w", err)
 		}
 		centralHold, stopStandbyWatchdog = hold, stop
-		defer hold.Release()
+		defer hold.Release(ctx)
 		defer stop()
-		ctx = hold.Context()
+		leaseCtx, endLease := hold.Scope(ctx)
+		defer endLease()
+		ctx = leaseCtx
 	}
 
 	// Issue #97 / ADR-025 axis 3: enumerate the active compute_nodes

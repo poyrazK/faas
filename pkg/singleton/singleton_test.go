@@ -230,13 +230,13 @@ func TestAcquireWaitsAsStandbyUntilRelease(t *testing.T) {
 		t.Fatal("standby acquired a held lease")
 	case <-time.After(3 * fastTimings.RenewEvery):
 	}
-	ha.Release()
+	ha.Release(context.Background())
 	if ha.Lost() || ha.Context().Err() == nil {
 		t.Fatalf("released holding: lost=%v ctxErr=%v", ha.Lost(), ha.Context().Err())
 	}
 	select {
 	case hb := <-got:
-		defer hb.Release()
+		defer hb.Release(context.Background())
 		if hb.Epoch() <= ha.Epoch() {
 			t.Fatalf("standby epoch %d not above %d", hb.Epoch(), ha.Epoch())
 		}
@@ -255,7 +255,7 @@ func TestHoldingContextEndsWithErrLeaseLostOnPartition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer h.Release()
+	defer h.Release(context.Background())
 	store.cut.Store(true)
 	select {
 	case <-h.Context().Done():

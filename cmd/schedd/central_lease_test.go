@@ -37,11 +37,11 @@ func TestCentralSchedulerLeaseStandbyWaitsForHolder(t *testing.T) {
 	defer cancel()
 	standby, _, err := acquireCentralSchedulerLease(ctx, store, log)
 	if err == nil {
-		standby.Release()
+		standby.Release(context.Background())
 		t.Fatal("a second central schedd acquired the lease while the first held it")
 	}
 	if ctx.Err() == nil {
 		t.Fatalf("standby returned %v before its context ended", err)
 	}
-	active.Release()
+	active.Release(context.Background())
 }

@@ -140,7 +140,7 @@ func (p *computeGatewayPool) snapshot(ctx context.Context) ([]computeGatewayEndp
 		out := append([]computeGatewayEndpoint(nil), p.endpoints...)
 		if !p.refreshing {
 			p.refreshing = true
-			go p.refreshInBackground()
+			go p.refreshInBackground(ctx)
 		}
 		p.mu.Unlock()
 		return out, nil
@@ -190,8 +190,10 @@ func (p *computeGatewayPool) logStaleLocked(err error) {
 // refreshInBackground re-reads the registry for a pool that is serving a
 // recent inventory. On failure it waits one TTL before the next attempt, so
 // an outage costs one registry read per TTL rather than one per request.
-func (p *computeGatewayPool) refreshInBackground() {
-	ctx, cancel := context.WithTimeout(context.Background(), computeGatewayRefreshTimeout)
+// The read outlives the request that started it, so it keeps parent's values
+// but not its cancellation.
+func (p *computeGatewayPool) refreshInBackground(parent context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), computeGatewayRefreshTimeout)
 	defer cancel()
 	_, err := p.refresh(ctx)
 	p.mu.Lock()

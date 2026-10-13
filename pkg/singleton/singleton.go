@@ -134,9 +134,11 @@ func (r *Runner) Run(ctx context.Context, work Work) error {
 		if err != nil {
 			return err
 		}
-		werr := work(h.Context(), h.Epoch())
+		workCtx, endWork := h.Scope(ctx)
+		werr := work(workCtx, h.Epoch())
+		endWork()
 		lost := h.Lost()
-		h.Release()
+		h.Release(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -216,6 +218,19 @@ type Holding struct {
 // parent context ends.
 func (h *Holding) Context() context.Context { return h.ctx }
 
+// Scope derives the context work should run under from the caller's own
+// context: it ends when parent ends or when this holding ends, carrying the
+// holding's cause (ErrLeaseLost when the lease was lost). Call the returned
+// function once the work has stopped.
+func (h *Holding) Scope(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	stop := context.AfterFunc(h.ctx, func() { cancel(context.Cause(h.ctx)) })
+	return ctx, func() {
+		stop()
+		cancel(context.Canceled)
+	}
+}
+
 // Epoch is the lease epoch this holding runs under.
 func (h *Holding) Epoch() int64 { return h.epoch }
 
@@ -228,8 +243,10 @@ func (h *Holding) Lost() bool {
 
 // Release stops renewing, ends the holding's context, and gives the lease up
 // in the database if it is still held, so a standby need not wait for
-// expiry. Safe to call more than once.
-func (h *Holding) Release() {
+// expiry. ctx scopes the release call; it may already be cancelled (a
+// shutdown), since the release ignores its cancellation and is bounded by
+// one renewal interval. Safe to call more than once.
+func (h *Holding) Release(ctx context.Context) {
 	h.mu.Lock()
 	if h.released {
 		h.mu.Unlock()
@@ -241,7 +258,7 @@ func (h *Holding) Release() {
 	<-h.done
 	h.cancel(context.Canceled)
 	if !h.Lost() {
-		h.r.release(h.epoch)
+		h.r.release(ctx, h.epoch)
 		h.r.changed(false, h.epoch)
 	}
 }
@@ -319,8 +336,10 @@ func (h *Holding) lose(reason string) {
 	h.r.changed(false, h.epoch)
 }
 
-func (r *Runner) release(epoch int64) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.timings.RenewEvery)
+func (r *Runner) release(parent context.Context, epoch int64) {
+	// The release must also run during shutdown, when parent is already
+	// cancelled; keep its values but not its cancellation.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), r.timings.RenewEvery)
 	defer cancel()
 	if err := r.store.ReleaseControlPlaneLease(ctx, r.name, r.holder, epoch); err != nil {
 		r.log.Warn("singleton: lease release failed; it will expire instead", "epoch", epoch, "err", err)
