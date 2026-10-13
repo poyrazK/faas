@@ -2375,10 +2375,12 @@ Save fixed guarded controls from one attention page
 
 Apply a reviewed fixed control plan with independent results
 
-`gregale events subscription-lineage-retry-control-plan-apply [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
+`gregale events subscription-lineage-retry-control-plan-apply [--report <PATH>] [--resume-report <PATH>] [--file <PATH>] [--timeout <DURATION>] <app> <subscription-id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--report <PATH>` | new private durable execution report |  |
+| `--resume-report <PATH>` | inspect prior report before retry; requires new --report |  |
 | `--file <PATH>` | reviewed plan; unchanged on apply |  |
 | `--timeout <DURATION>` | total duration (default 2m) |  |
 

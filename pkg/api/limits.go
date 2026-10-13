@@ -10428,3 +10428,4 @@ const EventExecutionLineageRetryRetentionWarning = 24 * time.Hour
 // Reviewed CLI control plans are fixed selections, independent of health sampling.
 const EventExecutionLineageControlPlanMaxJobs = 200
 const EventExecutionLineageControlPlanMaxBytes = 128 * 1024
+const EventExecutionLineageControlReportMaxBytes = 1024 * 1024

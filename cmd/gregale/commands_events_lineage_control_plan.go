@@ -26,6 +26,11 @@ func cmdEventsLineageControlPlan(args []string, apply bool, preflight ...bool) i
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum total duration")
 	var action, status, attention, after string
 	var limit int
+	var reportPath, resumePath string
+	if apply {
+		fs.StringVar(&reportPath, "report", "", "new private append-only execution report")
+		fs.StringVar(&resumePath, "resume-report", "", "previous execution report; requires a new --report")
+	}
 	if !apply && !checking {
 		fs.StringVar(&action, "action", "", "pause, resume or cancel")
 		fs.StringVar(&status, "status", "", "pending or paused; omit for both")
@@ -59,6 +64,16 @@ func cmdEventsLineageControlPlan(args []string, apply bool, preflight ...bool) i
 	if err != nil {
 		return printErr("Invalid control plan or selection", err)
 	}
+	var previous map[int]lineageControlPlanResult
+	if resumePath != "" {
+		if reportPath == "" {
+			return printErr("Invalid report options", fmt.Errorf("resume-report requires a new report destination"))
+		}
+		previous, err = readLineageControlPlanJournal(resumePath, plan)
+		if err != nil {
+			return printErr("Invalid execution report", err)
+		}
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -71,7 +86,16 @@ func cmdEventsLineageControlPlan(args []string, apply bool, preflight ...bool) i
 		return preflightLineageControlPlan(ctx, client, positional[0], plan, *file)
 	}
 	if apply {
-		return applyLineageControlPlan(ctx, client, positional[0], plan, *file)
+		var run lineageControlPlanRun
+		run.previous = previous
+		if reportPath != "" {
+			run.journal, err = newLineageControlPlanJournal(reportPath, plan)
+			if err != nil {
+				return printErr("Cannot create execution report", err)
+			}
+			defer run.journal.file.Close()
+		}
+		return applyLineageControlPlan(ctx, client, positional[0], plan, *file, run)
 	}
 	readCtx, readCancel := context.WithTimeout(ctx, api.EventSubscriptionControlTimeout)
 	page, err := client.ListEventExecutionLineageRetryJobs(readCtx, positional[0], sub.String(), status, after, limit, api.EventExecutionLineageRetryJobAttentionOptions{Attention: attention})

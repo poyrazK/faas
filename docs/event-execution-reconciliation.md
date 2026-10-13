@@ -1115,3 +1115,30 @@ The job and receipt reads are separate observations. State, receipt capacity and
 retention may change before apply. Preflight does not check write permission/MFA
 or reserve anything. Review the report, then apply the same unchanged file; server
 guards remain authoritative. No new UUIDs or files are created by preflight.
+
+### Save execution evidence and resume a control plan
+
+```sh
+gregale --json events subscription-lineage-retry-control-plan-apply APP SUB --file controls.json --report run-1.jsonl
+gregale --json events subscription-lineage-retry-control-plan-apply APP SUB --file controls.json --resume-report run-1.jsonl --report run-2.jsonl
+```
+
+Reports are new private append-only files (0600), capped at 1 MiB. Apply syncs a
+command intent before its POST and the verified result afterward. File creation,
+directory sync or persistence failures prevent further control requests and exit
+unsuccessfully. The stdout summary remains available; if the latest result could
+not be saved, resume treats the persisted intent as uncertain.
+
+Resume requires the same normalized plan, including command UUIDs and original
+guards. It reads complete records, ignoring only an unterminated final crash line,
+and checks server receipts for every recorded entry before sending another control.
+Matching receipts are acknowledged without POST; missing receipts allow the same
+command only if read-only preflight finds it eligible. Read failures or blockers
+stay unconfirmed. Unrecorded entries use their original plan commands. No new
+command UUIDs are generated. Each resume uses a new report, preserving prior files;
+use the newest report for subsequent resumes.
+
+A plan hash detects mismatches but does not authenticate editable reports. Read
+and control requests remain separate observations; server guards and retained
+receipts provide idempotency. Reports contain job progress and receipt metadata,
+not event payloads, and do not extend retention or provide atomic batch execution.

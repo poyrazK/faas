@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -19,54 +20,58 @@ type lineageControlPlanResult struct {
 	Receipt      *api.EventExecutionLineageRetryJobControlReceipt `json:"receipt,omitempty"`
 }
 type lineageControlPlanReport struct {
-	PlanID         string                     `json:"plan_id"`
-	File           string                     `json:"file"`
-	AppID          string                     `json:"app_id"`
-	SubscriptionID string                     `json:"subscription_id"`
-	Complete       bool                       `json:"complete"`
-	Acknowledged   int                        `json:"acknowledged"`
-	Unconfirmed    int                        `json:"unconfirmed"`
-	NotAttempted   int                        `json:"not_attempted"`
-	Results        []lineageControlPlanResult `json:"results"`
+	ExecutionReport  string                     `json:"execution_report,omitempty"`
+	PersistenceError string                     `json:"persistence_error,omitempty"`
+	PlanID           string                     `json:"plan_id"`
+	File             string                     `json:"file"`
+	AppID            string                     `json:"app_id"`
+	SubscriptionID   string                     `json:"subscription_id"`
+	Complete         bool                       `json:"complete"`
+	Acknowledged     int                        `json:"acknowledged"`
+	Unconfirmed      int                        `json:"unconfirmed"`
+	NotAttempted     int                        `json:"not_attempted"`
+	Results          []lineageControlPlanResult `json:"results"`
 }
 
-func applyLineageControlPlan(ctx context.Context, client *api.Client, app string, plan lineageControlPlan, path string) int {
+func applyLineageControlPlan(ctx context.Context, client *api.Client, app string, plan lineageControlPlan, path string, run lineageControlPlanRun) int {
 	report := lineageControlPlanReport{PlanID: plan.PlanID, File: path, AppID: plan.AppID, SubscriptionID: plan.SubscriptionID, Results: make([]lineageControlPlanResult, 0, len(plan.Actions))}
+	if run.journal != nil {
+		report.ExecutionReport = run.journal.file.Name()
+	}
 	scope := lineageRetryRequestFile{Scope: &lineageRetryFileScope{AppID: plan.AppID, SubscriptionID: plan.SubscriptionID}}
 	scopeErr := scope.validateApp(ctx, client, app)
-	for _, entry := range plan.Actions {
+	var persistenceErr error
+	for index, entry := range plan.Actions {
 		result := lineageControlPlanResult{JobRequestID: entry.JobRequestID, CommandID: entry.CommandID, Action: entry.Action, Outcome: "not_attempted"}
 		if scopeErr != nil {
 			result.Error = scopeErr.Error()
-			report.NotAttempted++
+		} else if persistenceErr != nil {
+			result.Error = "execution report persistence failed; no further commands attempted"
 		} else if ctx.Err() != nil {
 			result.Error = ctx.Err().Error()
-			report.NotAttempted++
 		} else {
-			readCtx, cancel := context.WithTimeout(ctx, api.EventSubscriptionControlTimeout)
-			job, err := executeLineageControlPlanEntry(readCtx, client, app, plan.SubscriptionID, entry)
-			cancel()
-			if err == nil {
-				err = verifyLineageControlPlanResponse(job, plan, entry)
-			}
-			if err != nil {
-				result.Outcome = "unconfirmed"
-				result.Error = err.Error()
-				report.Unconfirmed++
-			} else {
-				result.Outcome = "acknowledged"
-				result.Status = job.Status
-				result.Processed = job.Processed
-				result.Selected = len(job.Items)
-				result.Receipt = job.ControlReceipt
-				report.Acknowledged++
-			}
+			result, persistenceErr = runLineageControlPlanEntry(ctx, client, app, plan, entry, index, run)
+		}
+		if run.journal != nil && persistenceErr == nil {
+			persistenceErr = run.journal.append(lineageControlPlanJournalRecord{Index: index, Result: result})
+		}
+		switch result.Outcome {
+		case "acknowledged":
+			report.Acknowledged++
+		case "unconfirmed":
+			report.Unconfirmed++
+		default:
+			report.NotAttempted++
 		}
 		report.Results = append(report.Results, result)
 	}
+	if persistenceErr != nil {
+		report.PersistenceError = persistenceErr.Error()
+		_, _ = fmt.Fprintf(os.Stderr, "Execution report persistence failed: %s; resume using the same plan and last complete report records.\n", oneLine(persistenceErr.Error()))
+	}
 	report.Complete = report.NotAttempted == 0
 	code := 0
-	if report.Unconfirmed > 0 || report.NotAttempted > 0 {
+	if report.Unconfirmed > 0 || report.NotAttempted > 0 || persistenceErr != nil {
 		code = 1
 	}
 	if ctx.Err() == context.Canceled {
@@ -105,4 +110,47 @@ func verifyLineageControlPlanResponse(job api.EventExecutionLineageRetryJob, pla
 		return err
 	}
 	return validateLineageControlExportReceipt(*receipt, job, receipt.Sequence)
+}
+
+// Persist uncertainty before a POST: a crash can never turn an attempted command
+// into a durable assertion that it was not sent.
+func runLineageControlPlanEntry(ctx context.Context, client *api.Client, app string, plan lineageControlPlan, entry lineageControlPlanEntry, index int, run lineageControlPlanRun) (lineageControlPlanResult, error) {
+	result := lineageControlPlanResult{JobRequestID: entry.JobRequestID, CommandID: entry.CommandID, Action: entry.Action, Outcome: "unconfirmed"}
+	if _, seen := run.previous[index]; seen {
+		observed, err := preflightLineageControlPlanEntry(ctx, client, app, plan, entry)
+		if err != nil {
+			result.Error = "resume receipt inspection failed: " + err.Error()
+			return result, nil
+		}
+		if observed.Outcome == "already_acknowledged" {
+			observed.Outcome = "acknowledged"
+			return observed, nil
+		}
+		if observed.Outcome != "ready" && observed.Outcome != "no_op" {
+			result.Error = "resume inspection blocked command: " + observed.Outcome
+			return result, nil
+		}
+	}
+	if run.journal != nil {
+		intent := result
+		intent.Error = "command may be submitted; final acknowledgment not yet persisted"
+		if err := run.journal.append(lineageControlPlanJournalRecord{Index: index, Result: intent}); err != nil {
+			result.Outcome = "not_attempted"
+			result.Error = "could not persist command intent"
+			return result, err
+		}
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, api.EventSubscriptionControlTimeout)
+	job, err := executeLineageControlPlanEntry(requestCtx, client, app, plan.SubscriptionID, entry)
+	cancel()
+	if err == nil {
+		err = verifyLineageControlPlanResponse(job, plan, entry)
+	}
+	if err != nil {
+		result.Error = err.Error()
+		return result, nil
+	}
+	result.Outcome = "acknowledged"
+	result.Status, result.Processed, result.Selected, result.Receipt = job.Status, job.Processed, len(job.Items), job.ControlReceipt
+	return result, nil
 }
