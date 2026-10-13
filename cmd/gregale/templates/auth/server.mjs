@@ -1,9 +1,12 @@
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import pg from 'pg'
+import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { gotrue, limits, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
+const authzPrefix = '/authz/v1/'
 const hopByHop = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
 
 function problem(res, status, code) {
@@ -28,8 +31,9 @@ export function upstreamPath(url) {
   return null
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz } = {}) {
   return http.createServer((req, res) => {
+    if (authz && req.url.startsWith(authzPrefix)) return authz(req, res, '/' + req.url.slice(authzPrefix.length).split('?')[0])
     if (req.url === '/healthz') {
       if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
       const probe = http.get({ host: gotrue.host, port: upstreamPort, path: '/health', timeout: 2000 }, upstream => {
@@ -70,7 +74,11 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
 export function start(env = process.env) {
   const config = runtimeConfig(env)
   const child = spawn(gotrue.binary, ['serve'], { env: config.gotrueEnv, stdio: ['ignore', 'inherit', 'inherit'] })
-  const server = createServer()
+  // Short idle lifetime: a parked or restored instance must not reuse a
+  // connection that the database closed while it slept.
+  const pool = new pg.Pool({ connectionString: config.gotrueEnv.DATABASE_URL, max: limits.frontPool, idleTimeoutMillis: 5000 })
+  pool.on('error', () => {})
+  const server = createServer({ authz: createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins }) })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))
     server.close()

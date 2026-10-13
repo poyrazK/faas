@@ -17,6 +17,9 @@ RUN cd /app/gotrue-migrations \
  && test "$(ls | wc -l)" -eq "$(wc -l < /app/migrations.sha256)" \
  && cp /app/overlay/*.sql /app/gotrue-migrations/ \
  && rm -r /app/overlay /app/migrations.sha256
-COPY package.json config.mjs server.mjs migrate.mjs ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+COPY config.mjs server.mjs authz.mjs migrate.mjs ./
+COPY sql/ ./sql/
 EXPOSE 8080
 CMD ["node", "server.mjs"]

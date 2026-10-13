@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, bodyBytes: 1048576, redirectURLs: 50, migrationStatementMs: 600000 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800 })
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
 
@@ -96,7 +96,23 @@ export function runtimeConfig(env) {
     // Request logs would carry verification tokens from /verify query strings.
     GOTRUE_LOG_LEVEL: 'warn',
   }
-  return { external, api, gotrueEnv }
+  return { external, api, gotrueEnv, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects) }
+}
+
+// AUTH_AUTHZ declares custom roles and policies; gregale_auth.apply_authz
+// validates the semantics in the release task. Unset means built-in roles only.
+export function authzConfig(value) {
+  if (value === undefined || value === '') return '{}'
+  if (Buffer.byteLength(value) > limits.authzConfigBytes) throw new Error('AUTH_AUTHZ is too large')
+  let parsed
+  try { parsed = JSON.parse(value) } catch { throw new Error('Invalid AUTH_AUTHZ') }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('AUTH_AUTHZ must be a JSON object')
+  return JSON.stringify(parsed)
+}
+
+// Browsers call /authz/v1 from the application's own origins.
+function browserOrigins(site, redirects) {
+  return [...new Set([site, ...redirects].map(value => new URL(value).origin))]
 }
 
 // Migrations run in the release task and may legitimately exceed the auth

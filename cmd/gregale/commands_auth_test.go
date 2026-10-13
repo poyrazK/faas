@@ -191,10 +191,126 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, bound := range map[string]int{"accessTokenSeconds": api.AuthAccessTokenTTLSeconds, "pool": api.AuthMaxPoolConnections, "bodyBytes": api.AuthMaxRequestBytes, "redirectURLs": api.AuthMaxRedirectURLs, "migrationStatementMs": api.AuthMigrationStatementTimeoutMS} {
+	for name, bound := range map[string]int{"accessTokenSeconds": api.AuthAccessTokenTTLSeconds, "pool": api.AuthMaxPoolConnections, "frontPool": api.AuthFrontPoolConnections,
+		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
+		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
+	}
+	authorization, err := os.ReadFile("templates/auth/sql/0001_authorization.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bound := range []string{
+		fmt.Sprintf("WHERE created_by = caller) >= %d", api.AuthMaxOrganizationsPerUser),
+		fmt.Sprintf("expires_at > now()) >= %d", api.AuthMaxPendingInvitationsPerOrg),
+		fmt.Sprintf("ttl_seconds NOT BETWEEN 300 AND %d", api.AuthMaxInvitationTTLSeconds),
+	} {
+		if !strings.Contains(string(authorization), bound) {
+			t.Fatalf("authorization SQL differs from canonical limit: %q", bound)
+		}
+	}
+}
+
+func TestReadAuthzFileAcceptsOnlyRolesAndPolicies(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		path := dir + "/" + name
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	got, err := readAuthzFile(write("ok.json", `{"roles": {"editor": ["doc:write"]}, "policies": [{"action": "write", "resource": "doc", "permission": "doc:write"}]}`))
+	if err != nil || !strings.Contains(got, `"editor":["doc:write"]`) {
+		t.Fatalf("valid document rejected: %q %v", got, err)
+	}
+	for name, body := range map[string]string{"array.json": `[]`, "null.json": `null`, "extra.json": `{"roles": {}, "admins": []}`, "broken.json": `{`} {
+		if _, err := readAuthzFile(write(name, body)); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	if _, err := readAuthzFile(write("large.json", `{"roles":{"r":["`+strings.Repeat("x", api.AuthAuthzConfigBytes)+`"]}}`)); err == nil {
+		t.Fatal("oversized document accepted")
+	}
+}
+
+// authIssuerServer serves the Auth app lookup that --auth and --jwt-auth
+// resolve, and records what the command then writes.
+func authIssuerServer(t *testing.T, handle func(w http.ResponseWriter, r *http.Request) bool) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/apps/shop-auth" {
+			writeJSONTest(w, map[string]any{"id": "auth-app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app"})
+			return
+		}
+		if !handle(w, r) {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+}
+
+func TestEdgeRuleJWTAuthUsesTheAuthAppIssuer(t *testing.T) {
+	resetJSONEnv(t)
+	var action map[string]any
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "POST" || !strings.HasSuffix(r.URL.Path, "/edge-rules") {
+			return false
+		}
+		var body struct {
+			Action map[string]any `json:"action"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		action = body.Action
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(sampleEdgeRuleResponse(edgeRuleTestID))
+		return true
+	})
+	if code := cmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "jwt", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth"}); code != 0 {
+		t.Fatalf("create = %d", code)
+	}
+	encoded, _ := json.Marshal(action)
+	for _, want := range []string{`"https://shop-auth.gregale.app/auth/v1"`, `"https://shop-auth.gregale.app/auth/v1/.well-known/jwks.json"`, `"authenticated"`, `"ES256"`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("action %s lacks %s", encoded, want)
+		}
+	}
+	if code := cmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "jwt", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth", "--jwt-issuer", "https://other.example"}); code == 0 {
+		t.Fatal("--jwt-auth combined with an explicit issuer")
+	}
+	if code := cmdEdgeRulesCreate([]string{"--app", "shop", "--kind", "cors", "--match-host", "shop.example.com", "--jwt-auth", "shop-auth"}); code == 0 {
+		t.Fatal("--jwt-auth accepted for a non-JWT rule")
+	}
+}
+
+func TestDataAPIAuthFlagReplacesManualIssuer(t *testing.T) {
+	resetJSONOut(t)
+	if code := cmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth", "--issuer", "https://other.example"}); code == 0 {
+		t.Fatal("--auth combined with an explicit issuer")
+	}
+	if code := cmdDataAPI([]string{"create", "notes-data", "--database", "db"}); code == 0 {
+		t.Fatal("create accepted without an issuer or --auth")
+	}
+	t.Setenv("HOME", t.TempDir())
+	resolved := false
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		// Stop after the lookup: the remaining create flow is covered by
+		// the Data API create tests.
+		if r.Method == "GET" && r.URL.Path == "/v1/postgres/databases" {
+			resolved = true
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	_ = cmdDataAPI([]string{"create", "notes-data", "--database", "db", "--auth", "shop-auth"})
+	if !resolved {
+		t.Fatal("create did not continue after resolving the Auth app")
 	}
 }
 

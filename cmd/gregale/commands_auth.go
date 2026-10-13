@@ -48,9 +48,9 @@ func cmdAuth(args []string) int {
 }
 
 type authCreateOptions struct {
-	database, scope, siteURL string
-	redirectURLs             []string
-	autoconfirm, noSignup    bool
+	database, scope, siteURL, authz string
+	redirectURLs                    []string
+	autoconfirm, noSignup           bool
 }
 
 func cmdAuthCreate(args []string) int {
@@ -62,6 +62,7 @@ func cmdAuthCreate(args []string) int {
 	autoconfirm := fs.Bool("autoconfirm", false, "sign users in without email confirmation (development only)")
 	noSignup := fs.Bool("disable-signup", false, "allow only invited or administrator-created users")
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
+	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on deploy)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -74,6 +75,13 @@ func cmdAuthCreate(args []string) int {
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || opts.database == "" || api.ValidateScope(opts.scope) != nil || !authRedirectURL(opts.siteURL) {
 		PrintUsage(os.Stderr, "usage: gregale auth create NAME --database DATABASE --site-url URL [--redirect-urls URLS] [--scope SCOPE] [--autoconfirm] [--disable-signup] [--resume]", "auth")
 		return 1
+	}
+	if *authzFile != "" {
+		authz, err := readAuthzFile(*authzFile)
+		if err != nil {
+			return printErr("Invalid --authz", err)
+		}
+		opts.authz = authz
 	}
 	if len(opts.redirectURLs) > api.AuthMaxRedirectURLs {
 		return printErr("Too many redirect URLs", fmt.Errorf("at most %d redirect URLs are allowed; got %d", api.AuthMaxRedirectURLs, len(opts.redirectURLs)))
@@ -157,6 +165,10 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		"AUTH_AUTOCONFIRM":    authFlag(opts.autoconfirm),
 		"AUTH_DISABLE_SIGNUP": authFlag(opts.noSignup),
 	}
+	// AUTH_AUTHZ is declarative; leaving --authz out keeps the current file.
+	if opts.authz != "" {
+		settings["AUTH_AUTHZ"] = opts.authz
+	}
 	// Signing material is generated once. A resumed or repeated create must
 	// not replace keys that already signed live sessions.
 	existing, err := client.ListSecretsWithScope(ctx, app.Slug, opts.scope)
@@ -183,7 +195,7 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 		settings[authJWTSecretName] = secret
 	}
-	for _, key := range []string{"AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", authSigningKeysName, authJWTSecretName} {
+	for _, key := range []string{"AUTH_EXTERNAL_URL", "AUTH_SITE_URL", "AUTH_REDIRECT_URLS", "AUTH_AUTOCONFIRM", "AUTH_DISABLE_SIGNUP", "AUTH_AUTHZ", authSigningKeysName, authJWTSecretName} {
 		value, ok := settings[key]
 		if !ok {
 			continue
@@ -193,6 +205,56 @@ func configureAuth(ctx context.Context, client *api.Client, app api.AppResponse,
 		}
 	}
 	return nil
+}
+
+// readAuthzFile checks the declarative roles and policies document's shape;
+// gregale_auth.apply_authz validates its contents in the release task.
+func readAuthzFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() > api.AuthAuthzConfigBytes {
+		return "", fmt.Errorf("%s exceeds %d bytes", path, api.AuthAuthzConfigBytes)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
+		return "", errors.New("must be a JSON object with roles and/or policies")
+	}
+	for key := range doc {
+		if key != "roles" && key != "policies" {
+			return "", fmt.Errorf("unknown key %q; use roles and policies", key)
+		}
+	}
+	compact, err := json.Marshal(doc)
+	if err != nil {
+		return "", err
+	}
+	return string(compact), nil
+}
+
+// authIssuer is what a token verifier needs to accept an Auth app's tokens.
+type authIssuer struct{ Issuer, JWKSURL, Audience string }
+
+// resolveAuthIssuer backs the --auth flags of the Data API and edge JWT rules.
+func resolveAuthIssuer(ctx context.Context, client *api.Client, name string) (authIssuer, error) {
+	if !api.ValidAppSlug(name) {
+		return authIssuer{}, fmt.Errorf("invalid Auth app name %q", name)
+	}
+	app, err := client.GetApp(ctx, name)
+	if err != nil {
+		return authIssuer{}, err
+	}
+	external, err := authExternalOrigin(app)
+	if err != nil {
+		return authIssuer{}, err
+	}
+	issuer := external + "/auth/v1"
+	return authIssuer{Issuer: issuer, JWKSURL: issuer + "/.well-known/jwks.json", Audience: authAudience}, nil
 }
 
 func authFlag(enabled bool) string {

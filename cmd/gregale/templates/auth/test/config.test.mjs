@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { databaseURL, migrationEnv, runtimeConfig, signingKeys } from '../config.mjs'
+import { authzConfig, databaseURL, migrationEnv, runtimeConfig, signingKeys } from '../config.mjs'
 
 function key(kid, ops = ['sign', 'verify']) {
   const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
@@ -82,4 +82,14 @@ test('migrations lift the statement timeout for the release task only', () => {
   const config = runtimeConfig(env())
   assert.equal(new URL(migrationEnv(config).DATABASE_URL).searchParams.get('statement_timeout'), '600000')
   assert.equal(new URL(config.gotrueEnv.DATABASE_URL).searchParams.get('statement_timeout'), null)
+})
+
+test('accepts a declarative AUTH_AUTHZ object and derives browser origins', () => {
+  const config = runtimeConfig(env({ AUTH_REDIRECT_URLS: 'https://shop.example.com/cb,http://localhost:3000/cb', AUTH_AUTHZ: '{"roles":{"editor":["doc:write"]}}' }))
+  assert.deepEqual(JSON.parse(config.authz), { roles: { editor: ['doc:write'] } })
+  assert.deepEqual(config.origins, ['https://shop.example.com', 'http://localhost:3000'])
+  assert.equal(authzConfig(undefined), '{}')
+  for (const bad of ['[]', 'null', '"x"', 'not json', JSON.stringify({ roles: { r: ['x'.repeat(70000)] } })]) {
+    assert.throws(() => authzConfig(bad), undefined, bad.slice(0, 20))
+  }
 })

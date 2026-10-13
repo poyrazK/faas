@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1 (the `auth` credential mode) and 2 (the template, `gregale auth create|status`) implemented, not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1 (the `auth` credential mode), 2 (the template, `gregale auth create|status`) and 3 (organizations, roles, `authorize()`, `--auth`) implemented, not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -117,9 +117,9 @@ They live 600 seconds by default; the bound is in `pkg/api/limits.go`, not
 GoTrue's 3,600-second default. Refresh tokens rotate on every use. The issuer
 is `https://<app host>/auth/v1`.
 
-`data-api create --auth NAME` and the edge JWT rule's `--auth NAME` resolve
-the issuer, JWKS URL and audience from the auth app, in place of the manual
-flags. The Data API keeps overwriting the SQL role, so GoTrue's `role` claim
+`data-api create --auth NAME` and `edge-rules create --kind jwt --jwt-auth NAME`
+resolve the issuer, JWKS URL and audience from the auth app, in place of the
+manual flags; the edge rule also requires ES256 and `exp`. The Data API keeps overwriting the SQL role, so GoTrue's `role` claim
 selects nothing.
 
 ### Organizations, invitations and roles
@@ -131,9 +131,22 @@ hash, are single use and expire after a bound in `pkg/api/limits.go`. Default
 roles are `owner`, `admin` and `member`. The last owner of an organization
 cannot be removed or demoted.
 
-The front's `/authz/v1` API creates organizations, invites, accepts, changes
-roles and removes members. It requires a valid user token, and mutations also
-require the `members:manage` permission.
+The front's `/authz/v1` API creates and lists organizations, lists members,
+invites, accepts, revokes invitations, changes roles, removes members and
+answers `authorize` checks. GoTrue verifies the caller's token on loopback;
+the front then calls one owner-only `gregale_auth` function per request in a
+transaction whose `request.jwt.claims` carry only the verified `sub` and
+`session_id`. The functions enforce the rules themselves: managing members
+needs `members:manage`, only owners grant or remove the owner role, members
+may always leave, and changes in one organization are serialized so none loses
+its last owner. An invitation token is returned once to the inviter until the
+email hook delivers it, is stored only as a hash, and can be accepted only by a
+signed-in user whose confirmed email matches the invited address.
+
+Custom roles and policies are declarative: `gregale auth create --authz FILE`
+seals an `AUTH_AUTHZ` document (`roles` and `policies`), and the release task
+replaces custom roles and every policy from it. The `owner` role always holds
+every permission, and a role still assigned cannot be removed.
 
 ### One authorization function
 
@@ -143,8 +156,10 @@ next check, and tokens stay small. The helper functions are:
 
 - `gregale_auth.uid()`
 - `gregale_auth.session_active()`, which requires the token's `session_id` to
-  still exist in `auth.sessions`
-- `gregale_auth.has_permission(org uuid, permission text)`
+  still exist in `auth.sessions`, unexpired, for a user who is neither banned
+  nor deleted
+- `gregale_auth.has_permission(org uuid, permission text)`, which also
+  requires an active session
 - `gregale_auth.authorize(action text, resource text)`
 
 `authorize` denies by default. It allows an action only for an active session
@@ -157,10 +172,13 @@ fixed `search_path`. They are marked `gregale:auth-helper:v1` and are
 executable by PUBLIC. They read only the caller's `request.jwt.claims`, so
 they reveal only the caller's own sessions and memberships.
 
-The `data_api` and `read_only` credential verifiers currently reject every
-executable SECURITY DEFINER function. They will allow exactly these marked
-functions, owned by the database's auth owner in `gregale_auth`, and continue
-to reject all others.
+The `read_only` credential verifier rejected every executable SECURITY DEFINER
+function. It now allows exactly a function in `gregale_auth`, owned by that
+schema's marked auth owner, carrying the helper marker, and STABLE or
+IMMUTABLE SQL or PL/pgSQL. PostgreSQL rejects data-modifying statements in such
+functions, so calling one cannot give a read-only login writes. Volatile or
+unmarked definers still block issuance. The `data_api` verifier inspects only
+the `api` and `public` schemas and needs no change.
 
 Any SQL session can set `request.jwt.claims`. The helpers are therefore an
 authorization aid for sessions whose claims a verifying gateway set, such as
@@ -213,7 +231,8 @@ in `pkg/api/limits.go`.
    probe, binding constraints, delivery policy, API enums and CLI modes.
 2. The `auth` template, `gregale auth create|status`, and the migration
    overlay check. Key rotation follows.
-3. The `gregale_auth` schema and helpers, the verifier allowance, and `--auth`
+3. The `gregale_auth` schema and helpers, the verifier allowance, the
+   `/authz/v1` API, declarative `AUTH_AUTHZ` roles and policies, and `--auth`
    for the Data API and edge JWT rules.
 4. Hosted pages, the `@gregale/auth` SDK and the email hook.
 5. The storage, realtime and workflow checks.
@@ -250,7 +269,12 @@ JWKS with the expected issuer, audience and 600-second lifetime, refresh
 tokens rotated, and sign-out ended refresh. Under amd64 emulation the instance
 used about 131 MiB (Node ~62 MB, GoTrue ~84 MB RSS), above the Free plan's
 128 MB. Native x86_64 measurement decides whether the front must move from
-Node to a small Go process before Free-plan availability. Native acceptance must show sign-up, Data
+Node to a small Go process before Free-plan availability. With phase 3 the release
+task also applied the `gregale_auth` SQL and an `AUTH_AUTHZ` document, twice
+idempotently; read-only issuance still verified next to the real schema; and
+two real users created an organization, invited, accepted, were authorized by a
+declared policy, and lost access at the next check after sign-out (about
+134 MiB under emulation). Native acceptance must show sign-up, Data
 API RLS and session revocation through a builder-built deployment, with wake
 latency, resident memory and snapshot size within plan limits. This ADR alone
 changes no production gate.
