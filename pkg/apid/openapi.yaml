@@ -82169,7 +82169,7 @@ components:
       required: [range, source, as_of, nodes, edges, truncated]
       properties:
         range: { type: string }
-        source: { type: string, description: '"prometheus" or "degraded: <reason>".' }
+        source: { type: string, description: '"prometheus", or "degraded: <reason>" when the edge metrics could not be read.' }
         as_of: { type: string, format: date-time }
         truncated: { type: boolean }
         nodes:

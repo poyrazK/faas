@@ -26,7 +26,7 @@ class ServiceMapResponse:
 
     range_: str
     source: str
-    """"prometheus" or "degraded: <reason>"."""
+    """"prometheus", or "degraded: <reason>" when the edge metrics could not be read."""
     as_of: datetime.datetime
     truncated: bool
     nodes: list[ServiceMapNode] | None

@@ -48,8 +48,8 @@ func TestAllocateRequestAnalyticsRouteCostByTime_WeightsByRequestTime(t *testing
 	}
 	// The omitted routes add 90 requests and 5.5 s.
 	requests, allocated, other, method := apidserver.AllocateRequestAnalyticsRouteCostByTime(routes, 90, 5500, 1000)
-	if method != routeCostByRequestTime {
-		t.Fatalf("method = %q, want %q", method, routeCostByRequestTime)
+	if method != apidserver.RouteCostByRequestTime {
+		t.Fatalf("method = %q, want %q", method, apidserver.RouteCostByRequestTime)
 	}
 	if requests != 1000 || allocated != 1000 {
 		t.Fatalf("requests=%d allocated=%d, want 1000 and the full 1000 millicents", requests, allocated)
@@ -66,7 +66,7 @@ func TestAllocateRequestAnalyticsRouteCostByTime_WeightsByRequestTime(t *testing
 func TestAllocateRequestAnalyticsRouteCostByTime_FallsBackWithoutTiming(t *testing.T) {
 	routes := []api.RequestAnalyticsRoute{{Route: "/a", Requests: 1}, {Route: "/b", Requests: 3}}
 	_, allocated, _, method := apidserver.AllocateRequestAnalyticsRouteCostByTime(routes, 0, 0, 100)
-	if method != routeCostByRequests || allocated != 100 {
+	if method != apidserver.RouteCostByRequests || allocated != 100 {
 		t.Fatalf("method=%q allocated=%d, want request_share and 100", method, allocated)
 	}
 	if routes[0].EstimatedComputeCostMillicents != 25 || routes[1].EstimatedComputeCostMillicents != 75 {

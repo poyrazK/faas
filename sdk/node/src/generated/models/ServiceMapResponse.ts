@@ -12,7 +12,7 @@
 export type ServiceMapResponse = {
   range: string;
   /**
-   * "prometheus" or "degraded: <reason>".
+   * "prometheus", or "degraded: <reason>" when the edge metrics could not be read.
    */
   source: string;
   as_of: string;

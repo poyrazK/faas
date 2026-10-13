@@ -1,4 +1,4 @@
--- filename: 20261013163803000_app_custom_metrics_kind.sql
+-- filename: 20261013221555285_app_custom_metrics_kind.sql
 
 -- +goose Up
 -- +goose StatementBegin
