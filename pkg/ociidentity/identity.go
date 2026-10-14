@@ -53,7 +53,10 @@ func Resolve(image fs.FS, spec string, fallback Identity) (Identity, error) {
 	}
 	result := fallback
 	if numeric {
-		result = Identity{UID: uid, GID: uid}
+		// A numeric UID absent from passwd runs with GID 0, as under Docker
+		// (ADR-1239, amending ADR-411). Images built for arbitrary UIDs
+		// grant their writable paths to group 0.
+		result = Identity{UID: uid, GID: 0}
 	}
 	passwd, err := readIdentityFile(image, "etc/passwd")
 	if err != nil {
