@@ -3679,6 +3679,7 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_advice_evidence import RouteAdviceEvidence
+from .route_advice_evidence_safe_max_age_seconds import RouteAdviceEvidenceSafeMaxAgeSeconds
 from .route_advice_impact import RouteAdviceImpact
 from .route_advice_response import RouteAdviceResponse
 from .route_advice_setting import RouteAdviceSetting
@@ -7990,6 +7991,7 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteAdviceEvidence",
+    "RouteAdviceEvidenceSafeMaxAgeSeconds",
     "RouteAdviceImpact",
     "RouteAdviceResponse",
     "RouteAdviceSetting",

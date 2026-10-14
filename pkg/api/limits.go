@@ -9829,6 +9829,28 @@ const (
 	RouteAwakeCacheMinAnonymousShare = 0.9
 )
 
+// RouteContent bounds learned cacheability (ADR-1156). Each gateway
+// remembers the last anonymous GET body hash for at most
+// RouteContentObserverMaxURLs URLs. Outcomes are bucketed by
+// RouteContentWindows, which are also the max-ages the advisor can propose.
+// A max-age is safe when at least RouteContentMinRepeats responses fell inside
+// it, at least RouteContentMinBandRepeats of them were seen at that spacing
+// (longer than the next shorter window), and at most
+// RouteContentMaxStaleShare of them had changed; the advisor
+// withholds a cache suggestion when more than RouteContentUnsafeStaleShare of
+// the repeats within the shortest window had changed, or when more than
+// RouteContentMaxUncacheableShare of observed responses could not be stored.
+var RouteContentWindows = []time.Duration{time.Minute, 5 * time.Minute, time.Hour}
+
+const (
+	RouteContentObserverMaxURLs     = 50_000
+	RouteContentMinRepeats          = 50
+	RouteContentMinBandRepeats      = 10
+	RouteContentMaxStaleShare       = 0.01
+	RouteContentUnsafeStaleShare    = 0.05
+	RouteContentMaxUncacheableShare = 0.5
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.

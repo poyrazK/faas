@@ -3562,6 +3562,9 @@ type Querier interface {
 	// anonymous 2xx GET/HEAD requests into cache-lifetime windows: the first
 	// request of a window fills the cache, the rest are hits, and a cold boot
 	// that is not first in its window is a wake the cache would have avoided.
+	// The content_* counts are learned cacheability (ADR-1156): how observed
+	// anonymous GET bodies compared with the previous response for their URL,
+	// bucketed by api.RouteContentWindows (60 s, 300 s, 3600 s).
 	RouteAdviceRouteStats(ctx context.Context, db DBTX, arg RouteAdviceRouteStatsParams) ([]RouteAdviceRouteStatsRow, error)
 	// Requests one consumer sent above a per-minute allowance on one route.
 	RouteAdviceThrottleExcess(ctx context.Context, db DBTX, arg RouteAdviceThrottleExcessParams) (int64, error)

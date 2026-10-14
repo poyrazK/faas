@@ -454,6 +454,11 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		out.Outcome = rtOutcomeDBError
 		return out
 	}
+	// ADR-1156: an outcome this apid does not know is dropped, not the row.
+	contentOutcome := req.GetContentOutcome()
+	if !api.ValidContentOutcome(contentOutcome) {
+		contentOutcome = ""
+	}
 	insertErr := r.store.InsertRequestTelemetryWithLogEvent(ctx, sqlc.InsertRequestTelemetryParams{
 		AccountID:                   state.NewPgtypeUUID(accountID),
 		AppID:                       state.NewPgtypeUUID(appID),
@@ -479,6 +484,7 @@ func (r *requestTelemetryReceiver) HandleOne(ctx context.Context, req *apidpb.In
 		GuestOutcome:                guestOutcome,
 		GuestErrorClass:             guestErrorClass,
 		FlagEvidenceJson:            flagEvidence,
+		ContentOutcome:              contentOutcome,
 		ConsumerID:                  consumerID,
 		PlatformTenantID:            pgtype.UUID{Bytes: platformTenantUUID, Valid: platformTenantID != ""},
 		NodeID:                      req.GetNodeId(),

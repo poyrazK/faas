@@ -284,6 +284,9 @@ message IncrementRequestTelemetryRequest {
   string platform_tenant_jwt_authorization_rule_id = 35;
   // Bounded canonical application-reported flag decisions; no customer attributes.
   string flag_evidence_json = 36;
+  // ADR-1156: how an anonymous GET body compared with the previous response
+  // for its URL on the same gateway; empty when not observed. Never a hash.
+  string content_outcome = 37;
 }
 
 // IncrementRequestTelemetryResponse is the per-record outcome the
