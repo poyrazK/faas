@@ -255,15 +255,17 @@ func TestApplyProject_Builds_DeploymentStatusBuilding(t *testing.T) {
 	}
 }
 
-// TestApplyProject_Builds_StagedTarballPreservesRepository pins that
-// every workload receives the repository-relative tree while its
-// deployment SourceRoot selects the build context. Workspace package
-// managers need root manifests and sibling packages in addition to the
-// selected workload directory.
+// TestApplyProject_Builds_StagedTarballPreservesRepository pins that a
+// workload receives the repository-relative tree while its deployment
+// SourceRoot selects the build context. Workspace package managers need
+// root manifests and sibling packages in addition to the selected
+// workload directory (ADR-144). The exception is a Compose-declared
+// Dockerfile service, which builds from its declared context, as Docker
+// Compose does (ADR-1288, H10-25).
 //
 // Strategy: build a tarball with per-workload sentinel files plus a
 // shared file at the repo root. After apply, find each workload's
-// staged tarball and check the complete repository is present.
+// staged tarball and check which tree it carries.
 func TestApplyProject_Builds_StagedTarballPreservesRepository(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -352,13 +354,30 @@ func TestApplyProject_Builds_StagedTarballPreservesRepository(t *testing.T) {
 			}
 		}
 	}
+	// ADR-1288: the Compose-declared backend builds from its declared
+	// context, so its archive is that directory (no repository root, no
+	// sibling). Every other workload keeps the whole repository (ADR-144).
+	composeRooted, workspace := 0, 0
 	for _, path := range tarballs {
 		hasAPI := containsSentinel(path, "API_ONLY.txt")
 		hasWorker := containsSentinel(path, "WORKER_ONLY.txt")
-		if !hasAPI || !hasWorker || !containsSentinel(path, "root-marker.txt") {
-			t.Fatalf("tarball %s does not preserve repository workspace (api=%v worker=%v root=%v)",
-				path, hasAPI, hasWorker, containsSentinel(path, "root-marker.txt"))
+		hasRoot := containsSentinel(path, "root-marker.txt")
+		switch {
+		case hasRoot:
+			if !hasAPI || !hasWorker {
+				t.Fatalf("tarball %s does not preserve repository workspace (api=%v worker=%v root=%v)",
+					path, hasAPI, hasWorker, hasRoot)
+			}
+			workspace++
+		case hasAPI && !hasWorker && !containsSentinel(path, "services/"):
+			composeRooted++
+		default:
+			t.Fatalf("tarball %s is neither the repository nor the backend's Compose context (api=%v worker=%v root=%v)",
+				path, hasAPI, hasWorker, hasRoot)
 		}
+	}
+	if composeRooted != 1 || workspace == 0 {
+		t.Fatalf("staged %d Compose-context and %d repository archives, want 1 and at least 1", composeRooted, workspace)
 	}
 }
 
