@@ -127,6 +127,10 @@ type staleInstanceStore interface {
 	FailRunningInstanceIfOwnedByNode(ctx context.Context, id, nodeID string, terminalAt time.Time) error
 }
 
+// nodeInventoryRunningLimit bounds one reconciliation read. A node runs far
+// fewer instances; a truncated read only repairs the rows it returned.
+const nodeInventoryRunningLimit = 4096
+
 // NodeInventoryEnforceEnv controls canary enablement independently of the
 // older metric-based divergence sweep, which remains report-only by default.
 const NodeInventoryEnforceEnv = "FAAS_SCHEDD_NODE_INVENTORY_ENFORCE"
@@ -152,9 +156,16 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 		return
 	}
 
+	if nodeID == "" {
+		return
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	instances, err := e.store.ListInstancesOnNodeID(checkCtx, nodeID)
+	// Only RUNNING rows can be repaired. Listing every instance the node
+	// ever hosted read 21,067 rows on production-us after a boot loop and
+	// missed the 2 s deadline on every report, so this repair never ran
+	// (hunt #10).
+	instances, err := e.store.ListLiveInstancesOnNode(checkCtx, nodeID, nodeInventoryRunningLimit)
 	if err != nil {
 		e.log.Warn("sched: stale-instance reconciliation list failed",
 			"node_id", nodeID, "err", err)
