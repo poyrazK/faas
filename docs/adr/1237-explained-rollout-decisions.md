@@ -53,4 +53,4 @@ The audit timeline keeps its existing 90-day retention.
 
 ## Rollout
 
-Ship with the record written and shown everywhere at once. The safe-release drill asserts that a quiet canary's completion carries an `advance_probe_evidence` record with probe counts, that its hold rows name `hold_insufficient_samples`, and that a probe-backed abort carries an `abort_5xx` record with `probes_included`.
+Ship with the record written and shown everywhere at once. The safe-release drill asserts that a quiet canary's completion carries an `advance_probe_evidence` record with probe counts for both revisions, that a probe-backed abort carries an `abort_5xx` record with `probes_included`, that the bad release carries `abort_5xx` with the candidate's 5xx, and that the crash loop carries `abort_crash_loop` with its restarts. It logs the quiet canary's hold rows; whether a hold occurs depends on how many probes arrived by the stage boundary.

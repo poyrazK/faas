@@ -215,6 +215,27 @@ gregale app my-api --release-policy immediate  # every future deploy
 Any explicit `--canary-preset`, `--traffic-percent`, or `--rollback-on-5xx`
 always wins over the default.
 
+### Why a rollout advanced, waits, or stopped
+
+Gregale records the evidence behind every rollout decision
+([ADR-1237](adr/1237-explained-rollout-decisions.md)): the request, 5xx, probe,
+latency, OOM, and restart counts for both revisions, and which rule decided.
+`gregale deployment wait --rollout` prints why a stage is waiting and why each
+stage advanced:
+
+```text
+Rollout held at 1% traffic (step 1/4): waiting for enough traffic to compare: this release 3 requests, the current one 41 (20 each needed); probes 4 and 3 so far
+Rollout: 10% traffic · step 2/4 · rolling_out · advanced on synthetic probes of /: this release 0/30 probe 5xx, the current one 0/30
+```
+
+`gregale deployment summary <id>` shows the latest decision and the current
+hold. The API returns them as `rollout_decision` and `rollout_hold` on
+`GET /v1/deployments/{id}`; every decision is also in the deployment's audit
+timeline (`GET /v1/deployments/{id}/audit`). The `rollout.completed` and
+`rollout.aborted` webhooks carry the decision that completed or aborted the
+rollout as `decision`. An abort by a route monitor, an alert rule, or a profile
+gate keeps only its `reason`.
+
 ### Keep one user on one revision
 
 Send a stable, opaque user or tenant identifier in `Gregale-Version-Key` when

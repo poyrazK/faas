@@ -86,11 +86,31 @@ ORDER BY created_at DESC;
 Verify the audit chain contains rollout and traffic events:
 
 ```sql
-SELECT deployment_id, kind, actor, received_at, data
+SELECT deployment_id, kind, actor, at, data
 FROM deployment_audit
 WHERE deployment_id = '<deployment-id>'
-ORDER BY received_at ASC, id ASC;
+ORDER BY at ASC, id ASC;
 ```
+
+Why a canary advanced, is held, or was aborted is recorded with the transition
+([ADR-1237](../adr/1237-explained-rollout-decisions.md)), so meterd's log is
+not needed to explain a rollout:
+
+```sql
+-- latest decision on the deployment, and the holds of the current step
+SELECT rollout_decision FROM deployments WHERE id = '<deployment-id>';
+SELECT at, data->'decision'->>'rule' AS rule, data->'decision' AS decision
+FROM deployment_audit
+WHERE deployment_id = '<deployment-id>' AND kind = 'deploy.rollout_held'
+ORDER BY at DESC, id DESC LIMIT 5;
+```
+
+`gregale deployment summary <id>` shows the same as the customer sees it. A
+held canary with no `deploy.rollout_held` row is either inside its stage
+duration or blocked by a route gate or profile gate, which keep their own
+history (ADR-456); a missing advance or abort decision means the transition
+came from a path that records none (route monitor, alert rollback, profile
+gate, mirror drift).
 
 Trigger a staging alert against the canary and verify that the action is
 fail-safe and atomic:
@@ -143,9 +163,8 @@ these staging checks against an app with a known-good predecessor:
   with `canary_progression_circuit_breaker_total{event="advance_probe_evidence"}`.
   A candidate whose `/` starts failing after its hosting smoke must abort with
   `abort_5xx`. The deployment's rollout reason is "circuit breaker: 5xx error
-  rate regression; restoring predecessor <id>"; meterd's "canary: circuit
-  breaker aborted rollout" log line carries the detail, whose `reason` ends in
-  "synthetic probes included". If a quiet
+  rate regression; restoring predecessor <id>", and its `rollout_decision` has
+  rule `abort_5xx` with `probes_included` and the probe counts. If a quiet
   canary still waits the 5-minute bound, check that the probes are
   attributed: an auth-gated `/` (401/403 on at least half the probes) or a
   missing probe origin falls back to `advance_low_traffic`.

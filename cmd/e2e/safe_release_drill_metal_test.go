@@ -141,6 +141,13 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		if elapsed >= 30*time.Second+api.CanaryLowTrafficMaxHold {
 			t.Fatalf("quiet candidate advanced after %s; want probe evidence before the %s bound", elapsed, api.CanaryLowTrafficMaxHold)
 		}
+		// ADR-1237: the completing advance carries its probe evidence.
+		why := d.decision(t, got)
+		t.Logf("DRILL low_traffic_decision rule=%s probes_included=%v candidate_probes=%d stable_probes=%d holds=%v",
+			why.Rule, why.ProbesIncluded, why.Candidate.ProbeRequests, why.Stable.ProbeRequests, d.holdRules(t, candidate.ID))
+		if why.Rule != api.RolloutRuleAdvanceProbeEvidence || !why.ProbesIncluded || why.Candidate.ProbeRequests == 0 || why.Stable.ProbeRequests == 0 {
+			t.Fatalf("quiet completion decision = %+v; want advance_probe_evidence with probe counts", why)
+		}
 
 		rollbackStarted := time.Now()
 		raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/sr-quiet/rollback", map[string]any{})
@@ -197,6 +204,9 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 			return dep.RolloutState == "aborted" || dep.Status != state.DeployLive || dep.TrafficPercent == 0
 		})
 		t.Logf("DRILL bad_release state=%q status=%q reason=%q", got.RolloutState, got.Status, got.RolloutAbortedReason)
+		if why := d.decision(t, got); why.Rule != api.RolloutRuleAbort5xx || why.Candidate.ServerErrors == 0 {
+			t.Fatalf("bad release decision = %+v; want abort_5xx with the candidate's 5xx", why)
+		}
 		d.waitDeployment(t, stable.ID, time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
@@ -217,6 +227,12 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		t.Logf("DRILL probe_abort seconds=%.0f state=%q reason=%q", time.Since(started).Seconds(), got.RolloutState, got.RolloutAbortedReason)
 		if got.RolloutState != "aborted" || !strings.Contains(got.RolloutAbortedReason, "5xx error rate regression") {
 			t.Fatalf("late-failing candidate = state:%q reason:%q, want a 5xx abort from probe evidence", got.RolloutState, got.RolloutAbortedReason)
+		}
+		why := ld.decision(t, got)
+		t.Logf("DRILL probe_abort_decision rule=%s probes_included=%v candidate_probe_5xx=%d/%d summary=%q",
+			why.Rule, why.ProbesIncluded, why.Candidate.ProbeServerErrors, why.Candidate.ProbeRequests, why.Summary)
+		if why.Rule != api.RolloutRuleAbort5xx || !why.ProbesIncluded || why.Candidate.ProbeServerErrors == 0 {
+			t.Fatalf("probe abort decision = %+v; want abort_5xx with probes included", why)
 		}
 		restored := ld.waitDeployment(t, stable.ID, 2*time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
@@ -245,6 +261,9 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 			t.Fatalf("crash candidate abort reason = %q, want crash loop", got.RolloutAbortedReason)
 		}
 		t.Logf("DRILL crash_loop reason=%q", got.RolloutAbortedReason)
+		if why := d.decision(t, got); why.Rule != api.RolloutRuleAbortCrashLoop || why.Signals == nil || why.Signals.CandidateLivenessRestarts == 0 {
+			t.Fatalf("crash loop decision = %+v; want abort_crash_loop with the restarts", why)
+		}
 		d.waitDeployment(t, stable.ID, time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
@@ -296,6 +315,39 @@ func (d *safeReleaseDrill) createApp(t *testing.T, slug string) {
 			d.t.Errorf("cleanup park %s: status=%d body=%s", slug, status, raw)
 		}
 	})
+}
+
+// decision decodes the ADR-1237 record stored with the deployment's latest
+// rollout transition.
+func (d *safeReleaseDrill) decision(t *testing.T, dep state.Deployment) api.RolloutDecision {
+	t.Helper()
+	var out api.RolloutDecision
+	if err := json.Unmarshal(dep.RolloutDecision, &out); err != nil || out.Candidate == nil || out.Stable == nil {
+		t.Fatalf("deployment %s rollout_decision = %s (err %v); want a record with both samples", dep.ID, dep.RolloutDecision, err)
+	}
+	return out
+}
+
+// holdRules lists the rules of the deployment's recorded holds, oldest first.
+func (d *safeReleaseDrill) holdRules(t *testing.T, deploymentID string) []string {
+	t.Helper()
+	audits, err := d.store.ListDeploymentAudit(context.Background(), deploymentID, 100)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	var rules []string
+	for i := len(audits) - 1; i >= 0; i-- {
+		if audits[i].Kind != state.DeployRolloutHeld {
+			continue
+		}
+		var data struct {
+			Decision api.RolloutDecision `json:"decision"`
+		}
+		if json.Unmarshal(audits[i].Data, &data) == nil {
+			rules = append(rules, data.Decision.Rule)
+		}
+	}
+	return rules
 }
 
 // deployLive submits a deployment and waits until it is live. A canary
