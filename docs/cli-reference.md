@@ -4118,7 +4118,7 @@ List triggers
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | filter to an app slug |  |
-| `--kind <value>` | filter by trigger kind | one of `cron` · `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+| `--kind <value>` | filter by trigger kind | one of `cron` · `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 
 ### triggers get
 
@@ -4135,7 +4135,7 @@ Create a broker trigger
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` |
+| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 | `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
 | `--config <JSON>` | JSON config (inline \| @file \| -) |  |
 | `--enabled` | enable the trigger |  |
@@ -4196,7 +4196,7 @@ List recent trigger records
 
 | Flag | Meaning | |
 |---|---|---|
-| `--state <STATE>` | filter by record state | one of `pending` · `claimed` · `succeeded` · `retry` · `dead_letter` |
+| `--state <STATE>` | filter by record state | one of `pending` · `claimed` · `succeeded` · `retry` · `dead_letter` · `superseded` |
 
 ### triggers retry
 

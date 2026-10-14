@@ -46,5 +46,23 @@ Each message is one invocation. A 2xx response completes it; a failed or
 timed-out handler retries under the group's retry policy; a platform failure
 returns the message without spending an attempt. While a trigger consumes a group,
 direct claims return 409 `realtime_group_bound_to_trigger`; deleting the trigger
-returns the group to your workers. See the
+returns the group to your workers.
+
+Declare it in `gregale.yaml` to create it on deploy, in a single-app manifest or
+for one function of a [multi-function project](functions.md):
+
+```yaml
+triggers:
+  - kind: realtime
+    app: notify                   # the app slug, or a function name
+    slug: orders
+    config:
+      endpoint_id: 6f1c2a4e-1d9b-4c7a-9a39-0b8d6f0f4c11
+      channel: orders
+      group: billing
+      max_concurrency: 4          # optional; defaults to 1
+```
+
+Deploy matches the app's realtime triggers to the file by `slug` and rolls the
+change back if the deploy fails. See the
 [function-trigger operations guide](ops/realtime.md#realtime-function-triggers).

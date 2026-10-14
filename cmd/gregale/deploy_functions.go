@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -273,6 +274,12 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 	if err != nil {
 		return fmt.Errorf("cron triggers: %w", err)
 	}
+	if err := reconcileManifestRealtimeTriggers(ctx, client, fn.slug, functionRealtimeTriggers(d.manifest, fn), txn); err != nil {
+		if rollbackErr := txn.rollback(ctx); rollbackErr != nil {
+			err = errors.Join(err, rollbackErr)
+		}
+		return fmt.Errorf("realtime triggers: %w", err)
+	}
 	txn.commit()
 	acct, err := client.Whoami(ctx)
 	if err != nil {
@@ -289,6 +296,23 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 		return fmt.Errorf("webhooks: %w", err)
 	}
 	return nil
+}
+
+// functionRealtimeTriggers selects one function's realtime triggers with the
+// function name rewritten to its app slug. A function that declares none is
+// left alone unless the manifest explicitly clears every trigger.
+func functionRealtimeTriggers(m *gregalemanifest.Manifest, fn plannedFunction) *gregalemanifest.Manifest {
+	out := &gregalemanifest.Manifest{}
+	if m.Triggers != nil && len(m.Triggers) == 0 {
+		out.Triggers = []gregalemanifest.Trigger{}
+	}
+	for _, trigger := range m.Triggers {
+		if trigger.Kind == gregalemanifest.TriggerKindRealtime && trigger.App == fn.spec.Name {
+			trigger.App = fn.slug
+			out.Triggers = append(out.Triggers, trigger)
+		}
+	}
+	return out
 }
 
 // functionARN is the object-notification destination for a function app.
