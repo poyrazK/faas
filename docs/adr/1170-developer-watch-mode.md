@@ -223,8 +223,11 @@ the builder VM. That is the only case that waits for a build.
      stores the developer app's public hostname with the watch command
      (`dev_watch_settings.host`), builderd passes it in the build manifest
      and keys the build cache on it, and the watch overlay sets
-     `GREGALE_DEV_HOST` and Vite's `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS`
-     in the image. Next.js reads `allowedDevOrigins` only from its config
+     `GREGALE_DEV_HOST` in the image. guest-init adds Vite's
+     `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` from it when a watch-mode
+     workload starts: image environment keys must start with a letter, so
+     the image cannot carry Vite's name (the first metal run caught the
+     dropped variable as a 403). Next.js reads `allowedDevOrigins` only from its config
      file, so with a terminal `gregale dev --watch` offers to add
      `process.env.GREGALE_DEV_HOST` there (creating `next.config.mjs`, or
      editing a config that exports a plain object) and otherwise prints the
