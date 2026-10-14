@@ -102,7 +102,7 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"pull queue binding", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: jobs\n        mode: pull\n", api.PlanPro, "consumes queues by push"},
 		{"duplicate queue binding", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: jobs\n      - name: jobs\n        queue_name: other\n", api.PlanPro, "duplicate queue binding name"},
 		{"bad queue name", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: Jobs\n", api.PlanPro, "queue_name must match"},
-		{"event trigger names an app", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - app: other\n        source: billing.*\n        type: invoice.paid\n", api.PlanPro, "remove app:"},
+		{"event trigger names an app", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - app: other\n        source: billing.*\n        type: invoice.paid\n", api.PlanPro, "remove app; a function"},
 		{"event trigger without source", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - type: invoice.paid\n", api.PlanPro, "functions[0]: triggers.event[0].source"},
 	}
 	for _, tt := range tests {

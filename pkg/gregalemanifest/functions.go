@@ -327,7 +327,7 @@ func validateFunctionDeliveries(field string, fn FunctionSpec) error {
 	}
 	for j, trigger := range fn.EventTriggers {
 		if trigger.App != "" {
-			return fmt.Errorf("%s.event_triggers[%d].app: a function's event triggers deliver to that function; remove app:", field, j)
+			return fmt.Errorf("%s.event_triggers[%d].app: remove app; a function's event triggers deliver to that function", field, j)
 		}
 		if err := trigger.Validate(j); err != nil {
 			return fmt.Errorf("%s: %w", field, err)
