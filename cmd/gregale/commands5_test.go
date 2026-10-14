@@ -1697,11 +1697,15 @@ func TestCmdAppsDispatch_LsAlias(t *testing.T) {
 	defer sink.Close()
 	t.Setenv("FAAS_API", sink.URL)
 	t.Setenv("FAAS_TOKEN", "fp_live_x")
-	if code := run([]string{"apps", "ls"}); code != 0 {
-		t.Errorf("run(apps ls) = %d, want 0", code)
-	}
-	if !hit {
-		t.Errorf("apps ls did not hit /v1/apps")
+	// H10-24: `projects list` spells it `list`; `apps list` printed usage.
+	for _, verb := range []string{"ls", "list"} {
+		hit = false
+		if code := run([]string{"apps", verb}); code != 0 {
+			t.Errorf("run(apps %s) = %d, want 0", verb, code)
+		}
+		if !hit {
+			t.Errorf("apps %s did not hit /v1/apps", verb)
+		}
 	}
 }
 

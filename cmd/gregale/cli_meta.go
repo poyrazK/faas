@@ -1393,7 +1393,8 @@ var cliCommands = []cliCommand{
 				{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"slow", "balanced", "aggressive", "1-10-50-100"}},
 			}},
 		},
-		Positionals: []string{"<slug>"},
+		// No group positional: gate and advance take a deployment id and
+		// simulate takes the slug, so a group-level <slug> misled (H10-22).
 	},
 	{
 		Name:                dispatchBuild,
