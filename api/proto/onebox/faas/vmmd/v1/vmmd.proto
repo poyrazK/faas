@@ -1613,6 +1613,10 @@ message CaptureProfileResponse {
   // partial marks a window that ended early (the workload was OOM-killed);
   // heap profiles from processes that could not flush are checkpoints.
   bool partial = 5;
+  // oom_killed reports that the workload was OOM-killed during the window;
+  // oom_peak_mb is the memory in use at the kill.
+  bool oom_killed = 6;
+  int32 oom_peak_mb = 7;
 }
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to

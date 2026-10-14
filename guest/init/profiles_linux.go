@@ -59,6 +59,9 @@ type profileCapture struct {
 	// stop ends the window early; stopReason explains it in the reply.
 	stop       chan struct{}
 	stopReason string
+	// oomKilled marks a window ended by an OOM kill of the workload.
+	oomKilled bool
+	oomPeakMB int
 	// replied closes once the reply has been written to the host.
 	replied     chan struct{}
 	repliedOnce sync.Once

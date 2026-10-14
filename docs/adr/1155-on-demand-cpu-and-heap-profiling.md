@@ -149,6 +149,15 @@ changes keep that heap:
    `ProfileCaptureOOMLinkWindow` (15 min). The fields live in the capture
    document, so no migration is needed; re-stamping on a redelivered OOM
    report is idempotent.
+4. Single-process apps run without a workload cgroup leaf, so ADR-121's
+   memory.events watcher never sees their OOM kills; the supervisor restarts
+   them in place and no workload-OOM report is sent. guest-init therefore
+   also treats an app exit by SIGKILL while the kernel's `/proc/vmstat`
+   `oom_kill` counter rose as an OOM kill: it interrupts a running capture
+   and marks the reply `oom_killed` with the guest's memory as the peak, and
+   schedd stamps that capture with the instance's plan memory. This adds no
+   lifecycle change: whether such kills should fail the deployment like
+   workload OOMs is an ADR-121 decision and is left as it is.
 
 Checkpoints are limited to automatic captures: they cost a heap snapshot per
 interval (noticeable for Python's `tracemalloc`) and manual captures of a

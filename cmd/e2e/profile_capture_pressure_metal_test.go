@@ -187,9 +187,10 @@ func TestProfileCaptureMemoryPressureMetal(t *testing.T) {
 }
 
 // TestProfileCaptureOOMMetal drives the fixture from memory pressure into a
-// real OOM kill while the automatic heap capture runs (ADR-1155). guest-init
-// must end the capture with the last heap checkpoint before reporting the
-// kill, and schedd must link the kill to the capture.
+// real OOM kill while the automatic heap capture runs (ADR-1155). The fixture
+// is a single-process app, so the guest's OOM killer kills it and guest-init
+// restarts it in place; guest-init must end the capture with the last heap
+// checkpoint, mark the reply as OOM-killed, and schedd must link the kill.
 func TestProfileCaptureOOMMetal(t *testing.T) {
 	a := startPressureApp(t, "profoom")
 	auto := a.growUntilAutomaticCapture(t)

@@ -57,7 +57,8 @@ func profileCaptureStatus(err error) error {
 }
 
 func profileCaptureResponse(result profileproto.CaptureResult) *vmmdpb.CaptureProfileResponse {
-	out := &vmmdpb.CaptureProfileResponse{Processes: int32(result.Processes), Dropped: int32(result.Dropped), Reason: result.Reason, Partial: result.Partial}
+	out := &vmmdpb.CaptureProfileResponse{Processes: int32(result.Processes), Dropped: int32(result.Dropped), Reason: result.Reason, Partial: result.Partial,
+		OomKilled: result.OOMKilled, OomPeakMb: int32(result.OOMPeakMB)}
 	for _, p := range result.Profiles {
 		out.Profiles = append(out.Profiles, &vmmdpb.CapturedProfile{Kind: p.Kind, ProcessId: p.ProcessID, Profile: p.Profile, FromUnixNano: p.FromUnixNano, UntilUnixNano: p.UntilUnixNano})
 	}

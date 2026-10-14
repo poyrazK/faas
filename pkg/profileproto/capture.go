@@ -77,6 +77,12 @@ type CaptureResult struct {
 	// Partial marks a window that ended early; heap profiles from processes
 	// that could not flush are their last checkpoints.
 	Partial bool `json:"partial,omitempty"`
+	// OOMKilled reports that the workload was OOM-killed during the window;
+	// OOMPeakMB is the memory in use at the kill. guest-init carries this in
+	// the reply because an app without a workload cgroup is restarted in
+	// place rather than reported as a workload OOM.
+	OOMKilled bool `json:"oom_killed,omitempty"`
+	OOMPeakMB int  `json:"oom_peak_mb,omitempty"`
 }
 
 func ValidKind(kind string) bool { return api.ValidProfileKind(kind) }

@@ -4977,7 +4977,11 @@ type CaptureProfileResponse struct {
 	Reason    string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
 	// partial marks a window that ended early (the workload was OOM-killed);
 	// heap profiles from processes that could not flush are checkpoints.
-	Partial       bool `protobuf:"varint,5,opt,name=partial,proto3" json:"partial,omitempty"`
+	Partial bool `protobuf:"varint,5,opt,name=partial,proto3" json:"partial,omitempty"`
+	// oom_killed reports that the workload was OOM-killed during the window;
+	// oom_peak_mb is the memory in use at the kill.
+	OomKilled     bool  `protobuf:"varint,6,opt,name=oom_killed,json=oomKilled,proto3" json:"oom_killed,omitempty"`
+	OomPeakMb     int32 `protobuf:"varint,7,opt,name=oom_peak_mb,json=oomPeakMb,proto3" json:"oom_peak_mb,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5045,6 +5049,20 @@ func (x *CaptureProfileResponse) GetPartial() bool {
 		return x.Partial
 	}
 	return false
+}
+
+func (x *CaptureProfileResponse) GetOomKilled() bool {
+	if x != nil {
+		return x.OomKilled
+	}
+	return false
+}
+
+func (x *CaptureProfileResponse) GetOomPeakMb() int32 {
+	if x != nil {
+		return x.OomPeakMb
+	}
+	return 0
 }
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
@@ -11523,13 +11541,16 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"process_id\x18\x02 \x01(\tR\tprocessId\x12\x18\n" +
 	"\aprofile\x18\x03 \x01(\fR\aprofile\x12$\n" +
 	"\x0efrom_unix_nano\x18\x04 \x01(\x03R\ffromUnixNano\x12&\n" +
-	"\x0funtil_unix_nano\x18\x05 \x01(\x03R\runtilUnixNano\"\xc4\x01\n" +
+	"\x0funtil_unix_nano\x18\x05 \x01(\x03R\runtilUnixNano\"\x83\x02\n" +
 	"\x16CaptureProfileResponse\x12@\n" +
 	"\bprofiles\x18\x01 \x03(\v2$.onebox.faas.vmmd.v1.CapturedProfileR\bprofiles\x12\x1c\n" +
 	"\tprocesses\x18\x02 \x01(\x05R\tprocesses\x12\x18\n" +
 	"\adropped\x18\x03 \x01(\x05R\adropped\x12\x16\n" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x18\n" +
-	"\apartial\x18\x05 \x01(\bR\apartial\"y\n" +
+	"\apartial\x18\x05 \x01(\bR\apartial\x12\x1d\n" +
+	"\n" +
+	"oom_killed\x18\x06 \x01(\bR\toomKilled\x12\x1e\n" +
+	"\voom_peak_mb\x18\a \x01(\x05R\toomPeakMb\"y\n" +
 	"\x1aUpdateEgressCircuitRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12D\n" +
 	"\bcircuits\x18\x02 \x03(\v2(.onebox.faas.vmmd.v1.EgressCircuitTargetR\bcircuits\"=\n" +

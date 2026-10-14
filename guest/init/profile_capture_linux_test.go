@@ -246,7 +246,7 @@ func TestCaptureInterruptedByOOMReturnsCheckpoints(t *testing.T) {
 			t.Fatal("final heap rejected")
 		}
 		// Process 7 is OOM-killed: guest-init interrupts the capture.
-		released = b.interruptCapture(captureInterruptedOOM)
+		released = b.interruptCaptureForOOM(240)
 		select {
 		case <-released:
 			t.Fatal("OOM report released before the capture replied")
@@ -256,7 +256,7 @@ func TestCaptureInterruptedByOOMReturnsCheckpoints(t *testing.T) {
 	if ack != profileproto.CaptureAckOK || len(waits) != 2 || waits[1] != api.ProfileCaptureInterruptGrace {
 		t.Fatalf("ack=%d waits=%v", ack, waits)
 	}
-	if !result.Partial || result.Reason != captureInterruptedOOM || len(result.Profiles) != 2 {
+	if !result.Partial || result.Reason != captureInterruptedOOM || !result.OOMKilled || result.OOMPeakMB != 240 || len(result.Profiles) != 2 {
 		t.Fatalf("interrupted result = %+v", result)
 	}
 	got := map[string]string{}
@@ -281,7 +281,7 @@ func TestCaptureInterruptedByOOMReturnsCheckpoints(t *testing.T) {
 		t.Fatal("reply did not release the OOM report")
 	}
 	select {
-	case <-b.interruptCapture(captureInterruptedOOM):
+	case <-b.interruptCaptureForOOM(0):
 	default:
 		t.Fatal("idle bridge held the OOM report")
 	}

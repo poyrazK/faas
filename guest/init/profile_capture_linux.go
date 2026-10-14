@@ -82,6 +82,7 @@ func (b *profileBridge) runCapture(req profileproto.CaptureRequest, sleep func(t
 		result.Profiles = []profileproto.CapturedProfile{}
 	}
 	usedCheckpoint := c.addCheckpoints(&result)
+	result.OOMKilled, result.OOMPeakMB = c.oomKilled, c.oomPeakMB
 	if interrupted || usedCheckpoint {
 		result.Partial = true
 		if result.Reason == "" && interrupted {
@@ -134,14 +135,16 @@ func (c *profileCapture) addCheckpoints(result *profileproto.CaptureResult) bool
 	return used
 }
 
-// interruptCapture ends a running window early and returns a channel that
-// closes once its reply has reached the host (or at once when idle).
-func (b *profileBridge) interruptCapture(reason string) <-chan struct{} {
+// interruptCaptureForOOM ends a running window because the workload was
+// OOM-killed, marks its reply with the kill, and returns a channel that
+// closes once the reply has reached the host (or at once when idle).
+func (b *profileBridge) interruptCaptureForOOM(peakMB int) <-chan struct{} {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if c := b.capture; c != nil && c.stop != nil {
 		if c.stopReason == "" {
-			c.stopReason = reason
+			c.stopReason = captureInterruptedOOM
+			c.oomKilled, c.oomPeakMB = true, peakMB
 			close(c.stop)
 		}
 		return c.replied
@@ -167,7 +170,7 @@ func (b *profileBridge) markReplied() {
 // waits, bounded, until its checkpoints reached the host. guest-init calls
 // it before reporting the kill: the host destroys the instance on that
 // report, which would otherwise discard the heap captured before it.
-func flushProfileCaptureOnOOM(timeout time.Duration) {
+func flushProfileCaptureOnOOM(timeout time.Duration, peakMB int) {
 	b := activeProfileBridge()
 	if b == nil {
 		return
@@ -175,7 +178,7 @@ func flushProfileCaptureOnOOM(timeout time.Duration) {
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 	select {
-	case <-b.interruptCapture(captureInterruptedOOM):
+	case <-b.interruptCaptureForOOM(peakMB):
 	case <-t.C:
 	}
 }

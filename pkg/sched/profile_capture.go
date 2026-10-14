@@ -25,7 +25,10 @@ var ErrNoRunningInstance = errors.New("sched: app has no running instance")
 type ProfileCaptureOutcome struct {
 	InstanceID   string
 	DeploymentID string
-	Result       profileproto.CaptureResult
+	// PlanMB is the captured instance's memory limit, used when the guest
+	// reports the workload was OOM-killed during the window.
+	PlanMB int
+	Result profileproto.CaptureResult
 }
 
 type profileCaptureRouter interface {
@@ -57,9 +60,9 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 	}
 	result, err := router.CaptureProfile(ctx, target.NodeID, target.ID, req)
 	if err != nil {
-		return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID}, err
+		return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID, PlanMB: target.RAMMB}, err
 	}
-	return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID, Result: result}, nil
+	return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID, PlanMB: target.RAMMB, Result: result}, nil
 }
 
 // QueueMemoryPressureCapture turns a guest memory-pressure report into one
@@ -180,7 +183,8 @@ func (c *VMMClient) CaptureProfile(ctx context.Context, instance string, req pro
 	if err != nil {
 		return profileproto.CaptureResult{}, err
 	}
-	out := profileproto.CaptureResult{Processes: int(resp.GetProcesses()), Dropped: int(resp.GetDropped()), Reason: resp.GetReason(), Partial: resp.GetPartial()}
+	out := profileproto.CaptureResult{Processes: int(resp.GetProcesses()), Dropped: int(resp.GetDropped()), Reason: resp.GetReason(), Partial: resp.GetPartial(),
+		OOMKilled: resp.GetOomKilled(), OOMPeakMB: int(resp.GetOomPeakMb())}
 	for _, p := range resp.GetProfiles() {
 		out.Profiles = append(out.Profiles, profileproto.CapturedProfile{Kind: p.GetKind(), ProcessID: p.GetProcessId(), Profile: p.GetProfile(), FromUnixNano: p.GetFromUnixNano(), UntilUnixNano: p.GetUntilUnixNano()})
 	}

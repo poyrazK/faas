@@ -285,16 +285,20 @@ count as used memory, so file-heavy workloads are not mistaken for leaks.
 
 A fast leak can exhaust the plan's memory before a 10-second capture ends.
 Automatic captures therefore ask the collectors for an interim heap profile
-every 2 seconds. When the workload is OOM-killed during the window, guest-init
-ends the capture at once and returns the last of those checkpoints before it
-reports the kill, so the heap from just before the kill survives the instance.
-Such captures are `partial` and explain why in `reason`.
+every 2 seconds. When the app is OOM-killed during the window, guest-init ends
+the capture at once and returns the last of those checkpoints, so the heap from
+just before the kill survives. Such captures are `partial`, explain why in
+`reason`, and record the kill: `oom_killed_at`, `oom_peak_mb` and
+`oom_plan_mb`. The dashboard capture page and list mark them "OOM-killed
+after".
 
-Gregale then links the kill to the newest heap capture started on that
-instance in the previous 15 minutes: the capture shows `oom_killed_at`,
-`oom_peak_mb` and `oom_plan_mb`, the dashboard capture page and list mark it
-"OOM-killed after", and the deployment's `app_runtime_oom` explanation links
-to it as **Heap profile before the OOM kill**.
+A single-process app that is OOM-killed is restarted in place on the same
+instance, so the capture records the kill only when it happens during the
+window. Apps that run declared workloads report OOM kills to the control plane
+(the deployment fails with `app_runtime_oom`); Gregale then also links the
+kill to the newest heap capture started on that instance in the previous 15
+minutes, and the deployment's error explanation links to it as **Heap profile
+before the OOM kill**.
 
 ### Compare two captures
 

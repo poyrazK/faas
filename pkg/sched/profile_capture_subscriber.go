@@ -85,6 +85,15 @@ func (l *Loop) runProfileCapture(ctx context.Context, queue state.ProfileCapture
 		l.log.Warn("sched: profile_capture: finish failed", "capture_id", c.ID, "err", ferr)
 		return
 	}
+	if err == nil && out.Result.OOMKilled {
+		// The guest saw the workload OOM-killed mid-window (ADR-1155). Apps
+		// without a workload cgroup restart in place and never send a
+		// workload-OOM report, so the reply is the only signal.
+		oom := state.ProfileCaptureOOM{KilledAt: time.Now().UTC(), PeakMB: out.Result.OOMPeakMB, PlanMB: out.PlanMB}
+		if _, serr := queue.StampProfileCaptureOOM(context.WithoutCancel(ctx), c.AppID, out.InstanceID, oom, c.Capture.CreatedAt); serr != nil {
+			l.log.Warn("sched: profile_capture: link OOM kill failed", "capture_id", c.ID, "err", serr)
+		}
+	}
 	l.log.Info("sched: profile_capture: finished", "capture_id", c.ID, "app_id", c.AppID, "status", result.Status,
 		"instance_id", result.InstanceID, "profiles", len(blobs), "processes", result.Processes)
 }

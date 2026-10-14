@@ -617,6 +617,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		return err
 	}
 	defer retireGeneration()
+	oomKillsBefore, oomKillsKnown := readVMStatOOMKills(procVMStat)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -658,7 +659,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 				func(peakMB, pMB int) {
 					// ADR-1155: the host destroys the instance on this report,
 					// so a running capture first returns its heap checkpoints.
-					flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout)
+					flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, peakMB)
 					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
 						slog.Default().Warn("EmitWorkloadOOM failed",
 							"peak_mb", peakMB, "plan_mb", pMB, "err", eerr)
@@ -684,6 +685,12 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		defer pressureCancel()
 	}
 	if err := cmd.Wait(); err != nil {
+		if oomKilled(err, oomKillsBefore, oomKillsKnown, func() (uint64, bool) { return readVMStatOOMKills(procVMStat) }) {
+			// ADR-1155: a capture running when the app was OOM-killed returns
+			// its heap checkpoints marked with the kill. The supervisor still
+			// restarts the app; nothing waits on the reply here.
+			go flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, guestMemTotalMB())
+		}
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
 	return nil
