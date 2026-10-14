@@ -1,0 +1,66 @@
+version: 1
+assertion_profiles:
+  strict-retry-limit:
+    dependency_attempts: {request: dependency-read, per_request: true, max_attempts_per_request: 2, min_requests: 3}
+  responsive-health:
+    healthy_routes:
+      health: {p95: 750ms, error_rate: 0, min_samples: 3}
+  restored-dependency:
+    recovery_deadlines:
+      dependency-read:
+        within: 1s
+        sustain: 1s
+        window: 1s
+        thresholds: {p95: 750ms, error_rate: 0, min_samples: 2}
+suites:
+  per-request-attempts:
+    scenarios:
+      - {scenario: per-request-attempts, engine: real-vm, profile: warm}
+scenarios:
+  per-request-attempts:
+    project: per-request-attempts
+    source: ./native-retry-app
+    timeout: 5m
+    secrets:
+      GREGALE_RETRY_BUDGET_FIXTURE: '1'
+      LEDGER_NAMESPACE: '${run.id}'
+      NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    services:
+      payment:
+        source: ./payment-postgres
+        secrets:
+          DATABASE_URL: '${env.GREGALE_DEPENDENCY_DATABASE_URL}'
+          LEDGER_NAMESPACE: '${run.id}'
+          LEDGER_TEST_DISPOSABLE: '${env.GREGALE_DEPENDENCY_DATABASE_DISPOSABLE}'
+          GREGALE_NATIVE_SSL_REQUEST: '1'
+          NATIVE_AUTH_CERT_PEM: '${env.GREGALE_NATIVE_AUTH_CERT_PEM}'
+          NATIVE_AUTH_KEY_PEM: '${env.GREGALE_NATIVE_AUTH_KEY_PEM}'
+          NATIVE_AUTH_CONTROL_TOKEN: '${env.GREGALE_NATIVE_AUTH_CONTROL_TOKEN}'
+    steps:
+      - name: baseline
+        requests:
+          - {name: ready, method: GET, path: /query, expect: {status: 200}}
+      - name: verify-each-request
+        requests:
+          - {name: dependency-read, method: GET, path: /query, expect: {status: 200}}
+          - {name: health, method: GET, path: /, expect: {status: 200}}
+        load:
+          duration: 8s
+          streams:
+            - {name: dependency, requests: [dependency-read], rate: 5, vus: 2}
+            # The schedule pauses every stream at each phase change until in-flight
+            # requests finish. Six VUs absorb a pause of about a second at this
+            # rate without dropping arrivals.
+            - {name: health, requests: [health], rate: 5, vus: 6}
+          thresholds: {error_rate: 1}
+          chaos_schedule:
+            - {name: baseline, duration: 2s, assertions: [responsive-health]}
+            - name: fault
+              duration: 2s
+              assertions: [strict-retry-limit, responsive-health]
+              rules:
+                - {from: per-request-attempts, to: payment, kind: http_status, status_code: 503, percent: 100, min_matches: 1}
+            - {name: recovery, duration: 4s, assertions: [responsive-health, restored-dependency]}
+      - name: restored
+        requests:
+          - {name: confirmed, method: GET, path: /query, expect: {status: 200}}

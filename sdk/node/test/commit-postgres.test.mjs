@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { insertCommitEvent } from '../dist/index.js';
+import { insertCommitEvent, insertRealtimeCommitEvent, listRealtimeCommitDeliveries, getRealtimeCommitDelivery, retryRealtimeCommitEvent } from '../dist/index.js';
 
 const { Client } = pg;
 const dsn = process.env.DATABASE_URL;
@@ -65,6 +65,33 @@ test('Commit helper shares the business transaction and pins the public outbox',
     await writer.query('ROLLBACK');
     assert.deepEqual(await counts(), { orders: 2, events: 2 });
     await assert.rejects(insertCommitEvent(writer, { type: 'order.created', data: {}, routing: { version: 2, key: null } }), TypeError);
+    await writer.query(await readFile(new URL('../../../pkg/commit/realtime_schema.sql', import.meta.url), 'utf8'));
+    const endpointId = '0123456789abcdef0123456789abcdef';
+    await writer.query('BEGIN');
+    await writer.query('INSERT INTO orders VALUES(6)');
+    const realtimeId = await insertRealtimeCommitEvent(writer, { endpointId, channel: 'orders', data: { order_id: 6 } });
+    assert.equal(await getRealtimeCommitDelivery(observer, realtimeId), null);
+    await writer.query('ROLLBACK');
+    assert.equal(await getRealtimeCommitDelivery(observer, realtimeId), null);
+    assert.deepEqual(await counts(), { orders: 2, events: 2 });
+    await writer.query('BEGIN');
+    await writer.query('INSERT INTO orders VALUES(6)');
+    await insertRealtimeCommitEvent(writer, { id: realtimeId, endpointId, channel: 'orders', data: { order_id: 6 } });
+    await writer.query('COMMIT');
+    assert.equal((await getRealtimeCommitDelivery(observer, realtimeId)).status, 'pending');
+    assert.equal((await listRealtimeCommitDeliveries(observer))[0].id, realtimeId);
+    await writer.query("UPDATE public.gregale_realtime_outbox SET blocked_code='destination_unqualified' WHERE event_id=$1", [realtimeId]);
+    assert.equal((await getRealtimeCommitDelivery(observer, realtimeId)).status, 'blocked');
+    await retryRealtimeCommitEvent(writer, realtimeId);
+    assert.equal((await getRealtimeCommitDelivery(observer, realtimeId)).status, 'pending');
+    await writer.query('UPDATE public.gregale_realtime_outbox SET published_at=clock_timestamp(),sequence=9007199254740993 WHERE event_id=$1', [realtimeId]);
+    const delivery = await getRealtimeCommitDelivery(observer, realtimeId);
+    assert.equal(delivery.status, 'published');
+    assert.equal(delivery.sequence, '9007199254740993');
+    assert.equal('data' in delivery, false);
+    await retryRealtimeCommitEvent(writer, realtimeId);
+    assert.equal((await getRealtimeCommitDelivery(observer, realtimeId)).status, 'published');
+
   } finally {
     if (writer) await writer.end();
     if (observer) await observer.end();

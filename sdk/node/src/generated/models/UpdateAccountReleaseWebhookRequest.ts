@@ -8,7 +8,7 @@
 export type UpdateAccountReleaseWebhookRequest = {
   target_url?: string;
   webhook_secret?: string;
-  event_filter?: Array<'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted'>;
+  event_filter?: Array<'deployment.live' | 'deployment.failed' | 'rollout.completed' | 'rollout.aborted' | 'environment.gitops.changed'>;
   retry_policy?: 'default' | 'aggressive' | 'none';
   delivery_format?: 'json' | 'cloudevents';
   enabled?: boolean;

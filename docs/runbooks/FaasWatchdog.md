@@ -56,6 +56,19 @@ and a heartbeat (`alertmanager — refuse a silent control plane`).
 5. Re-run the control-plane bootstrap, then confirm Alertmanager is enabled
    and the heartbeat monitor shows a ping within one interval.
 
+6. Recommended: keep warn alerts out of the page chat. Since ADR-1236 only 27
+   alerts page; the warn alerts are a review queue that Alertmanager sends as
+   a per-family digest (new families within the hour, still-firing ones once
+   a day). Create a second webhook for a separate channel, store it the same
+   way as above (`discord-warn-webhook-url` or `slack-warn-webhook-url`), and
+   set `am_discord_warn_webhook_url_file` or `am_slack_warn_webhook_url_file`.
+   Without it, warn alerts post to the page chat. Review the warn channel, or
+   the fleet dashboard's "Firing warn alerts" table, once a day.
+
+   For pages that reach a phone even when chat is muted, also set
+   `am_pushover_token_file` and `am_pushover_user_key_file`; Pushover receives
+   pages only, at emergency priority.
+
 ## Check
 
 ```bash

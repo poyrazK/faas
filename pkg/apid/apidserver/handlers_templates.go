@@ -42,6 +42,8 @@ type templateView struct {
 // these out of the <select>.
 func templateDescription(name string) string {
 	switch name {
+	case "auth":
+		return "Application Auth for your users on your own Postgres — create it with gregale auth create"
 	case "durable-entity-node":
 		return "Node.js durable entity with local development, typed clients and object-storage-backed state"
 	case "hello-node":

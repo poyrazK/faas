@@ -39,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -93,6 +94,25 @@ func (f *fakeBatchDispatcher) blockAll() chan struct{} {
 	defer f.blockMu.Unlock()
 	f.blockCh = make(chan struct{})
 	return f.blockCh
+}
+
+// spec: §4.10 — a trigger batch record is an async invocation of the bound
+// app, so it runs as long as that app's invocations may (ADR-1180).
+func TestBatchRecordTimeoutFollowsTheAppsInvocationTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		lookup func(context.Context, string) time.Duration
+		want   time.Duration
+	}{
+		{name: "no lookup", want: batchDispatchPerRecordTimeout},
+		{name: "default app", lookup: func(context.Context, string) time.Duration { return api.AsyncInvocationTimeoutFloor }, want: batchDispatchPerRecordTimeout},
+		{name: "two-minute app", lookup: func(context.Context, string) time.Duration { return 2 * time.Minute }, want: 2*time.Minute + api.AsyncInvocationWakeAllowance},
+	} {
+		srv := (&SynthServer{}).WithInvocationTimeout(tc.lookup)
+		if got := srv.batchRecordTimeout(context.Background(), "app-1"); got != tc.want {
+			t.Errorf("%s: record timeout %s, want %s", tc.name, got, tc.want)
+		}
+	}
 }
 
 // TestDispatchBatchRecord_PerRecordTimeout pins audit round 2

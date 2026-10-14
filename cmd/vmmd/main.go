@@ -1101,7 +1101,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
-	// ADR-957 quiet pause: pause eligible instances between requests. schedd
+	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it.
 	if cfg.QuietPause {
@@ -1110,8 +1110,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
 		})
 		go mgr.RunQuietPause(ctx)
-		log.Info("quiet pause enabled (ADR-957)")
+		log.Info("quiet pause enabled (ADR-1151)")
 	}
+	// ADR-1151 frozen tier: nothing is frozen until schedd calls
+	// FreezeInstance. The activity tracker lets a freeze refuse an instance
+	// that is serving a request.
+	mgr.WithFreeze(fcvm.FreezeConfig{
+		Activity: activityTracker,
+		Metrics:  fcvm.NewFreezeMetrics(ops.Registry(), mgr),
+	})
 	// issue #299: wire the artifact backend the Manager uses to
 	// read Grype scan sidecars at boot time. Mirrors the VMM's
 	// own WithStorage wiring at line 223 above; the VMM uses
@@ -1430,7 +1437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-740: instances served a developer live patch are never snapshotted.
 	// The receiver marks them; the gRPC snapshot handlers refuse them.
 	divergedInstances := vmmdgrpc.NewDivergedInstances()
-	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer, divergedInstances)
+	runtimeConfigRecv, runtimeConfigErr := StartRuntimeConfigReceiver(ctx, log, mgr, runtimeEnvStore, jailer, divergedInstances, newDevPatchMetrics(ops.Registry()))
 	if runtimeConfigErr != nil {
 		log.Warn("vmmd: runtime config receiver unavailable", "err", runtimeConfigErr, "goos", runtime.GOOS)
 	} else {

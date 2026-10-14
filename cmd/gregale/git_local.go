@@ -48,6 +48,9 @@ func gitRootFromCwd(start string) (string, error) {
 	}
 	cur := abs
 	for {
+		if !projectContextRootAllowed(cur) {
+			return "", ErrNotInGitRepo
+		}
 		// filepath.Dir of "/" returns "/"; stop there.
 		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
 			return cur, nil

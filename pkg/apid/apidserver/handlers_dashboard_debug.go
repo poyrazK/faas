@@ -994,16 +994,22 @@ func dashboardDebugRegressionView(item api.DebugRegressionItem, slug, since stri
 	values := debugTelemetryFilterValues(since, item.Route, "", filters)
 	values.Set("deployment_id", item.DeploymentID)
 	return dashboard.DebugRegressionView{
-		DeploymentID:    item.DeploymentID,
-		Route:           item.Route,
-		State:           item.State,
-		P95MS:           item.P95MS,
-		P95BaseMS:       item.P95BaseMS,
-		AffectedCount:   item.AffectedCount,
-		Factor:          item.Factor,
-		FirstDetectedAt: item.FirstDetectedAt,
-		LastDetectedAt:  item.LastDetectedAt,
-		RequestsURL:     "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
+		DeploymentID:     item.DeploymentID,
+		Route:            item.Route,
+		State:            item.State,
+		P95MS:            item.P95MS,
+		P95BaseMS:        item.P95BaseMS,
+		AffectedCount:    item.AffectedCount,
+		Factor:           item.Factor,
+		FirstDetectedAt:  item.FirstDetectedAt,
+		LastDetectedAt:   item.LastDetectedAt,
+		RequestsURL:      "/dashboard/apps/" + url.PathEscape(slug) + "/debug?" + values.Encode(),
+		Kind:             item.Kind,
+		HasErrors:        debugger.RegressionHasErrors(item.Kind),
+		HasLatency:       debugger.RegressionHasLatency(item.Kind),
+		ErrorRatePct:     strconv.FormatFloat(item.ErrorRatePct, 'f', -1, 64),
+		ErrorRateBasePct: strconv.FormatFloat(item.ErrorRateBasePct, 'f', -1, 64),
+		ErrorCount:       item.ErrorCount,
 	}
 }
 
@@ -1177,12 +1183,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		return err
 	}
 	now := time.Now().UTC()
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(ctx, sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-since), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-	})
+	row, err := s.getDebugRequestTelemetry(ctx, acct.ID, app.ID, identifier, now.Add(-since), now, now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("request telemetry was not found or has aged out of retention")
 	}
@@ -1258,7 +1259,10 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 	}
 	var apiRegression *api.DebugRegressionItem
 	if matching != nil {
-		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt, State: matching.State}
+		apiRegression = &api.DebugRegressionItem{DeploymentID: matching.DeploymentID, Route: matching.Route, P95MS: matching.P95MS, P95BaseMS: matching.P95BaseMS, AffectedCount: matching.AffectedCount, Factor: matching.Factor, FirstDetectedAt: matching.FirstDetectedAt, LastDetectedAt: matching.LastDetectedAt, State: matching.State,
+			Kind: matching.Kind, ErrorCount: matching.ErrorCount}
+		apiRegression.ErrorRatePct, _ = strconv.ParseFloat(matching.ErrorRatePct, 64)
+		apiRegression.ErrorRateBasePct, _ = strconv.ParseFloat(matching.ErrorRateBasePct, 64)
 	}
 	explanation := buildDebugEvidenceExplanation(item, apiRegression, spans)
 	if regressionErr != nil {

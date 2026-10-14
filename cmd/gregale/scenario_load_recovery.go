@@ -7,14 +7,16 @@ import (
 )
 
 type testLoadRecoverySpec struct {
-	Relative   *testLoadRecoveryRelativeSpec `yaml:"relative,omitempty"`
-	Within     string                        `yaml:"within"`
-	Stability  string                        `yaml:"stability,omitempty" json:"stability,omitempty"`
-	Sustain    string                        `yaml:"sustain"`
-	Window     string                        `yaml:"window"`
-	Thresholds testLoadStepThresholdSpec     `yaml:"thresholds"`
+	MaxPendingAge string                        `yaml:"max_pending_age,omitempty"`
+	Relative      *testLoadRecoveryRelativeSpec `yaml:"relative,omitempty"`
+	Within        string                        `yaml:"within"`
+	Stability     string                        `yaml:"stability,omitempty" json:"stability,omitempty"`
+	Sustain       string                        `yaml:"sustain"`
+	Window        string                        `yaml:"window"`
+	Thresholds    testLoadStepThresholdSpec     `yaml:"thresholds"`
 }
 type testLoadRecoveryConfig struct {
+	MaxPendingAge                      time.Duration
 	Relative                           *testLoadRecoveryRelativeSpec
 	Within, Sustain, Window, Stability time.Duration
 	Thresholds                         testLoadStepThresholdConfig
@@ -26,6 +28,9 @@ type testLoadRecoverySample struct {
 	Passed    bool
 }
 type testLoadRecoveryEvidence struct {
+	MaxPendingAgeMS int64                              `json:"max_pending_age_ms,omitempty"`
+	OverdueRequests int                                `json:"overdue_requests"`
+	Thresholds      []testLoadThresholdEvidence        `json:"thresholds,omitempty"`
 	Stability       *testLoadRecoveryStabilityEvidence `json:"stability,omitempty"`
 	DiagnosticsRef  string                             `json:"diagnostics_ref,omitempty"`
 	Baseline        *testLoadRecoveryBaseline          `json:"baseline,omitempty"`
@@ -73,6 +78,12 @@ func validateTestLoadRecovery(phase testLoadChaosPhaseSpec, followsFault bool, d
 			return fail("stability must be whole milliseconds between 100ms and 5m")
 		}
 	}
+	if r.MaxPendingAge != "" {
+		d, err := time.ParseDuration(r.MaxPendingAge)
+		if err != nil || d < time.Millisecond || d > testLoadMaxDuration || d%time.Millisecond != 0 {
+			return fail("max_pending_age must be whole milliseconds between 1ms and 5m")
+		}
+	}
 	cfg := resolveTestLoadRecovery(r)
 	if cfg.Window > cfg.Within || cfg.Within+cfg.Sustain+cfg.Stability > duration {
 		return fail("window must not exceed within, and within plus sustain plus stability must fit the phase duration")
@@ -96,18 +107,20 @@ func resolveTestLoadRecovery(spec *testLoadRecoverySpec) *testLoadRecoveryConfig
 	if spec == nil {
 		return nil
 	}
+	pendingAge, _ := time.ParseDuration(spec.MaxPendingAge)
 	within, _ := time.ParseDuration(spec.Within)
 	sustain, _ := time.ParseDuration(spec.Sustain)
 	window, _ := time.ParseDuration(spec.Window)
 	stability, _ := time.ParseDuration(spec.Stability)
 	p95, _ := time.ParseDuration(spec.Thresholds.P95)
 	p99, _ := time.ParseDuration(spec.Thresholds.P99)
-	return &testLoadRecoveryConfig{Relative: spec.Relative, Within: within, Sustain: sustain, Window: window, Stability: stability, Thresholds: testLoadStepThresholdConfig{P95: p95, P99: p99, ErrorRate: spec.Thresholds.ErrorRate, SuccessRate: spec.Thresholds.SuccessRate, MinSamples: spec.Thresholds.MinSamples}}
+	return &testLoadRecoveryConfig{MaxPendingAge: pendingAge, Relative: spec.Relative, Within: within, Sustain: sustain, Window: window, Stability: stability, Thresholds: testLoadStepThresholdConfig{P95: p95, P99: p99, ErrorRate: spec.Thresholds.ErrorRate, SuccessRate: spec.Thresholds.SuccessRate, MinSamples: spec.Thresholds.MinSamples}}
 }
 
 // Recovery windows use completion times of requests started in this phase.
 // Pending requests contribute no healthy samples; late completions appear only
-// in later windows, with their full latency.
+// in later windows, with their full latency. Carryover requests from earlier
+// phases affect only the optional pending-age budget.
 func evaluateTestLoadRecovery(cfg *testLoadRecoveryConfig, phase testLoadPhaseWindow, samples []testLoadRecoverySample, baselines ...*testLoadRecoveryBaseline) *testLoadRecoveryEvidence {
 	if cfg == nil {
 		return nil
@@ -116,7 +129,12 @@ func evaluateTestLoadRecovery(cfg *testLoadRecoveryConfig, phase testLoadPhaseWi
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond
 	}
-	evidence := &testLoadRecoveryEvidence{WithinMS: cfg.Within.Milliseconds(), SustainMS: cfg.Sustain.Milliseconds(), WindowMS: cfg.Window.Milliseconds(), CheckIntervalMS: interval.Milliseconds(), Error: "no sustained healthy interval within the recovery deadline"}
+	evidence := &testLoadRecoveryEvidence{MaxPendingAgeMS: cfg.MaxPendingAge.Milliseconds(), WithinMS: cfg.Within.Milliseconds(), SustainMS: cfg.Sustain.Milliseconds(), WindowMS: cfg.Window.Milliseconds(), CheckIntervalMS: interval.Milliseconds(), Error: "no sustained healthy interval within the recovery deadline"}
+	defer func() {
+		if !evidence.Passed && evidence.OverdueRequests > 0 {
+			evidence.Error += fmt.Sprintf("; %d requests exceed max_pending_age of %dms", evidence.OverdueRequests, evidence.MaxPendingAgeMS)
+		}
+	}()
 	if cfg.Stability > 0 {
 		evidence.Stability = &testLoadRecoveryStabilityEvidence{DurationMS: cfg.Stability.Milliseconds()}
 	}
@@ -139,13 +157,31 @@ func evaluateTestLoadRecovery(cfg *testLoadRecoveryConfig, phase testLoadPhaseWi
 		evidence.Error = "recovery phase did not complete"
 		return evidence
 	}
-	ordered := append([]testLoadRecoverySample(nil), samples...)
+	ordered := make([]testLoadRecoverySample, 0, len(samples))
+	for _, sample := range samples {
+		if !sample.StartedAt.Before(phase.StartedAt) {
+			ordered = append(ordered, sample)
+		}
+	}
 	sort.Slice(ordered, func(i, j int) bool {
 		return ordered[i].StartedAt.Add(ordered[i].Duration).Before(ordered[j].StartedAt.Add(ordered[j].Duration))
 	})
 	limit := phase.FinishedAt.Sub(phase.StartedAt)
 	if limit > cfg.Within+cfg.Sustain+cfg.Stability {
 		limit = cfg.Within + cfg.Sustain + cfg.Stability
+	}
+	// Overdue intervals allow exact historical pending counts without scanning
+	// every request for every rolling window.
+	var overdueStarts, overdueEnds []time.Time
+	if cfg.MaxPendingAge > 0 {
+		for _, sample := range samples {
+			if sample.Duration > cfg.MaxPendingAge {
+				overdueStarts = append(overdueStarts, sample.StartedAt.Add(cfg.MaxPendingAge))
+				overdueEnds = append(overdueEnds, sample.StartedAt.Add(sample.Duration))
+			}
+		}
+		sort.Slice(overdueStarts, func(i, j int) bool { return overdueStarts[i].Before(overdueStarts[j]) })
+		sort.Slice(overdueEnds, func(i, j int) bool { return overdueEnds[i].Before(overdueEnds[j]) })
 	}
 	var healthySince, stabilityStart time.Duration
 	left, right := 0, 0
@@ -176,7 +212,10 @@ func evaluateTestLoadRecovery(cfg *testLoadRecoveryConfig, phase testLoadPhaseWi
 		}
 		b := cfg.Thresholds
 		healthy := metrics.Requests > 0
-		for _, threshold := range testLoadThresholdEvidenceFor(metrics, b.P95, b.P99, b.ErrorRate, b.SuccessRate, b.MinSamples) {
+		evidence.Thresholds = testLoadThresholdEvidenceFor(metrics, b.P95, b.P99, b.ErrorRate, b.SuccessRate, b.MinSamples)
+		evidence.OverdueRequests = sort.Search(len(overdueStarts), func(i int) bool { return !overdueStarts[i].Before(end) }) - sort.Search(len(overdueEnds), func(i int) bool { return overdueEnds[i].After(end) })
+		healthy = healthy && evidence.OverdueRequests == 0
+		for _, threshold := range evidence.Thresholds {
 			healthy = healthy && threshold.Passed
 		}
 		if cfg.Relative != nil {

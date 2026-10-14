@@ -22,7 +22,7 @@ class DevPatchPreview:
 
     eligible: bool
     changed_paths: int
-    """Files added"""
+    """Files added, modified or deleted inside the build's source root."""
     patch_bytes: int
     """Total size of the added or modified files."""
     reason: DevPatchPreviewReason | Unset = UNSET

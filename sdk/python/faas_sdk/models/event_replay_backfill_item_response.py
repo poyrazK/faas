@@ -40,9 +40,9 @@ class EventReplayBackfillItemResponse:
     """Handler attempt history for this consumer; omitted when retained delivery provenance or current app
     ownership is unavailable."""
     workflow_run_id: UUID | Unset = UNSET
-    """Retained workflow run admitted for this item"""
+    """Retained workflow run admitted for this item, when still present."""
     workflow_run_status: str | Unset = UNSET
-    """Current state of the retained workflow run"""
+    """Current state of the retained workflow run, when still present."""
 
     def to_dict(self) -> dict[str, Any]:
         event_source = self.event_source

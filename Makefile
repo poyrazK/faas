@@ -411,7 +411,7 @@ grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e
 
 .PHONY: grafana-mirror-check
 grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → deploy/ansible/roles/grafana/files/ mirror. PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.
-	@for f in faas-fleet.json warm-snapshot.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json loki-pipeline.json ai-gateway.json; do \
+	@for f in faas-fleet.json warm-snapshot.json dev-loop.json top-tenants.json top-throttled-apps.json edge-rules.json audit-write-fidelity.json obs-trace-completeness.json telemetry-pipeline.json loki-pipeline.json ai-gateway.json; do \
 	  if [ -f "deploy/grafana/$$f" ] && [ -f "deploy/ansible/roles/grafana/files/$$f" ]; then \
 	    a=$$(shasum -a 256 "deploy/grafana/$$f" | awk '{print $$1}'); \
 	    b=$$(shasum -a 256 "deploy/ansible/roles/grafana/files/$$f" | awk '{print $$1}'); \
@@ -588,6 +588,21 @@ metal-lima: ## Run metal tests locally on an M3+ Mac via Lima nested KVM (see de
 
 .PHONY: native-m9-acceptance
 .PHONY: native-dev-bridge-acceptance
+.PHONY: native-scenario-restart-acceptance test-scenario-restart-acceptance test-scenario-dependency-postgres
+native-scenario-restart-acceptance: ## Verify native checkout batches, restart checkpoint matrix, pending recovery, failure/cancellation and cleanup
+	@GO="$(GO)" bash scripts/ci/run-native-scenario-restart-acceptance.sh
+
+test-scenario-restart-acceptance: ## Portable native-gate contracts, Node fixtures and manifest checks; no native VM claim
+	@python3 scripts/ci/scenario-restart-native_test.py
+	@python3 scripts/ci/scenario-dependency-postgres_test.py
+	@node --test examples/scenario-checkout/test/checkout.test.mjs examples/scenario-checkout/test/durable.test.mjs examples/scenario-checkout/test/batch.test.mjs examples/scenario-checkout/test/native-probe.test.mjs examples/scenario-checkout/test/pool-exhaustion.test.mjs examples/scenario-http-write/test/write.test.mjs examples/scenario-http-write/test/in-flight.test.mjs examples/scenario-http-write/test/retry-budget.test.mjs examples/scenario-http-write/test/circuit-breaker.test.mjs examples/scenario-http-write/test/bulkhead.test.mjs examples/scenario-http-write/test/combined.test.mjs examples/scenario-http-write/test/isolation.test.mjs examples/scenario-http-write/test/request-correlation.test.mjs examples/scenario-http-write/test/pg-commit-proxy.test.mjs
+	@$(GO) test ./cmd/gregale -run '^TestNativePoolCancellationRealCommandAndProxy$$|^TestNativeTransportNegativeAssertionsRealTCP$$|^TestRequestDeadline|^TestPoolExhaustion|^TestConnectionLeak|^TestDeclared.*Campaign|^TestCheckout.*ExampleManifest$$|^TestScenarioNativeAcceptanceHarness$$|^TestHTTPInFlightExampleManifest$$|^TestHTTPRestartMatrix|^TestHTTPDependencyRestart|^TestScenarioSecretEnvironment|^TestScenarioRestartInFlight' -race -count=1
+
+test-scenario-dependency-postgres: ## Verify dependency crash/replay and plaintext/TLS COMMIT faults, latency, bandwidth, read cuts, SSL/auth connection stalls, deployed COMMIT acknowledgement loss/deadlines, bandwidth restrictions, deployed read interruption/SSLRequest stalls, application retry budgets/circuit breakers/bulkheads, combined policies, repeated outage/recovery cycles, dependency isolation and recovery against Postgres 16
+	@node --test examples/scenario-http-write/test/pg-commit-proxy.test.mjs
+	@python3 scripts/ci/scenario-dependency-postgres_test.py
+	@python3 scripts/ci/scenario-dependency-postgres.py
+
 .PHONY: native-profiling-acceptance
 native-profiling-acceptance: ## Qualify deployed CPU profiling, request counters and native restore with evidence
 	@result=0; bash scripts/ci/run-native-profiling-acceptance.sh || result=$$?; \
@@ -1063,8 +1078,12 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
-	  cp pkg/state/queries.sql pkg/state/managed_postgres_drain_queries.sql pkg/state/managed_postgres_drain_plan_queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/dev_source_patch_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql pkg/state/route_advice_queries.sql pkg/state/service_wake_ahead_queries.sql pkg/state/route_priority_queries.sql "$$tmp/pkg/state/"; \
-	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql "$$tmp/pkg/state/"; \
+	  for realtime_package in realtimettl realtimebulk; do \
+	    mkdir -p "$$tmp/pkg/state/$$realtime_package"; \
+	    cp "pkg/state/$$realtime_package/queries.sql" "pkg/state/$$realtime_package/schema.sql" "$$tmp/pkg/state/$$realtime_package/"; \
+	  done; \
+	  cp pkg/state/queries.sql pkg/state/managed_postgres_drain_queries.sql pkg/state/managed_postgres_drain_plan_queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/queue_lease_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/dev_source_patch_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql pkg/state/route_advice_queries.sql pkg/state/service_wake_ahead_queries.sql pkg/state/route_priority_queries.sql pkg/state/route_awake_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql pkg/state/edge_rule_replay_retention_queries.sql pkg/state/mcp_access_policy_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
 	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
@@ -1073,7 +1092,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1337,6 +1356,19 @@ data-api-browser-acceptance: ## Real browser CORS acceptance with disposable Pos
 
 data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
 	@bash scripts/test-data-api-packaging.sh
+
+.PHONY: test-auth-app
+test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (ADR-1190); needs Node 22+ and npm
+	@scratch="$$(mktemp -d)" && trap 'rm -rf "$$scratch"' EXIT && \
+	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
+	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
+
+.PHONY: auth-staging-check auth-staging-canary
+auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)
+	@node --test tests/auth/staging/*.test.mjs
+
+auth-staging-canary: ## Opt-in application Auth native acceptance through Gregale's remote builder (ADR-1190)
+	@bash scripts/ci/run-auth-staging-canary.sh
 
 .PHONY: data-api-staging-check data-api-staging-canary
 data-api-staging-check: ## Staging canary harness contracts without provider calls

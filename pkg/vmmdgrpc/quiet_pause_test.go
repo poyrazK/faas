@@ -1,4 +1,4 @@
-// adr: 957 — forwards resume a quiet-paused instance before dialing it, and
+// adr: 1151 — forwards resume a quiet-paused instance before dialing it, and
 // Stats reports quiet pause so schedd can leave paused vCPUs out of admission.
 package vmmdgrpc
 

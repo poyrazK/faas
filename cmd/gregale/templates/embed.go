@@ -34,7 +34,7 @@ import (
 // FS holds the embedded starter projects. The root is the directory
 // this file lives in, so subdirs are accessed by their template name.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node
+//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node auth
 var FS embed.FS
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
@@ -80,6 +80,24 @@ var Names = []string{
 	"data-api",
 	"data-api-starter",
 	"durable-entity-node",
+	"auth",
+}
+
+// unlisted templates stay embedded and materializable by name but are left
+// out of customer discovery: `gregale init --list`, completions and
+// unknown-template hints. durable-entity-node scaffolds the operator-only
+// durable entity preview (ADR-712).
+var unlisted = map[string]bool{"durable-entity-node": true}
+
+// ListedNames returns Names without unlisted templates, in catalog order.
+func ListedNames() []string {
+	names := make([]string, 0, len(Names))
+	for _, name := range Names {
+		if !unlisted[name] {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // generatedDotfiles are files a template needs whose names start with '.'.
@@ -420,7 +438,7 @@ func CategoryFor(name string) string {
 		return "function"
 	case "event-worker", "queue-worker":
 		return "event-driven"
-	case "s3-uploader", "object-storage-node", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter":
+	case "s3-uploader", "object-storage-node", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform", "data-api", "data-api-starter", "auth":
 		return "stateless-contract"
 	case "ai-chat":
 		return "ai"

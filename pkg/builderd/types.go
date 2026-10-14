@@ -48,6 +48,10 @@ type VMRequest struct {
 	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
 	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build
 	Function       bool   // handler build; allows markerless Node/Python sources
+	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
+	DevWatchCommand string
+	// DevWatchHost is the developer app's public hostname for that image.
+	DevWatchHost string
 	// DependencyCacheKey is a platform-derived, tenant-scoped digest. Empty
 	// keeps the builder fully ephemeral; developer sessions set it so matching
 	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.
@@ -139,6 +143,9 @@ type BuildOutcome struct {
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool
 	DependencyCacheStoreError string
+	// DependencyCacheUnchanged: the guest kept the imported cache because
+	// the build's plan and install inputs matched it, so nothing was stored.
+	DependencyCacheUnchanged bool
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string

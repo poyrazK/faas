@@ -63,6 +63,15 @@ func cmdAutomationsHistory(args []string) int {
 			provenance = "durable"
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s | %s | %s | %s | %s | policy %d | run %s | review %s | child %s | episode %s\n", e.OccurredAt.Format(time.RFC3339), provenance, oneLine(e.Kind), oneLine(e.Outcome), oneLine(e.Reason), e.PolicyVersion, oneLine(e.RunID), oneLine(e.ReviewID), oneLine(e.ChildJobID), oneLine(e.EpisodeID))
+
+		if e.EvidenceKind != "" {
+			generation := 0
+			if e.ResumeCount != nil {
+				generation = *e.ResumeCount
+			}
+			_, _ = fmt.Fprintf(osStdout, "  Evidence: %s generation %d | action %s | actor %s %s | request %s | notification %s | diagnosis %s\n", oneLine(e.EvidenceKind), generation, oneLine(e.ActionID), oneLine(e.ActorKind), oneLine(e.ActorID), oneLine(e.RequestID), oneLine(e.NotificationEventID), oneLine(e.DiagnosisReason))
+			_, _ = fmt.Fprintf(osStdout, "  Links: review %s | evidence %s | job %s\n", oneLine(e.ReviewURL), oneLine(e.EvidenceURL), oneLine(e.JobURL))
+		}
 	}
 	if out.NextAfter != "" {
 		_, _ = fmt.Fprintln(osStdout, "Next cursor: "+oneLine(out.NextAfter))

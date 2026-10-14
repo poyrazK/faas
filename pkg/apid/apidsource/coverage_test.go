@@ -37,6 +37,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -193,6 +194,42 @@ func TestPublishSource_HappyPath(t *testing.T) {
 	if got := be.puts["sources/build-abc.tar.gz"]; string(got) != "archive bytes" {
 		t.Errorf("uploaded bytes = %q, want 'archive bytes'", got)
 	}
+}
+
+// H10-26: the Put must not inherit the request's leftover budget or its
+// cancellation; it gets a deadline sized to the archive.
+func TestPublishSource_OwnDeadlineDetachedFromRequest(t *testing.T) {
+	be := &ctxBackend{memBackend: newMemBackend()}
+	src := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := os.WriteFile(src, make([]byte, 64<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	defer cancel()
+	<-ctx.Done()
+	if err := publishSource(ctx, be, "build-big", src); err != nil {
+		t.Fatalf("publishSource after the request deadline: %v", err)
+	}
+	if want := 30*time.Second + 8*time.Second; be.left < want-time.Second || be.left > want {
+		t.Fatalf("put deadline left = %v, want about %v for 64 MiB", be.left, want)
+	}
+}
+
+type ctxBackend struct {
+	*memBackend
+	left time.Duration
+}
+
+func (c *ctxBackend) Put(ctx context.Context, key string, r io.Reader) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return errors.New("put has no deadline")
+	}
+	c.left = time.Until(deadline)
+	return c.memBackend.Put(ctx, key, r)
 }
 
 func TestPublishSource_MissingSourceFile(t *testing.T) {
