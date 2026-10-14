@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
@@ -22,6 +23,7 @@ import (
 // on-demand profiling enabled, ready to grow its live heap.
 type pressureApp struct {
 	h                *e2etest.Harness
+	pool             *pgxpool.Pool
 	key, slug, appID string
 	depID            string
 	client           *http.Client
@@ -79,7 +81,8 @@ func startPressureApp(t *testing.T, prefix string) pressureApp {
 	if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 110*time.Second); err != nil {
 		t.Fatalf("deployment did not reach live: %v", err)
 	}
-	app := pressureApp{h: h, key: key, slug: slug, appID: appID, depID: depID, client: h.HTTPClient(), url: gatewayAppURL(h, slug), host: slug + ".apps.test.example"}
+	app := pressureApp{h: h, pool: pool, key: key, slug: slug, appID: appID, depID: depID, client: h.HTTPClient(), url: gatewayAppURL(h, slug), host: slug + ".apps.test.example"}
+	app.subscribeCaptureWebhook(t)
 	// Park before the harness stops the daemons (cleanups run LIFO): an
 	// instance still running at teardown leaks its VM, and an app that was
 	// OOM-killed and restarted in place is still running.
@@ -119,6 +122,68 @@ func (a pressureApp) growUntilAutomaticCapture(t *testing.T) *api.ProfileCapture
 	}
 	t.Fatalf("no automatic capture after growing the heap to %s MiB", grownMB)
 	return nil
+}
+
+// subscribeCaptureWebhook registers an app webhook for the capture events
+// (ADR-1155) straight in the store: the API would resolve the target and
+// seal a secret, neither of which this test is about. Deliveries to the
+// unreachable target fail; the events are asserted in the outbox and ledger.
+func (a pressureApp) subscribeCaptureWebhook(t *testing.T) {
+	t.Helper()
+	var accountID string
+	if err := a.pool.QueryRow(t.Context(), `SELECT account_id::text FROM apps WHERE id = $1::uuid`, a.appID).Scan(&accountID); err != nil {
+		t.Fatalf("app account: %v", err)
+	}
+	if _, err := state.NewPgStore(a.pool).CreateAppWebhook(t.Context(), state.AppWebhook{AppID: a.appID, AccountID: accountID,
+		TargetURL: "https://hooks.invalid/profile-captures", SecretSealed: []byte("unused"), Enabled: true,
+		EventFilter: []string{string(state.AppWebhookEventProfileCaptureReady), string(state.AppWebhookEventProfileCaptureOOMLinked)}}); err != nil {
+		t.Fatalf("create capture webhook: %v", err)
+	}
+}
+
+// assertCaptureNotified expects exactly one profile.capture_ready event for
+// the capture, naming the OOM kill when wantOOM, and no
+// profile.capture_oom_linked: a kill during the capture is announced with it.
+func (a pressureApp) assertCaptureNotified(t *testing.T, captureID string, wantOOM bool) {
+	t.Helper()
+	const q = `SELECT event, payload FROM app_webhook_event_outbox WHERE app_id = $1::uuid AND source_id = $2::uuid
+		UNION ALL SELECT event, payload FROM app_webhook_deliveries WHERE app_id = $1::uuid AND payload->'capture'->>'id' = $2`
+	var events []string
+	var payload api.ProfileCaptureWebhookPayload
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		events = events[:0]
+		rows, err := a.pool.Query(t.Context(), q, a.appID, captureID)
+		if err != nil {
+			t.Fatalf("capture notifications: %v", err)
+		}
+		for rows.Next() {
+			var event string
+			var body []byte
+			if err := rows.Scan(&event, &body); err != nil {
+				t.Fatalf("scan capture notification: %v", err)
+			}
+			events = append(events, event)
+			if event == string(state.AppWebhookEventProfileCaptureReady) {
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Fatalf("decode capture notification: %v", err)
+				}
+			}
+		}
+		rows.Close()
+		if len(events) > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if len(events) != 1 || events[0] != string(state.AppWebhookEventProfileCaptureReady) {
+		t.Fatalf("capture %s notifications = %v; want one profile.capture_ready", captureID, events)
+	}
+	if payload.Capture.ID != captureID || payload.Capture.Trigger != api.ProfileCaptureTriggerMemoryPressure || (payload.Capture.OOMKilledAt != nil) != wantOOM ||
+		payload.CapturePath != "/dashboard/apps/"+a.slug+"/profiles/captures/"+captureID {
+		t.Fatalf("capture notification = %+v; want the capture (OOM=%v) and its page", payload, wantOOM)
+	}
+	t.Logf("capture %s announced: %s (OOM-killed: %v)", captureID, events[0], wantOOM)
 }
 
 func (a pressureApp) captures(t *testing.T) []api.ProfileCapture {
@@ -185,6 +250,7 @@ func TestProfileCaptureMemoryPressureMetal(t *testing.T) {
 		t.Fatalf("automatic capture = %+v; want a ready heap capture of the pressured instance", auto)
 	}
 	assertCaptureFunction(t, h, key, slug, auto.ID, "heap", "profileFixtureGrow")
+	a.assertCaptureNotified(t, auto.ID, false)
 
 	if _, s := doGetWithHost(t, client, url+"release", host, 10*time.Second); s != http.StatusNoContent {
 		t.Fatalf("release: status=%d", s)
@@ -223,6 +289,7 @@ func TestProfileCaptureOOMMetal(t *testing.T) {
 	}
 	t.Logf("capture %s: OOM-killed at %s (%d MB of %d MB), %d profile(s)", auto.ID, auto.OOMKilledAt, auto.OOMPeakMB, auto.OOMPlanMB, len(auto.Profiles))
 	assertCaptureFunction(t, a.h, a.key, a.slug, auto.ID, "heap", "profileFixtureGrow")
+	a.assertCaptureNotified(t, auto.ID, true)
 }
 
 // TestProfileCaptureSlowRequestMetal holds a request in the fixture past the
