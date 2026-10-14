@@ -575,11 +575,9 @@ func secretsSet(args []string) int {
 			fmt.Fprintln(os.Stderr, "secret set: --from-stdin takes no positional pairs")
 			return 1
 		}
-		scanner := bufio.NewScanner(osStdin)
-		// A 64 KB line cap is enough for SecretValueMaxBytes at Scale (32 KB)
-		// plus the key name. Larger lines silently truncate today; the
-		// apid-side byte cap will still reject the request.
-		scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+		// The line cap fits SecretValueMaxBytes at Scale plus the key name;
+		// a longer line fails here with the cap named.
+		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
@@ -593,7 +591,7 @@ func secretsSet(args []string) int {
 			pairs = append(pairs, p)
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintln(os.Stderr, "read stdin:", err)
+			fmt.Fprintln(os.Stderr, "read stdin:", keyValueScanErr(err))
 			return 1
 		}
 	} else {
@@ -843,8 +841,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	scanner := newKeyValueScanner(bufio.NewScanner(f))
 	pairs := make([]secretsPair, 0, 8)
 	seen := make(map[string]struct{})
 	lineNo := 0
@@ -868,7 +865,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		pairs = append(pairs, pair)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, keyValueScanErr(err)
 	}
 	if len(pairs) == 0 {
 		return nil, errors.New("no KEY=VALUE pairs found")
