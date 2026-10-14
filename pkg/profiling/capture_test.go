@@ -97,3 +97,40 @@ func TestGoHeapProfileNormalizes(t *testing.T) {
 		t.Fatalf("Go heap view total %d: %v", view.Total, err)
 	}
 }
+
+//go:noinline
+func parkedStackFixture(release <-chan struct{}, ready chan<- struct{}) {
+	ready <- struct{}{}
+	<-release
+}
+
+func TestGoGoroutineProfileNormalizesAsStacks(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	ready := make(chan struct{})
+	for i := 0; i < 3; i++ {
+		go parkedStackFixture(release, ready)
+		<-ready
+	}
+	var buf bytes.Buffer
+	if err := pprof.Lookup("goroutine").WriteTo(&buf, 0); err != nil {
+		t.Fatal(err)
+	}
+	merged, skipped, err := MergeCapture([][]byte{buf.Bytes(), heapProfile(t, "inuse_space", "grow", 1)}, api.ProfileKindStacks)
+	if err != nil || skipped != 1 || merged == nil {
+		t.Fatalf("goroutine profile rejected or heap accepted as stacks: %v skipped=%d", err, skipped)
+	}
+	view, err := CaptureView(merged, api.ProfileKindStacks)
+	if err != nil || view.Unit != "count" || view.Total < 4 {
+		t.Fatalf("stacks view unit=%q total=%d: %v", view.Unit, view.Total, err)
+	}
+	for _, f := range view.Functions {
+		if strings.HasSuffix(f.Name, "parkedStackFixture") {
+			if f.Total < 3 {
+				t.Fatalf("parked goroutines = %d, want 3", f.Total)
+			}
+			return
+		}
+	}
+	t.Fatalf("parked goroutines missing from the stacks view: %+v", view.Functions)
+}

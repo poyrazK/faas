@@ -7,13 +7,22 @@ import (
 )
 
 // Profile kinds. CPU samples on-CPU time; heap samples live allocations
-// (ADR-1155). Continuous collection defaults to CPU only.
+// (ADR-1155). Continuous collection defaults to CPU only. Stacks is an
+// instant snapshot of where every goroutine or thread is waiting; it exists
+// only for captures.
 const (
-	ProfileKindCPU  = "cpu"
-	ProfileKindHeap = "heap"
+	ProfileKindCPU    = "cpu"
+	ProfileKindHeap   = "heap"
+	ProfileKindStacks = "stacks"
 )
 
+// ValidProfileKind reports a kind continuous collection supports.
 func ValidProfileKind(kind string) bool { return kind == ProfileKindCPU || kind == ProfileKindHeap }
+
+// ValidCaptureProfileKind reports a kind an on-demand capture supports.
+func ValidCaptureProfileKind(kind string) bool {
+	return ValidProfileKind(kind) || kind == ProfileKindStacks
+}
 
 // ProfilingConfig enables sampled CPU profiles (ADR-819). Settings are baked
 // into the deployment; changing them requires a redeploy. Kinds adds

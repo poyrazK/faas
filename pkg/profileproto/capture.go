@@ -85,7 +85,7 @@ type CaptureResult struct {
 	OOMPeakMB int  `json:"oom_peak_mb,omitempty"`
 }
 
-func ValidKind(kind string) bool { return api.ValidProfileKind(kind) }
+func ValidKind(kind string) bool { return api.ValidCaptureProfileKind(kind) }
 
 // Duration returns the requested capture window.
 func (r CaptureRequest) Duration() time.Duration {
@@ -99,8 +99,8 @@ func (r CaptureRequest) Validate() error {
 	if d := r.Duration(); d < CaptureMinDuration || d > CaptureMaxDuration {
 		return fmt.Errorf("capture duration must be between %s and %s", CaptureMinDuration, CaptureMaxDuration)
 	}
-	if len(r.Kinds) == 0 || len(r.Kinds) > 2 {
-		return fmt.Errorf("capture needs one or two profile kinds")
+	if len(r.Kinds) == 0 || len(r.Kinds) > api.ProfileCaptureMaxKinds {
+		return fmt.Errorf("capture needs one to %d profile kinds", api.ProfileCaptureMaxKinds)
 	}
 	if c := r.Checkpoint(); c != 0 && (c < time.Second || c >= r.Duration()) {
 		return fmt.Errorf("capture checkpoint interval must be at least 1s and shorter than the window")
@@ -108,7 +108,7 @@ func (r CaptureRequest) Validate() error {
 	seen := map[string]bool{}
 	for _, kind := range r.Kinds {
 		if !ValidKind(kind) || seen[kind] {
-			return fmt.Errorf("profile kinds must be distinct values of cpu or heap")
+			return fmt.Errorf("profile kinds must be distinct values of cpu, heap or stacks")
 		}
 		seen[kind] = true
 	}

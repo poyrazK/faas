@@ -154,6 +154,20 @@ func (s *server) dashboardProfileCaptureDiff(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// requestProfileCaptureID names the stack snapshot taken while the request
+// with this trace id was in flight (ADR-1155), or "".
+func (s *server) requestProfileCaptureID(ctx context.Context, acct state.Account, app state.App, traceID string) string {
+	store, ok := s.profileCaptures.CaptureStore()
+	if !ok || traceID == "" {
+		return ""
+	}
+	c, err := store.ProfileCaptureForRequest(ctx, acct.ID, app.ID, traceID)
+	if err != nil {
+		return ""
+	}
+	return c.ID
+}
+
 // oomProfileCaptureURL links an OOM-failed deployment to the heap capture
 // taken before the kill (ADR-1155), or "" when there is none.
 func (s *server) oomProfileCaptureURL(ctx context.Context, acct state.Account, app state.App, dep state.Deployment) string {

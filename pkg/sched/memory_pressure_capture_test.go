@@ -74,6 +74,46 @@ func TestQueueMemoryPressureCapture(t *testing.T) {
 	}
 }
 
+func TestQueueSlowRequestCapture(t *testing.T) {
+	ctx := t.Context()
+	mem := state.NewMemStore()
+	seed := func(email string, plan api.Plan) (state.App, state.Instance) {
+		t.Helper()
+		acct, err := mem.CreateAccount(ctx, email, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := mem.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: strings.Split(email, "@")[0], RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ins, err := mem.CreateInstance(ctx, app.ID, "", string(state.StateRunning), 256, "node-1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app, ins
+	}
+	e := newEngine(t, mem, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	app, ins := seed("slow@example.com", api.PlanHobby)
+	queued, reason, err := e.QueueSlowRequestCapture(ctx, ins.ID, "req-1", "trace-1", "GET /orders/{id}", 12*time.Second)
+	if err != nil || !queued || reason != "" {
+		t.Fatalf("first report: queued=%v reason=%q err=%v", queued, reason, err)
+	}
+	list, _ := mem.ListProfileCaptures(ctx, app.AccountID, app.ID)
+	if len(list) != 1 || list[0].Trigger != api.ProfileCaptureTriggerSlowRequest || list[0].RequestID != "req-1" || list[0].RequestTraceID != "trace-1" ||
+		len(list[0].Kinds) != 2 || list[0].Kinds[0] != api.ProfileKindStacks || list[0].Kinds[1] != api.ProfileKindCPU ||
+		list[0].DurationSeconds != int(api.ProfileCaptureSlowRequestDuration/time.Second) || list[0].TriggerDetail != "GET /orders/{id} in flight for 12s" {
+		t.Fatalf("queued capture = %+v", list)
+	}
+	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, ins.ID, "req-2", "trace-2", "", 11*time.Second); queued || !strings.Contains(reason, "already queued") {
+		t.Fatalf("concurrent report: queued=%v reason=%q", queued, reason)
+	}
+	_, free := seed("free-slow@example.com", api.PlanFree)
+	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, free.ID, "req-3", "trace-3", "GET /", 10*time.Second); queued || !strings.Contains(reason, "plan") {
+		t.Fatalf("free plan: queued=%v reason=%q", queued, reason)
+	}
+}
+
 func TestLinkOOMProfileCapture(t *testing.T) {
 	ctx := t.Context()
 	mem := state.NewMemStore()

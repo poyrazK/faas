@@ -58,6 +58,22 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
         except Exception:
             pass
 
+    def _upload_stacks(endpoint, epoch):
+        import _gregale_stacks
+        body = _gregale_stacks.snapshot_pprof()
+        if not body:
+            return
+        now = time.time_ns() // 10**9
+        name = "gregale{gregale_epoch=" + epoch + ",gregale_process=" + str(os.getpid()) + "}"
+        query = urllib.parse.urlencode({"kind": "stacks", "name": name, "from": now, "until": now})
+        req = urllib.request.Request(endpoint + "/ingest?" + query, data=body, method="POST",
+                                     headers={"Content-Type": "application/octet-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=2):
+                pass
+        except Exception:
+            pass
+
     def _start_cpu(endpoint, config):
         import pyroscope
         pyroscope.configure(application_name="gregale", server_address=endpoint,
@@ -106,8 +122,13 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
         elif config["enabled"] and not _state["running"] and not _state["heap"] and not same_epoch:
             kinds = _kinds(config)
             _state["epoch"] = config["epoch"]
+            _state["capture"] = None
             if config.get("capture"):
                 _state["capture"] = {"epoch": config["epoch"], "checkpoint_at": time.time_ns()}
+                if "stacks" in kinds:
+                    # Instant snapshot, taken as the capture starts: closest
+                    # to whatever triggered it.
+                    _upload_stacks(endpoint, config["epoch"])
             if "cpu" in kinds:
                 _start_cpu(endpoint, config)
             if "heap" in kinds:

@@ -13,6 +13,7 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt mk
     PIP_CERT=/etc/ssl/certs/ca-certificates.crt pip install --no-cache-dir --require-hashes --only-binary=:all: -r /opt/gregale/profiling/requirements.txt
 COPY --chmod=0644 guest/profiling/python/sitecustomize.py /opt/gregale/profiling/python/sitecustomize.py
 COPY --chmod=0644 guest/profiling/python/_gregale_heap.py /opt/gregale/profiling/python/_gregale_heap.py
+COPY --chmod=0644 guest/profiling/python/_gregale_stacks.py /opt/gregale/profiling/python/_gregale_stacks.py
 COPY --chmod=0644 guest/tracing/python/requirements.txt /opt/gregale/tracing/requirements.txt
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt mkdir -p /opt/gregale/tracing/python/lib && \
     chmod 0755 /opt/gregale/tracing /opt/gregale/tracing/python /opt/gregale/tracing/python/lib && \

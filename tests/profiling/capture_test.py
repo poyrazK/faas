@@ -33,6 +33,33 @@ while time.time() < deadline:
 '''
 
 
+STUCK_APP = '''
+import asyncio
+import threading
+import time
+
+lock = threading.Lock()
+lock.acquire()
+
+
+def wait_for_lock():
+    lock.acquire()
+
+
+async def stuck_handler():
+    await asyncio.sleep(60)
+
+
+async def main():
+    task = asyncio.ensure_future(stuck_handler())
+    await asyncio.sleep(8)
+    task.cancel()
+
+threading.Thread(target=wait_for_lock, name="worker", daemon=True).start()
+asyncio.run(main())
+'''
+
+
 class Bridge(http.server.BaseHTTPRequestHandler):
     control = {"enabled": False, "suspended": False, "epoch": "d" * 32, "window_seconds": 2}
     polls = []
@@ -89,12 +116,48 @@ class CaptureTests(unittest.TestCase):
         self.assertIn(b"inuse_space", raw)
         self.assertIn(b"Cache.grow", raw, "allocation site lost its function name")
 
+    def test_stacks_snapshot(self):
+        dormant = dict(Bridge.control)
+        self.addCleanup(lambda: setattr(Bridge, "control", dormant))
+        self.addCleanup(lambda: (setattr(Bridge, "polls", []), setattr(Bridge, "uploads", [])))
+        Bridge.polls, Bridge.uploads = [], []
+        Bridge.control = {"enabled": False, "suspended": False, "epoch": "b" * 32, "window_seconds": 2}
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Bridge)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory, "app.py")
+            app.write_text(STUCK_APP)
+            env = dict(os.environ, FAAS_PROFILING_ENABLED="1",
+                       FAAS_PROFILING_ENDPOINT="http://127.0.0.1:%d" % server.server_address[1],
+                       PYTHONPATH=str(ROOT / "guest/profiling/python"))
+            proc = subprocess.Popen([sys.executable, str(app)], env=env)
+            self.addCleanup(proc.kill)
+            # Arm the capture once the app is stuck, as a slow request would.
+            time.sleep(2)
+            Bridge.control = {"enabled": True, "suspended": False, "epoch": "a" * 32, "window_seconds": 2,
+                              "kinds": ["stacks"], "capture": True}
+            deadline = time.time() + 6
+            while time.time() < deadline and not Bridge.uploads:
+                time.sleep(0.1)
+            time.sleep(1)  # a second upload would arrive within a poll
+        self.assertEqual(len(Bridge.uploads), 1, "expected one snapshot per capture epoch")
+        query, body = Bridge.uploads[0]
+        self.assertEqual(query["kind"], ["stacks"])
+        raw = gzip.decompress(body)
+        self.assertIn(b"threads", raw)
+        self.assertIn(b"wait_for_lock", raw, "blocked thread missing")
+        self.assertIn(b"<thread>", raw)
+        self.assertIn(b"stuck_handler", raw, "pending asyncio task missing")
+        self.assertIn(b"<asyncio task>", raw)
+        self.assertNotIn(b"_control_loop", raw, "the collector's own thread must be excluded")
+
     def test_capture_checkpoints_heap(self):
         dormant = dict(Bridge.control)
         self.addCleanup(lambda: setattr(Bridge, "control", dormant))
         self.addCleanup(lambda: (setattr(Bridge, "polls", []), setattr(Bridge, "uploads", [])))
         Bridge.polls, Bridge.uploads = [], []
-        Bridge.control = {"enabled": True, "suspended": False, "epoch": "e" * 32, "window_seconds": 4,
+        Bridge.control = {"enabled": True, "suspended": False, "epoch": "e" * 32, "window_seconds": 10,
                           "kinds": ["heap"], "capture": True, "checkpoint_seconds": 1}
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Bridge)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -107,7 +170,7 @@ class CaptureTests(unittest.TestCase):
                        PYTHONPATH=str(ROOT / "guest/profiling/python"))
             proc = subprocess.Popen([sys.executable, str(app)], env=env)
             self.addCleanup(proc.kill)
-            time.sleep(3.5)
+            time.sleep(6)
             # The process dies mid-window like an OOM kill: only checkpoints remain.
             proc.kill()
             proc.wait()

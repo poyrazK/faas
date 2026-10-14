@@ -2771,6 +2771,7 @@ type Querier interface {
 	PlainReplayRecordChild(ctx context.Context, db DBTX, arg PlainReplayRecordChildParams) error
 	PrepareCheckedRollbackTarget(ctx context.Context, db DBTX, arg PrepareCheckedRollbackTargetParams) error
 	ProbeManagedPostgresCredential(ctx context.Context, db DBTX, access string) (ProbeManagedPostgresCredentialRow, error)
+	ProfileCaptureForRequest(ctx context.Context, db DBTX, arg ProfileCaptureForRequestParams) ([]byte, error)
 	ProfileInvestigationAppOwned(ctx context.Context, db DBTX, arg ProfileInvestigationAppOwnedParams) (bool, error)
 	ProfileInvestigationDeploymentOwned(ctx context.Context, db DBTX, arg ProfileInvestigationDeploymentOwnedParams) (bool, error)
 	ProfileRequestCount(ctx context.Context, db DBTX, arg ProfileRequestCountParams) (ProfileRequestCountRow, error)

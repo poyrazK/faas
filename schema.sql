@@ -26453,7 +26453,7 @@ CREATE TABLE public.profile_capture_data (
     kind text NOT NULL,
     process_id text NOT NULL,
     profile bytea NOT NULL,
-    CONSTRAINT profile_capture_data_kind_check CHECK ((kind = ANY (ARRAY['cpu'::text, 'heap'::text]))),
+    CONSTRAINT profile_capture_data_kind_check CHECK ((kind = ANY (ARRAY['cpu'::text, 'heap'::text, 'stacks'::text]))),
     CONSTRAINT profile_capture_data_process_id_check CHECK ((octet_length(process_id) <= 16)),
     CONSTRAINT profile_capture_data_profile_check CHECK (((octet_length(profile) >= 1) AND (octet_length(profile) <= 1048576))),
     CONSTRAINT profile_capture_data_seq_check CHECK (((seq >= 0) AND (seq <= 7)))

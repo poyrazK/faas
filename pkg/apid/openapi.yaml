@@ -14426,7 +14426,7 @@ paths:
       operationId: getProfileCaptureView
       summary: Merged functions and call paths of one capture kind.
       parameters:
-        - { name: kind, in: query, required: false, description: 'cpu or heap; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap] } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap or stacks; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks] } }
       responses:
         '200':
           description: CPU nanoseconds or live heap bytes merged across the instance's processes.
@@ -14451,7 +14451,7 @@ paths:
       operationId: downloadProfileCapture
       summary: Download one capture kind as a merged gzip pprof profile.
       parameters:
-        - { name: kind, in: query, required: false, description: 'cpu or heap; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap] } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap or stacks; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks] } }
       responses:
         '200':
           description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
@@ -14478,7 +14478,7 @@ paths:
       description: Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
       parameters:
         - { name: base, in: query, required: true, description: Baseline capture id of the same app., schema: { type: string, format: uuid } }
-        - { name: kind, in: query, required: false, description: 'cpu or heap; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap] } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap or stacks; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap, stacks] } }
       responses:
         '200':
           description: Differential view in the kind's unit.
@@ -80600,10 +80600,10 @@ components:
           maxItems: 2
           items: { type: string, enum: [cpu, heap] }
     CreateProfileCaptureRequest:
-      description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10.
+      description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts.
       type: object
       properties:
-        kinds: { type: array, maxItems: 2, items: { type: string, enum: [cpu, heap] } }
+        kinds: { type: array, maxItems: 3, items: { type: string, enum: [cpu, heap, stacks] } }
         duration_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
         instance_id: { type: string, format: uuid, description: Running instance to profile; empty selects the earliest-started RUNNING instance. }
     ProfileCaptureProfile:
@@ -80611,7 +80611,7 @@ components:
       type: object
       required: [kind, bytes]
       properties:
-        kind: { type: string, enum: [cpu, heap] }
+        kind: { type: string, enum: [cpu, heap, stacks] }
         process_id: { type: string }
         bytes: { type: integer }
     ProfileCapture:
@@ -80622,10 +80622,12 @@ components:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         status: { type: string, enum: [queued, capturing, ready, failed] }
-        kinds: { type: array, items: { type: string, enum: [cpu, heap] } }
+        kinds: { type: array, items: { type: string, enum: [cpu, heap, stacks] } }
         duration_seconds: { type: integer }
         requested_instance_id: { type: string, format: uuid }
-        trigger: { type: string, enum: [manual, memory_pressure], description: Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory. }
+        trigger: { type: string, enum: [manual, memory_pressure, slow_request], description: Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds. }
+        request_id: { type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture. }
+        request_trace_id: { type: string, maxLength: 128, description: The trace id that request's telemetry is stored under. }
         trigger_detail: { type: string }
         instance_id: { type: string, format: uuid }
         deployment_id: { type: string, format: uuid }
@@ -80668,13 +80670,13 @@ components:
         value: { type: integer, format: int64 }
         children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
     ProfileCaptureView:
-      description: One profile kind merged across processes. unit is nanoseconds for cpu and bytes for heap. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
+      description: One profile kind merged across processes. unit is nanoseconds for cpu, bytes for heap and count (goroutines or threads) for stacks. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
       type: object
       required: [capture, kind, unit, total, functions, flamegraph, empty]
       properties:
         capture: { $ref: '#/components/schemas/ProfileCapture' }
-        kind: { type: string, enum: [cpu, heap] }
-        unit: { type: string, enum: [nanoseconds, bytes] }
+        kind: { type: string, enum: [cpu, heap, stacks] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
         total: { type: integer, format: int64 }
         functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
         flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
@@ -80687,8 +80689,8 @@ components:
       properties:
         baseline: { $ref: '#/components/schemas/ProfileCapture' }
         candidate: { $ref: '#/components/schemas/ProfileCapture' }
-        kind: { type: string, enum: [cpu, heap] }
-        unit: { type: string, enum: [nanoseconds, bytes] }
+        kind: { type: string, enum: [cpu, heap, stacks] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
         baseline_total: { type: integer, format: int64 }
         candidate_total: { type: integer, format: int64 }
         delta: { type: integer, format: int64 }
@@ -81111,6 +81113,7 @@ components:
         image_digest: { type: string, description: "Immutable image/artifact digest associated with the deployment." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+        profile_capture_id: { type: string, format: uuid, description: "Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists." }
 
     DebugGuestExecutionEvidence:
       type: object

@@ -2635,6 +2635,9 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+	// ProfileCaptureURL links the stack snapshot taken while the request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureURL string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

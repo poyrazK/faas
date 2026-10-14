@@ -113,6 +113,57 @@ func TestGoCollectorCheckpointsHeapDuringCapture(t *testing.T) {
 	}
 }
 
+//go:noinline
+func parkedCollectorFixture(release <-chan struct{}) { <-release }
+
+func TestGoCollectorSnapshotsStacksOncePerCapture(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	go parkedCollectorFixture(release)
+	var mu sync.Mutex
+	var bodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/control":
+			_ = json.NewEncoder(w).Encode(control{Enabled: true, Epoch: "55555555555555555555555555555555", WindowSeconds: 2, Kinds: []string{"stacks"}, Capture: true})
+		case "/ingest":
+			body, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			if r.URL.Query().Get("kind") != "stacks" {
+				t.Errorf("unexpected kind %q", r.URL.Query().Get("kind"))
+			}
+			bodies = append(bodies, body)
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); run(ctx, server.URL) }()
+	time.Sleep(2500 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 1 {
+		t.Fatalf("stack snapshots = %d, want one per capture epoch", len(bodies))
+	}
+	p, err := profile.Parse(bytes.NewReader(bodies[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.SampleType) == 0 || p.SampleType[0].Type != "goroutine" {
+		t.Fatalf("stacks profile sample types = %v", p.SampleType)
+	}
+	for _, fn := range p.Function {
+		if bytes.HasSuffix([]byte(fn.Name), []byte("parkedCollectorFixture")) {
+			return
+		}
+	}
+	t.Fatal("parked goroutine missing from the snapshot")
+}
+
 func TestGoCollectorDormantPollsSlowly(t *testing.T) {
 	var mu sync.Mutex
 	polls := 0

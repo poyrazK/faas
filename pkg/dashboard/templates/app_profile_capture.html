@@ -9,6 +9,7 @@ body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5r
 <p>Status: <strong>{{$c.Status}}</strong>{{if $d.Refresh}} — this page refreshes until the capture finishes.{{end}}</p>
 <p class="muted">{{range $i, $k := $c.Kinds}}{{if $i}} + {{end}}{{$k}}{{end}} for {{$c.DurationSeconds}}s · started {{$c.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}{{with $c.InstanceID}} · instance <code>{{.}}</code>{{end}}{{with $c.DeploymentID}} · deployment <code>{{.}}</code>{{end}}{{if $c.InstanceID}} · {{$c.Processes}} instrumented process(es){{end}}</p>
 {{if eq $c.Trigger "memory_pressure"}}<p class="notice">Captured automatically because the instance was running out of memory: {{$c.TriggerDetail}}. Node and Python heap captures show memory allocated during the capture that was still live at its end.</p>{{end}}
+{{if eq $c.Trigger "slow_request"}}<p class="notice">Captured automatically while a request was stuck: {{$c.TriggerDetail}}.{{with $c.RequestID}} <a href="/dashboard/apps/{{$d.AppSlug}}/debug?request_id={{.}}#request-detail">Open the request</a>.{{end}} The stacks show where every goroutine or thread was waiting when the capture started.</p>{{end}}
 {{with $c.OOMKilledAt}}<p class="notice" role="alert">This instance was OOM-killed at {{.Format "2006-01-02 15:04:05Z07:00"}}{{if $c.OOMPeakMB}}, peaking at {{$c.OOMPeakMB}} MB of its {{$c.OOMPlanMB}} MB plan{{end}}. The heap profile below shows memory retained before the kill.</p>{{end}}
 {{with $c.Reason}}<p class="notice">{{.}}</p>{{end}}
 {{if $d.Compare}}<form method="get" action="/dashboard/apps/{{$d.AppSlug}}/profiles/captures/{{$c.ID}}/diff" aria-label="Compare captures">
@@ -29,7 +30,7 @@ body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5r
 <script nonce="{{.Nonce}}">
 const captureKinds = {{$d.Kinds}};
 const ns='http://www.w3.org/2000/svg';
-function amount(v,unit){if(unit==='bytes'){if(v>=1073741824)return (v/1073741824).toFixed(2)+' GiB';if(v>=1048576)return (v/1048576).toFixed(2)+' MiB';if(v>=1024)return (v/1024).toFixed(1)+' KiB';return v+' B'}if(v>=1e9)return (v/1e9).toFixed(3)+' s';return (v/1e6).toFixed(2)+' ms'}
+function amount(v,unit){if(unit==='count')return v+(v===1?' thread':' threads');if(unit==='bytes'){if(v>=1073741824)return (v/1073741824).toFixed(2)+' GiB';if(v>=1048576)return (v/1048576).toFixed(2)+' MiB';if(v>=1024)return (v/1024).toFixed(1)+' KiB';return v+' B'}if(v>=1e9)return (v/1e9).toFixed(3)+' s';return (v/1e6).toFixed(2)+' ms'}
 for (const kind of captureKinds || []) {
  if (!kind.flamegraph) continue;
  const svg=document.querySelector('svg[data-flamegraph="'+kind.kind+'"]'),search=document.querySelector('input[data-search="'+kind.kind+'"]'),panel=document.querySelector('p[data-source="'+kind.kind+'"]');

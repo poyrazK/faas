@@ -50,6 +50,9 @@ type ProfileCaptureStore interface {
 	// LatestOOMProfileCapture returns the deployment's newest ready capture
 	// linked to an OOM kill, or ErrNotFound.
 	LatestOOMProfileCapture(ctx context.Context, accountID, appID, deploymentID string) (api.ProfileCapture, error)
+	// ProfileCaptureForRequest returns the newest capture taken while the
+	// request with this trace id was in flight, or ErrNotFound.
+	ProfileCaptureForRequest(ctx context.Context, accountID, appID, traceID string) (api.ProfileCapture, error)
 }
 
 type ProfileCaptureQueue interface {
@@ -96,9 +99,16 @@ func profileCaptureRequestDoc(c api.ProfileCapture) ([]byte, error) {
 	if trigger == "" {
 		trigger = api.ProfileCaptureTriggerManual
 	}
-	return json.Marshal(map[string]any{"kinds": c.Kinds, "duration_seconds": c.DurationSeconds,
+	doc := map[string]any{"kinds": c.Kinds, "duration_seconds": c.DurationSeconds,
 		"requested_instance_id": c.RequestedInstanceID, "trigger": trigger, "trigger_detail": c.TriggerDetail,
-		"processes": 0, "profiles": []api.ProfileCaptureProfile{}})
+		"processes": 0, "profiles": []api.ProfileCaptureProfile{}}
+	if c.RequestID != "" {
+		doc["request_id"] = c.RequestID
+	}
+	if c.RequestTraceID != "" {
+		doc["request_trace_id"] = c.RequestTraceID
+	}
+	return json.Marshal(doc)
 }
 
 // profileCaptureResultDoc is merged into the stored document on finish.
@@ -119,7 +129,7 @@ func validProfileCaptureFinish(result api.ProfileCapture, blobs []ProfileCapture
 		return errors.New("profile capture has too many profiles")
 	}
 	for _, b := range blobs {
-		if !api.ValidProfileKind(b.Kind) || len(b.Profile) == 0 || len(b.Profile) > api.ProfileMaxCompressedBytes || len(b.ProcessID) > 16 {
+		if !api.ValidCaptureProfileKind(b.Kind) || len(b.Profile) == 0 || len(b.Profile) > api.ProfileMaxCompressedBytes || len(b.ProcessID) > 16 {
 			return errors.New("profile capture blob exceeds bounds")
 		}
 	}

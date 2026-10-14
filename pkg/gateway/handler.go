@@ -1098,7 +1098,10 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry    *requestTelemetryRecorder
+	requestTelemetry *requestTelemetryRecorder
+	// slowRequests reports requests in flight too long for an automatic
+	// stack capture (ADR-1155); nil disables tracking.
+	slowRequests        *SlowRequestWatcher
 	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
@@ -7515,6 +7518,7 @@ haveApp:
 		// returned above and never reach here.
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7530,6 +7534,7 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, app, planCap)
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}

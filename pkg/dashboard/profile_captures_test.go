@@ -81,6 +81,29 @@ func TestFormatProfileAmount(t *testing.T) {
 	}
 }
 
+func TestProfileCaptureStacksRender(t *testing.T) {
+	now := time.Date(2026, 10, 15, 9, 30, 0, 0, time.UTC)
+	capture := api.ProfileCapture{ID: "11111111-1111-1111-1111-111111111111", Status: api.ProfileCaptureReady, Kinds: []string{"stacks", "cpu"}, DurationSeconds: 5,
+		Trigger: api.ProfileCaptureTriggerSlowRequest, TriggerDetail: "GET /orders/{id} in flight for 12s", RequestID: "req-abc", Processes: 1, CreatedAt: now}
+	view := api.ProfileCaptureView{Kind: "stacks", Unit: "count", Total: 7, Functions: []api.ProfileCaptureFunction{{Name: "main.profileFixtureHang", Self: 3, Total: 3}},
+		Flamegraph: &api.ProfileCaptureStack{Name: "all", Value: 7, Children: []*api.ProfileCaptureStack{{Name: "main.profileFixtureHang", Value: 3, Children: []*api.ProfileCaptureStack{}}}}}
+	page := ProfileCapturePage{AppSlug: "profile-app", Capture: capture, Kinds: []ProfileCaptureKindView{BuildProfileCaptureKind("profile-app", capture.ID, view)}}
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture", Data: page}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"stacks: 7 threads", "3 threads", "while a request was stuck", "GET /orders/{id} in flight for 12s",
+		`href="/dashboard/apps/profile-app/debug?request_id=req-abc#request-detail"`, `"unit":"count"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stacks capture page missing %q", want)
+		}
+	}
+	if got := FormatProfileAmount(1, "count"); got != "1 thread" {
+		t.Fatalf("FormatProfileAmount(1, count) = %q", got)
+	}
+}
+
 func TestProfileCaptureOOMAndCompareRender(t *testing.T) {
 	now := time.Date(2026, 10, 14, 9, 30, 0, 0, time.UTC)
 	killed := now.Add(8 * time.Second)

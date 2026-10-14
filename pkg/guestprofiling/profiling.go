@@ -80,6 +80,8 @@ func run(ctx context.Context, endpoint string) {
 	var active *window
 	// finished is the capture epoch whose single window already ended.
 	var finished string
+	// stacksEpoch is the capture epoch whose stack snapshot was sent.
+	var stacksEpoch string
 	stop := func(upload bool) {
 		w := active
 		active = nil
@@ -130,6 +132,16 @@ func run(ctx context.Context, endpoint string) {
 				finished = cfg.Epoch
 			}
 			stop(cfg.Epoch == active.epoch)
+		}
+		if !cfg.Suspended && cfg.Enabled && cfg.Capture && cfg.Epoch != stacksEpoch && cfg.wants(api.ProfileKindStacks) {
+			// An instant snapshot, taken as the capture starts: closest to
+			// whatever triggered it.
+			stacksEpoch = cfg.Epoch
+			var stacks bytes.Buffer
+			if err := pprof.Lookup("goroutine").WriteTo(&stacks, 0); err == nil {
+				now := time.Now()
+				_ = uploadKind(ctx, client, endpoint, api.ProfileKindStacks, cfg.Epoch, now, now, stacks.Bytes(), false)
+			}
 		}
 		if cfg.Suspended {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/control/ack?pid="+pid+"&epoch="+url.QueryEscape(cfg.Epoch), nil)

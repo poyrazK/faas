@@ -233,6 +233,29 @@ func (m *MemStore) LatestOOMProfileCapture(_ context.Context, accountID, appID, 
 	return *newest, nil
 }
 
+func (m *MemStore) ProfileCaptureForRequest(_ context.Context, accountID, appID, traceID string) (api.ProfileCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if traceID == "" || !m.profileInvestigationOwnedLocked(accountID, appID) {
+		return api.ProfileCapture{}, ErrNotFound
+	}
+	var newest *api.ProfileCapture
+	for _, row := range m.profileCaptures {
+		c := row.capture
+		if row.accountID != accountID || c.AppID != appID || c.RequestTraceID != traceID {
+			continue
+		}
+		if newest == nil || c.CreatedAt.After(newest.CreatedAt) || c.CreatedAt.Equal(newest.CreatedAt) && c.ID < newest.ID {
+			copied := copyProfileCapture(c)
+			newest = &copied
+		}
+	}
+	if newest == nil {
+		return api.ProfileCapture{}, ErrNotFound
+	}
+	return *newest, nil
+}
+
 func (m *MemStore) ExpireProfileCaptures(_ context.Context, now time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

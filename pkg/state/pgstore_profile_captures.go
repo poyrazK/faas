@@ -196,6 +196,17 @@ func (s *PgStore) LatestOOMProfileCapture(ctx context.Context, accountID, appID,
 	return decodeProfileCapture(body)
 }
 
+func (s *PgStore) ProfileCaptureForRequest(ctx context.Context, accountID, appID, traceID string) (api.ProfileCapture, error) {
+	if traceID == "" {
+		return api.ProfileCapture{}, ErrNotFound
+	}
+	body, err := sqlc.New().ProfileCaptureForRequest(ctx, s.pool, sqlc.ProfileCaptureForRequestParams{AppID: appID, AccountID: accountID, TraceID: traceID})
+	if err != nil {
+		return api.ProfileCapture{}, routePolicyReadError(err)
+	}
+	return decodeProfileCapture(body)
+}
+
 func (s *PgStore) ExpireProfileCaptures(ctx context.Context, now time.Time) (int64, error) {
 	q := sqlc.New()
 	failed, err := q.FailStaleProfileCaptures(ctx, s.pool, sqlc.FailStaleProfileCapturesParams{Now: pgtypeFromTime(now), Reason: profileCaptureInterruptedReason,

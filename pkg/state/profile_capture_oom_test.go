@@ -108,6 +108,24 @@ func TestProfileCaptureOOMLink(t *testing.T) {
 			if _, err := store.LatestOOMProfileCapture(ctx, other.ID, app.ID, deployment); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("foreign account read the OOM capture: %v", err)
 			}
+
+			// A slow_request capture is found by the trace id of the request
+			// it was taken for.
+			slow := api.ProfileCapture{ID: uuid.NewString(), Kinds: []string{api.ProfileKindStacks, api.ProfileKindCPU}, DurationSeconds: 5,
+				Trigger: api.ProfileCaptureTriggerSlowRequest, TriggerDetail: "GET /orders in flight for 12s", RequestID: "req-1", RequestTraceID: "trace-1",
+				CreatedAt: now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
+			if err := store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, slow, api.ProfileCaptureSlowRequestMinInterval); err != nil {
+				t.Fatal(err)
+			}
+			got, err = store.ProfileCaptureForRequest(ctx, acct.ID, app.ID, "trace-1")
+			if err != nil || got.ID != slow.ID || got.RequestID != "req-1" || got.RequestTraceID != "trace-1" || got.Trigger != api.ProfileCaptureTriggerSlowRequest {
+				t.Fatalf("capture for request = %+v %v", got, err)
+			}
+			for _, tc := range []struct{ account, trace string }{{acct.ID, "trace-2"}, {acct.ID, ""}, {other.ID, "trace-1"}} {
+				if _, err := store.ProfileCaptureForRequest(ctx, tc.account, app.ID, tc.trace); !errors.Is(err, state.ErrNotFound) {
+					t.Fatalf("ProfileCaptureForRequest(%q) = %v, want not found", tc.trace, err)
+				}
+			}
 		})
 	}
 }

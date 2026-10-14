@@ -72,6 +72,14 @@ WHERE p.app_id = sqlc.arg(app_id)::text::uuid AND p.account_id = sqlc.arg(accoun
   AND p.capture->>'deployment_id' = sqlc.arg(deployment_id)::text AND p.capture->>'oom_killed_at' IS NOT NULL
 ORDER BY p.created_at DESC, p.id LIMIT 1;
 
+-- name: ProfileCaptureForRequest :one
+SELECT (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
+FROM profile_captures p JOIN apps a ON a.id = p.app_id
+WHERE p.app_id = sqlc.arg(app_id)::text::uuid AND p.account_id = sqlc.arg(account_id)::text::uuid
+  AND a.account_id = p.account_id AND a.status <> 'deleted'
+  AND p.capture->>'request_trace_id' = sqlc.arg(trace_id)::text
+ORDER BY p.created_at DESC, p.id LIMIT 1;
+
 -- name: InsertProfileCaptureData :exec
 INSERT INTO profile_capture_data (capture_id, seq, kind, process_id, profile)
 VALUES (sqlc.arg(capture_id)::text::uuid, sqlc.arg(seq)::smallint, sqlc.arg(kind)::text, sqlc.arg(process_id)::text, sqlc.arg(profile)::bytea);

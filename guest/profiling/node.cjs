@@ -39,6 +39,32 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
     pprof = pprof || require('@datadog/pprof');
     pprof.heap.start(512 * 1024, 64); heapRunning = true; heapFrom = Date.now();
   }
+  // Stacks: a JS thread cannot sample its own stack while it runs this
+  // collector, so Node reports what the event loop is waiting on: active
+  // handles and requests by type (sockets, timers, file system requests).
+  function stacksProfile() {
+    const f = require('pprof-format');
+    const strings = new f.StringTable();
+    const counts = new Map();
+    const active = typeof process.getActiveResourcesInfo === 'function' ? process.getActiveResourcesInfo() : [];
+    for (const type of active) counts.set(type, (counts.get(type) || 0) + 1);
+    const functions = [], locations = [];
+    const frame = name => {
+      const id = functions.length + 1;
+      functions.push(new f.Function({id, name: strings.dedup(name), filename: strings.dedup('')}));
+      locations.push(new f.Location({id, line: [new f.Line({functionId: id})]}));
+      return id;
+    };
+    const root = frame('<event loop>');
+    const sample = [];
+    for (const [type, n] of counts) sample.push(new f.Sample({locationId: [frame('waiting on ' + type), root], value: [n]}));
+    const threads = new f.ValueType({type: strings.dedup('threads'), unit: strings.dedup('count')});
+    return new f.Profile({sampleType: [threads], sample, location: locations, function: functions, stringTable: strings,
+      periodType: threads, period: 1, timeNanos: Date.now() * 1e6});
+  }
+  async function uploadStacks(tag) {
+    try { await upload('stacks', tag, Date.now(), await pprof.encode(stacksProfile())); } catch (_) { /* best effort */ }
+  }
   // On-demand CPU uses the same time profiler as the continuous Pyroscope
   // collector, stopped explicitly so the window flushes at its end.
   async function stopCapture() {
@@ -89,6 +115,7 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
       } else if (config.enabled && config.capture && !capture && config.epoch !== epoch) {
         epoch = config.epoch;
         startCapture(config);
+        if (kinds(config).includes('stacks')) await uploadStacks(config.epoch);
       } else if (config.enabled && !config.capture && !running && !heapRunning) {
         const want = kinds(config);
         epoch = config.epoch;

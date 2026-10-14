@@ -13,7 +13,11 @@ import tracemalloc
 MAX_SAMPLES = 5000
 MAX_FRAMES = 32
 MAX_SOURCE_BYTES = 1 << 20
-_SKIP = (os.path.abspath(__file__), os.path.abspath(tracemalloc.__file__))
+# Allocations made by the profiler itself, including the collector's control
+# loop in sitecustomize (urllib, json, http.client), are not the app's.
+_SKIP = (os.path.abspath(__file__), os.path.abspath(tracemalloc.__file__),
+         os.path.join(os.path.dirname(os.path.abspath(__file__)), "sitecustomize.py"),
+         os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gregale_stacks.py"))
 
 
 def _varint(value):

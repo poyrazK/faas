@@ -224,3 +224,53 @@ func TestProfileCaptureOOMMetal(t *testing.T) {
 	t.Logf("capture %s: OOM-killed at %s (%d MB of %d MB), %d profile(s)", auto.ID, auto.OOMKilledAt, auto.OOMPeakMB, auto.OOMPlanMB, len(auto.Profiles))
 	assertCaptureFunction(t, a.h, a.key, a.slug, auto.ID, "heap", "profileFixtureGrow")
 }
+
+// TestProfileCaptureSlowRequestMetal holds a request in the fixture past the
+// gateway's slow-request threshold and expects an automatic stacks+CPU
+// capture whose stacks show the goroutine the request is stuck in (ADR-1155):
+// gatewayd-internal → schedd ReportSlowRequest → queued capture → vmmd.
+func TestProfileCaptureSlowRequestMetal(t *testing.T) {
+	a := startPressureApp(t, "profslow")
+	hung := make(chan int, 1)
+	go func() { hung <- tryGetWithHost(a.client, a.url+"hang?s=20", a.host, 40*time.Second) }()
+	var auto *api.ProfileCapture
+	deadline := time.Now().Add(api.ProfileCaptureSlowRequestAfter + 30*time.Second)
+	for auto == nil && time.Now().Before(deadline) {
+		time.Sleep(time.Second)
+		for _, c := range a.captures(t) {
+			if c.Trigger == api.ProfileCaptureTriggerSlowRequest {
+				auto = &c
+			}
+		}
+	}
+	if auto == nil {
+		t.Fatal("no automatic capture while a request hung past the slow-request threshold")
+	}
+	t.Logf("slow-request capture %s queued: %s", auto.ID, auto.TriggerDetail)
+	a.waitCapture(t, auto, 60*time.Second, func(c *api.ProfileCapture) bool { return c.Done() })
+	if auto.Status != api.ProfileCaptureReady || auto.Processes < 1 || auto.RequestID == "" || auto.RequestTraceID == "" ||
+		len(auto.Kinds) != 2 || auto.Kinds[0] != api.ProfileKindStacks || auto.Kinds[1] != api.ProfileKindCPU {
+		t.Fatalf("slow-request capture = %+v; want a ready stacks+cpu capture naming the request", auto)
+	}
+	assertCaptureFunction(t, a.h, a.key, a.slug, auto.ID, api.ProfileKindStacks, "profileFixtureHang")
+	if status := <-hung; status != http.StatusOK {
+		t.Fatalf("hung request finished with status %d", status)
+	}
+	// The request explorer links back to the snapshot once the request's
+	// telemetry is recorded. Harnesses without request telemetry skip this.
+	linkDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(linkDeadline) {
+		b, s := doReq(t, a.h, a.key, http.MethodGet, "/v1/apps/"+a.slug+"/debug/requests/"+auto.RequestID, nil)
+		if s == http.StatusOK {
+			var item api.DebugTelemetryRequestItem
+			if err := json.Unmarshal(b, &item); err != nil {
+				t.Fatal(err)
+			}
+			if item.ProfileCaptureID == auto.ID {
+				return
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Log("request telemetry did not link the capture within 30s; this harness may not record request telemetry")
+}

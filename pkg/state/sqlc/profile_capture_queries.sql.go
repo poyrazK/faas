@@ -317,6 +317,28 @@ func (q *Queries) LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockPr
 	return id, err
 }
 
+const profileCaptureForRequest = `-- name: ProfileCaptureForRequest :one
+SELECT (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
+FROM profile_captures p JOIN apps a ON a.id = p.app_id
+WHERE p.app_id = $1::text::uuid AND p.account_id = $2::text::uuid
+  AND a.account_id = p.account_id AND a.status <> 'deleted'
+  AND p.capture->>'request_trace_id' = $3::text
+ORDER BY p.created_at DESC, p.id LIMIT 1
+`
+
+type ProfileCaptureForRequestParams struct {
+	AppID     string
+	AccountID string
+	TraceID   string
+}
+
+func (q *Queries) ProfileCaptureForRequest(ctx context.Context, db DBTX, arg ProfileCaptureForRequestParams) ([]byte, error) {
+	row := db.QueryRow(ctx, profileCaptureForRequest, arg.AppID, arg.AccountID, arg.TraceID)
+	var capture []byte
+	err := row.Scan(&capture)
+	return capture, err
+}
+
 const readProfileCapture = `-- name: ReadProfileCapture :one
 SELECT (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
 FROM profile_captures p JOIN apps a ON a.id = p.app_id

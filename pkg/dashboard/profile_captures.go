@@ -165,9 +165,15 @@ func BuildProfileCaptureKind(slug, id string, v api.ProfileCaptureView) ProfileC
 	return out
 }
 
-// FormatProfileAmount renders CPU nanoseconds as a duration and heap bytes
-// with binary units.
+// FormatProfileAmount renders CPU nanoseconds as a duration, heap bytes
+// with binary units and stack counts as threads.
 func FormatProfileAmount(v int64, unit string) string {
+	if unit == "count" {
+		if v == 1 {
+			return "1 thread"
+		}
+		return fmt.Sprintf("%d threads", v)
+	}
 	if unit != "bytes" {
 		return time.Duration(v).Round(time.Microsecond).String()
 	}

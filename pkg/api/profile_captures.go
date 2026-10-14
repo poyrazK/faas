@@ -7,11 +7,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Capture triggers (ADR-1155): a person or API client, or guest-init
-// reporting memory pressure on the instance.
+// Capture triggers (ADR-1155): a person or API client, guest-init reporting
+// memory pressure on the instance, or the gateway reporting a slow request.
 const (
 	ProfileCaptureTriggerManual         = "manual"
 	ProfileCaptureTriggerMemoryPressure = "memory_pressure"
+	// ProfileCaptureTriggerSlowRequest marks a stack snapshot taken while a
+	// request was in flight longer than ProfileCaptureSlowRequestAfter.
+	ProfileCaptureTriggerSlowRequest = "slow_request"
 )
 
 // On-demand profile capture statuses (ADR-1155).
@@ -45,8 +48,8 @@ func (r *CreateProfileCaptureRequest) Normalize() error {
 	}
 	seen := map[string]bool{}
 	for _, kind := range r.Kinds {
-		if !ValidProfileKind(kind) || seen[kind] {
-			return fmt.Errorf("kinds must list distinct values of cpu or heap")
+		if !ValidCaptureProfileKind(kind) || seen[kind] {
+			return fmt.Errorf("kinds must list distinct values of cpu, heap or stacks")
 		}
 		seen[kind] = true
 	}
@@ -86,6 +89,10 @@ type ProfileCapture struct {
 	Dropped       int                     `json:"dropped,omitempty"`
 	Reason        string                  `json:"reason,omitempty"`
 	Profiles      []ProfileCaptureProfile `json:"profiles"`
+	// RequestID and RequestTraceID name the in-flight request that started a
+	// slow_request capture; the request explorer links back by trace id.
+	RequestID      string `json:"request_id,omitempty"`
+	RequestTraceID string `json:"request_trace_id,omitempty"`
 	// Partial marks a capture that ended early, normally because the
 	// workload was OOM-killed; its heap profiles are the last checkpoints.
 	Partial bool `json:"partial,omitempty"`
@@ -110,7 +117,7 @@ type ProfileCaptureList struct {
 }
 
 // ProfileCaptureFunction is a function's sampled cost in the view's unit:
-// CPU nanoseconds or live heap bytes.
+// CPU nanoseconds, live heap bytes, or goroutines/threads parked there.
 type ProfileCaptureFunction struct {
 	Name   string                 `json:"name"`
 	File   string                 `json:"file,omitempty"`
@@ -138,9 +145,12 @@ type ProfileHeapResponse struct {
 }
 
 // ProfileCaptureView is the merged profile of one kind across the capture's
-// processes. Unit is "nanoseconds" for cpu and "bytes" for heap. Node and
-// Python heap captures report memory allocated during the window that is
-// still live at its end; Go reports the sampled live heap.
+// processes. Unit is "nanoseconds" for cpu, "bytes" for heap and "count"
+// (goroutines or threads) for stacks. Node and Python heap captures report
+// memory allocated during the window that is still live at its end; Go
+// reports the sampled live heap. Stacks is a snapshot taken when the capture
+// starts: Go's goroutines, Python's threads and asyncio tasks, and Node's
+// active handles and requests by type.
 type ProfileCaptureView struct {
 	Capture    ProfileCapture           `json:"capture"`
 	Kind       string                   `json:"kind"`

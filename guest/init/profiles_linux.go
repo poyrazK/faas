@@ -199,7 +199,7 @@ func (b *profileBridge) ingestHandler(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = api.ProfileKindCPU
 	}
-	if !api.ValidProfileKind(kind) {
+	if !api.ValidCaptureProfileKind(kind) {
 		http.Error(w, "unknown profile kind", http.StatusBadRequest)
 		return
 	}

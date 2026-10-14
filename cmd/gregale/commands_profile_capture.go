@@ -15,13 +15,13 @@ import (
 // profileCapturePollInterval paces status polls while a capture runs.
 var profileCapturePollInterval = time.Second
 
-const profileCaptureUsage = "usage: gregale debug capture <slug> [--type cpu,heap] [--duration 10s] [--instance UUID] [--output DIR] [--top N] [--no-wait]"
+const profileCaptureUsage = "usage: gregale debug capture <slug> [--type cpu,heap,stacks] [--duration 10s] [--instance UUID] [--output DIR] [--top N] [--no-wait]"
 
 // cmdDebugCapture runs an on-demand CPU/heap capture on a running instance
 // (ADR-1155), waits for it and prints the hottest functions per kind.
 func cmdDebugCapture(args []string) int {
 	fs := newFlagSet("debug capture", flag.ContinueOnError)
-	kinds := fs.String("type", "cpu", "profile kinds: cpu, heap or cpu,heap")
+	kinds := fs.String("type", "cpu", "profile kinds, comma-separated: cpu, heap, stacks")
 	duration := fs.Duration("duration", api.ProfileCaptureDefaultDuration, "capture window (1s..60s)")
 	instance := fs.String("instance", "", "instance UUID; default: the app's earliest running instance")
 	output := fs.String("output", "", "directory for the merged .pb.gz pprof files")
@@ -129,6 +129,12 @@ func printProfileCapture(c api.ProfileCapture) int {
 	_, err := fmt.Fprintf(osStdout, "Capture %s: %s\n", c.ID, c.Status)
 	if err == nil && c.Trigger == api.ProfileCaptureTriggerMemoryPressure {
 		_, err = fmt.Fprintf(osStdout, "Captured automatically on memory pressure: %s\n", c.TriggerDetail)
+	}
+	if err == nil && c.Trigger == api.ProfileCaptureTriggerSlowRequest {
+		_, err = fmt.Fprintf(osStdout, "Captured automatically while a request was stuck: %s\n", c.TriggerDetail)
+		if err == nil && c.RequestID != "" {
+			_, err = fmt.Fprintf(osStdout, "Request: gregale debug requests show <slug> %s\n", c.RequestID)
+		}
 	}
 	if err == nil && c.InstanceID != "" {
 		_, err = fmt.Fprintf(osStdout, "Instance %s, deployment %s, %d instrumented process(es)\n", c.InstanceID, c.DeploymentID, c.Processes)
@@ -305,6 +311,12 @@ func profileCaptureTrigger(c api.ProfileCapture) string {
 }
 
 func profileCaptureAmount(v int64, unit string) string {
+	if unit == "count" {
+		if v == 1 {
+			return "1 thread"
+		}
+		return fmt.Sprintf("%d threads", v)
+	}
 	if unit == "bytes" {
 		switch {
 		case v >= 1<<30:

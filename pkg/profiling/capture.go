@@ -40,6 +40,34 @@ func NormalizeHeap(p *profile.Profile) error {
 	return nil
 }
 
+// NormalizeStacks keeps the goroutine or thread count of a stack snapshot.
+// Go's goroutine profile reports goroutine/count; the Python and Node
+// encoders report threads/count. Labels are dropped like CPU sample labels.
+func NormalizeStacks(p *profile.Profile) error {
+	index := -1
+	for i, typ := range p.SampleType {
+		if (typ.Type == "goroutine" || typ.Type == "threads") && typ.Unit == "count" {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("profile contains no goroutine or thread counts")
+	}
+	for _, sample := range p.Sample {
+		if sample.Value[index] < 0 {
+			return fmt.Errorf("negative stack sample")
+		}
+		sample.Value = []int64{sample.Value[index]}
+		sample.Label, sample.NumLabel, sample.NumUnit = nil, nil, nil
+	}
+	p.SampleType = []*profile.ValueType{{Type: "threads", Unit: "count"}}
+	p.DefaultSampleType = "threads"
+	p.PeriodType = &profile.ValueType{Type: "threads", Unit: "count"}
+	p.Comments = nil
+	return nil
+}
+
 // NormalizeKind normalizes a parsed profile for kind and resets the period
 // so profiles from different runtimes merge.
 func NormalizeKind(p *profile.Profile, kind string) error {
@@ -49,6 +77,8 @@ func NormalizeKind(p *profile.Profile, kind string) error {
 		err = NormalizeCPU(p)
 	case api.ProfileKindHeap:
 		err = NormalizeHeap(p)
+	case api.ProfileKindStacks:
+		err = NormalizeStacks(p)
 	default:
 		err = fmt.Errorf("unknown profile kind %q", kind)
 	}
@@ -99,8 +129,11 @@ func EncodeCapture(p *profile.Profile) ([]byte, error) {
 func CaptureView(p *profile.Profile, kind string) (api.ProfileCaptureView, error) {
 	out := api.ProfileCaptureView{Kind: kind, Unit: "nanoseconds", Functions: []api.ProfileCaptureFunction{},
 		Flamegraph: &api.ProfileCaptureStack{Name: "all", Children: []*api.ProfileCaptureStack{}}, Empty: true}
-	if kind == api.ProfileKindHeap {
+	switch kind {
+	case api.ProfileKindHeap:
 		out.Unit = "bytes"
+	case api.ProfileKindStacks:
+		out.Unit = "count"
 	}
 	if p == nil {
 		return out, nil

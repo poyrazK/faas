@@ -300,6 +300,38 @@ kill to the newest heap capture started on that instance in the previous 15
 minutes, and the deployment's error explanation links to it as **Heap profile
 before the OOM kill**.
 
+### Stack snapshots for slow and stuck requests
+
+CPU shows where time goes and heap where memory is held; neither explains a
+request that hangs while the process is idle. A `stacks` capture is an
+instant snapshot of where every goroutine or thread is waiting, taken when
+the capture starts:
+
+```sh
+gregale debug capture my-app --type stacks
+```
+
+- **Go** — every goroutine's stack (`runtime/pprof` goroutine profile).
+- **Python** — every thread's stack, plus the stack of every pending asyncio
+  task, so an async handler awaiting a slow call shows where it waits.
+- **Node** — what the event loop is waiting on: active sockets, timers,
+  file-system and DNS requests by type. A JavaScript thread cannot sample its
+  own stack while it runs the collector, so Node has no per-function stacks;
+  a CPU-bound handler shows up in a CPU capture instead.
+
+Values are counts: the flamegraph is as wide as the number of goroutines or
+threads parked on each path.
+
+When a request stays in flight for 10 seconds, the gateway reports it and
+Gregale captures stacks and 5 seconds of CPU from the serving instance
+automatically (`trigger: slow_request`, at most once per app every 15
+minutes). The capture records the request id; its page links to the request,
+and the request's evidence in the debugger links back to "the stack snapshot
+taken while this request was in flight"
+(`GET /v1/apps/{slug}/debug/requests/{id}` returns `profile_capture_id`).
+Streaming responses and WebSocket upgrades are long-lived by design and are
+never reported.
+
 ### Compare two captures
 
 A single heap capture shows where memory is held; two captures show what grew.

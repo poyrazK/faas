@@ -81,6 +81,29 @@ func serveRelease(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// hangGate is never signalled: a hanging request waits on it until its
+// timeout, like a request stuck on a lock or a pool that never frees up.
+var hangGate = make(chan struct{})
+
+//go:noinline
+func profileFixtureHang(d time.Duration) {
+	select {
+	case <-hangGate:
+	case <-time.After(d):
+	}
+}
+
+// serveHang holds the request for N seconds (default 15) so the gateway sees
+// it in flight: GET /hang?s=15.
+func serveHang(w http.ResponseWriter, r *http.Request) {
+	s, err := strconv.Atoi(r.URL.Query().Get("s"))
+	if err != nil || s < 1 || s > 60 {
+		s = 15
+	}
+	profileFixtureHang(time.Duration(s) * time.Second)
+	_, _ = w.Write([]byte("released\n"))
+}
+
 // serveWork burns CPU and retains heap so captures have known hot frames:
 // GET /work?ms=50&retain=8.
 func serveWork(w http.ResponseWriter, r *http.Request) {

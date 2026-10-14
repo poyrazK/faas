@@ -84,6 +84,27 @@ func TestCmdDebugCaptureQueuesPollsAndPrints(t *testing.T) {
 	}
 }
 
+func TestPrintSlowRequestCapture(t *testing.T) {
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+	c := api.ProfileCapture{ID: "11111111-1111-4111-8111-111111111111", Status: api.ProfileCaptureReady, Trigger: api.ProfileCaptureTriggerSlowRequest,
+		TriggerDetail: "GET /orders/{id} in flight for 12s", RequestID: "req-abc"}
+	if code := printProfileCapture(c); code != 0 {
+		t.Fatalf("printProfileCapture() = %d", code)
+	}
+	for _, want := range []string{"while a request was stuck: GET /orders/{id} in flight for 12s", "gregale debug requests show <slug> req-abc"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("output missing %q:\n%s", want, stdout.String())
+		}
+	}
+	if got := profileCaptureAmount(4, "count"); got != "4 threads" {
+		t.Fatalf("profileCaptureAmount(4, count) = %q", got)
+	}
+}
+
 func TestCmdDebugCaptureDiff(t *testing.T) {
 	const id, base = "11111111-1111-4111-8111-111111111111", "33333333-3333-4333-8333-333333333333"
 	var query string

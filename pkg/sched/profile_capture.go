@@ -71,6 +71,40 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 // the capture is skipped: rate limited, already running, not running, or
 // the plan lacks profiling.
 func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) (bool, string, error) {
+	capture := api.ProfileCapture{Kinds: []string{api.ProfileKindHeap},
+		DurationSeconds: int(api.ProfileCaptureAutomaticDuration / time.Second),
+		Trigger:         api.ProfileCaptureTriggerMemoryPressure,
+		TriggerDetail:   fmt.Sprintf("guest memory available fell to %d MiB of %d MiB (%d MiB anonymous)", availableMB, totalMB, anonMB)}
+	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureAutomaticMinInterval)
+}
+
+// QueueSlowRequestCapture turns a gateway report of a request in flight for
+// too long into one automatic stacks+CPU capture of the serving instance
+// (ADR-1155): the stacks show where the request is waiting, the CPU where any
+// time goes.
+func (e *Engine) QueueSlowRequestCapture(ctx context.Context, instanceID, requestID, traceID, route string, inflight time.Duration) (bool, string, error) {
+	if route == "" {
+		route = "a request"
+	}
+	capture := api.ProfileCapture{Kinds: []string{api.ProfileKindStacks, api.ProfileKindCPU},
+		DurationSeconds: int(api.ProfileCaptureSlowRequestDuration / time.Second),
+		Trigger:         api.ProfileCaptureTriggerSlowRequest,
+		TriggerDetail:   fmt.Sprintf("%s in flight for %s", truncateRunes(route, 160), inflight.Round(time.Second)),
+		RequestID:       truncateRunes(requestID, 128), RequestTraceID: truncateRunes(traceID, 128)}
+	return e.queueAutomaticCapture(ctx, instanceID, capture, api.ProfileCaptureSlowRequestMinInterval)
+}
+
+func truncateRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+// queueAutomaticCapture queues a platform-triggered capture of a RUNNING
+// instance whose plan includes profiling, at most once per minInterval per
+// app and trigger, and notifies the capture drain.
+func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, capture api.ProfileCapture, minInterval time.Duration) (bool, string, error) {
 	queue, ok := e.store.(state.ProfileCaptureQueue)
 	if !ok {
 		return false, "profile capture storage is unavailable", nil
@@ -94,12 +128,9 @@ func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID stri
 		return false, "plan does not include profiling", nil
 	}
 	now := time.Now().UTC()
-	capture := api.ProfileCapture{ID: uuid.NewString(), AppID: app.ID, Kinds: []string{api.ProfileKindHeap},
-		DurationSeconds: int(api.ProfileCaptureAutomaticDuration / time.Second), RequestedInstanceID: ins.ID,
-		Trigger:       api.ProfileCaptureTriggerMemoryPressure,
-		TriggerDetail: fmt.Sprintf("guest memory available fell to %d MiB of %d MiB (%d MiB anonymous)", availableMB, totalMB, anonMB),
-		CreatedAt:     now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval); {
+	capture.ID, capture.AppID, capture.RequestedInstanceID = uuid.NewString(), app.ID, ins.ID
+	capture.CreatedAt, capture.ExpiresAt = now, now.Add(api.ProfileCaptureRetention)
+	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval); {
 	case errors.Is(err, state.ErrProfileCaptureRecent):
 		return false, "an automatic capture ran for this app within the minimum interval", nil
 	case errors.Is(err, state.ErrProfileCaptureActive):

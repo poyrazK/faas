@@ -173,6 +173,32 @@ deployments are reported as warnings instead. The dashboard renders the
 difference as a flamegraph whose width is the sum of both captures, which
 keeps children inside their parents.
 
+## Amendment: stack snapshots and slow-request captures
+
+CPU and heap captures do not explain a request that hangs while the process
+is idle. Captures gain a `stacks` kind, an instant snapshot taken when the
+capture starts (captures only; continuous `profiling.kinds` stays cpu/heap):
+
+- Go uploads the goroutine profile; Python encodes `sys._current_frames()`
+  plus the stacks of pending asyncio tasks, found through each thread's
+  `run_forever` frame and `asyncio.all_tasks(loop)`; Node reports the event
+  loop's active handles and requests by type, because a JavaScript thread
+  cannot sample its own stack while running the collector.
+- Profiles normalize to `threads`/`count` and reuse merge, view, comparison
+  and storage (`profile_capture_data.kind` admits `stacks`). A capture holds
+  up to three kinds (`ProfileCaptureMaxKinds`).
+
+gatewayd-internal tracks proxied requests (not streaming responses or
+upgrades) for apps whose plan includes profiling, when
+`FAAS_PROFILING_ON_DEMAND=1`. A request in flight for
+`ProfileCaptureSlowRequestAfter` (10 s) is reported, at most once per app per
+minute, through the new schedd RPC `ReportSlowRequest` to the schedd that owns
+the instance. schedd queues a stacks+CPU capture of 5 s with trigger
+`slow_request`, at most once per app per `ProfileCaptureSlowRequestMinInterval`
+(15 min), recording the request id and trace id. The request explorer looks
+captures up by trace id and links them (`profile_capture_id`). The gateway
+reports only route labels, never raw paths.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

@@ -326,6 +326,11 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		if data.Selected != nil && data.Selected.Regression != nil {
 			data.Selected.Regression.CompareURL = dashboardDebugRegressionCompareURL(slug, data.Since, data.Selected.Regression.DeploymentID, data.Selected.Regression.Route, data.Deployments, filters)
 		}
+		if data.Selected != nil {
+			if id := s.requestProfileCaptureID(ctx, acct, app, data.Selected.Request.TraceID); id != "" {
+				data.Selected.ProfileCaptureURL = dashboard.ProfileCaptureURL(app.Slug, id)
+			}
+		}
 	}
 	if replayID := strings.TrimSpace(r.URL.Query().Get("replay_id")); replayID != "" && data.Selected != nil {
 		data.ReplayPoll = parseDashboardDebugReplayPoll(r.URL.Query().Get("replay_poll"))

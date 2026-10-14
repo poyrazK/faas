@@ -196,6 +196,17 @@ const (
 	// ProfileCaptureOOMLinkWindow is how recent a heap capture on the killed
 	// instance must be for the OOM kill to be linked to it.
 	ProfileCaptureOOMLinkWindow = 15 * time.Minute
+	// Automatic stack snapshots of slow requests (ADR-1155). The gateway
+	// reports a request in flight for ProfileCaptureSlowRequestAfter at most
+	// once per app per ProfileCaptureSlowRequestReportEvery; schedd queues a
+	// stacks+CPU capture of that instance at most once per app per
+	// ProfileCaptureSlowRequestMinInterval.
+	ProfileCaptureSlowRequestAfter       = 10 * time.Second
+	ProfileCaptureSlowRequestReportEvery = time.Minute
+	ProfileCaptureSlowRequestMinInterval = 15 * time.Minute
+	ProfileCaptureSlowRequestDuration    = 5 * time.Second
+	// ProfileCaptureMaxKinds bounds the kinds one capture collects.
+	ProfileCaptureMaxKinds = 3
 	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
 	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
