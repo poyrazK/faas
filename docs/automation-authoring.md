@@ -8,7 +8,43 @@ Create and manage definitions through the automation authoring API or generated
 SDKs. Save a draft with a trigger and steps, including input mapping, event filters,
 waits, and failure handlers as needed. Validate reports errors without executing
 or saving steps; publishing makes the saved draft available to future runs.
-This change contains backend APIs only; no dashboard editor is included.
+The app dashboard also offers a guided JSON authoring workspace, described below.
+
+## Start from the app dashboard
+
+Open **Build and manage automations** in the app's Workflows section, or visit
+`/dashboard/apps/APP_SLUG/automations`. Choose one of the same four starters
+available through `gregale automations init`. Selection does not save a draft
+or start a run. Deploy the starter's handler routes and configure its required
+integrations or event sources separately.
+
+1. Choose a unique automation name and use that same name in the JSON definition.
+   Configure its trigger and action routes, then validate the definition.
+2. Review the sample input and mock outcomes, then simulate. The trace shows step
+   decisions without calling handlers or connected services.
+3. Save the draft. The browser preserves your sample and check text through the
+   current save/check/publish flow. These samples are not stored with the draft;
+   reopening a custom automation requires supplying its samples again.
+4. Review the scenario JSON and choose **Check and publish**. The server checks
+   the saved draft and issues the receipt required by the app's publishing policy.
+   Unsaved changes, stale revisions, failing scenarios or missing required
+   coverage stop publication. Explicitly choose manifest takeover only when
+   API-managed publication should replace the deployed definition's ownership.
+5. After publication, confirm real side effects and choose **Run published
+   automation**. Only the sample's `input` is submitted. Mock results never
+   control real execution. Repeating the same form submission reuses its admitted
+   run through the existing idempotency mechanism.
+
+The page shows recent health, queue observations, run states, pinned deployments,
+and step attempts. Run input/output bodies and raw errors remain behind explicit
+API/CLI inspection. Run links are scoped to the selected app and automation.
+A failed history read is reported as unavailable instead of an empty history.
+
+Scheduled starters remain disabled after publication until **Enable automatic
+starts** is selected. Manual runs remain distinct from that setting. The console
+cannot enable a disabled workflow runtime, satisfy tenant admission requirements,
+configure outbound worker flags, or establish native KVM qualification. The
+existing permissions, publication policies and execution gates still apply.
 
 ## Start from a template
 

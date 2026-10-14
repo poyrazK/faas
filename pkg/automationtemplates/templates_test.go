@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/onebox-faas/faas/cmd/gregale/automationtemplates"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/automationtemplates"
 	"github.com/onebox-faas/faas/pkg/state"
 	"gopkg.in/yaml.v3"
 )

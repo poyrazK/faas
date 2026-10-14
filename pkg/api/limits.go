@@ -6378,11 +6378,13 @@ const (
 	AutomationPublishCheckMaxExclusions         = 256
 	AutomationPublishCheckReceiptTTL            = 30 * time.Minute
 
-	AutomationSimulationRequestMaxBytes         int64 = 3 << 20
-	AutomationSimulationResponseMaxBytes        int64 = 4 << 20
-	AutomationSimulationMaxSteps                      = 128
-	AutomationSimulationMaxTraceEntries               = 1024
-	AutomationDefinitionMaxBytes                int64 = 1 << 20
+	AutomationSimulationRequestMaxBytes  int64 = 3 << 20
+	AutomationSimulationResponseMaxBytes int64 = 4 << 20
+	AutomationSimulationMaxSteps               = 128
+	AutomationSimulationMaxTraceEntries        = 1024
+	AutomationDefinitionMaxBytes         int64 = 1 << 20
+	// Browser forms can percent-encode each definition, sample, and check byte.
+	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes) + 4096
 	AutomationNameMaxBytes                            = 128
 	WorkflowRunInputMaxBytes                    int64 = 1 << 20
 	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10

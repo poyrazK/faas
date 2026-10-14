@@ -1,0 +1,110 @@
+package apidserver
+
+import (
+	"net/http"
+	"net/url"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
+	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
+)
+
+const automationConsoleCookie = "gregale_automation_csrf"
+
+type automationConsoleHost struct{ server *server }
+
+func (h automationConsoleHost) Scope(w http.ResponseWriter, r *http.Request) (automationconsole.Scope, bool) {
+	acct, app, ok := h.server.dashboardDataAPIApp(w, r)
+	if !ok {
+		return automationconsole.Scope{}, false
+	}
+	return automationconsole.Scope{AccountID: acct.ID, AppID: app.ID, Slug: app.Slug, Account: dashboardAccountView(acct, 0)}, true
+}
+func (h automationConsoleHost) IssueCSRF(w http.ResponseWriter, scope automationconsole.Scope) string {
+	token, err := middleware.IssueForAuthenticatedNamed(h.server.sessions, "automation_console:"+scope.AppID, scope.AccountID, automationConsoleCookie)
+	if err != nil {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: automationConsoleCookie, Value: token,
+		Path: "/dashboard/apps/" + url.PathEscape(scope.Slug) + "/automations", HttpOnly: true,
+		Secure: h.server.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
+	return token
+}
+func (h automationConsoleHost) VerifyCSRF(w http.ResponseWriter, r *http.Request, scope automationconsole.Scope) bool {
+	return h.server.verifyDashboardConfigCSRF(w, r, "automation_console:"+scope.AppID, automationConsoleCookie, scope.AccountID)
+}
+
+func (h automationConsoleHost) Request(r *http.Request, scope automationconsole.Scope, operation automationconsole.Operation) automationconsole.Response {
+	acct, ok := AccountFrom(r.Context())
+	if !ok || acct.ID != scope.AccountID {
+		return automationconsole.Response{Status: http.StatusUnauthorized}
+	}
+	method, path, handler := h.endpoint(scope.Slug, operation)
+	if handler == nil {
+		return automationconsole.Response{Status: http.StatusNotFound}
+	}
+	request := r.Clone(r.Context())
+	request.Header = r.Header.Clone()
+	request.Header.Del("Idempotency-Key")
+	// The dashboard actor comes from its cookie session, never a competing bearer.
+	request.Header.Del("Authorization")
+	if operation.Key != "" {
+		request.Header.Set("Idempotency-Key", operation.Key)
+	}
+	request.SetPathValue("slug", scope.Slug)
+	request.SetPathValue("name", operation.Name)
+	request.SetPathValue("id", operation.RunID)
+	next := accountHandler(handler)
+	scopes := api.ScopesReadSurface
+	if operation.Kind == "save" || operation.Kind == "publish" || operation.Kind == "check" || operation.Kind == "enabled" || operation.Kind == "run" {
+		scopes = api.ScopesDeployWriteSurface
+		next = h.server.requireVerifiedEmail(next)
+	}
+	authenticated := h.server.auth(h.server.requireScope(scopes...)(next))
+	response := h.server.forwardDashboardJSON(request, acct, method, path, "", "", operation.Body,
+		func(w http.ResponseWriter, forwarded *http.Request, account state.Account) {
+			if operation.Kind == "runs" {
+				forwarded.URL.RawQuery = url.Values{"workflow_name": {operation.Name}, "limit": {"20"}}.Encode()
+			}
+			authenticated(w, forwarded)
+		})
+	return automationconsole.Response{Status: response.Code, Body: response.Body.Bytes()}
+}
+
+func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operation) (string, string, dashboardJSONHandler) {
+	root := "/v1/apps/" + url.PathEscape(slug) + "/automations"
+	named := root + "/" + url.PathEscape(op.Name)
+	switch op.Kind {
+	case "list":
+		return http.MethodGet, root, h.server.listAutomations
+	case "get":
+		return http.MethodGet, named, h.server.getAutomation
+	case "policy":
+		return http.MethodGet, root + ":publish-policy", h.server.getAutomationPublishPolicy
+	case "validate":
+		return http.MethodPost, root + ":validate", h.server.validateAutomation
+	case "simulate":
+		return http.MethodPost, root + ":simulate", h.server.simulateAutomation
+	case "save":
+		return http.MethodPut, named, h.server.saveAutomationDraft
+	case "check":
+		return http.MethodPost, named + "/publish-check", h.server.checkAutomationPublication
+	case "publish":
+		return http.MethodPost, named + "/publish", dashboardJSONHandler(h.server.idempotent(h.server.publishAutomation))
+	case "enabled":
+		return http.MethodPut, named + "/enabled", h.server.setAutomationEnabled
+	case "health":
+		return http.MethodGet, named + "/health", h.server.getAutomationHealth
+	case "runs":
+		return http.MethodGet, "/v1/apps/" + url.PathEscape(slug) + "/workflows/runs", h.server.listWorkflowRuns
+	case "get-run":
+		return http.MethodGet, "/v1/workflows/runs/" + url.PathEscape(op.RunID), h.server.getWorkflowRun
+	case "steps":
+		return http.MethodGet, "/v1/workflows/runs/" + url.PathEscape(op.RunID) + "/steps", h.server.listWorkflowSteps
+	case "run":
+		return http.MethodPost, "/v1/apps/" + url.PathEscape(slug) + "/workflows/" + url.PathEscape(op.Name) + "/runs", h.server.createWorkflowRun
+	default:
+		return "", "", nil
+	}
+}

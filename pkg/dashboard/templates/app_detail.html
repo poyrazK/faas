@@ -577,6 +577,7 @@
       {{end}}
 
       <h2>Workflows</h2>
+      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>
       {{if .Data.Workflows}}
         <p class="muted">Recent durable workflow runs. Inputs and outputs stay in the workflow API; this view is for run state and step diagnostics.</p>
         {{range .Data.Workflows}}
