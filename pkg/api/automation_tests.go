@@ -64,11 +64,12 @@ type AutomationTestCaseResult struct {
 	Steps          []AutomationTestStepResult `json:"steps"`
 }
 type AutomationTestStepResult struct {
-	Step      string `json:"step"`
-	Loop      string `json:"loop,omitempty"`
-	ItemIndex *int   `json:"item_index,omitempty"`
-	State     string `json:"state,omitempty"`
-	Passed    bool   `json:"passed"`
+	Step       string   `json:"step"`
+	Loop       string   `json:"loop,omitempty"`
+	ItemIndex  *int     `json:"item_index,omitempty"`
+	State      string   `json:"state,omitempty"`
+	Passed     bool     `json:"passed"`
+	Mismatches []string `json:"mismatches,omitempty"`
 }
 
 // AutomationTestInputsHash tolerates JSONB object-key ordering without losing

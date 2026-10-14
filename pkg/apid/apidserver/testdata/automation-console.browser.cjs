@@ -17,6 +17,54 @@ const { chromium } = require('playwright');
       assert.ok(await page.getByText(marker, { exact: false }).count(), 'missing feedback for ' + label + '; alerts: ' + (await page.locator('[role=alert]').allTextContents()).join('; '));
       assert.equal(await page.locator('[role=alert]').count(), 0, 'action returned an error for ' + label);
     }
+    if (fixture.mode === 'case-editor') {
+      assert.equal((await page.goto(fixture.url + '?template=scheduled-report')).status(), 200);
+      await page.locator('input[name=editor_mode][value=json]').check();
+      await page.getByText('Advanced definition (JSON)', { exact: true }).click();
+      const definition = JSON.parse(await page.locator('#automation-definition').inputValue());
+      definition.name = 'browser-guided-cases';
+      await page.locator('#automation-name').fill(definition.name);
+      await page.locator('#automation-definition').fill(JSON.stringify(definition));
+      await submit('Save draft', 'Draft saved.');
+      await submit('Duplicate case', 'Test case edits applied locally.');
+      await page.locator('#test-case-name').fill('renamed <case>');
+      await page.locator('input[name=test_assert_output]').check();
+      await page.locator('#test-output').fill('null');
+      await page.locator('#test-attempt-count').fill('25');
+      await submit('Apply case changes', 'Test case edits applied locally.');
+      assert.equal(await page.locator('#test-output').inputValue(), 'null');
+      await submit('Save test data', 'Test data saved.');
+      await page.goto(fixture.url + '?name=' + definition.name);
+      await page.locator('#test-case-select').selectOption('1');
+      await submit('Open case', 'Test case edits applied locally.');
+      assert.equal(await page.locator('#test-case-name').inputValue(), 'renamed <case>');
+      await submit('Run saved test cases', 'Some saved cases failed.');
+      assert.ok(await page.getByText('Expected output did not match.', { exact: true }).count());
+      assert.ok(await page.getByText('Expected attempt count did not match.', { exact: true }).count());
+      if (process.env.GREGALE_AUTOMATION_EDITOR_SCREENSHOT) {
+        await page.locator('#automation-test-editor').screenshot({ path: process.env.GREGALE_AUTOMATION_EDITOR_SCREENSHOT });
+      }
+      await page.locator('input[name=test_assert_output]').uncheck();
+      await page.locator('#test-attempt-count').fill('');
+      assert.ok((await page.locator('#automation-test-freshness').innerText()).includes('outdated'));
+      const denied = await Promise.all([page.waitForNavigation(), page.getByRole('button', { name: 'Run saved test cases', exact: true }).click()]);
+      assert.equal(denied[0].status(), 400);
+      assert.ok(await page.getByRole('alert').getByText('Save your current sample', { exact: false }).count());
+      await submit('Save test data', 'Test data saved.');
+      await submit('Run saved test cases', 'All saved cases passed.');
+      await submit('Remove case', 'Test case edits applied locally.');
+      await submit('Add test case', 'Test case edits applied locally.');
+      await page.locator('#test-case-name').fill('new input case');
+      await submit('Add assertion', 'Test case edits applied locally.');
+      await page.locator('#test-state').selectOption('mocked');
+      await submit('Add assertion', 'Test case edits applied locally.');
+      await submit('Remove assertion', 'Test case edits applied locally.');
+      await submit('Save test data', 'Test data saved.');
+      await submit('Run saved test cases', 'All saved cases passed.');
+      await submit('Check and publish', 'Checks passed and the draft was published.');
+      assert.equal(errors.length, 0);
+      return;
+    }
     if (fixture.mode === 'cases') {
       const initial = await page.goto(fixture.url + '?template=scheduled-report');
       assert.equal(initial.status(), 200);
@@ -27,6 +75,8 @@ const { chromium } = require('playwright');
       await page.locator('#automation-name').fill(definition.name);
       await page.locator('#automation-definition').fill(JSON.stringify(definition, null, 2));
       await submit('Save draft', 'Draft saved.');
+      await page.locator('input[name=test_editor_mode][value=json]').check();
+      await page.getByText('Advanced test cases (JSON)', { exact: true }).click();
       const sample = await page.locator('#automation-sample').inputValue();
       const cases = JSON.parse(await page.locator('#automation-scenarios').inputValue());
       cases.push(JSON.parse(JSON.stringify(cases[0])));
@@ -45,6 +95,8 @@ const { chromium } = require('playwright');
       if (process.env.GREGALE_AUTOMATION_CASES_SCREENSHOT) {
         await page.locator('#automation-test-report').screenshot({ path: process.env.GREGALE_AUTOMATION_CASES_SCREENSHOT });
       }
+      await page.locator('input[name=test_editor_mode][value=json]').check();
+      await page.getByText('Advanced test cases (JSON)', { exact: true }).click();
       cases[1].expectations = cases[0].expectations;
       await page.locator('#automation-scenarios').fill(JSON.stringify(cases, null, 2));
       assert.ok((await page.locator('#automation-test-freshness').innerText()).includes('Results are outdated.'));

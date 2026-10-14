@@ -11,5 +11,9 @@ export type AutomationTestStepResult = {
   item_index?: number;
   state?: string;
   passed: boolean;
+  /**
+   * Failed assertion field names only; expected and observed values are omitted.
+   */
+  mismatches?: Array<'step' | 'state' | 'reason' | 'when_matched' | 'output' | 'attempt_count' | 'attempts'>;
 };
 

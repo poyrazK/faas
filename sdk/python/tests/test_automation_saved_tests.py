@@ -26,7 +26,9 @@ def test_saved_suite_null_and_large_integer_roundtrip():
                 "name": "explicit null",
                 "passed": False,
                 "issue": "assertion_failed",
-                "steps": [{"step": "main", "state": "mocked", "passed": False}],
+                "steps": [
+                    {"step": "main", "state": "mocked", "passed": False, "mismatches": ["output", "attempt_count"]}
+                ],
             }
         ],
     }

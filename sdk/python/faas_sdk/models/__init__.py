@@ -409,6 +409,7 @@ from .automation_test_inputs_mock_item_outputs import AutomationTestInputsMockIt
 from .automation_test_inputs_mock_outputs import AutomationTestInputsMockOutputs
 from .automation_test_report import AutomationTestReport
 from .automation_test_step_result import AutomationTestStepResult
+from .automation_test_step_result_mismatches_item import AutomationTestStepResultMismatchesItem
 from .automation_test_suite import AutomationTestSuite
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
@@ -4986,6 +4987,7 @@ __all__ = (
     "AutomationTestInputsMockOutputs",
     "AutomationTestReport",
     "AutomationTestStepResult",
+    "AutomationTestStepResultMismatchesItem",
     "AutomationTestSuite",
     "BeforeCheckpointHook",
     "BillingCancelResponse",

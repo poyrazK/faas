@@ -69156,6 +69156,12 @@ components:
           type: string
         passed:
           type: boolean
+        mismatches:
+          description: Failed assertion field names only; expected and observed values are omitted.
+          type: array
+          items:
+            type: string
+            enum: [step, state, reason, when_matched, output, attempt_count, attempts]
     AutomationPublishCheckScenario:
       description: Named simulation and assertions to evaluate against a saved automation draft.
       type: object

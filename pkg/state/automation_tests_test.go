@@ -55,6 +55,9 @@ func TestAutomationSavedTestsPersistenceAndFreshness(t *testing.T) {
 		if report.Passed || len(report.Cases) != 3 || !report.Cases[0].Passed || report.Cases[1].Passed || !report.Cases[2].Passed || report.Cases[1].Steps[0].Passed || report.Cases[1].Steps[0].State != "mocked" {
 			t.Fatalf("case/step results: %+v", report)
 		}
+		if !reflect.DeepEqual(report.Cases[1].Steps[0].Mismatches, []string{"output"}) {
+			t.Fatal("report did not identify the failing field")
+		}
 		rows, _ := author.ListAutomations(t.Context(), app.ID)
 		current := rows[0]
 		if current.Version != saved.Version || !current.UpdatedAt.Truncate(time.Microsecond).Equal(saved.UpdatedAt.Truncate(time.Microsecond)) {

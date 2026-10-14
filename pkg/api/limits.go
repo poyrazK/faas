@@ -6388,8 +6388,9 @@ const (
 	AutomationTestReportMaxBytes         int64 = AutomationPublishCheckMaxBytes
 	AutomationTestCaseNameMaxBytes             = 128
 	AutomationTestStepResultsMax               = AutomationSimulationMaxTraceEntries
-	// Browser forms can percent-encode each definition, sample, and check byte.
-	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes) + 4096
+	// Browser forms percent-encode the definition, sample, cases, and selected
+	// case simulation/output controls.
+	AutomationConsoleFormMaxBytes               int64 = 3*(AutomationDefinitionMaxBytes+2*AutomationSimulationRequestMaxBytes+AutomationPublishCheckMaxBytes+WorkflowRunInputMaxBytes) + 4096
 	AutomationNameMaxBytes                            = 128
 	WorkflowRunInputMaxBytes                    int64 = 1 << 20
 	WorkflowWebhookBindingMaxBytes              int64 = 64 << 10

@@ -65,6 +65,14 @@ func TestAutomationConsoleBrowserSavedCasesJourney(t *testing.T) {
 	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "cases")
 }
 
+func TestAutomationConsoleBrowserGuidedCasesJourney(t *testing.T) {
+	if os.Getenv("GREGALE_AUTOMATION_BROWSER_ACCEPTANCE") != "1" {
+		t.Skip("set GREGALE_AUTOMATION_BROWSER_ACCEPTANCE=1 with Playwright and Chromium installed")
+	}
+	e, app, cookie := consoleFixture(t)
+	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "case-editor")
+}
+
 func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string, extra ...map[string]string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -50,8 +50,21 @@ existing permissions, publication policies and execution gates still apply.
 
 ### Save and rerun reusable test cases
 
-Edit **Sample and mocks** and the named **Check scenarios**, then choose **Save
-test data**. Use synthetic data: the sample, mock outcomes, and expected values
+Use **Guided test cases** to add, duplicate, rename, and remove cases. Open a
+case to edit its input/mocks and choose a workflow step assertion. Check the
+expected state, output, or attempt count, then **Apply case changes**. Loop action
+assertions select an item index starting at zero. An output of `null` asserts
+null; unchecking output omits that check. A blank attempt count omits it, while
+zero checks that no attempts occurred. New assertions require an explicit check.
+
+Case navigation applies pending edits locally. **Save test data** persists the
+sample and cases; adding or removing them in the editor alone makes no write.
+Apply changes before switching to **Advanced test JSON**, select that mode, and
+choose **Apply editor mode** to edit complete scenarios. Advanced condition,
+reason, detailed retry assertions and per-item mocks survive guided edits.
+Input, mocks, and expected output remain JSON so structured data stays exact.
+
+Edit **Sample and mocks** and the named cases, then choose **Save test data**. Use synthetic data: the sample, mock outcomes, and expected values
 are explicitly stored with the draft and are readable by authorized app readers.
 Credentials belong in managed integrations. Real run or webhook payloads are
 never automatically copied into saved tests.
@@ -60,7 +73,10 @@ never automatically copied into saved tests.
 draft. It reports each case and assertion, including the observed step state,
 and continues after failed cases. Unknown or removed step assertions are reported
 as `invalid_expectations`. Saved result summaries exclude inputs, outputs and raw
-errors. They survive reopening and are marked outdated when the displayed
+errors. Failed step results identify mismatched fields: missing/ambiguous step,
+state, reason, condition result, output, attempt count, or retry outcomes. Expected
+and observed values are omitted. Older results can be rerun for field details.
+They survive reopening and are marked outdated when the displayed
 definition, sample, mocks, or expectations change. Publishing and pausing starts
 alone do not make unchanged results outdated. Results describe mock simulations;
 they do not prove deployed handlers, integrations or provider responses work.

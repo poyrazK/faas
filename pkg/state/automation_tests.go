@@ -149,7 +149,8 @@ func evaluateAutomationTestCase(ctx context.Context, def api.WorkflowSpec, c api
 			result.StepsTruncated = true
 			break
 		}
-		step := api.AutomationTestStepResult{Step: e.Step, Loop: e.Loop, ItemIndex: e.ItemIndex, Passed: automationchecks.Passes([]api.AutomationCheckExpectation{e}, response)}
+		mismatches := automationchecks.MismatchFields(e, response.Trace)
+		step := api.AutomationTestStepResult{Step: e.Step, Loop: e.Loop, ItemIndex: e.ItemIndex, Passed: len(mismatches) == 0, Mismatches: mismatches}
 		for _, row := range response.Trace {
 			if (e.Loop == "" && row.StepName == e.Step && row.ParentStep == "" && row.ItemIndex == nil) || (e.Loop != "" && row.ParentStep == e.Loop && e.ItemIndex != nil && row.ItemIndex != nil && *e.ItemIndex == *row.ItemIndex) {
 				step.State = row.State

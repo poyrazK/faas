@@ -24,6 +24,9 @@ type AutomationConsoleData struct {
 	CheckEvidence                                            *api.AutomationCheckEvidence
 	TestSuiteSaved, TestReportFresh                          bool
 	TestReport                                               *api.AutomationTestReport
+	TestEditorMode                                           string
+	TestCaseIndex, TestAssertionIndex                        int
+	TestEditor                                               *AutomationTestEditor
 	Health                                                   *api.AutomationHealthResponse
 	Runs                                                     []AutomationConsoleRun
 	Run                                                      *AutomationConsoleRun
@@ -43,6 +46,20 @@ type AutomationConsoleData struct {
 	ScheduleConfigured                                       bool
 	Webhook                                                  *AutomationWebhookForm
 	Ingress                                                  *AutomationWebhookSetup
+}
+
+type AutomationTestEditor struct {
+	Cases, Assertions                      []AutomationTestChoice
+	Targets                                []string
+	Name, Simulation, Step, State          string
+	ItemIndex, Output, AttemptCount, Error string
+	AssertOutput, HasCase, HasAssertion    bool
+	CanAddCase, CanAddAssertion            bool
+}
+
+type AutomationTestChoice struct {
+	Index int
+	Label string
 }
 
 type AutomationWebhookForm struct{ Source, EventType, Filter, LookupPath, EnrichPath string }
