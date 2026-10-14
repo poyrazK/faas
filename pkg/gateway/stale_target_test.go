@@ -31,7 +31,7 @@ func TestMarkStaleTargetClaimsRecoveryOnce(t *testing.T) {
 	}
 }
 
-// ADR-1151: vmmd's instance_frozen refusal marks the target frozen, so the
+// adr: 1151 — vmmd's instance_frozen refusal marks the target frozen, so the
 // handler withdraws it instead of quarantining it; other Unavailable errors
 // do not.
 func TestMarkStaleTargetErrFlagsFrozenRefusal(t *testing.T) {

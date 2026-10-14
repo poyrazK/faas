@@ -1,6 +1,6 @@
-// adr: 906, 1151 — a frozen instance is paused in place and reclaimed only on
-// request, refuses what a paused guest cannot serve, and every failed freeze
-// leaves the guest running.
+// adr: 1151 — a frozen instance is paused in place and reclaimed only on
+// request (ADR-906), refuses what a paused guest cannot serve, and every
+// failed freeze leaves the guest running.
 package fcvm
 
 import (
