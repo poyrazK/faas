@@ -277,6 +277,8 @@ func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	switch {
 	case live.Gaps > 0:
 		return "some lines were dropped before they could be sent"
+	case live.Reason == api.JobTaskLogsEndStoredOutput:
+		return "the last attempt ended before its output could be streamed"
 	case live.Reason != "":
 		return live.Reason
 	case err != nil:

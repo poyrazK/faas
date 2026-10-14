@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,14 +24,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// fakeLogStream yields scripted lines, then EOF.
+// fakeLogStream yields scripted lines, then end (io.EOF unless set). Like
+// a real server-streaming call, a status error arrives on Recv.
 type fakeLogStream struct {
 	grpc.ClientStream
 	lines []*vmmdpb.LogsResponse
+	end   error
 }
 
 func (s *fakeLogStream) Recv() (*vmmdpb.LogsResponse, error) {
 	if len(s.lines) == 0 {
+		if s.end != nil {
+			return nil, s.end
+		}
 		return nil, io.EOF
 	}
 	line := s.lines[0]
@@ -38,11 +44,13 @@ func (s *fakeLogStream) Recv() (*vmmdpb.LogsResponse, error) {
 	return line, nil
 }
 
-// fakeLogsVmmd serves each instance's scripted ring once.
+// fakeLogsVmmd serves each instance's scripted ring. booting[id] calls
+// answer NotFound first, as vmmd does before the VM's ring exists.
 type fakeLogsVmmd struct {
 	vmmdpb.VmmdClient
 	mu       sync.Mutex
 	rings    map[string][]string
+	booting  map[string]int
 	requests []*vmmdpb.LogsRequest
 }
 
@@ -50,9 +58,14 @@ func (v *fakeLogsVmmd) Logs(_ context.Context, in *vmmdpb.LogsRequest, _ ...grpc
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.requests = append(v.requests, in)
+	notFound := &fakeLogStream{end: status.Error(codes.NotFound, "instance not live on this vmmd")}
+	if v.booting[in.GetInstance()] > 0 {
+		v.booting[in.GetInstance()]--
+		return notFound, nil
+	}
 	lines, ok := v.rings[in.GetInstance()]
 	if !ok {
-		return nil, status.Error(codes.NotFound, "instance not live on this vmmd")
+		return notFound, nil
 	}
 	stream := &fakeLogStream{}
 	for i, line := range lines {
@@ -147,12 +160,14 @@ func TestJobTaskLogsStreamsEveryAttemptUntilTerminal(t *testing.T) {
 		{Status: "claimed", Attempt: 1, InstanceID: "inst-a", NodeID: "node-1"},
 		{Status: "queued", Attempt: 2, InstanceID: "inst-a", NodeID: "node-1"},
 		{Status: "claimed", Attempt: 2, InstanceID: "inst-b", NodeID: "node-2"},
-		{Status: "failed", Attempt: 2, InstanceID: "inst-b"},
+		{Status: "claimed", Attempt: 2, InstanceID: "inst-b", NodeID: "node-2"},
+		{Status: "claimed", Attempt: 2, InstanceID: "inst-b", NodeID: "node-2"},
+		{Status: "failed", Attempt: 2, InstanceID: "inst-b", NodeID: "node-2"},
 	}}
 	nodes := &fakeLogsNodes{vmmd: &fakeLogsVmmd{rings: map[string][]string{
 		"inst-a": {"first attempt"},
 		"inst-b": {"second attempt", "bye"},
-	}}}
+	}, booting: map[string]int{"inst-b": 2}}}
 	f := newJobLogsFixture(t, api.PlanPro, targets, nodes)
 	code, body := f.get(t, jobLogsPath+"?since_seq=7")
 	if code != http.StatusOK {
@@ -169,9 +184,14 @@ func TestJobTaskLogsStreamsEveryAttemptUntilTerminal(t *testing.T) {
 	}
 	f.vmmd.mu.Lock()
 	defer f.vmmd.mu.Unlock()
-	if len(f.vmmd.requests) != 2 || f.vmmd.requests[0].GetSinceSeq() != 7 || f.vmmd.requests[1].GetSinceSeq() != 1 ||
-		!f.vmmd.requests[0].GetFollow() || f.vmmd.requests[1].GetInstance() != "inst-b" {
-		t.Fatalf("vmmd requests = %+v; want the cursor on the first attempt only, following each VM once", f.vmmd.requests)
+	var got []string
+	for _, r := range f.vmmd.requests {
+		got = append(got, fmt.Sprintf("%s@%d", r.GetInstance(), r.GetSinceSeq()))
+	}
+	// inst-b answers NotFound twice while it boots; each retry starts again
+	// from its first line, and a closed ring is never reopened.
+	if strings.Join(got, ",") != "inst-a@7,inst-b@1,inst-b@1,inst-b@1" || !f.vmmd.requests[0].GetFollow() {
+		t.Fatalf("vmmd requests = %s; want the cursor on the first attempt only and retries while booting", got)
 	}
 }
 
@@ -186,12 +206,14 @@ func TestJobTaskLogsEndsAndRejects(t *testing.T) {
 		status  int
 		want    string
 	}{
-		"finished before the stream opened": {api.PlanPro, jobLogsPath, &scriptedTargets{targets: []state.JobTaskLogTarget{{Status: "succeeded"}}}, false, http.StatusOK, `"reason":"task_finished"`},
-		"node unreachable":                  {api.PlanPro, jobLogsPath, &scriptedTargets{targets: running}, true, http.StatusOK, `"reason":"node_unreachable"`},
-		"unknown task":                      {api.PlanPro, "/v1/jobs/ir-0123/runs/run-1/tasks/3/logs/stream", &scriptedTargets{targets: running}, false, http.StatusNotFound, api.CodeJobTaskNotFound},
-		"bad index":                         {api.PlanPro, "/v1/jobs/ir-0123/runs/run-1/tasks/x/logs/stream", &scriptedTargets{targets: running}, false, http.StatusBadRequest, api.CodeValidation},
-		"bad cursor":                        {api.PlanPro, jobLogsPath + "?since_seq=-1", &scriptedTargets{targets: running}, false, http.StatusBadRequest, api.CodeValidation},
-		"free plan":                         {api.PlanFree, jobLogsPath, &scriptedTargets{targets: running}, false, http.StatusPaymentRequired, api.CodeJobsNotAllowed},
+		"finished, ring still draining": {api.PlanPro, jobLogsPath, &scriptedTargets{targets: []state.JobTaskLogTarget{{Status: "succeeded", InstanceID: "inst-a", NodeID: "node-1"}}}, false, http.StatusOK, `"reason":"task_finished"`},
+		"node unreachable":              {api.PlanPro, jobLogsPath, &scriptedTargets{targets: running}, true, http.StatusOK, `"reason":"node_unreachable"`},
+		"last VM gone before streaming": {api.PlanPro, jobLogsPath, &scriptedTargets{targets: []state.JobTaskLogTarget{{Status: "succeeded", InstanceID: "inst-gone", NodeID: "node-1"}}}, false, http.StatusOK, `"reason":"stored_output"`},
+		"cancelled while queued":        {api.PlanPro, jobLogsPath, &scriptedTargets{targets: []state.JobTaskLogTarget{{Status: "cancelled"}}}, false, http.StatusOK, `"reason":"stored_output"`},
+		"unknown task":                  {api.PlanPro, "/v1/jobs/ir-0123/runs/run-1/tasks/3/logs/stream", &scriptedTargets{targets: running}, false, http.StatusNotFound, api.CodeJobTaskNotFound},
+		"bad index":                     {api.PlanPro, "/v1/jobs/ir-0123/runs/run-1/tasks/x/logs/stream", &scriptedTargets{targets: running}, false, http.StatusBadRequest, api.CodeValidation},
+		"bad cursor":                    {api.PlanPro, jobLogsPath + "?since_seq=-1", &scriptedTargets{targets: running}, false, http.StatusBadRequest, api.CodeValidation},
+		"free plan":                     {api.PlanFree, jobLogsPath, &scriptedTargets{targets: running}, false, http.StatusPaymentRequired, api.CodeJobsNotAllowed},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

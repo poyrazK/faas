@@ -22,6 +22,9 @@ const (
 	JobTaskLogsEndUnreachable = "node_unreachable"
 	// JobTaskLogsEndNotFound: the job, run or task disappeared.
 	JobTaskLogsEndNotFound = "not_found"
+	// JobTaskLogsEndStoredOutput: the task finished before its last VM's
+	// output could be streamed; read the stored output from GET .../logs.
+	JobTaskLogsEndStoredOutput = "stored_output"
 )
 
 // IsJobTaskLogStreamPath reports whether p is

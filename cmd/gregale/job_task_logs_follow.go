@@ -108,6 +108,12 @@ func followJobTaskLogsCommand(client *api.Client, job, runID string, taskIndex i
 		return 130
 	case err != nil && live.Lines == 0 && live.Reason == "":
 		return printErr("Could not follow the task output", err)
+	case live.Lines == 0 && live.Reason == api.JobTaskLogsEndStoredOutput:
+		logs, err := client.GetJobTaskLogs(ctx, job, runID, taskIndex)
+		if err != nil {
+			return printErr("Logs request failed", err)
+		}
+		return renderJobTaskLogs(logs)
 	case !live.Complete():
 		PrintWarn(osStderr, "live output was incomplete (%s); stored output: %s jobs logs %s %s %d",
 			liveIncompleteReason(live, err), recoveryCLI(), recoveryArgument(job), runID, taskIndex)

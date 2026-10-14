@@ -37,6 +37,7 @@ const (
 	jobTaskLogsEndTimeout     = api.JobTaskLogsEndTimeout
 	jobTaskLogsEndUnreachable = api.JobTaskLogsEndUnreachable
 	jobTaskLogsEndGone        = api.JobTaskLogsEndNotFound
+	jobTaskLogsEndStored      = api.JobTaskLogsEndStoredOutput
 )
 
 type jobTaskLogTargets interface {
@@ -114,27 +115,43 @@ func parseJobTaskLogsRequest(r *http.Request, acct state.Account) (jobTaskLogsRe
 	return jobTaskLogsRequest{account: acct.ID, job: r.PathValue("name"), run: r.PathValue("id"), index: index, sinceSeq: since}, nil
 }
 
-// follow streams every attempt's VM output until the task is terminal and
-// its last VM's ring has closed, and returns the end reason.
+// follow streams every attempt's VM output until the task is terminal, and
+// returns the end reason. A VM's ring appears only once vmmd boots it, so a
+// missing ring before any line arrived is retried; a broken stream resumes
+// after the last relayed line.
 func (h *JobTaskLogsHandler) follow(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, req jobTaskLogsRequest, target state.JobTaskLogTarget) string {
 	ctx, cancel := context.WithTimeout(ctx, durationOr(h.Backstop, jobTaskLogsBackstop))
 	defer cancel()
-	streamed := map[string]bool{}
-	since := req.sinceSeq
+	next := map[string]int64{} // instance -> next sequence to request
+	closed := map[string]bool{}
+	firstInstance := ""
 	for {
-		if target.InstanceID != "" && target.NodeID != "" && !streamed[target.InstanceID] {
-			streamed[target.InstanceID] = true
-			if reason, done := h.followInstance(ctx, w, flusher, target, since); done {
-				return reason
+		id := target.InstanceID
+		if id != "" && target.NodeID != "" && !closed[id] {
+			if firstInstance == "" {
+				firstInstance = id
+				next[id] = req.sinceSeq // a client cursor applies to the attempt it came from
 			}
-			since = 0 // a cursor applies only to the attempt it came from
-		} else if target.Terminal() {
-			return jobTaskLogsEndFinished
+			res := h.followInstance(ctx, w, flusher, target, next[id])
+			if res.done {
+				return res.reason
+			}
+			if res.lastSeq > 0 {
+				next[id] = res.lastSeq + 1
+			}
+			closed[id] = res.closed
+		}
+		if target.Terminal() {
+			if id != "" && closed[id] {
+				return jobTaskLogsEndFinished
+			}
+			// The last VM was gone before its output could be relayed.
+			return jobTaskLogsEndStored
 		}
 		if !h.wait(ctx, w, flusher) {
 			return jobTaskLogsEndTimeout
 		}
-		next, err := h.Targets.JobTaskLogTarget(ctx, req.account, req.job, req.run, req.index)
+		reloaded, err := h.Targets.JobTaskLogTarget(ctx, req.account, req.job, req.run, req.index)
 		switch {
 		case errors.Is(err, state.ErrNotFound):
 			return jobTaskLogsEndGone
@@ -142,19 +159,31 @@ func (h *JobTaskLogsHandler) follow(ctx context.Context, w http.ResponseWriter, 
 			h.logWarn("job task logs: reload task", err)
 			continue
 		}
-		target = next
+		target = reloaded
 	}
 }
 
-// followInstance relays one VM's ring, with heartbeats while the task is
-// quiet. It returns done=true only when the stream must end (client gone,
-// backstop, unreachable node).
-func (h *JobTaskLogsHandler) followInstance(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, target state.JobTaskLogTarget, since int64) (string, bool) {
+// instanceFollow is the outcome of relaying one VM's ring.
+type instanceFollow struct {
+	// lastSeq is the last sequence relayed, 0 when none was.
+	lastSeq int64
+	// closed is true when the ring ended: the VM is gone and every retained
+	// line was relayed.
+	closed bool
+	// done ends the whole stream with reason (client gone, backstop,
+	// unreachable node).
+	done   bool
+	reason string
+}
+
+// followInstance relays one VM's ring from since, with heartbeats while the
+// task is quiet.
+func (h *JobTaskLogsHandler) followInstance(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, target state.JobTaskLogTarget, since int64) instanceFollow {
 	dialCtx, cancelDial := context.WithTimeout(ctx, jobTaskLogsDial)
 	client, closer, ok := h.Nodes.ClientFor(dialCtx, target.NodeID)
 	cancelDial()
 	if !ok {
-		return jobTaskLogsEndUnreachable, true
+		return instanceFollow{done: true, reason: jobTaskLogsEndUnreachable}
 	}
 	defer func() { _ = closer.Close() }()
 	if since <= 0 {
@@ -162,9 +191,10 @@ func (h *JobTaskLogsHandler) followInstance(ctx context.Context, w http.Response
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	var res instanceFollow
 	stream, err := client.Logs(streamCtx, &vmmdpb.LogsRequest{Instance: target.InstanceID, SinceSeq: since, Follow: proto.Bool(true)})
 	if err != nil {
-		return h.instanceStreamEnd(ctx, err)
+		return h.instanceStreamEnd(ctx, res, err)
 	}
 	lines := make(chan *vmmdpb.LogsResponse, 64)
 	recvErr := make(chan error, 1)
@@ -182,42 +212,52 @@ func (h *JobTaskLogsHandler) followInstance(ctx context.Context, w http.Response
 			}
 		}
 	}()
+	relay := func(line *vmmdpb.LogsResponse) {
+		renderJobTaskLogFrame(w, flusher, target.InstanceID, line)
+		if !line.GetIsGap() && line.GetSeq() > res.lastSeq {
+			res.lastSeq = line.GetSeq()
+		}
+	}
 	heartbeat := time.NewTicker(durationOr(h.Heartbeat, jobTaskLogsHeartbeat))
 	defer heartbeat.Stop()
 	for {
 		select {
 		case line := <-lines:
-			renderJobTaskLogFrame(w, flusher, target.InstanceID, line)
+			relay(line)
 		case err := <-recvErr:
 			for drained := false; !drained; {
 				select {
 				case line := <-lines:
-					renderJobTaskLogFrame(w, flusher, target.InstanceID, line)
+					relay(line)
 				default:
 					drained = true
 				}
 			}
-			return h.instanceStreamEnd(ctx, err)
+			return h.instanceStreamEnd(ctx, res, err)
 		case <-heartbeat.C:
 			writeSSEComment(w, flusher)
 		case <-ctx.Done():
-			return jobTaskLogsEndTimeout, true
+			return instanceFollow{done: true, reason: jobTaskLogsEndTimeout}
 		}
 	}
 }
 
-// instanceStreamEnd maps the end of one VM's stream: a closed or missing
-// ring means the VM is gone and the task may run again.
-func (h *JobTaskLogsHandler) instanceStreamEnd(ctx context.Context, err error) (string, bool) {
+// instanceStreamEnd classifies how one VM's stream stopped. EOF means vmmd
+// closed the ring with the VM. NotFound before any line means the VM has not
+// booted yet (retry); after a line it means the ring is already gone. Any
+// other error is retried from the last relayed line.
+func (h *JobTaskLogsHandler) instanceStreamEnd(ctx context.Context, res instanceFollow, err error) instanceFollow {
 	switch {
 	case ctx.Err() != nil:
-		return jobTaskLogsEndTimeout, true
-	case errors.Is(err, io.EOF), status.Code(err) == codes.NotFound:
-		return "", false
+		return instanceFollow{done: true, reason: jobTaskLogsEndTimeout}
+	case errors.Is(err, io.EOF):
+		res.closed = true
+	case status.Code(err) == codes.NotFound:
+		res.closed = res.lastSeq > 0
 	default:
 		h.logWarn("job task logs: vmmd stream", err)
-		return "", false
 	}
+	return res
 }
 
 func renderJobTaskLogFrame(w http.ResponseWriter, flusher http.Flusher, instanceID string, line *vmmdpb.LogsResponse) {

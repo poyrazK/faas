@@ -27741,9 +27741,10 @@ paths:
         log stream: `event: log` (seq, instance, stream, line, written_at),
         `event: gap` when the VM already dropped older lines, heartbeat
         comments, and one final `event: end` whose `reason` is
-        `task_finished`, `timeout`, `node_unreachable` or `not_found`. After
-        `task_finished`, read the task for its outcome; the stored output
-        from `GET .../logs` remains available.
+        `task_finished` (all output relayed), `stored_output` (the task ended
+        before its last VM's output could be streamed; read `GET .../logs`),
+        `timeout`, `node_unreachable` or `not_found`. Read the task for its
+        outcome; the stored output from `GET .../logs` remains available.
       responses:
         '200':
           description: A text/event-stream of the task's output lines, ending with one `end` frame.

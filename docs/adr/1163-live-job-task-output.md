@@ -25,6 +25,9 @@
   - While the task is queued, the stream sends heartbeat comments.
   - It relays each attempt's VM in turn. A retry starts a new VM, a new ring
     and new sequence numbers; `instance` distinguishes them.
+  - A task row names its instance before vmmd has booted the VM, so a
+    missing ring is retried until the VM appears. A broken vmmd stream
+    resumes after the last relayed line.
   - The stream ends once the task is terminal and its last VM's ring has
     closed.
   - `since_seq` resumes within the current attempt; 0 replays the attempt
@@ -32,8 +35,13 @@
 - **Frames:**
   - The same `log` and `gap` frames, and heartbeat comments, as the app log
     stream.
-  - One final `end` frame, with reason `task_finished`, `timeout` (3 h
-    backstop), `node_unreachable` or `not_found`.
+  - One final `end` frame. Its reason is one of:
+    - `task_finished`: the task is terminal and its last VM's output was
+      relayed.
+    - `stored_output`: the task finished before its last VM's output could
+      be streamed; read `GET .../logs`.
+    - `timeout`: the 3 h backstop elapsed.
+    - `node_unreachable` or `not_found`.
   - Heartbeats are also sent between lines, so quiet tasks survive proxy idle
     timeouts.
 - **Stored output is unchanged:** schedd still copies the last 1 MiB to
@@ -45,8 +53,8 @@
   - Without `--json`, it streams lines as they arrive; stderr-tagged lines go
     to stderr.
   - It doesn't print the stored copy again after a complete stream.
-  - If the stream can't open, as with an older gateway, it prints the stored
-    output as before.
+  - If the stream can't open, as with an older gateway, or relays nothing
+    before `stored_output`, it prints the stored output as before.
   - If the stream breaks part-way, it warns and names `gregale jobs logs`
     instead of printing lines twice.
   - Exit codes are unchanged.
@@ -61,7 +69,7 @@
 - Lines longer than the SSE decoder's 64 KiB buffer end the CLI's live
   stream; the CLI then warns and points at the stored output.
 - Output is live only while the VM runs. A stream opened after the task
-  ended returns `task_finished` at once, and the stored output is the
+  ended returns `stored_output` at once, and the stored output is the
   record.
 
 ## Rejected alternatives
