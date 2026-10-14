@@ -350,6 +350,9 @@ var dtoExclude = map[string]bool{
 	// EdgeRuleParamKind is an internal enum for kind=validate parameter
 	// locations (path, query, header); it never appears on the wire alone.
 	"EdgeRuleParamKind": true,
+	// ADR-1238: a plan's included object storage in month-close billing
+	// units; internal to pricing and never serialized.
+	"ObjectStorageAllowance": true,
 
 	"WorkflowRecoveryHistoryOptions": true, // client-only history query parameters; documented on the route
 	"WorkflowRecoveryReportOptions":  true, // client-only report query parameters; documented on the route
