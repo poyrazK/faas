@@ -68,7 +68,9 @@ jobs:
   acceptance:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Browser acceptance precedes the full credential and CLI integration run;
+    # cold Go builds need enough time to finish both stages on hosted runners.
+    timeout-minutes: 45
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
