@@ -406,16 +406,14 @@ func buildTenantDetail(ctx context.Context, st state.Store, a state.Account, inc
 	}
 	orgRows := make([]api.ObsTenantOrg, 0, len(orgs))
 	for _, o := range orgs {
-		role := "member"
-		if mem, err := st.OrgMemberByAccount(ctx, o.ID, a.ID); err == nil {
-			role = string(mem.Role)
-		} else {
+		mem, err := st.OrgMemberByAccount(ctx, o.ID, a.ID)
+		if err != nil {
 			return api.ObsTenantDetailResponse{}, err
 		}
 		orgRows = append(orgRows, api.ObsTenantOrg{
 			ID:   o.ID,
 			Slug: o.Slug,
-			Role: role,
+			Role: string(mem.Role),
 		})
 	}
 	keys, err := st.ListAPIKeys(ctx, a.ID)
