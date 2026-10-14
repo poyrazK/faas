@@ -4761,15 +4761,17 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 
 // idempotencyReplayable reports whether a response may be stored for
 // replay. A refusal that depends on account state or time — sign-in,
-// payment, verification or permission, a rate limit, temporary
-// unavailability — means the operation did not run, and the condition
-// can clear. The CLI derives deploy keys from the deploy's content, so a
-// cached refusal kept answering the same deploy for the whole 24 h replay
-// window: after paying, verifying the email, or waiting out the hourly
-// deploy limit, `gregale deploy` still got the old 402/403/429.
+// payment, verification or permission, a missing resource, a rate limit,
+// temporary unavailability — means the operation did not run, and the
+// condition can clear. The CLI derives deploy keys from the deploy's
+// content, so a cached refusal kept answering the same deploy for the whole
+// 24 h replay window: after paying, verifying the email, or waiting out the
+// hourly deploy limit, `gregale deploy` still got the old 402/403/429. A
+// cached 404 did the same: `gregale deliver` to a webhook registered after
+// the first attempt kept answering "no webhook registered" (H10-54).
 func idempotencyReplayable(status int) bool {
 	switch status {
-	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusNotFound,
 		http.StatusTooManyRequests, http.StatusServiceUnavailable:
 		return false
 	}
