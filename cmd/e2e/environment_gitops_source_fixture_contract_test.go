@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func TestGitOpsSourceFixturePinsArchivesAndRecoversOnSameConnection(t *testing.T
 		var resolved string
 		for {
 			chunk, err := stream.Recv()
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
