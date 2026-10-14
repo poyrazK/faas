@@ -45,6 +45,10 @@ type fakeVMM struct {
 	pruneErr     map[string]error
 	archiveBytes map[string]int64
 	growErr      error
+	// copied is where each database's volume was copied by a move not yet
+	// switched over; copyErr and syncErr fail those steps.
+	copied           map[string]string
+	copyErr, syncErr error
 	// startDelay is how long a boot takes, outside the lock; booting and
 	// maxBooting count the boots in flight.
 	startDelay          time.Duration
@@ -417,4 +421,50 @@ func TestRecoverParksInFlightDatabases(t *testing.T) {
 	if got, _ := store.Get(ctx, vm.DatabaseID); got.State != StateParked || vmm.callCount("stop") != stops+1 {
 		t.Fatalf("after recover = %+v, stops %d", got, vmm.callCount("stop")-stops)
 	}
+}
+
+func (f *fakeVMM) CopyVolume(_ context.Context, from, to Node, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, "copy@"+from.ID+">"+to.ID)
+	if f.copyErr != nil {
+		return f.copyErr
+	}
+	if f.running[id] || f.volNode[id] != from.ID {
+		return errors.New("volume not stopped on the source")
+	}
+	if f.copied == nil {
+		f.copied = map[string]string{}
+	}
+	f.copied[id] = to.ID
+	return nil
+}
+
+func (f *fakeVMM) SyncArchive(_ context.Context, node Node, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, "sync@"+node.ID)
+	return f.syncErr
+}
+
+func (f *fakeVMM) DiscardVolume(_ context.Context, node Node, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, "discard@"+node.ID)
+	if f.copied[id] == node.ID {
+		delete(f.copied, id)
+	}
+	return nil
+}
+
+// ReleaseVolume drops the source volume; the copy becomes the volume.
+func (f *fakeVMM) ReleaseVolume(_ context.Context, node Node, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onNode = append(f.onNode, "release@"+node.ID)
+	if to, ok := f.copied[id]; ok && f.volNode[id] == node.ID {
+		f.volNode[id] = to
+		delete(f.copied, id)
+	}
+	return nil
 }

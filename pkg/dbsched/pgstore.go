@@ -78,7 +78,7 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 		Bootstrapped: r.Bootstrapped, AlwaysOn: r.AlwaysOn, LastBackupAt: r.LastBackupAt.Time, LastError: r.LastError.String, LastActiveAt: r.LastActiveAt.Time,
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
 		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
-		ResizePending: r.ResizePending,
+		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
@@ -518,4 +518,100 @@ func inTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) (VM, error)) 
 		return VM{}, fmt.Errorf("dbsched: commit: %w", err)
 	}
 	return vm, nil
+}
+
+func (s *PgStore) BeginMove(ctx context.Context, id, target string, lease time.Duration) (VM, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return VM{}, err
+	}
+	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if vm.State != StateParked || vm.ResizePending {
+			return VM{}, ErrConflict
+		}
+		nodes, err := s.Nodes(ctx)
+		if err != nil {
+			return VM{}, err
+		}
+		usage, err := s.usage(ctx, tx)
+		if err != nil {
+			return VM{}, err
+		}
+		node, err := moveTarget(nodes, usage, vm, target)
+		if err != nil {
+			return VM{}, err
+		}
+		// Re-check under the node lock, as Place does.
+		if _, err := s.q.LockDatabaseNode(ctx, tx, node.ID); err != nil {
+			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", node.ID, err)
+		}
+		if usage, err = s.usage(ctx, tx); err != nil {
+			return VM{}, err
+		}
+		if node.VolumeCapacityBytes-usage[node.ID].volumeBytes < vm.VolumeBytes {
+			return VM{}, ErrNoCapacity
+		}
+		n, err := s.q.BeginDatabaseVMMove(ctx, tx, sqlc.BeginDatabaseVMMoveParams{DatabaseID: key, MoveNode: node.ID, LeaseSeconds: lease.Seconds()})
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: begin move of %s: %w", id, err)
+		}
+		if n == 0 {
+			return VM{}, ErrConflict
+		}
+		return s.get(ctx, tx, id)
+	})
+}
+
+func (s *PgStore) RenewMove(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	next, err := s.q.RenewDatabaseVMMove(ctx, s.pool, sqlc.RenewDatabaseVMMoveParams{
+		DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: true}, LeaseSeconds: lease.Seconds(),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, ErrConflict
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dbsched: renew move of %s: %w", id, err)
+	}
+	return next.Time, nil
+}
+
+func (s *PgStore) FinishMove(ctx context.Context, id string, held time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.FinishDatabaseVMMove(ctx, s.pool, sqlc.FinishDatabaseVMMoveParams{DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: true}})
+	if err != nil {
+		return fmt.Errorf("dbsched: finish move of %s: %w", id, err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) AbortMove(ctx context.Context, id string, held time.Time, lastError string) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.AbortDatabaseVMMove(ctx, s.pool, sqlc.AbortDatabaseVMMoveParams{
+		DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: !held.IsZero()},
+		LastError: pgtype.Text{String: lastError, Valid: lastError != ""},
+	})
+	if err != nil {
+		return fmt.Errorf("dbsched: abort move of %s: %w", id, err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
 }

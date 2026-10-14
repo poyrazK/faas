@@ -75,6 +75,29 @@ func (q *Queries) AbandonProjectEnvironmentCloneConfiguration(ctx context.Contex
 	return result.RowsAffected(), nil
 }
 
+const abortDatabaseVMMove = `-- name: AbortDatabaseVMMove :execrows
+UPDATE database_vms
+SET move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now(), last_error = $1
+WHERE database_id = $2 AND state = 'moving'
+  AND (move_lease_until = $3::timestamptz OR ($3::timestamptz IS NULL AND move_lease_until < now()))
+`
+
+type AbortDatabaseVMMoveParams struct {
+	LastError  pgtype.Text
+	DatabaseID pgtype.UUID
+	Held       pgtype.Timestamptz
+}
+
+// Ends a move with the database parked where it was: by the lease holder,
+// or by anyone once the lease has lapsed (held NULL).
+func (q *Queries) AbortDatabaseVMMove(ctx context.Context, db DBTX, arg AbortDatabaseVMMoveParams) (int64, error) {
+	result, err := db.Exec(ctx, abortDatabaseVMMove, arg.LastError, arg.DatabaseID, arg.Held)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const abortLockedInstanceMigration = `-- name: AbortLockedInstanceMigration :execrows
 UPDATE instances SET state = 'parked', lease_token = NULL, migration_started_at = NULL
 WHERE id = $1::uuid AND node_id = $2::uuid
@@ -1997,6 +2020,27 @@ func (q *Queries) BeginClonePostgresWriteFenceAbandonment(ctx context.Context, d
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const beginDatabaseVMMove = `-- name: BeginDatabaseVMMove :execrows
+UPDATE database_vms
+SET state = 'moving', move_node = $1::text, state_changed_at = now(), last_error = NULL,
+    move_lease_until = now() + make_interval(secs => $2::double precision)
+WHERE database_id = $3 AND state = 'parked' AND NOT resize_pending
+`
+
+type BeginDatabaseVMMoveParams struct {
+	MoveNode     string
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+}
+
+func (q *Queries) BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDatabaseVMMoveParams) (int64, error) {
+	result, err := db.Exec(ctx, beginDatabaseVMMove, arg.MoveNode, arg.LeaseSeconds, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const beginImagePreparation = `-- name: BeginImagePreparation :one
@@ -9364,10 +9408,10 @@ func (q *Queries) DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgty
 const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
-    count(v.database_id) FILTER (WHERE v.state = 'waking')::bigint AS waking_vms
-FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id
+    COALESCE(sum(v.mem_mib) FILTER (WHERE v.node_id = n.id AND v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
+    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
+    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
+FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id
 GROUP BY n.id ORDER BY n.id
 `
 
@@ -9379,6 +9423,8 @@ type DatabaseNodeUsageRow struct {
 	WakingVms    int64
 }
 
+// A moving database's volume counts on its node and on the node it is
+// moving to; its memory only where it can run.
 func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error) {
 	rows, err := db.Query(ctx, databaseNodeUsage)
 	if err != nil {
@@ -14929,6 +14975,25 @@ func (q *Queries) FinishClonePostgresWriteFenceAbandonment(ctx context.Context, 
 	return i, err
 }
 
+const finishDatabaseVMMove = `-- name: FinishDatabaseVMMove :execrows
+UPDATE database_vms
+SET node_id = move_node, move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now()
+WHERE database_id = $1 AND state = 'moving' AND move_lease_until = $2::timestamptz
+`
+
+type FinishDatabaseVMMoveParams struct {
+	DatabaseID pgtype.UUID
+	Held       pgtype.Timestamptz
+}
+
+func (q *Queries) FinishDatabaseVMMove(ctx context.Context, db DBTX, arg FinishDatabaseVMMoveParams) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabaseVMMove, arg.DatabaseID, arg.Held)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const finishDatabaseVMResize = `-- name: FinishDatabaseVMResize :execrows
 UPDATE database_vms SET resize_pending = false WHERE database_id = $1
 `
@@ -17492,7 +17557,8 @@ func (q *Queries) GetDatabaseRoleVerifier(ctx context.Context, db DBTX, arg GetD
 const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17520,6 +17586,8 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.LastActiveAt,
 		&i.StateChangedAt,
 		&i.CreatedAt,
+		&i.MoveNode,
+		&i.MoveLeaseUntil,
 	)
 	return i, err
 }
@@ -30507,7 +30575,8 @@ func (q *Queries) ListDatabaseNodes(ctx context.Context, db DBTX) ([]ListDatabas
 const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30541,6 +30610,8 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.LastActiveAt,
 			&i.StateChangedAt,
 			&i.CreatedAt,
+			&i.MoveNode,
+			&i.MoveLeaseUntil,
 		); err != nil {
 			return nil, err
 		}
@@ -63678,6 +63749,28 @@ type RenewCustomerOperationWorkflowRunParams struct {
 func (q *Queries) RenewCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg RenewCustomerOperationWorkflowRunParams) error {
 	_, err := db.Exec(ctx, renewCustomerOperationWorkflowRun, arg.LeaseUntil, arg.ID)
 	return err
+}
+
+const renewDatabaseVMMove = `-- name: RenewDatabaseVMMove :one
+UPDATE database_vms
+SET move_lease_until = now() + make_interval(secs => $1::double precision)
+WHERE database_id = $2 AND state = 'moving' AND move_lease_until = $3::timestamptz
+RETURNING move_lease_until
+`
+
+type RenewDatabaseVMMoveParams struct {
+	LeaseSeconds float64
+	DatabaseID   pgtype.UUID
+	Held         pgtype.Timestamptz
+}
+
+// Renews the lease the caller holds on a move. The lease is the database
+// clock's, so replicas' clocks do not matter.
+func (q *Queries) RenewDatabaseVMMove(ctx context.Context, db DBTX, arg RenewDatabaseVMMoveParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, renewDatabaseVMMove, arg.LeaseSeconds, arg.DatabaseID, arg.Held)
+	var move_lease_until pgtype.Timestamptz
+	err := row.Scan(&move_lease_until)
+	return move_lease_until, err
 }
 
 const renewEnvironmentGitOpsLease = `-- name: RenewEnvironmentGitOpsLease :execrows

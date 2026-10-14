@@ -18460,24 +18460,28 @@ SELECT id, target_url, admission_ceiling_mb, volume_capacity_bytes, boot_slots, 
 FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
 
 -- name: DatabaseNodeUsage :many
+-- A moving database's volume counts on its node and on the node it is
+-- moving to; its memory only where it can run.
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
-    count(v.database_id) FILTER (WHERE v.state = 'waking')::bigint AS waking_vms
-FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id
+    COALESCE(sum(v.mem_mib) FILTER (WHERE v.node_id = n.id AND v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
+    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
+    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
+FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id
 GROUP BY n.id ORDER BY n.id;
 
 -- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
-    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at
+    restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
+    move_node, move_lease_until
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -18560,6 +18564,33 @@ UPDATE database_vms SET state = sqlc.arg(to_state), state_changed_at = now(),
     bootstrapped = bootstrapped OR sqlc.arg(bootstrapped)::boolean,
     last_active_at = CASE WHEN sqlc.arg(to_state) = 'running' THEN now() ELSE last_active_at END
 WHERE database_id = sqlc.arg(database_id) AND state = ANY(sqlc.arg(from_states)::text[]);
+
+-- name: BeginDatabaseVMMove :execrows
+UPDATE database_vms
+SET state = 'moving', move_node = sqlc.arg(move_node)::text, state_changed_at = now(), last_error = NULL,
+    move_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'parked' AND NOT resize_pending;
+
+-- name: RenewDatabaseVMMove :one
+-- Renews the lease the caller holds on a move. The lease is the database
+-- clock's, so replicas' clocks do not matter.
+UPDATE database_vms
+SET move_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'moving' AND move_lease_until = sqlc.arg(held)::timestamptz
+RETURNING move_lease_until;
+
+-- name: FinishDatabaseVMMove :execrows
+UPDATE database_vms
+SET node_id = move_node, move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now()
+WHERE database_id = sqlc.arg(database_id) AND state = 'moving' AND move_lease_until = sqlc.arg(held)::timestamptz;
+
+-- name: AbortDatabaseVMMove :execrows
+-- Ends a move with the database parked where it was: by the lease holder,
+-- or by anyone once the lease has lapsed (held NULL).
+UPDATE database_vms
+SET move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now(), last_error = sqlc.narg(last_error)
+WHERE database_id = sqlc.arg(database_id) AND state = 'moving'
+  AND (move_lease_until = sqlc.narg(held)::timestamptz OR (sqlc.narg(held)::timestamptz IS NULL AND move_lease_until < now()));
 
 -- name: TouchDatabaseVM :execrows
 UPDATE database_vms SET last_active_at = sqlc.arg(at)

@@ -36,6 +36,18 @@ type VMM interface {
 	// GrowVolume enlarges a stopped database's volume and filesystem to
 	// sizeBytes; already that size is a cheap no-op.
 	GrowVolume(ctx context.Context, node Node, id string, sizeBytes int64) error
+	// CopyVolume copies a stopped database's volume from one node to
+	// another, which installs it only if it arrived whole (move.go).
+	CopyVolume(ctx context.Context, from, to Node, id string) error
+	// SyncArchive ships the database's archive files node still holds to
+	// the shared bucket.
+	SyncArchive(ctx context.Context, node Node, id string) error
+	// DiscardVolume deletes a volume and nothing else: a failed move's
+	// copy.
+	DiscardVolume(ctx context.Context, node Node, id string) error
+	// ReleaseVolume deletes a moved database's old volume and hands that
+	// node's copy of its archive to the bucket.
+	ReleaseVolume(ctx context.Context, node Node, id string) error
 	Start(ctx context.Context, node Node, vm VM) error
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
@@ -139,6 +151,13 @@ type Config struct {
 	// a restore may then run off the source's node, and after that node is
 	// lost.
 	SharedArchive bool
+	// MoveTimeout bounds one database move's copy; MoveLease is how long
+	// a move's lease lasts unrenewed before another replica may abort it.
+	MoveTimeout time.Duration
+	MoveLease   time.Duration
+	// EvacuateDraining moves databases off draining nodes (needs
+	// SharedArchive).
+	EvacuateDraining bool
 }
 
 // Scheduler is schedd's database scheduler. Operations on one database are
@@ -219,6 +238,12 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.RestoreLease <= 0 {
 		cfg.RestoreLease = 2 * time.Minute
+	}
+	if cfg.MoveTimeout <= 0 {
+		cfg.MoveTimeout = 2 * time.Hour
+	}
+	if cfg.MoveLease <= 0 {
+		cfg.MoveLease = 2 * time.Minute
 	}
 	if log == nil {
 		log = slog.Default()
@@ -384,6 +409,11 @@ func (s *Scheduler) RunBackupLoop(ctx context.Context, interval time.Duration) {
 			}
 			if _, err := s.CollectOrphans(ctx); err != nil {
 				s.log.Warn("dbsched: orphan sweep failed", "err", err)
+			}
+			if n, err := s.EvacuateDraining(ctx); err != nil {
+				s.log.Warn("dbsched: evacuation sweep failed", "err", err)
+			} else if n > 0 {
+				s.log.Info("dbsched: moved databases off draining nodes", "count", n)
 			}
 			if _, err := s.PruneLostArchives(ctx); err != nil {
 				s.log.Warn("dbsched: lost-node prune sweep failed", "err", err)
@@ -691,8 +721,10 @@ func (s *Scheduler) PruneLostArchives(ctx context.Context) (int, error) {
 // CollectOrphans removes database volumes no record names: those of
 // databases deleted while their node was lost, found once it is back. A
 // record always exists before its volume and outlives it, so a volume
-// without one is garbage. Their archives go with them. It reports how many
-// it removed.
+// without one is garbage. Their archives go with them. It also removes a
+// volume whose database lives on another node and is not moving here: a
+// moved database's old volume or a failed move's copy. That node's archive
+// copy goes to the bucket, which keeps it. It reports how many it removed.
 func (s *Scheduler) CollectOrphans(ctx context.Context) (int, error) {
 	nodes, err := s.store.Nodes(ctx)
 	if err != nil {
@@ -721,15 +753,23 @@ func (s *Scheduler) CollectOrphans(ctx context.Context) (int, error) {
 }
 
 func (s *Scheduler) removeOrphan(ctx context.Context, node Node, v NodeVolume) (bool, error) {
-	unlock := s.lock(v.DatabaseID)
+	unlock, ok := s.tryLock(v.DatabaseID)
+	if !ok {
+		return false, nil // busy here (a move, a delete); the next sweep looks again
+	}
 	defer unlock()
-	if _, err := s.store.Get(ctx, v.DatabaseID); !errors.Is(err, ErrNotFound) {
+	vm, err := s.store.Get(ctx, v.DatabaseID)
+	moved := err == nil && vm.NodeID != node.ID && vm.MoveNode != node.ID
+	if err != nil && !errors.Is(err, ErrNotFound) || err == nil && !moved {
 		return false, err
 	}
 	if v.Running {
 		if err := s.vmm.Stop(ctx, node, v.DatabaseID); err != nil {
 			return false, err
 		}
+	}
+	if moved {
+		return true, s.vmm.ReleaseVolume(ctx, node, v.DatabaseID)
 	}
 	return true, s.vmm.DeleteVolume(ctx, node, v.DatabaseID)
 }
@@ -858,9 +898,12 @@ func (s *Scheduler) vmLost(ctx context.Context, vm VM) bool {
 // Recover settles transitions a previous schedd process left in flight:
 // a waking or parking database is stopped and parked. Its next wake boots
 // it again; PostgreSQL recovers from its WAL if the stop was unclean.
-// Restores resume in the background.
+// Restores resume in the background; moves whose lease lapsed are aborted.
 func (s *Scheduler) Recover(ctx context.Context) error {
 	if err := s.ResumeRestores(ctx); err != nil {
+		return err
+	}
+	if _, err := s.SettleMoves(ctx); err != nil {
 		return err
 	}
 	stuck, err := s.store.List(ctx, StateWaking, StateParking)
@@ -908,6 +951,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 			}
 			if err := s.ResumeRestores(ctx); err != nil {
 				s.log.Warn("dbsched: restore sweep failed", "err", err)
+			}
+			if _, err := s.SettleMoves(ctx); err != nil {
+				s.log.Warn("dbsched: move settle sweep failed", "err", err)
 			}
 		}
 	}

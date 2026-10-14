@@ -3,7 +3,9 @@ package dbsched
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -211,4 +213,76 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 		out.RecoveredTo = resp.GetRecoveredTo().AsTime()
 	}
 	return out, nil
+}
+
+// CopyVolume relays one node's volume export into another's import. The
+// importer checks the transfer digest, so a stream cut short or garbled
+// installs nothing.
+func (g *GRPCVMM) CopyVolume(ctx context.Context, from, to Node, id string) error {
+	src, err := g.client(ctx, from)
+	if err != nil {
+		return err
+	}
+	dst, err := g.client(ctx, to)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	out, err := src.ExportDatabaseVolume(ctx, &vmmdpb.ExportDatabaseVolumeRequest{DatabaseId: id})
+	if err != nil {
+		return fmt.Errorf("export from %s: %w", from.ID, err)
+	}
+	in, err := dst.ImportDatabaseVolume(ctx)
+	if err != nil {
+		return fmt.Errorf("import on %s: %w", to.ID, err)
+	}
+	for {
+		chunk, err := out.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("export from %s: %w", from.ID, err)
+		}
+		if err := in.Send(chunk); err != nil {
+			// The importer ended the stream; CloseAndRecv says why.
+			break
+		}
+	}
+	if _, err := in.CloseAndRecv(); err != nil {
+		return fmt.Errorf("import on %s: %w", to.ID, err)
+	}
+	return nil
+}
+
+// SyncArchive ships node's copy of the database's archive to the bucket.
+func (g *GRPCVMM) SyncArchive(ctx context.Context, node Node, id string) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.SyncDatabaseArchive(ctx, &vmmdpb.SyncDatabaseArchiveRequest{DatabaseId: id})
+	return err
+}
+
+// DiscardVolume deletes only the volume; the archive is untouched.
+func (g *GRPCVMM) DiscardVolume(ctx context.Context, node Node, id string) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: id})
+	return err
+}
+
+// ReleaseVolume deletes a moved database's old volume and releases node's
+// copy of its archive to the bucket.
+func (g *GRPCVMM) ReleaseVolume(ctx context.Context, node Node, id string) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.DeleteDatabaseVolume(ctx, &vmmdpb.DeleteDatabaseVolumeRequest{DatabaseId: id, ReleaseArchive: true})
+	return err
 }

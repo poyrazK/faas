@@ -22,8 +22,11 @@ const (
 	StateWaking       State = "waking"
 	StateRunning      State = "running"
 	StateParking      State = "parking"
-	StateDeleting     State = "deleting"
-	StateFailed       State = "failed"
+	// StateMoving: the parked database's volume is being copied to
+	// VM.MoveNode (move.go). It cannot wake, park or be deleted meanwhile.
+	StateMoving   State = "moving"
+	StateDeleting State = "deleting"
+	StateFailed   State = "failed"
 )
 
 // Node lifecycles (database_nodes.lifecycle).
@@ -87,6 +90,10 @@ type VM struct {
 	// ResizePending: the shape or volume changed and the VM has not been
 	// restarted on it yet.
 	ResizePending bool
+	// MoveNode is where a moving database is going; MoveLeaseUntil is the
+	// lease of the schedd replica moving it.
+	MoveNode       string
+	MoveLeaseUntil time.Time
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.
 	RestoreUntilEnd bool
@@ -161,6 +168,21 @@ type Store interface {
 	Resize(ctx context.Context, id string, shape Shape, at time.Time) error
 	// FinishResize clears the pending mark once the VM runs on the shape.
 	FinishResize(ctx context.Context, id string) error
+	// BeginMove marks a parked database moving to target, or to the active
+	// node with the most free volume capacity when target is empty, if
+	// that node has room for its volume. It returns the database with its
+	// MoveNode and the move's lease. A resize-pending database is
+	// ErrConflict.
+	BeginMove(ctx context.Context, id, target string, lease time.Duration) (VM, error)
+	// RenewMove renews the lease held; a lapsed or taken lease is
+	// ErrConflict.
+	RenewMove(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
+	// FinishMove puts the moving database on its MoveNode, parked; only the
+	// lease holder can.
+	FinishMove(ctx context.Context, id string, held time.Time) error
+	// AbortMove leaves a moving database parked on its node: by the lease
+	// holder, or by anyone once the lease lapsed (held zero).
+	AbortMove(ctx context.Context, id string, held time.Time, lastError string) error
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
 }
@@ -273,4 +295,23 @@ func bootSlots(node Node) int {
 		return DefaultBootSlots
 	}
 	return node.BootSlots
+}
+
+// moveTarget picks a move's destination among the other nodes: target if
+// set, else the active node with the most free volume capacity.
+func moveTarget(nodes []Node, usage map[string]nodeUsage, vm VM, target string) (Node, error) {
+	others := make([]Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n.ID != vm.NodeID {
+			others = append(others, n)
+		}
+	}
+	node, ok := pickNode(others, usage, vm.VolumeBytes, target)
+	if !ok {
+		if target == vm.NodeID {
+			return Node{}, fmt.Errorf("%w: the database is already on %s", ErrInvalid, target)
+		}
+		return Node{}, ErrNoCapacity
+	}
+	return node, nil
 }

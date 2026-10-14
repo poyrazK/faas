@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS database_vms (
     volume_bytes bigint NOT NULL
         CHECK (volume_bytes > 0),
     state text NOT NULL
-        CHECK (state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'deleting', 'failed')),
+        CHECK (state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'moving', 'deleting', 'failed')),
     bootstrapped boolean NOT NULL DEFAULT false,
     -- Always-on databases are never parked for idleness, and schedd wakes
     -- them when they are found parked (scale_to_zero = false).
@@ -68,9 +68,16 @@ CREATE TABLE IF NOT EXISTS database_vms (
     last_active_at timestamptz,
     state_changed_at timestamptz NOT NULL DEFAULT now(),
     created_at timestamptz NOT NULL DEFAULT now(),
+    -- A moving database's volume is being copied to move_node; the schedd
+    -- replica running the move holds move_lease_until and renews it.
+    move_node text REFERENCES database_nodes (id),
+    move_lease_until timestamptz,
     CONSTRAINT database_vms_restore_lineage
         CHECK ((restore_source IS NULL) = (restore_target IS NULL)
-            AND restore_source IS DISTINCT FROM database_id)
+            AND restore_source IS DISTINCT FROM database_id),
+    CONSTRAINT database_vms_move
+        CHECK ((state = 'moving') = (move_node IS NOT NULL)
+            AND (move_node IS NULL OR (move_node <> node_id AND move_lease_until IS NOT NULL)))
 );
 
 CREATE INDEX IF NOT EXISTS database_vms_node_state_idx

@@ -74,6 +74,11 @@ func (m *MemStore) usageLocked() map[string]nodeUsage {
 	for _, vm := range m.vms {
 		u := usage[vm.NodeID]
 		u.volumeBytes += vm.VolumeBytes
+		if vm.MoveNode != "" {
+			m := usage[vm.MoveNode]
+			m.volumeBytes += vm.VolumeBytes
+			usage[vm.MoveNode] = m
+		}
 		if isActive(vm.State) {
 			u.activeMB += billableMB(vm.MemMiB)
 		}
@@ -361,6 +366,72 @@ func (m *MemStore) FinishResize(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	vm.ResizePending = false
+	m.vms[id] = vm
+	return nil
+}
+
+func (m *MemStore) BeginMove(_ context.Context, id, target string, lease time.Duration) (VM, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return VM{}, ErrNotFound
+	}
+	if vm.State != StateParked || vm.ResizePending {
+		return VM{}, ErrConflict
+	}
+	nodes := make([]Node, 0, len(m.nodes))
+	for _, n := range m.nodes {
+		nodes = append(nodes, n)
+	}
+	node, err := moveTarget(nodes, m.usageLocked(), vm, target)
+	if err != nil {
+		return VM{}, err
+	}
+	now := m.now()
+	vm.State, vm.StateChangedAt, vm.LastError = StateMoving, now, ""
+	vm.MoveNode, vm.MoveLeaseUntil = node.ID, now.Add(lease)
+	m.vms[id] = vm
+	return vm, nil
+}
+
+func (m *MemStore) RenewMove(_ context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateMoving || !vm.MoveLeaseUntil.Equal(held) {
+		return time.Time{}, ErrConflict
+	}
+	vm.MoveLeaseUntil = m.now().Add(lease)
+	m.vms[id] = vm
+	return vm.MoveLeaseUntil, nil
+}
+
+func (m *MemStore) FinishMove(_ context.Context, id string, held time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateMoving || !vm.MoveLeaseUntil.Equal(held) {
+		return ErrConflict
+	}
+	vm.NodeID, vm.MoveNode, vm.MoveLeaseUntil = vm.MoveNode, "", time.Time{}
+	vm.State, vm.StateChangedAt = StateParked, m.now()
+	m.vms[id] = vm
+	return nil
+}
+
+func (m *MemStore) AbortMove(_ context.Context, id string, held time.Time, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateMoving {
+		return ErrConflict
+	}
+	if held.IsZero() && !vm.MoveLeaseUntil.Before(m.now()) || !held.IsZero() && !vm.MoveLeaseUntil.Equal(held) {
+		return ErrConflict
+	}
+	vm.MoveNode, vm.MoveLeaseUntil = "", time.Time{}
+	vm.State, vm.StateChangedAt, vm.LastError = StateParked, m.now(), lastError
 	m.vms[id] = vm
 	return nil
 }

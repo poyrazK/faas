@@ -15,6 +15,9 @@ type Querier interface {
 	// as alice?" can identify the key that authenticated. See ADR-034 rev2.
 	APIKeyByHash(ctx context.Context, db DBTX, keySha256 []byte) (APIKeyByHashRow, error)
 	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
+	// Ends a move with the database parked where it was: by the lease holder,
+	// or by anyone once the lease has lapsed (held NULL).
+	AbortDatabaseVMMove(ctx context.Context, db DBTX, arg AbortDatabaseVMMoveParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AbortProfileGatedCanary(ctx context.Context, db DBTX, arg AbortProfileGatedCanaryParams) (int64, error)
 	AccountByEmail(ctx context.Context, db DBTX, email interface{}) (AccountByEmailRow, error)
@@ -122,6 +125,7 @@ type Querier interface {
 	AutomationFailureTargetExists(ctx context.Context, db DBTX, arg AutomationFailureTargetExistsParams) (bool, error)
 	AutomationManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (AutomationManifestRow, error)
 	BeginClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg BeginClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
+	BeginDatabaseVMMove(ctx context.Context, db DBTX, arg BeginDatabaseVMMoveParams) (int64, error)
 	BeginImagePreparation(ctx context.Context, db DBTX, arg BeginImagePreparationParams) (DeploymentImagePreparation, error)
 	// ADR-581: persist an irreversible accounting obligation before provider I/O.
 	BeginManagedPostgresAccounting(ctx context.Context, db DBTX, arg BeginManagedPostgresAccountingParams) (int64, error)
@@ -434,6 +438,8 @@ type Querier interface {
 	CustomerOperationWorkflowTenantStatus(ctx context.Context, db DBTX, arg CustomerOperationWorkflowTenantStatusParams) (string, error)
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgtype.UUID) (bool, error)
+	// A moving database's volume counts on its node and on the node it is
+	// moving to; its memory only where it can run.
 	DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error)
 	// Rows that can overlap [from, to): intervals crossing it and egress hours
 	// starting before its end (the caller drops earlier hours).
@@ -941,6 +947,7 @@ type Querier interface {
 	FindRuntimeRelease(ctx context.Context, db DBTX, arg FindRuntimeReleaseParams) (RuntimeRelease, error)
 	FinishAppHealthCollection(ctx context.Context, db DBTX, arg FinishAppHealthCollectionParams) error
 	FinishClonePostgresWriteFenceAbandonment(ctx context.Context, db DBTX, arg FinishClonePostgresWriteFenceAbandonmentParams) (ProjectEnvironmentClonePostgresWriteFence, error)
+	FinishDatabaseVMMove(ctx context.Context, db DBTX, arg FinishDatabaseVMMoveParams) (int64, error)
 	FinishDatabaseVMResize(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error)
 	FinishDevBridgeWebhookReplay(ctx context.Context, db DBTX, arg FinishDevBridgeWebhookReplayParams) (int64, error)
 	FinishEnvironmentGitOpsRun(ctx context.Context, db DBTX, arg FinishEnvironmentGitOpsRunParams) (int64, error)
@@ -3085,6 +3092,9 @@ type Querier interface {
 	RenewCustomerOperationStream(ctx context.Context, db DBTX, arg RenewCustomerOperationStreamParams) (int64, error)
 	RenewCustomerOperationWorkflowCustody(ctx context.Context, db DBTX, arg RenewCustomerOperationWorkflowCustodyParams) error
 	RenewCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg RenewCustomerOperationWorkflowRunParams) error
+	// Renews the lease the caller holds on a move. The lease is the database
+	// clock's, so replicas' clocks do not matter.
+	RenewDatabaseVMMove(ctx context.Context, db DBTX, arg RenewDatabaseVMMoveParams) (pgtype.Timestamptz, error)
 	RenewEnvironmentGitOpsLease(ctx context.Context, db DBTX, arg RenewEnvironmentGitOpsLeaseParams) (int64, error)
 	RenewEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg RenewEnvironmentWorkloadQualificationParams) (EnvironmentWorkloadQualificationRequest, error)
 	// Materialize the locked row before evaluating expiry. A valid predicate

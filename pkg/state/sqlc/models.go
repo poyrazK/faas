@@ -1931,6 +1931,8 @@ type DatabaseVm struct {
 	LastActiveAt         pgtype.Timestamptz
 	StateChangedAt       pgtype.Timestamptz
 	CreatedAt            pgtype.Timestamptz
+	MoveNode             pgtype.Text
+	MoveLeaseUntil       pgtype.Timestamptz
 }
 
 type DeadLetterEvent struct {

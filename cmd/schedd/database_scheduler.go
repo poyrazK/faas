@@ -40,6 +40,10 @@ type DatabaseSchedulerConfig struct {
 	// disables it). Zero takes dbsched's defaults.
 	WakeQueueWait  time.Duration `toml:"wake_queue_wait"`
 	EvictIdleAfter time.Duration `toml:"evict_idle_after"`
+	// EvacuateDraining moves databases off nodes whose lifecycle is
+	// draining (needs shared_archive); MoveTimeout bounds one move's copy.
+	EvacuateDraining bool          `toml:"evacuate_draining"`
+	MoveTimeout      time.Duration `toml:"move_timeout"`
 	// SharedArchive: every database node's dbbackupd uploads to the same
 	// bucket and prefix, so restores may run on any node (ADR-1027).
 	SharedArchive bool                 `toml:"shared_archive"`
@@ -128,7 +132,8 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 	}
 	vmm := dbsched.NewGRPCVMM(vmmTLS)
 	sched := dbsched.New(store, vmm, dbsched.Config{IdleTimeout: cfg.IdleTimeout, SharedArchive: cfg.SharedArchive,
-		WakeQueueWait: cfg.WakeQueueWait, EvictIdleAfter: cfg.EvictIdleAfter}, log)
+		WakeQueueWait: cfg.WakeQueueWait, EvictIdleAfter: cfg.EvictIdleAfter,
+		EvacuateDraining: cfg.EvacuateDraining, MoveTimeout: cfg.MoveTimeout}, log)
 	if err := sched.Recover(ctx); err != nil {
 		_ = vmm.Close()
 		return nil, fmt.Errorf("schedd: recover databases: %w", err)
