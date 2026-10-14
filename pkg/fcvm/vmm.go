@@ -462,6 +462,8 @@ var guestInitPlatformMessages = []string{
 	"workload identity proxy ", "event publish proxy ", "outbound relay ",
 	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
 	"sidecar ", "healthcheck: ", "WatchOOM",
+	// Boot characterization and port normalization (H10-56).
+	"characterization ", "portnorm ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05

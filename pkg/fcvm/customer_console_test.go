@@ -174,6 +174,10 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 00:58:50 INFO event publish proxy started endpoint=http://169.254.169.254/v1/events:publish\n",
 		"2026/10/14 00:58:50 INFO outbound relay started endpoint=http://127.0.0.1:2774\n",
 		"2026/10/14 00:58:50 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err=\"invalid argument\"\n",
+		// H10-56: boot characterization and port normalization.
+		"2026/10/14 15:46:06 WARN portnorm DNAT install failed rule=\"-t nat -A OUTPUT -p tcp --dport 8080 -j REDIRECT --to-ports 7000\"\n",
+		"2026/10/14 15:46:06 WARN portnorm forward failed; host will see listen mismatch port=7000\n",
+		"2026/10/14 15:46:06 INFO characterization complete mode=forward port=7000 class=http exit=-1 shipped=true\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
 		"hello-gregale listening on :3000\n",

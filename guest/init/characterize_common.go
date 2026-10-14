@@ -48,12 +48,22 @@ func containsNat(data []byte) bool {
 const procNetInodeColumn = 9
 
 func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, bool) {
+	port, addr, ok, _ := scanListeningFileFor(path, owned, 0)
+	return port, addr, ok
+}
+
+// scanListeningFileFor returns the owned LISTEN entry on port want when there
+// is one, else the first owned LISTEN entry; exact reports the former. An app
+// with a second listener (a raw TCP or metrics port) used to be characterized
+// on whichever socket /proc listed first, and portnorm then redirected the
+// expected HTTP port to that listener (H10-56).
+func scanListeningFileFor(path string, owned map[uint64]struct{}, want int) (port int, addr string, ok, exact bool) {
 	//nolint:forbidigo // /proc/net/tcp{,6} is a vetted kernel path inside the
 	// guest; the customer-path guard (openCustomerFile) is for host daemons
 	// reading customer bytes — this reads in-guest kernel state only.
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, "", false
+		return 0, "", false, false
 	}
 	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
@@ -74,8 +84,8 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 		}
 		ipHex := localHex[:colon]
 		portHex := localHex[colon+1:]
-		var port uint16
-		if _, sErr := fmt.Sscanf(portHex, "%x", &port); sErr != nil {
+		var rowPort uint16
+		if _, sErr := fmt.Sscanf(portHex, "%x", &rowPort); sErr != nil {
 			continue
 		}
 		// inode is the LAST field (kernel writes it after all the
@@ -94,14 +104,18 @@ func scanListeningFile(path string, owned map[uint64]struct{}) (int, string, boo
 			continue
 		}
 		// ADR-741: the debugger listener is never the app's port.
-		if devDebugActive.Load() && int(port) == api.DevDebugNodePort {
+		if devDebugActive.Load() && int(rowPort) == api.DevDebugNodePort {
 			continue
 		}
-		ip := hexIPToString(ipHex)
-		addr := fmt.Sprintf("%s:%d", ip, port)
-		return int(port), addr, true
+		entryAddr := fmt.Sprintf("%s:%d", hexIPToString(ipHex), rowPort)
+		if want > 0 && int(rowPort) == want {
+			return int(rowPort), entryAddr, true, true
+		}
+		if !ok {
+			port, addr, ok = int(rowPort), entryAddr, true
+		}
 	}
-	return 0, "", false
+	return port, addr, ok, false
 }
 
 // scanEstablishedFile parses one /proc/net/tcp{,6} for the count of
@@ -196,9 +210,9 @@ func truncateLog(s string, n int) string {
 // on linux. On non-linux builds, pid > 0 always returns
 // (0, "", false) — there is no /proc to walk, and the caller
 // polls until deadline.
-func probeListening(pid int) (int, string, bool) {
+func probeListening(pid, want int) (int, string, bool) {
 	if pid <= 0 {
 		return 0, "", false
 	}
-	return probeListeningLinux(pid)
+	return probeListeningLinux(pid, want)
 }
