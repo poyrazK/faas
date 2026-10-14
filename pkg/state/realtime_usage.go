@@ -173,3 +173,62 @@ func realtimeUsageUUID(value string) pgtype.UUID {
 	id, err := uuid.Parse(value)
 	return pgtype.UUID{Bytes: id, Valid: err == nil}
 }
+
+// RealtimeAccountUsageHour is an account's fleet-wide usage for one UTC hour
+// across all of its endpoints.
+type RealtimeAccountUsageHour struct {
+	Hour              time.Time `json:"hour"`
+	PeakConnections   int64     `json:"peak_connections"`
+	ConnectionSeconds int64     `json:"connection_seconds"`
+	DeliveredMessages int64     `json:"delivered_messages"`
+	DeliveredBytes    int64     `json:"delivered_bytes"`
+	ReceivedMessages  int64     `json:"received_messages"`
+	ReceivedBytes     int64     `json:"received_bytes"`
+}
+
+// RealtimeAccountUsageReader serves the customer usage view (ADR-1238).
+type RealtimeAccountUsageReader interface {
+	ReadRealtimeUsage(ctx context.Context, accountID string, from, to time.Time) ([]RealtimeUsageHour, error)
+	ReadRealtimeAccountUsage(ctx context.Context, accountID string, from, to time.Time) ([]RealtimeAccountUsageHour, error)
+	// ReadRealtimeOpenConnections is the account's open connections on nodes
+	// that reported within api.RealtimeConnectionSyncStaleAfter.
+	ReadRealtimeOpenConnections(ctx context.Context, accountID string) (int64, error)
+}
+
+// ReadRealtimeAccountUsage returns an account's usage per hour in [from, to),
+// oldest first.
+func (s *PgStore) ReadRealtimeAccountUsage(ctx context.Context, accountID string, from, to time.Time) ([]RealtimeAccountUsageHour, error) {
+	if _, err := uuid.Parse(accountID); err != nil || !from.Before(to) {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := usagesqlc.New().ReadRealtimeAccountUsageHours(ctx, s.pool, usagesqlc.ReadRealtimeAccountUsageHoursParams{
+		AccountID: realtimeUsageUUID(accountID), FromHour: pgtype.Timestamptz{Time: from, Valid: true},
+		ToHour: pgtype.Timestamptz{Time: to, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("state: read realtime account usage: %w", err)
+	}
+	out := make([]RealtimeAccountUsageHour, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, RealtimeAccountUsageHour{
+			Hour: row.Hour.Time.UTC(), PeakConnections: row.PeakConnections, ConnectionSeconds: row.ConnectionSeconds,
+			DeliveredMessages: row.DeliveredMessages, DeliveredBytes: row.DeliveredBytes,
+			ReceivedMessages: row.ReceivedMessages, ReceivedBytes: row.ReceivedBytes,
+		})
+	}
+	return out, nil
+}
+
+// ReadRealtimeOpenConnections sums the account's freshly reported connections.
+func (s *PgStore) ReadRealtimeOpenConnections(ctx context.Context, accountID string) (int64, error) {
+	if _, err := uuid.Parse(accountID); err != nil {
+		return 0, ErrInvalidArgument
+	}
+	n, err := usagesqlc.New().ReadAccountOpenConnections(ctx, s.pool, usagesqlc.ReadAccountOpenConnectionsParams{
+		AccountID: realtimeUsageUUID(accountID), StaleSeconds: api.RealtimeConnectionSyncStaleAfter.Seconds(),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("state: read realtime open connections: %w", err)
+	}
+	return n, nil
+}

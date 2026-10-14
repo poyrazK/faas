@@ -117,3 +117,46 @@ func TestValidateRealtimeUsageReport(t *testing.T) {
 		})
 	}
 }
+
+func TestPgStoreRealtimeAccountUsageAndOpenConnections(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-rt-account-usage")
+	first, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hour := time.Now().UTC().Truncate(time.Hour)
+	if _, err := s.RecordRealtimeUsage(ctx, state.RealtimeUsageReport{NodeName: "node-a", Incarnation: uuid.NewString(), Hour: hour, Endpoints: []state.RealtimeEndpointUsage{
+		{EndpointID: first.ID, MinutePeakConnections: usagePeaks(map[int]int32{0: 4, 1: 1}), ConnectionSeconds: 100, DeliveredMessages: 3},
+		{EndpointID: second.ID, MinutePeakConnections: usagePeaks(map[int]int32{0: 2, 1: 6}), ConnectionSeconds: 50, DeliveredMessages: 2},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	hours, err := s.ReadRealtimeAccountUsage(ctx, accountID, hour, hour.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ReadRealtimeAccountUsage: %v", err)
+	}
+	// Minute 0: 4+2=6, minute 1: 1+6=7; the per-endpoint peaks (4, 6) must not be added.
+	if len(hours) != 1 || hours[0].PeakConnections != 7 || hours[0].ConnectionSeconds != 150 || hours[0].DeliveredMessages != 5 {
+		t.Fatalf("account hours = %+v, want peak 7 and summed counts", hours)
+	}
+
+	if n, err := s.ReadRealtimeOpenConnections(ctx, accountID); err != nil || n != 0 {
+		t.Fatalf("open connections before any sync = %d, %v", n, err)
+	}
+	for node, count := range map[string]int64{"node-a": 3, "node-b": 5} {
+		if _, err := s.SyncRealtimeNodeConnections(ctx, node, []state.RealtimeAccountConnections{{AccountID: accountID, Connections: count}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.ReadRealtimeOpenConnections(ctx, accountID); err != nil || n != 8 {
+		t.Fatalf("open connections = %d, %v, want 8 across nodes", n, err)
+	}
+	if _, err := s.ReadRealtimeOpenConnections(ctx, "not-a-uuid"); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("bad account err = %v", err)
+	}
+}

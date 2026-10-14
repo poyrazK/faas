@@ -48,6 +48,11 @@ where realtime holds real capacity on our servers:
 An endpoint's `max_connections` still caps that endpoint; the account limit
 applies on top of it.
 
+See where you stand with `gregale realtime usage` (or `GET /v1/usage/realtime`):
+connections open now against your limit, and, where usage recording is on, the
+peak connections, connection-hours and messages for each recent hour, per
+account and per endpoint.
+
 ## Subscription tickets
 
 A subscription ticket lets your backend hand a browser or app a short-lived

@@ -3692,6 +3692,10 @@ SELECT endpoint_id, hour, max(connections) AS peak_connections
 FROM m GROUP BY endpoint_id, hour ORDER BY hour;
 ```
 
+Customers read the same data, plus their open connections and plan limit,
+through `GET /v1/usage/realtime` and `gregale realtime usage`; without recording
+they still see open connections, but no hourly history.
+
 Watch `realtimed_usage_report_failures_total` (apid unreachable or rejecting
 reports), `realtimed_usage_held_hours` (above 1 means completed hours are
 waiting to be delivered) and `realtimed_usage_dropped_hours_total` (hours lost

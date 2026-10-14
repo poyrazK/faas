@@ -1839,6 +1839,7 @@ export type { RealtimeDeadLetterPreviewItem } from './RealtimeDeadLetterPreviewI
 export type { RealtimeDeadLetterPreviewRequest } from './RealtimeDeadLetterPreviewRequest.js';
 export type { RealtimeDeadLetterReplayOutcome } from './RealtimeDeadLetterReplayOutcome.js';
 export type { RealtimeDeadLetterReplaySelection } from './RealtimeDeadLetterReplaySelection.js';
+export type { RealtimeEndpointUsageHour } from './RealtimeEndpointUsageHour.js';
 export type { RealtimeNotificationPreferences } from './RealtimeNotificationPreferences.js';
 export type { RealtimeNotificationRateLimit } from './RealtimeNotificationRateLimit.js';
 export type { RealtimePublisherCredential } from './RealtimePublisherCredential.js';
@@ -1856,6 +1857,8 @@ export type { RealtimeTicketRequest } from './RealtimeTicketRequest.js';
 export type { RealtimeTicketResponse } from './RealtimeTicketResponse.js';
 export type { RealtimeTicketsRevokeResponse } from './RealtimeTicketsRevokeResponse.js';
 export type { RealtimeTriggerConfig } from './RealtimeTriggerConfig.js';
+export type { RealtimeUsageHour } from './RealtimeUsageHour.js';
+export type { RealtimeUsageResponse } from './RealtimeUsageResponse.js';
 export type { RealtimeWorkerBatchClaimRequest } from './RealtimeWorkerBatchClaimRequest.js';
 export type { RealtimeWorkerClaimRequest } from './RealtimeWorkerClaimRequest.js';
 export type { RealtimeWorkerCredential } from './RealtimeWorkerCredential.js';

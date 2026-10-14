@@ -373,6 +373,11 @@ const (
 	RealtimeUsageReportMaxBytes     = 256 << 10
 	RealtimeUsageReportMaxAge       = 24 * time.Hour
 	RealtimeUsageReadMaxRows        = 10_000
+	// The customer usage view (GET /v1/usage/realtime) covers the last
+	// RealtimeUsageQueryDefaultHours hours unless asked for up to
+	// RealtimeUsageQueryMaxHours (31 days).
+	RealtimeUsageQueryDefaultHours = 24
+	RealtimeUsageQueryMaxHours     = 744
 )
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and

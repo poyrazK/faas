@@ -3547,6 +3547,7 @@ from .realtime_dead_letter_preview_request import RealtimeDeadLetterPreviewReque
 from .realtime_dead_letter_replay_outcome import RealtimeDeadLetterReplayOutcome
 from .realtime_dead_letter_replay_outcome_status import RealtimeDeadLetterReplayOutcomeStatus
 from .realtime_dead_letter_replay_selection import RealtimeDeadLetterReplaySelection
+from .realtime_endpoint_usage_hour import RealtimeEndpointUsageHour
 from .realtime_notification_preferences import RealtimeNotificationPreferences
 from .realtime_notification_preferences_categories_type_0 import RealtimeNotificationPreferencesCategoriesType0
 from .realtime_notification_preferences_digest_interval_seconds import (
@@ -3574,6 +3575,8 @@ from .realtime_ticket_request import RealtimeTicketRequest
 from .realtime_ticket_response import RealtimeTicketResponse
 from .realtime_tickets_revoke_response import RealtimeTicketsRevokeResponse
 from .realtime_trigger_config import RealtimeTriggerConfig
+from .realtime_usage_hour import RealtimeUsageHour
+from .realtime_usage_response import RealtimeUsageResponse
 from .realtime_worker_batch_claim_request import RealtimeWorkerBatchClaimRequest
 from .realtime_worker_claim_request import RealtimeWorkerClaimRequest
 from .realtime_worker_credential import RealtimeWorkerCredential
@@ -7869,6 +7872,7 @@ __all__ = (
     "RealtimeDeadLetterReplayOutcome",
     "RealtimeDeadLetterReplayOutcomeStatus",
     "RealtimeDeadLetterReplaySelection",
+    "RealtimeEndpointUsageHour",
     "RealtimeNotificationPreferences",
     "RealtimeNotificationPreferencesCategoriesType0",
     "RealtimeNotificationPreferencesDigestIntervalSeconds",
@@ -7894,6 +7898,8 @@ __all__ = (
     "RealtimeTicketResponse",
     "RealtimeTicketsRevokeResponse",
     "RealtimeTriggerConfig",
+    "RealtimeUsageHour",
+    "RealtimeUsageResponse",
     "RealtimeWorkerBatchClaimRequest",
     "RealtimeWorkerClaimRequest",
     "RealtimeWorkerCredential",

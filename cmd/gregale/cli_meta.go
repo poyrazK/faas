@@ -4373,6 +4373,9 @@ var cliCommands = []cliCommand{
 		Short:   "Manage realtime endpoints, policies, connections, channels, and auth",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed realtime endpoints", Positionals: []string{"<app>"}},
+			{Name: "usage", Short: "Show open connections against the plan's fair-use limit and recent hourly usage", Flags: []cliFlag{
+				{Name: "hours", Short: "UTC hours of usage to show (1-744, default 24)", Value: "N"},
+			}},
 			{Name: "get", Short: "Show one endpoint and safe auth-rotation status", Positionals: []string{"<app>", "<endpoint-id>"}},
 			{Name: "create", Short: "Create a managed realtime endpoint", Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "callback-url", Short: "application callback URL", Req: true, Value: "URL"},

@@ -333,3 +333,29 @@ WHERE c.node_name<>sqlc.arg(node_name)::text
  AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision)
 GROUP BY c.account_id ORDER BY sum(c.connections) DESC,c.account_id
 LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadAccountOpenConnections :one
+-- An account's open connections across nodes with a fresh sync (ADR-1238).
+SELECT coalesce(sum(c.connections),0)::bigint AS connections
+FROM realtime_node_connections c JOIN realtime_node_connection_syncs s ON s.node_name=c.node_name
+WHERE c.account_id=sqlc.arg(account_id)::uuid
+ AND s.synced_at>clock_timestamp()-make_interval(secs=>sqlc.arg(stale_seconds)::double precision);
+
+-- name: ReadRealtimeAccountUsageHours :many
+-- Account usage per hour across all endpoints and nodes. The peak is the
+-- largest per-minute sum, so it never double-counts across endpoints.
+WITH selected AS (
+ SELECT * FROM realtime_usage_hours WHERE account_id=sqlc.arg(account_id)::uuid
+ AND hour>=sqlc.arg(from_hour)::timestamptz AND hour<sqlc.arg(to_hour)::timestamptz),
+minutes AS (
+ SELECT s.hour,m.i,sum(m.v)::bigint AS connections
+ FROM selected s CROSS JOIN LATERAL unnest(s.minute_peak_connections) WITH ORDINALITY AS m(v,i)
+ GROUP BY s.hour,m.i),
+peaks AS (SELECT hour,max(connections)::bigint AS peak_connections FROM minutes GROUP BY hour)
+SELECT s.hour,p.peak_connections,
+ sum(s.connection_seconds)::bigint AS connection_seconds,sum(s.delivered_messages)::bigint AS delivered_messages,
+ sum(s.delivered_bytes)::bigint AS delivered_bytes,sum(s.received_messages)::bigint AS received_messages,
+ sum(s.received_bytes)::bigint AS received_bytes
+FROM selected s JOIN peaks p ON p.hour=s.hour
+GROUP BY s.hour,p.peak_connections
+ORDER BY s.hour;

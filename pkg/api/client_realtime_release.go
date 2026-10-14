@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -691,6 +692,18 @@ func (c *Client) IssueRealtimeSubscriptionTicket(ctx context.Context, slug strin
 	headers := http.Header{}
 	var out RealtimeTicketResponse
 	err := c.doRealtimeRelease(ctx, "POST", path, request, &out, headers)
+	return out, err
+}
+
+// GetRealtimeUsage calls GET /v1/usage/realtime for the last hours UTC hours
+// (zero uses the server default of 24).
+func (c *Client) GetRealtimeUsage(ctx context.Context, hours int) (RealtimeUsageResponse, error) {
+	path := "/v1/usage/realtime"
+	if hours > 0 {
+		path += "?hours=" + strconv.Itoa(hours)
+	}
+	var out RealtimeUsageResponse
+	err := c.doRealtimeRelease(ctx, "GET", path, nil, &out, http.Header{})
 	return out, err
 }
 

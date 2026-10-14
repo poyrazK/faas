@@ -12781,6 +12781,16 @@ List managed realtime endpoints
 
 `gregale realtime list <app>`
 
+### realtime usage
+
+Show open connections against the plan&#39;s fair-use limit and recent hourly usage
+
+`gregale realtime usage [--hours <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--hours <N>` | UTC hours of usage to show (1-744, default 24) |  |
+
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
