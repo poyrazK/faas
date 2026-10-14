@@ -1,7 +1,7 @@
 // adr: 1237
 // meterd_lease_test.go pins ADR-1237 §4 for meterd: a second meterd waits as
-// a standby while another holds the meterd lease, and the gate can be turned
-// off.
+// a standby while another holds the meterd lease, and the gate stays off
+// unless a multi-node cell turns it on.
 
 package main
 
@@ -15,11 +15,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 1237
+// TestMeterdLeaseEnabled: a one-node cell leaves the variable unset or "0"
+// and starts as before; only "1" turns the gate on.
 func TestMeterdLeaseEnabled(t *testing.T) {
-	if !meterdLeaseEnabled(nil, meterdLeaseEnv) {
-		t.Fatal("nil getenv disabled the gate")
+	if meterdLeaseEnabled(nil, meterdLeaseEnv) {
+		t.Fatal("nil getenv enabled the gate")
 	}
-	for raw, want := range map[string]bool{"": true, "1": true, "0": false, " 0": false} {
+	for raw, want := range map[string]bool{"": false, "0": false, " 0": false, "true": false, "1": true, " 1": true} {
 		getenv := func(string) string { return raw }
 		if got := meterdLeaseEnabled(getenv, meterdLeaseEnv); got != want {
 			t.Errorf("meterdLeaseEnabled(%q) = %v, want %v", raw, got, want)

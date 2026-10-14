@@ -20,17 +20,18 @@ import (
 
 const (
 	meterdLeaseName = "meterd"
-	// meterdLeaseEnv set to "0" turns the gate off.
+	// meterdLeaseEnv set to "1" turns the gate on. control_plane_service
+	// renders it for a cell with more than one control node.
 	meterdLeaseEnv = "FAAS_METERD_LEASE"
 )
 
 // meterdLeaseEnabled reads name through getenv; a nil getenv (test wiring)
-// means unset, which keeps the gate on.
+// means unset, which leaves the gate off.
 func meterdLeaseEnabled(getenv func(string) string, name string) bool {
 	if getenv == nil {
-		return true
+		return false
 	}
-	return strings.TrimSpace(getenv(name)) != "0"
+	return strings.TrimSpace(getenv(name)) == "1"
 }
 
 // acquireMeterdLease blocks as a standby until this process holds the meterd

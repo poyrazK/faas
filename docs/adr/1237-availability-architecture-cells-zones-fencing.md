@@ -378,6 +378,12 @@ The primitive is used for:
   - apid's shared-state background workers (rollbacks, reconcilers,
     retention, grace, outboxes, the audit bridge), lease `apid-background`;
     apid keeps serving HTTP on every replica.
+  - The gates are on only in a cell with more than one control node:
+    `control_plane_service` renders `FAAS_SCHEDD_CENTRAL_LEASE`,
+    `FAAS_METERD_LEASE` and `FAAS_APID_BACKGROUND_LEASE` as `1` there and
+    `0` otherwise. A one-node cell runs as before, with no lease to lose
+    when Postgres blips, so the lease code can merge without changing a
+    one-node production.
 - **Node leases.** Each compute node holds `node/<name>`.
   - It renews every 10 s with a 30 s TTL, in its own table, not on
     `compute_nodes.last_heartbeat_at`. That row takes the regional

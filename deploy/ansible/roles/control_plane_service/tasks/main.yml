@@ -316,6 +316,35 @@
     group: root
     mode: "0644"
 
+# ADR-1237 §4: the central schedd, meterd and apid's shared background workers
+# take a Postgres lease only in a cell with more than one control node.
+- name: control_plane_service — create singleton lease drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - faas-schedd
+    - faas-meterd
+
+- name: control_plane_service — set control-plane singleton lease mode
+  notify:
+    - restart faas-schedd
+    - restart faas-meterd
+    - restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-control-plane-lease.conf.j2
+    dest: "/etc/systemd/system/{{ item.unit }}.service.d/zz-faas-control-plane-lease.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { unit: faas-schedd, env: FAAS_SCHEDD_CENTRAL_LEASE }
+    - { unit: faas-meterd, env: FAAS_METERD_LEASE }
+    - { unit: faas-apid, env: FAAS_APID_BACKGROUND_LEASE }
+
 # ADR-520: customer DNS instructions and on-demand certificate status. Rendered
 # unconditionally so disabling the feature clears the values.
 - name: control_plane_service — set custom-domain routing and TLS mode

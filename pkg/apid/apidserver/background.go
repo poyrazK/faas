@@ -7,8 +7,9 @@ package apidserver
 // and durable reconcilers, retention sweepers, the grace timer, outboxes and
 // notification bridges. Several have no claim of their own, so running them
 // on three nodes would repeat external effects (emails, rollbacks, audit
-// rows). Those run only on the node holding the apid-background lease and
-// stop when it is lost; another node's apid takes them over.
+// rows). In a cell with more than one control node they run only on the node
+// holding the apid-background lease and stop when it is lost; another node's
+// apid takes them over. A one-node cell runs them directly, with no lease.
 //
 // Workers that serve or describe this replica (its caches, its SSE clients,
 // its local spool and log files, its own metrics) keep running on every
@@ -35,16 +36,18 @@ import (
 
 const (
 	apidBackgroundLeaseName = "apid-background"
-	// apidBackgroundLeaseEnv set to "0" runs the shared workers on every
-	// replica, as before ADR-1237 (single control node only).
+	// apidBackgroundLeaseEnv set to "1" runs the shared workers only under the
+	// lease. control_plane_service renders it for a cell with more than one
+	// control node; unset, a one-node cell runs them directly as before
+	// ADR-1237.
 	apidBackgroundLeaseEnv = "FAAS_APID_BACKGROUND_LEASE"
 )
 
 func apidBackgroundLeaseEnabled(getenv func(string) string) bool {
 	if getenv == nil {
-		return true
+		return false
 	}
-	return strings.TrimSpace(getenv(apidBackgroundLeaseEnv)) != "0"
+	return strings.TrimSpace(getenv(apidBackgroundLeaseEnv)) == "1"
 }
 
 // startBackground launches apid's background workers: the per-replica ones

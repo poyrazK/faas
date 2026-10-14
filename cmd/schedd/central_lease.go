@@ -25,13 +25,15 @@ import (
 
 const (
 	centralSchedulerLeaseName = "central-scheduler"
-	// centralSchedulerLeaseEnv set to "0" turns the gate off (a single-box
-	// deployment that wants the pre-ADR-1237 start path).
+	// centralSchedulerLeaseEnv set to "1" turns the gate on. control_plane_service
+	// renders it for a cell with more than one control node; a one-node cell
+	// leaves it off and starts as before ADR-1237, with no lease to lose when
+	// Postgres blips.
 	centralSchedulerLeaseEnv = "FAAS_SCHEDD_CENTRAL_LEASE"
 )
 
 func centralSchedulerLeaseEnabled(raw string) bool {
-	return strings.TrimSpace(raw) != "0"
+	return strings.TrimSpace(raw) == "1"
 }
 
 // acquireCentralSchedulerLease blocks as a standby until this process holds

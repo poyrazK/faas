@@ -1,0 +1,6 @@
+# Managed by Ansible (control_plane_service). Local edits are overwritten.
+# ADR-1237 §4: a control-plane singleton holds a Postgres lease only in a cell
+# with more than one control node. A one-node cell renders 0 and runs as
+# before: no lease, and no exit when Postgres blips.
+[Service]
+Environment={{ item.env }}={{ '1' if (groups['control_plane'] | default([]) | length) > 1 else '0' }}

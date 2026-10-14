@@ -1,7 +1,8 @@
 // adr: 1237
 // central_lease_test.go pins ADR-1237 §4 for the central schedd: a second
 // central schedd waits as a standby while another holds the
-// central-scheduler lease, and the gate can be turned off.
+// central-scheduler lease, and the gate stays off unless a multi-node cell
+// turns it on.
 
 package main
 
@@ -15,8 +16,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 1237
+// TestCentralSchedulerLeaseEnabled: a one-node cell leaves the variable unset
+// or "0" and starts as before; only "1" turns the gate on.
 func TestCentralSchedulerLeaseEnabled(t *testing.T) {
-	for raw, want := range map[string]bool{"": true, "1": true, " 0 ": false, "0": false} {
+	for raw, want := range map[string]bool{"": false, "0": false, " 0 ": false, "true": false, "1": true, " 1 ": true} {
 		if got := centralSchedulerLeaseEnabled(raw); got != want {
 			t.Errorf("centralSchedulerLeaseEnabled(%q) = %v, want %v", raw, got, want)
 		}
