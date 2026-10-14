@@ -830,6 +830,16 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
+	// MCP admission evidence and independent catalog monitoring roles.
+	"GET /v1/mcp/admissions/{id}":                           "GetMCPAdmissionReceipt",
+	"GET /v1/deployments/{id}/mcp-admissions":               "ListMCPAdmissionHistory",
+	"GET /v1/apps/{slug}/mcp-catalog-monitor":               "GetMCPCatalogMonitor",
+	"PUT /v1/apps/{slug}/mcp-catalog-monitor":               "ConfigureMCPCatalogMonitor",
+	"GET /v1/mcp-connection-health":                         "GetMCPConnectionHealth",
+	"GET /v1/mcp-oauth-retirements":                         "ListMCPOAuthRetirements",
+	"POST /v1/mcp-oauth-retirements/{id}":                   "RecoverMCPOAuthRetirement",
+	"POST /v1/apps/{slug}/mcp-catalog-monitor/oauth":        "MCPCatalogOAuth",
+	"POST /v1/apps/{slug}/mcp-catalog-monitor/observations": "ReportMCPCatalogObservation",
 	// ADR-426: typed MCP hosting probes and task rollout operations.
 	"GET /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health": "ProbeMCPInstanceHealth",
 	"POST /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe": "ProbeMCPInstanceProtocol",
@@ -929,6 +939,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/artifacts/{artifact}/download": "DownloadJobArtifact",
 	"POST /v1/jobs/{name}/runs/{id}/tasks/{idx}/retry":                        "RetryJobTask",
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs":                          "GetJobTaskLogs",
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream":                   "StreamJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
 	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
@@ -1371,6 +1382,10 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/queues/send":                                       "QueueSend",
 	"POST /v1/apps/{slug}/queues/receive":                                    "QueueReceive",
 	"POST /v1/apps/{slug}/queues/{id}/ack":                                   "AckQueueRow",
+	"POST /v1/apps/{slug}/queues/{queue}/leases":                             "LeaseQueueMessages",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:ack":                         "AckQueueLeases",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:nack":                        "NackQueueLeases",
+	"POST /v1/apps/{slug}/queues/{queue}/leases:extend":                      "ExtendQueueLeases",
 	"GET /v1/apps/{slug}/queues/state":                                       "QueueState",
 	"GET /v1/apps/{slug}/queues/peek":                                        "QueuePeek",
 	"GET /v1/apps/{slug}/queues/dead_letter":                                 "QueueDeadLetter",

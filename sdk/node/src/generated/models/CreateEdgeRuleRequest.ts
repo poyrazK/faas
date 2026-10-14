@@ -25,6 +25,9 @@ import type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
  * Body shape for POST /v1/apps/{slug}/edge-rules.
  */
 export type CreateEdgeRuleRequest = {
+  /**
+   * Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other values starting with `@` are reserved.
+   */
   match_host: string;
   match_path?: string;
   match_methods?: Array<string>;

@@ -246,6 +246,7 @@ type AlertRule struct {
 	Action                          string
 	PostDeployRollbackWindowSeconds int32
 	EventSubscriptionID             pgtype.UUID
+	EdgeRuleID                      pgtype.UUID
 }
 
 type ApiConsumer struct {
@@ -2387,6 +2388,7 @@ type EdgeRuleChangeLog struct {
 	Operation  string
 	MatchHosts []string
 	CreatedAt  pgtype.Timestamptz
+	AccountIds []pgtype.UUID
 }
 
 type EdgeRuleEvent struct {
@@ -3783,6 +3785,15 @@ type InvocationPlainReplay struct {
 	ParentInvocationID pgtype.UUID
 	ReplayInvocationID pgtype.UUID
 	ReplayCreatedAt    pgtype.Timestamptz
+}
+
+type InvocationQueueLeaseReceipt struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	TokenHash        string
+	IssuedAt         pgtype.Timestamptz
+	LeaseExpiresAt   pgtype.Timestamptz
 }
 
 type InvocationWorkCancellation struct {
@@ -5203,6 +5214,24 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	StatusCode   string
 	LastSeenAt   pgtype.Timestamptz
 	Lost         bool
+}
+
+type McpCatalogMonitor struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Payload   []byte
+}
+
+type McpOauthRetirement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	BindingSha256 string
+	CreatedAt     pgtype.Timestamptz
+	RetainUntil   pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	State         pgtype.Text
+	Payload       []byte
 }
 
 type MeterGatewayUsageEvent struct {

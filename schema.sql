@@ -1869,25 +1869,58 @@ $$;
 
 
 --
+-- Name: edge_rules_mcp_access_commit_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rules_mcp_access_commit_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    old_account uuid;
+    new_account uuid;
+    target uuid;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN old_account := OLD.account_id; END IF;
+    IF TG_OP <> 'DELETE' THEN new_account := NEW.account_id; END IF;
+    FOR target IN
+        SELECT DISTINCT account_id FROM unnest(ARRAY[old_account, new_account]) AS account_id
+        WHERE account_id IS NOT NULL ORDER BY account_id
+    LOOP
+        PERFORM pg_advisory_xact_lock(hashtext('mcp_access_policy'), hashtext(target::text));
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: edge_rules_record_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.edge_rules_record_change() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE
+    owners uuid[];
 BEGIN
     PERFORM pg_advisory_xact_lock(711901248671::bigint);
     IF TG_OP = 'INSERT' THEN
-        INSERT INTO edge_rule_change_log (app_id, rule_id, operation, match_hosts)
-        VALUES (NEW.app_id, NEW.id, 'created', ARRAY[NEW.match_host]);
+        owners := ARRAY[NEW.account_id];
+        INSERT INTO edge_rule_change_log (app_id, rule_id, operation, match_hosts, account_ids)
+        VALUES (NEW.app_id, NEW.id, 'created', ARRAY[NEW.match_host], owners);
         RETURN NEW;
     ELSIF TG_OP = 'UPDATE' THEN
-        INSERT INTO edge_rule_change_log (app_id, rule_id, operation, match_hosts)
-        VALUES (NEW.app_id, NEW.id, 'updated', ARRAY[OLD.match_host, NEW.match_host]);
+        owners := ARRAY[NEW.account_id];
+        IF OLD.account_id IS DISTINCT FROM NEW.account_id THEN
+            owners := ARRAY[OLD.account_id, NEW.account_id];
+        END IF;
+        INSERT INTO edge_rule_change_log (app_id, rule_id, operation, match_hosts, account_ids)
+        VALUES (NEW.app_id, NEW.id, 'updated', ARRAY[OLD.match_host, NEW.match_host], owners);
         RETURN NEW;
     ELSE
-        INSERT INTO edge_rule_change_log (app_id, rule_id, operation, match_hosts)
-        VALUES (OLD.app_id, OLD.id, 'deleted', ARRAY[OLD.match_host]);
+        owners := ARRAY[OLD.account_id];
+        INSERT INTO edge_rule_change_log (app_id, rule_id, operation, match_hosts, account_ids)
+        VALUES (OLD.app_id, OLD.id, 'deleted', ARRAY[OLD.match_host], owners);
         RETURN OLD;
     END IF;
 END;
@@ -11271,6 +11304,436 @@ END $$;
 
 
 --
+-- Name: mcp_admission_audit_kind_base(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_admission_audit_kind_base() RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$SELECT 'CHECK ((kind = ANY (ARRAY[''deploy.created''::text, ''deploy.source_ref''::text, ''deploy.local_tarball''::text, ''deploy.traffic_changed''::text, ''deploy.health_probe_failed''::text, ''deploy.health_recovered''::text, ''deploy.rolled_back''::text, ''deploy.removed''::text, ''deploy.rollout_started''::text, ''deploy.rollout_completed''::text, ''deploy.rollout_aborted''::text, ''deploy.canary_step_advanced''::text, ''deploy.alert_rule_fired''::text, ''deploy.scan_regressed''::text, ''deploy.mcp_task_held''::text, ''deploy.mcp_task_retry_requested''::text, ''deploy.mcp_task_retry_started''::text, ''deploy.mcp_task_retry_completed''::text, ''deploy.mcp_task_recovered''::text, ''deploy.mcp_task_hold_cancelled''::text, ''deploy.worker_drain_started''::text, ''deploy.worker_drain_completed''::text])))'$$;
+
+
+--
+-- Name: mcp_catalog_managed_observers_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_managed_observers_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE view jsonb; config jsonb; runtime jsonb;
+BEGIN
+ FOR view IN SELECT payload UNION ALL SELECT value FROM jsonb_each(COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  config := view->'config'->'observer'; runtime := view->'observer_status';
+  IF config IS NOT NULL AND config <> 'null'::jsonb THEN
+   IF jsonb_typeof(config) IS DISTINCT FROM 'object'
+    OR jsonb_typeof(config->'enabled') IS DISTINCT FROM 'boolean'
+    OR jsonb_typeof(config->'paused') IS DISTINCT FROM 'boolean'
+    OR jsonb_typeof(config->'interval_seconds') IS DISTINCT FROM 'number'
+    OR jsonb_typeof(config->'timeout_seconds') IS DISTINCT FROM 'number' THEN RETURN false; END IF;
+   IF (config->>'interval_seconds')::numeric NOT BETWEEN 30 AND 3600
+    OR (config->>'timeout_seconds')::numeric NOT BETWEEN 1 AND 30
+    OR COALESCE(config->>'endpoint','') !~ '^/([^/].*)?$'
+    OR length(config->>'endpoint') > 512
+    OR (COALESCE(config->>'secret_ref','') <> '' AND config->>'secret_ref' !~ '^secret:[A-Za-z_][A-Za-z0-9_]*$') THEN RETURN false; END IF;
+  END IF;
+  IF runtime IS NOT NULL AND runtime <> 'null'::jsonb THEN
+   IF config IS NULL OR config='null'::jsonb OR jsonb_typeof(runtime) IS DISTINCT FROM 'object'
+    OR COALESCE(runtime->>'state','') NOT IN ('scheduled','checking','degraded')
+    OR jsonb_typeof(runtime->'consecutive_failures') IS DISTINCT FROM 'number' THEN RETURN false; END IF;
+   IF (runtime->>'consecutive_failures')::numeric NOT BETWEEN 0 AND 16
+    OR COALESCE(runtime->>'failure_reason','') NOT IN ('','credential_unavailable','source_unavailable','comparison_unavailable') THEN RETURN false; END IF;
+  END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: mcp_catalog_monitor_metric_base(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_monitor_metric_base(kind text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT CASE WHEN $1='rules' THEN 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p50_ms''::text, ''latency_p95_ms''::text, ''latency_p99_ms''::text, ''cold_start_pct''::text, ''request_count''::text, ''failed_invocations''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''cold_wake_rate_pct''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''event_pending_recipients''::text, ''event_oldest_pending_seconds''::text, ''event_retry_rate_per_second''::text, ''event_terminal_failure_pct''::text, ''event_routing_latency_p95_seconds''::text, ''event_paused_seconds''::text, ''event_drain_rate_per_second''::text, ''event_execution_dead_letters''::text, ''event_execution_dead_letter_rate_per_second''::text, ''event_handler_failure_pct''::text, ''event_completion_latency_p95_seconds''::text, ''event_recovery_stalled_jobs''::text, ''event_recovery_expiring_jobs''::text, ''event_recovery_capacity_wait_jobs''::text, ''event_recovery_execution_waiting_jobs''::text, ''event_recovery_execution_prolonged_wait_jobs''::text, ''event_recovery_execution_unknown_jobs''::text, ''event_recovery_execution_retention_risk_jobs''::text, ''event_recovery_notification_admission_overdue_jobs''::text, ''event_recovery_notification_admission_dead_jobs''::text, ''event_recovery_notification_admission_unknown_jobs''::text, ''event_recovery_notification_admission_no_receivers_jobs''::text, ''event_recovery_notification_execution_overdue_jobs''::text, ''event_recovery_notification_execution_dead_jobs''::text, ''event_recovery_notification_execution_unknown_jobs''::text, ''event_recovery_notification_execution_no_receivers_jobs''::text, ''event_retention_expiring_receipts''::text, ''event_storage_utilization_pct''::text, ''workflow_failures''::text, ''workflow_schedule_quota_skips''::text, ''workflow_pending_age_seconds''::text, ''workflow_waiting_age_seconds''::text, ''workflow_due_age_seconds''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text, ''mcp_tasks_oldest_age_seconds''::text, ''mcp_tasks_metrics_stale''::text, ''mcp_task_promotion_hold_age_seconds''::text, ''edge_rule_hits''::text, ''edge_rule_log_hits''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text]))))' ELSE 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p95_ms''::text, ''cold_start_pct''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''workflow_due_age_seconds''::text, ''workflow_failures''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text]))))' END$_$;
+
+
+--
+-- Name: mcp_catalog_monitor_roles_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_monitor_roles_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE role_name text; view jsonb; role_count integer := 0;
+BEGIN
+ IF payload ? 'roles' THEN
+  IF jsonb_typeof(payload->'roles') <> 'object' THEN RETURN false; END IF;
+  FOR role_name, view IN SELECT * FROM jsonb_each(payload->'roles') LOOP
+   role_count := role_count + 1;
+   IF role_name = 'default' OR role_name !~ '^[a-z][a-z0-9_-]{0,31}$'
+    OR view ? 'roles'
+    OR jsonb_typeof(view->'config') IS DISTINCT FROM 'object'
+    OR view->'config'->>'role' IS DISTINCT FROM role_name
+    OR COALESCE(view->'config'->>'revision','') = ''
+    OR jsonb_typeof(view->'history') IS DISTINCT FROM 'array' THEN RETURN false; END IF;
+   IF jsonb_array_length(view->'history') > 32 THEN RETURN false; END IF;
+   IF view->'latest' IS NOT NULL AND view->'latest' <> 'null'::jsonb
+    AND COALESCE(view->'latest'->>'state','') NOT IN ('healthy','drift','unavailable') THEN RETURN false; END IF;
+  END LOOP;
+ END IF;
+ IF COALESCE(payload->'config'->>'revision','') <> '' THEN role_count := role_count + 1; END IF;
+ RETURN role_count <= 16;
+END $_$;
+
+
+--
+-- Name: mcp_catalog_oauth_flows_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_oauth_flows_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE view jsonb; flow jsonb;
+BEGIN
+ FOR view IN SELECT payload UNION ALL SELECT value FROM jsonb_each(COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  flow:=view->'observer_status'->'oauth_flow';
+  IF flow IS NOT NULL AND flow<>'null'::jsonb THEN
+   IF view->'config'->'observer'->'oauth'->>'guided' IS DISTINCT FROM 'true'
+    OR jsonb_typeof(flow) IS DISTINCT FROM 'object'
+    OR COALESCE(flow->>'state_sha256','') !~ '^[a-f0-9]{64}$'
+    OR COALESCE(length(flow->>'ciphertext'),0) NOT BETWEEN 1 AND 87384
+    OR jsonb_typeof(flow->'consumed') IS DISTINCT FROM 'boolean'
+    OR jsonb_typeof(flow->'expires_at') IS DISTINCT FROM 'string' THEN RETURN false; END IF;
+  END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: mcp_catalog_oauth_lifecycle_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_oauth_lifecycle_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE view jsonb; config jsonb; lifecycle jsonb; job jsonb; event jsonb;
+BEGIN
+ FOR view IN SELECT payload UNION ALL SELECT value FROM jsonb_each(COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  config:=view->'config'->'observer'->'oauth';
+  IF COALESCE(config->>'revocation_endpoint','')<>'' AND (config->>'revocation_endpoint' !~ '^https://[^/?#@:\\[:space:]]+(/[^?#\\[:space:]]*)?$' OR length(config->>'revocation_endpoint')>512) THEN RETURN false; END IF;
+  IF COALESCE(config->>'revocation_auth_method','') NOT IN ('','none','client_secret_basic','client_secret_post') THEN RETURN false; END IF;
+  IF COALESCE(config->>'revocation_auth_method','') IN ('client_secret_basic','client_secret_post') AND COALESCE(config->>'client_secret_ref','')='' THEN RETURN false; END IF;
+  IF COALESCE(config->>'revocation_auth_method','')<>'' AND COALESCE(config->>'revocation_endpoint','')='' THEN RETURN false; END IF;
+  lifecycle:=view->'oauth_lifecycle'; IF lifecycle IS NULL OR lifecycle='null'::jsonb THEN CONTINUE; END IF;
+  IF lifecycle->>'local_state' IS NULL OR lifecycle->>'local_state' NOT IN ('connected','disconnected','reauthorization_required') OR jsonb_typeof(lifecycle->'history') IS DISTINCT FROM 'array' THEN RETURN false; END IF;
+  IF jsonb_array_length(lifecycle->'history')>64 THEN RETURN false; END IF;
+  FOR event IN SELECT value FROM jsonb_array_elements(lifecycle->'history') LOOP
+   IF event->>'kind' IS NULL OR event->>'kind' NOT IN ('connected','renewed','reauthorization_required','disconnected','revocation_acknowledged','revocation_manual_required','credentials_discarded') THEN RETURN false; END IF;
+  END LOOP;
+  job:=lifecycle->'revocation'; IF job IS NULL OR job='null'::jsonb THEN CONTINUE; END IF;
+  IF job->>'state' IS NULL OR job->>'state' NOT IN ('pending','provider_acknowledged','manual_required') OR jsonb_typeof(job->'attempts') IS DISTINCT FROM 'number' THEN RETURN false; END IF;
+  IF (job->>'attempts')::numeric NOT BETWEEN 0 AND 8 OR (job->>'attempts')::numeric<>trunc((job->>'attempts')::numeric) THEN RETURN false; END IF;
+  IF COALESCE(job->>'failure_reason','') NOT IN ('','credential_unavailable','provider_unavailable') THEN RETURN false; END IF;
+  IF job->>'state'='pending' AND (jsonb_typeof(job->'private_config') IS DISTINCT FROM 'object' OR COALESCE(job->>'private_ciphertext','')='' OR COALESCE(job->>'next_attempt_at','')='') THEN RETURN false; END IF;
+  IF job->>'state'<>'pending' AND (job ? 'private_client_ciphertext' OR job ? 'private_config' OR job ? 'private_ciphertext' OR job ? 'private_lease_id' OR job ? 'private_lease_until') THEN RETURN false; END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: mcp_catalog_oauth_profiles_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_oauth_profiles_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE view jsonb; config jsonb; field text; method text;
+BEGIN
+ FOR view IN SELECT payload UNION ALL SELECT value FROM jsonb_each(COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  config:=view->'config'->'observer'->'oauth';
+  IF config IS NULL OR config='null'::jsonb THEN CONTINUE; END IF;
+  IF COALESCE(config->>'profile','') NOT IN ('','generic','google','oidc')
+   OR COALESCE(config->>'token_auth_method','') NOT IN ('','none','client_secret_basic','client_secret_post') THEN RETURN false; END IF;
+  IF config->'callback_port' IS NOT NULL AND (jsonb_typeof(config->'callback_port') IS DISTINCT FROM 'number'
+   OR (config->>'callback_port')::numeric NOT BETWEEN 0 AND 65535
+   OR (config->>'callback_port')::numeric <> trunc((config->>'callback_port')::numeric)) THEN RETURN false; END IF;
+  FOREACH field IN ARRAY ARRAY['resource','issuer','discovery_url'] LOOP
+   IF COALESCE(config->>field,'')<>'' AND (config->>field !~ '^https://[^/?#@]+(/[^?#]*)?$' OR length(config->>field)>512) THEN RETURN false; END IF;
+  END LOOP;
+  IF (COALESCE(config->>'issuer','')='') <> (COALESCE(config->>'discovery_url','')='') THEN RETURN false; END IF;
+  method:=COALESCE(NULLIF(config->>'token_auth_method',''),CASE WHEN COALESCE(config->>'client_secret_ref','')='' THEN 'none' WHEN config->>'profile'='google' THEN 'client_secret_post' ELSE 'client_secret_basic' END);
+  IF (method='none') <> (COALESCE(config->>'client_secret_ref','')='') THEN RETURN false; END IF;
+  IF COALESCE(config->>'guided','false')<>'true' AND (COALESCE((config->>'callback_port')::numeric,0)<>0 OR COALESCE(config->>'discovery_url','')<>'' OR COALESCE(config->>'profile','') IN ('google','oidc')) THEN RETURN false; END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: mcp_catalog_oauth_public_lifecycle_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_oauth_public_lifecycle_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE view record; phase jsonb; checked jsonb:=payload; path text[];
+BEGIN
+ FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object('default',payload)||COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  phase:=view.value->'oauth_lifecycle'->'revocation';
+  IF phase IS NULL OR phase='null'::jsonb THEN CONTINUE; END IF;
+  IF phase ?| ARRAY['private_config','private_ciphertext','private_client_ciphertext','private_lease_id','private_lease_until'] THEN RETURN false; END IF;
+  IF phase->>'state'='pending' THEN
+   path:=CASE WHEN view.key='default' THEN ARRAY['oauth_lifecycle','revocation'] ELSE ARRAY['roles',view.key,'oauth_lifecycle','revocation'] END;
+   checked:=jsonb_set(checked,path,phase||jsonb_build_object('private_config','{}'::jsonb,'private_ciphertext','validation_only'));
+  END IF;
+ END LOOP;
+ RETURN mcp_catalog_oauth_lifecycle_valid(checked);
+END $$;
+
+
+--
+-- Name: mcp_catalog_oauth_renewal_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_oauth_renewal_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE view jsonb; journal jsonb; result jsonb;
+BEGIN
+ FOR view IN SELECT value FROM jsonb_each(jsonb_build_object('default',payload)||COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  journal:=view->'observer_status'->'oauth_renewal';
+  IF journal IS NULL OR journal='null'::jsonb THEN CONTINUE; END IF;
+  IF jsonb_typeof(journal)<>'object' OR COALESCE(journal->>'state','') NOT IN ('pending','saved','installed','failed','reauthorization_required')
+   OR COALESCE(journal->>'private_id','') !~ '^[a-f0-9-]{36}$'
+   OR COALESCE(journal->>'private_lease_id','') !~ '^[a-f0-9-]{36}$'
+   OR COALESCE(journal->>'private_source_sha256','') !~ '^[a-f0-9]{64}$'
+   OR journal->>'started_at' IS NULL OR view->'config'->'observer'->'oauth' IS NULL THEN RETURN false; END IF;
+  result:=journal->'private_result';
+  IF journal->>'state'='saved' THEN
+   IF result IS NULL OR result='null'::jsonb OR result->>'source_sha256' IS DISTINCT FROM journal->>'private_source_sha256'
+    OR NOT mcp_catalog_observer_oauth_valid(jsonb_build_object('config',view->'config','observer_status',jsonb_build_object('oauth',result))) THEN RETURN false; END IF;
+  ELSIF result IS NOT NULL AND result<>'null'::jsonb THEN RETURN false;
+  END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: mcp_catalog_observer_oauth_valid(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_catalog_observer_oauth_valid(payload jsonb) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE view jsonb; config jsonb; runtime jsonb;
+BEGIN
+ FOR view IN SELECT payload UNION ALL SELECT value FROM jsonb_each(COALESCE(payload->'roles','{}'::jsonb)) LOOP
+  config := view->'config'->'observer'->'oauth'; runtime := view->'observer_status'->'oauth';
+  IF config IS NOT NULL AND config <> 'null'::jsonb THEN
+   IF jsonb_typeof(config) IS DISTINCT FROM 'object'
+    OR COALESCE(config->>'token_endpoint','') !~ '^https://[^/?#@]+(/[^?#]*)?$'
+    OR length(config->>'token_endpoint') > 512
+    OR COALESCE(length(config->>'client_id'),0) NOT BETWEEN 1 AND 512
+    OR (COALESCE(config->>'guided','false') <> 'true' AND COALESCE(config->>'refresh_token_secret_ref','') !~ '^secret:[A-Za-z_][A-Za-z0-9_]*$')
+    OR (config->>'guided'='true' AND (COALESCE(config->>'refresh_token_secret_ref','') <> '' OR COALESCE(config->>'authorization_endpoint','') !~ '^https://[^/?#@]+(/[^?#]*)?$'))
+    OR (COALESCE(config->>'client_secret_ref','') <> '' AND config->>'client_secret_ref' !~ '^secret:[A-Za-z_][A-Za-z0-9_]*$')
+    OR COALESCE(view->'config'->'observer'->>'secret_ref','') <> '' THEN RETURN false; END IF;
+  END IF;
+  IF runtime IS NOT NULL AND runtime <> 'null'::jsonb THEN
+   IF config IS NULL OR config='null'::jsonb
+    OR jsonb_typeof(runtime) IS DISTINCT FROM 'object'
+    OR COALESCE(runtime->>'state','') NOT IN ('connected','reauthorization_required')
+    OR COALESCE(runtime->>'source_sha256','') !~ '^[a-f0-9]{64}$'
+    OR COALESCE(length(runtime->>'ciphertext'),0) NOT BETWEEN 1 AND 87384
+    OR (runtime->>'state'='connected' AND (runtime->>'expires_at' IS NULL OR runtime->>'last_renewal_at' IS NULL)) THEN RETURN false; END IF;
+  END IF;
+ END LOOP;
+ RETURN true;
+END $_$;
+
+
+--
+-- Name: mcp_connection_alert_metric_base(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_connection_alert_metric_base(kind text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT CASE WHEN $1='rules' THEN 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p50_ms''::text, ''latency_p95_ms''::text, ''latency_p99_ms''::text, ''cold_start_pct''::text, ''request_count''::text, ''failed_invocations''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''cold_wake_rate_pct''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''event_pending_recipients''::text, ''event_oldest_pending_seconds''::text, ''event_retry_rate_per_second''::text, ''event_terminal_failure_pct''::text, ''event_routing_latency_p95_seconds''::text, ''event_paused_seconds''::text, ''event_drain_rate_per_second''::text, ''event_execution_dead_letters''::text, ''event_execution_dead_letter_rate_per_second''::text, ''event_handler_failure_pct''::text, ''event_completion_latency_p95_seconds''::text, ''event_recovery_stalled_jobs''::text, ''event_recovery_expiring_jobs''::text, ''event_recovery_capacity_wait_jobs''::text, ''event_recovery_execution_waiting_jobs''::text, ''event_recovery_execution_prolonged_wait_jobs''::text, ''event_recovery_execution_unknown_jobs''::text, ''event_recovery_execution_retention_risk_jobs''::text, ''event_recovery_notification_admission_overdue_jobs''::text, ''event_recovery_notification_admission_dead_jobs''::text, ''event_recovery_notification_admission_unknown_jobs''::text, ''event_recovery_notification_admission_no_receivers_jobs''::text, ''event_recovery_notification_execution_overdue_jobs''::text, ''event_recovery_notification_execution_dead_jobs''::text, ''event_recovery_notification_execution_unknown_jobs''::text, ''event_recovery_notification_execution_no_receivers_jobs''::text, ''event_retention_expiring_receipts''::text, ''event_storage_utilization_pct''::text, ''workflow_failures''::text, ''workflow_schedule_quota_skips''::text, ''workflow_pending_age_seconds''::text, ''workflow_waiting_age_seconds''::text, ''workflow_due_age_seconds''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text, ''mcp_tasks_oldest_age_seconds''::text, ''mcp_tasks_metrics_stale''::text, ''mcp_task_promotion_hold_age_seconds''::text, ''edge_rule_hits''::text, ''edge_rule_log_hits''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text])) OR (metric = ANY (ARRAY[''mcp_catalog_drift''::text, ''mcp_catalog_monitor_unavailable''::text]))))' ELSE 'CHECK (((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p95_ms''::text, ''cold_start_pct''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''workflow_due_age_seconds''::text, ''workflow_failures''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text])) OR (metric = ANY (ARRAY[''mcp_policy_unconverged_gateways''::text, ''mcp_policy_unverified''::text])) OR (metric = ANY (ARRAY[''mcp_catalog_drift''::text, ''mcp_catalog_monitor_unavailable''::text]))))' END$_$;
+
+
+--
+-- Name: mcp_oauth_public_phase(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_oauth_public_phase(phase jsonb) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT phase-ARRAY['private_config','private_ciphertext','private_client_ciphertext','private_lease_id','private_lease_until'];
+$$;
+
+
+--
+-- Name: mcp_oauth_retire_deleted_app(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_oauth_retire_deleted_app() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE root jsonb; changed jsonb; view record; cfg jsonb; grant_data jsonb; phase jsonb; record_data jsonb; job_id uuid; client_cipher bytea; path text[]; captured_at timestamptz:=now(); count_jobs bigint;
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.status<>'deleted' OR OLD.status='deleted') THEN RETURN NEW; END IF;
+ SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=OLD.id AND account_id=OLD.account_id FOR UPDATE;
+ IF root IS NULL THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
+ PERFORM pg_advisory_xact_lock(hashtext('mcp_oauth_retirement'),hashtext(OLD.account_id::text));
+ changed:=root;
+ FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object('default',root)||COALESCE(root->'roles','{}'::jsonb)) LOOP
+  cfg:=view.value->'config'->'observer'->'oauth';grant_data:=view.value->'observer_status'->'oauth';
+  IF cfg IS NULL OR cfg='null'::jsonb OR COALESCE(grant_data->>'ciphertext','')='' THEN CONTINUE; END IF;
+  SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=OLD.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
+  IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
+  job_id:=gen_random_uuid(); client_cipher:=NULL;
+  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope='default' AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
+  phase:=jsonb_build_object('id',job_id,'state',CASE WHEN COALESCE(cfg->>'revocation_endpoint','')='' THEN 'manual_required' ELSE 'pending' END,'attempts',0,'next_attempt_at',captured_at,'refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg,'private_ciphertext',grant_data->>'ciphertext');
+  IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
+  record_data:=jsonb_build_object('id',job_id,'app_id',OLD.id,'app_slug',OLD.slug,'role',view.key,'reason','app_deleted','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+  INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)
+  VALUES(job_id,OLD.account_id,OLD.id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at,record_data);
+  view.value:=view.value-'roles';
+  view.value:=jsonb_set(view.value,'{observer_status}',(view.value->'observer_status')-ARRAY['oauth','oauth_flow','lease_id','lease_until']);
+  view.value:=jsonb_set(view.value,'{config,revision}',to_jsonb(gen_random_uuid()::text));
+  view.value:=jsonb_set(view.value,'{oauth_lifecycle}',jsonb_build_object('local_state','disconnected','revocation',mcp_oauth_public_phase(phase),'history',COALESCE(view.value->'oauth_lifecycle'->'history','[]'::jsonb)));
+  IF view.key='default' THEN changed:=view.value||jsonb_build_object('roles',COALESCE(changed->'roles','{}'::jsonb));
+  ELSE changed:=jsonb_set(changed,ARRAY['roles',view.key],view.value); END IF;
+ END LOOP;
+ UPDATE mcp_catalog_monitors SET payload=changed WHERE app_id=OLD.id AND account_id=OLD.account_id;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
+-- Name: mcp_oauth_retire_deleted_renewal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_oauth_retire_deleted_renewal() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE root jsonb; changed jsonb; view record; cfg jsonb; grant_data jsonb; phase jsonb; record_data jsonb; job_id uuid; client_cipher bytea; path text[]; captured_at timestamptz:=now(); count_jobs bigint;
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.status<>'deleted' OR OLD.status='deleted') THEN RETURN NEW; END IF;
+ SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=OLD.id AND account_id=OLD.account_id FOR UPDATE;
+ IF root IS NULL THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
+ PERFORM pg_advisory_xact_lock(hashtext('mcp_oauth_retirement'),hashtext(OLD.account_id::text));
+ changed:=root;
+ FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object('default',root)||COALESCE(root->'roles','{}'::jsonb)) LOOP
+  cfg:=view.value->'config'->'observer'->'oauth';grant_data:=view.value->'observer_status'->'oauth_renewal'->'private_result';
+  IF cfg IS NULL OR cfg='null'::jsonb OR COALESCE(grant_data->>'ciphertext','')='' THEN CONTINUE; END IF;
+  SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=OLD.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
+  IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
+  job_id:=gen_random_uuid(); client_cipher:=NULL;
+  SELECT ciphertext INTO client_cipher FROM app_secrets WHERE app_id=OLD.id AND account_id=OLD.account_id AND scope='default' AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL;
+  phase:=jsonb_build_object('id',job_id,'state',CASE WHEN COALESCE(cfg->>'revocation_endpoint','')='' THEN 'manual_required' ELSE 'pending' END,'attempts',0,'next_attempt_at',captured_at,'refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg,'private_ciphertext',grant_data->>'ciphertext');
+  IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
+  record_data:=jsonb_build_object('id',job_id,'app_id',OLD.id,'app_slug',OLD.slug,'role',view.key,'reason','app_deleted','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+  INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload)
+  VALUES(job_id,OLD.account_id,OLD.id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at,record_data);
+  view.value:=view.value-'roles';
+  view.value:=jsonb_set(view.value,ARRAY['observer_status'],(view.value->'observer_status')-'oauth_renewal');
+  IF view.key='default' THEN changed:=view.value||jsonb_build_object('roles',COALESCE(changed->'roles','{}'::jsonb));
+  ELSE changed:=jsonb_set(changed,ARRAY['roles',view.key],view.value); END IF;
+ END LOOP;
+ UPDATE mcp_catalog_monitors SET payload=changed WHERE app_id=OLD.id AND account_id=OLD.account_id;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
+-- Name: mcp_oauth_secret_credential_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_oauth_secret_credential_change() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE secret_row app_secrets; root jsonb; changed jsonb; view record; cfg jsonb; st jsonb; life jsonb; grant_data jsonb; phase jsonb; record_data jsonb; journal jsonb; job_id uuid; client_cipher bytea; captured_at timestamptz:=now(); count_jobs bigint; refresh_changed boolean; deleting boolean:=TG_OP='DELETE'; history jsonb;
+BEGIN
+ IF deleting THEN secret_row:=OLD; ELSE secret_row:=NEW; END IF;
+ IF secret_row.scope<>'default' OR secret_row.managed_postgres_binding_id IS NOT NULL OR secret_row.managed_object_storage_credential_id IS NOT NULL OR secret_row.managed_credential_ref IS NOT NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
+ IF TG_OP='UPDATE' AND NEW.secret_version=OLD.secret_version THEN RETURN NEW; END IF;
+ IF TG_OP='INSERT' AND EXISTS(SELECT 1 FROM app_secrets WHERE app_id=NEW.app_id AND scope=NEW.scope AND key=NEW.key) THEN RETURN NEW; END IF;
+ SELECT payload INTO root FROM mcp_catalog_monitors WHERE app_id=secret_row.app_id AND account_id=secret_row.account_id FOR UPDATE;
+ IF root IS NULL THEN IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
+ PERFORM pg_advisory_xact_lock(hashtext('mcp_oauth_retirement'),hashtext(secret_row.account_id::text));changed:=root;
+ FOR view IN SELECT key,value FROM jsonb_each(jsonb_build_object('default',root)||COALESCE(root->'roles','{}'::jsonb)) LOOP
+  cfg:=view.value->'config'->'observer'->'oauth';
+  refresh_changed:=COALESCE(cfg->>'refresh_token_secret_ref','')='secret:'||secret_row.key;
+  IF NOT refresh_changed AND COALESCE(cfg->>'client_secret_ref','')<>'secret:'||secret_row.key THEN CONTINUE; END IF;
+  st:=COALESCE(NULLIF(view.value->'observer_status','null'::jsonb),jsonb_build_object('state','scheduled','consecutive_failures',0));
+  life:=COALESCE(NULLIF(view.value->'oauth_lifecycle','null'::jsonb),jsonb_build_object('local_state','disconnected','history','[]'::jsonb));
+  client_cipher:=NULL;
+  IF cfg->>'client_secret_ref'='secret:'||secret_row.key AND TG_OP<>'INSERT' THEN client_cipher:=OLD.ciphertext;
+  ELSE SELECT ciphertext INTO client_cipher FROM app_secrets WHERE account_id=secret_row.account_id AND app_id=secret_row.app_id AND scope='default' AND key=substring(cfg->>'client_secret_ref' FROM 8) AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id IS NULL AND managed_credential_ref IS NULL; END IF;
+  journal:=st->'oauth_renewal';
+  -- Preserve unknown issuance before invalidating an in-flight exchange.
+  IF journal->>'state' IN ('pending','reauthorization_required') AND COALESCE(journal->'private_result','null'::jsonb)='null'::jsonb THEN
+   job_id:=(journal->>'private_id')::uuid;
+   phase:=jsonb_build_object('id',job_id,'state','pending','attempts',0,'next_attempt_at',captured_at+interval '5 minutes','refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg);
+   IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
+   record_data:=jsonb_build_object('id',job_id,'app_id',secret_row.app_id,'app_slug',(SELECT slug FROM apps WHERE id=secret_row.app_id),'role',view.key,'reason','credential_changed','state','awaiting_issuance','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+   SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=secret_row.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
+   IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
+   INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload) VALUES(job_id,secret_row.account_id,secret_row.app_id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at+interval '5 minutes',record_data) ON CONFLICT(id) DO NOTHING;
+  END IF;
+  IF refresh_changed OR deleting THEN
+   FOR grant_data IN SELECT value FROM jsonb_array_elements(jsonb_build_array(st->'oauth',journal->'private_result')) LOOP
+    IF COALESCE(grant_data->>'ciphertext','')='' THEN CONTINUE; END IF;
+    SELECT count(*) INTO count_jobs FROM mcp_oauth_retirements WHERE account_id=secret_row.account_id AND state IN ('awaiting_issuance','pending','held','manual_required');
+    IF count_jobs>=64 THEN RAISE EXCEPTION 'MCP OAuth retirement capacity exhausted' USING ERRCODE='23514'; END IF;
+    job_id:=gen_random_uuid();
+    phase:=jsonb_build_object('id',job_id,'state',CASE WHEN COALESCE(cfg->>'revocation_endpoint','')='' THEN 'manual_required' ELSE 'pending' END,'attempts',0,'next_attempt_at',captured_at,'refresh_acknowledged',false,'access_acknowledged',false,'private_config',cfg,'private_ciphertext',grant_data->>'ciphertext');
+    IF client_cipher IS NOT NULL THEN phase:=phase||jsonb_build_object('private_client_ciphertext',encode(client_cipher,'base64')); END IF;
+    record_data:=jsonb_build_object('id',job_id,'app_id',secret_row.app_id,'app_slug',(SELECT slug FROM apps WHERE id=secret_row.app_id),'role',view.key,'reason','credential_changed','state',phase->>'state','created_at',captured_at,'retain_until',captured_at+interval '7 days','revocation',phase,'allow_active_grant_revocation',false,'history',jsonb_build_array(jsonb_build_object('at',captured_at,'action','queued')));
+    INSERT INTO mcp_oauth_retirements(id,account_id,app_id,binding_sha256,created_at,retain_until,next_attempt_at,payload) VALUES(job_id,secret_row.account_id,secret_row.app_id,encode(sha256(convert_to((cfg->>'token_endpoint')||chr(10)||(cfg->>'client_id'),'UTF8')),'hex'),captured_at,captured_at+interval '7 days',captured_at,record_data);
+    life:=jsonb_set(life,ARRAY['revocation'],mcp_oauth_public_phase(phase));
+   END LOOP;
+   st:=st-ARRAY['oauth','oauth_renewal'];life:=jsonb_set(life,ARRAY['local_state'],'"disconnected"');
+  ELSIF journal->>'state' IN ('pending','reauthorization_required') AND COALESCE(journal->'private_result','null'::jsonb)='null'::jsonb THEN
+   st:=st-'oauth_renewal';IF st->'oauth' IS NOT NULL THEN st:=jsonb_set(st,ARRAY['oauth','state'],'"reauthorization_required"'); END IF;
+  END IF;
+  life:=jsonb_set(life,ARRAY['credential_state'],to_jsonb(CASE WHEN deleting THEN 'reconnect_required'::text ELSE 'credential_changed'::text END));
+  SELECT jsonb_agg(value ORDER BY ord) INTO history FROM jsonb_array_elements(COALESCE(life->'history','[]'::jsonb)||jsonb_build_array(jsonb_build_object('id',gen_random_uuid(),'at',captured_at,'kind','credentials_discarded'))) WITH ORDINALITY x(value,ord) WHERE ord>greatest(0,jsonb_array_length(COALESCE(life->'history','[]'::jsonb))+1-64);
+  life:=jsonb_set(life,ARRAY['history'],history);
+  st:=(st-ARRAY['lease_id','lease_until','oauth_flow'])||jsonb_build_object('state','scheduled','next_check_at',captured_at);
+  view.value:=jsonb_set(view.value-'roles',ARRAY['config','revision'],to_jsonb(gen_random_uuid()::text));
+  view.value:=view.value||jsonb_build_object('observer_status',st,'oauth_lifecycle',life);
+  IF view.key='default' THEN changed:=view.value||jsonb_build_object('roles',COALESCE(changed->'roles','{}'::jsonb)); ELSE changed:=jsonb_set(changed,ARRAY['roles',view.key],view.value); END IF;
+ END LOOP;
+ UPDATE mcp_catalog_monitors SET payload=changed WHERE app_id=secret_row.app_id;
+ IF deleting THEN RETURN OLD; ELSE RETURN NEW; END IF;
+END $$;
+
+
+--
+-- Name: mcp_oauth_secret_source(uuid, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_oauth_secret_source(app uuid, scope_name text, secret_key text, version bigint) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+ SELECT encode(sha256(convert_to(encode(sha256(convert_to(app::text||chr(10)||scope_name||chr(10)||secret_key||chr(10)||version::text,'UTF8')),'hex'),'UTF8')),'hex');
+$$;
+
+
+--
+-- Name: mcp_policy_convergence_metric_base(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mcp_policy_convergence_metric_base(kind text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$SELECT CASE WHEN $1='rules' THEN 'CHECK ((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p50_ms''::text, ''latency_p95_ms''::text, ''latency_p99_ms''::text, ''cold_start_pct''::text, ''request_count''::text, ''failed_invocations''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''cold_wake_rate_pct''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''event_pending_recipients''::text, ''event_oldest_pending_seconds''::text, ''event_retry_rate_per_second''::text, ''event_terminal_failure_pct''::text, ''event_routing_latency_p95_seconds''::text, ''event_paused_seconds''::text, ''event_drain_rate_per_second''::text, ''event_execution_dead_letters''::text, ''event_execution_dead_letter_rate_per_second''::text, ''event_handler_failure_pct''::text, ''event_completion_latency_p95_seconds''::text, ''event_recovery_stalled_jobs''::text, ''event_recovery_expiring_jobs''::text, ''event_recovery_capacity_wait_jobs''::text, ''event_recovery_execution_waiting_jobs''::text, ''event_recovery_execution_prolonged_wait_jobs''::text, ''event_recovery_execution_unknown_jobs''::text, ''event_recovery_execution_retention_risk_jobs''::text, ''event_recovery_notification_admission_overdue_jobs''::text, ''event_recovery_notification_admission_dead_jobs''::text, ''event_recovery_notification_admission_unknown_jobs''::text, ''event_recovery_notification_admission_no_receivers_jobs''::text, ''event_recovery_notification_execution_overdue_jobs''::text, ''event_recovery_notification_execution_dead_jobs''::text, ''event_recovery_notification_execution_unknown_jobs''::text, ''event_recovery_notification_execution_no_receivers_jobs''::text, ''event_retention_expiring_receipts''::text, ''event_storage_utilization_pct''::text, ''workflow_failures''::text, ''workflow_schedule_quota_skips''::text, ''workflow_pending_age_seconds''::text, ''workflow_waiting_age_seconds''::text, ''workflow_due_age_seconds''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text, ''mcp_tasks_oldest_age_seconds''::text, ''mcp_tasks_metrics_stale''::text, ''mcp_task_promotion_hold_age_seconds''::text, ''edge_rule_hits''::text, ''edge_rule_log_hits''::text])))' ELSE 'CHECK ((metric = ANY (ARRAY[''error_rate_pct''::text, ''latency_p95_ms''::text, ''cold_start_pct''::text, ''api_up''::text, ''account_spend_eur''::text, ''deployment_failed''::text, ''cert_expiry_seconds''::text, ''cert_issuance_failed''::text, ''queue_depth''::text, ''new_error_fingerprint''::text, ''daily_cost_cents''::text, ''slo_burn_rate''::text, ''canary_stuck_step''::text, ''safedeploy_audit_emit_failing''::text, ''deployment_audit_gc_failing''::text, ''canary_fleet_in_flight_high''::text, ''pre_auth_target_threshold''::text, ''pre_auth_target_signal_gap_pct''::text, ''workflow_due_age_seconds''::text, ''workflow_failures''::text, ''pre_auth_pressure''::text, ''edge_validation_failures''::text, ''edge_rejections''::text, ''edge_waf_detections''::text])))' END$_$;
+
+
+--
 -- Name: measure_realtime_group_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15867,7 +16330,7 @@ CREATE TABLE public.alert_presets (
     CONSTRAINT alert_presets_cooldown_chk CHECK (((default_cooldown_minutes >= 5) AND (default_cooldown_minutes <= 1440))),
     CONSTRAINT alert_presets_description_len_chk CHECK (((char_length(description) >= 1) AND (char_length(description) <= 512))),
     CONSTRAINT alert_presets_display_name_len_chk CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 128))),
-    CONSTRAINT alert_presets_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text]))),
+    CONSTRAINT alert_presets_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p95_ms'::text, 'cold_start_pct'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'workflow_due_age_seconds'::text, 'workflow_failures'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])))),
     CONSTRAINT alert_presets_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_presets_plan_chk CHECK ((minimum_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT alert_presets_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text])))
@@ -15917,17 +16380,22 @@ CREATE TABLE public.alert_rules (
     action text DEFAULT 'webhook'::text NOT NULL,
     post_deploy_rollback_window_seconds integer DEFAULT 0 NOT NULL,
     event_subscription_id uuid,
+    edge_rule_id uuid,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
+    CONSTRAINT alert_rules_edge_rule_chk CHECK ((((metric = ANY (ARRAY['edge_rule_hits'::text, 'edge_rule_log_hits'::text])) AND (app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['1h'::text, '6h'::text, '24h'::text, '7d'::text]))) OR ((metric <> ALL (ARRAY['edge_rule_hits'::text, 'edge_rule_log_hits'::text])) AND (edge_rule_id IS NULL)))),
     CONSTRAINT alert_rules_edge_security_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_event_consumer_chk CHECK ((((metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text])) AND (event_subscription_id IS NOT NULL) AND (app_id IS NOT NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))) OR ((NOT (metric = ANY (ARRAY['event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text]))) AND (event_subscription_id IS NULL)))),
     CONSTRAINT alert_rules_event_retention_chk CHECK (((metric <> ALL (ARRAY['event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text])) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text]))))),
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
+    CONSTRAINT alert_rules_mcp_catalog_chk CHECK (((metric <> ALL (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR ((app_id IS NOT NULL) AND (action = 'webhook'::text)))),
+    CONSTRAINT alert_rules_mcp_connection_health_action_chk CHECK (((metric <> ALL (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (action = 'webhook'::text))),
+    CONSTRAINT alert_rules_mcp_convergence_chk CHECK (((metric <> ALL (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR ((app_id IS NOT NULL) AND (action = 'webhook'::text)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK ((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text]))),
+    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -19136,7 +19604,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])))
+    CONSTRAINT deployment_audit_kind_chk CHECK (((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])) OR (kind = 'deploy.mcp_admission'::text)))
 );
 
 
@@ -19791,6 +20259,8 @@ CREATE TABLE public.edge_rule_change_log (
     operation text NOT NULL,
     match_hosts text[] DEFAULT '{}'::text[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    account_ids uuid[],
+    CONSTRAINT edge_rule_change_log_account_ids_check CHECK (((account_ids IS NULL) OR ((cardinality(account_ids) > 0) AND (array_position(account_ids, NULL::uuid) IS NULL)))),
     CONSTRAINT edge_rule_change_log_operation_check CHECK ((operation = ANY (ARRAY['created'::text, 'updated'::text, 'deleted'::text])))
 );
 
@@ -22444,6 +22914,24 @@ CREATE TABLE public.invocation_plain_replays (
     replay_invocation_id uuid NOT NULL,
     replay_created_at timestamp with time zone NOT NULL,
     CONSTRAINT invocation_plain_replays_check CHECK ((parent_invocation_id <> replay_invocation_id))
+);
+
+
+--
+-- Name: invocation_queue_lease_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_queue_lease_receipts (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    replay_generation bigint NOT NULL,
+    token_hash text NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    lease_expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_queue_lease_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT invocation_queue_lease_receipts_check CHECK ((lease_expires_at > issued_at)),
+    CONSTRAINT invocation_queue_lease_receipts_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT invocation_queue_lease_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -25113,6 +25601,46 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
     CONSTRAINT managed_realtime_worker_heartbeats_ready_check CHECK ((ready = ANY (ARRAY[true, false]))),
     CONSTRAINT managed_realtime_worker_heartbeats_status_code_check CHECK (((octet_length(status_code) <= 64) AND (status_code ~ '^[ -~]*$'::text))),
     CONSTRAINT managed_realtime_worker_heartbeats_worker_check CHECK (((octet_length(worker) >= 1) AND (octet_length(worker) <= 128)))
+);
+
+
+--
+-- Name: mcp_catalog_monitors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_catalog_monitors (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT mcp_catalog_managed_observers_chk CHECK (public.mcp_catalog_managed_observers_valid(payload)),
+    CONSTRAINT mcp_catalog_monitor_roles_chk CHECK (public.mcp_catalog_monitor_roles_valid(payload)),
+    CONSTRAINT mcp_catalog_monitors_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT mcp_catalog_monitors_payload_check1 CHECK (((jsonb_typeof((payload -> 'history'::text)) = 'array'::text) AND (jsonb_array_length((payload -> 'history'::text)) <= 32))),
+    CONSTRAINT mcp_catalog_monitors_payload_check2 CHECK ((((payload -> 'latest'::text) IS NULL) OR ((payload -> 'latest'::text) = 'null'::jsonb) OR (((payload -> 'latest'::text) ->> 'state'::text) = ANY (ARRAY['healthy'::text, 'drift'::text, 'unavailable'::text])))),
+    CONSTRAINT mcp_catalog_oauth_flows_chk CHECK (public.mcp_catalog_oauth_flows_valid(payload)),
+    CONSTRAINT mcp_catalog_oauth_lifecycle_chk CHECK (public.mcp_catalog_oauth_public_lifecycle_valid(payload)),
+    CONSTRAINT mcp_catalog_oauth_profiles_chk CHECK (public.mcp_catalog_oauth_profiles_valid(payload)),
+    CONSTRAINT mcp_catalog_oauth_renewal_chk CHECK (public.mcp_catalog_oauth_renewal_valid(payload)),
+    CONSTRAINT mcp_catalog_observer_oauth_chk CHECK (public.mcp_catalog_observer_oauth_valid(payload))
+);
+
+
+--
+-- Name: mcp_oauth_retirements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mcp_oauth_retirements (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    binding_sha256 text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    state text GENERATED ALWAYS AS ((payload ->> 'state'::text)) STORED,
+    payload jsonb NOT NULL,
+    CONSTRAINT mcp_oauth_retirement_payload_chk CHECK (((jsonb_typeof((payload -> 'history'::text)) = 'array'::text) AND (jsonb_array_length((payload -> 'history'::text)) <= 32) AND ((payload ->> 'id'::text) = (id)::text) AND ((payload ->> 'app_id'::text) = (app_id)::text) AND (jsonb_typeof((payload -> 'revocation'::text)) = 'object'::text) AND (((((payload -> 'revocation'::text) ->> 'attempts'::text))::integer >= 0) AND ((((payload -> 'revocation'::text) ->> 'attempts'::text))::integer <= 8)) AND (retain_until > created_at) AND (retain_until <= (created_at + '7 days'::interval)) AND ((state <> ALL (ARRAY['installed'::text, 'provider_acknowledged'::text, 'manually_acknowledged'::text, 'expired'::text])) OR (NOT ((payload -> 'revocation'::text) ?| ARRAY['private_config'::text, 'private_ciphertext'::text, 'private_client_ciphertext'::text, 'private_lease_id'::text, 'private_lease_until'::text]))))),
+    CONSTRAINT mcp_oauth_retirement_state_chk CHECK ((state = ANY (ARRAY['awaiting_issuance'::text, 'pending'::text, 'held'::text, 'installed'::text, 'manual_required'::text, 'provider_acknowledged'::text, 'manually_acknowledged'::text, 'expired'::text])))
 );
 
 
@@ -35572,6 +36100,14 @@ ALTER TABLE ONLY public.invocation_plain_replays
 
 
 --
+-- Name: invocation_queue_lease_receipts invocation_queue_lease_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_queue_lease_receipts
+    ADD CONSTRAINT invocation_queue_lease_receipts_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -36505,6 +37041,22 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: mcp_catalog_monitors mcp_catalog_monitors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_catalog_monitors
+    ADD CONSTRAINT mcp_catalog_monitors_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: mcp_oauth_retirements mcp_oauth_retirements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_oauth_retirements
+    ADD CONSTRAINT mcp_oauth_retirements_pkey PRIMARY KEY (id);
 
 
 --
@@ -40146,6 +40698,13 @@ CREATE UNIQUE INDEX alert_rules_account_name_uniq ON public.alert_rules USING bt
 
 
 --
+-- Name: alert_rules_edge_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_rules_edge_rule_idx ON public.alert_rules USING btree (edge_rule_id) WHERE (edge_rule_id IS NOT NULL);
+
+
+--
 -- Name: alert_rules_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -41833,6 +42392,13 @@ CREATE INDEX deployment_audit_deployment_idx ON public.deployment_audit USING bt
 
 
 --
+-- Name: deployment_audit_mcp_admission_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX deployment_audit_mcp_admission_id_idx ON public.deployment_audit USING btree ((((data -> 'mcp_admission'::text) ->> 'id'::text))) WHERE (kind = 'deploy.mcp_admission'::text);
+
+
+--
 -- Name: deployment_audit_worker_drain_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -42106,10 +42672,24 @@ CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observ
 
 
 --
+-- Name: edge_rule_change_log_account_ids_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_change_log_account_ids_idx ON public.edge_rule_change_log USING gin (account_ids);
+
+
+--
 -- Name: edge_rule_change_log_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX edge_rule_change_log_created_idx ON public.edge_rule_change_log USING btree (created_at, id);
+
+
+--
+-- Name: edge_rule_change_log_unknown_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rule_change_log_unknown_owner_idx ON public.edge_rule_change_log USING btree (id DESC) WHERE (account_ids IS NULL);
 
 
 --
@@ -44378,6 +44958,27 @@ CREATE INDEX managed_realtime_schedule_group_idx ON public.managed_realtime_sche
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_endpoint_expiry ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, expires_at);
+
+
+--
+-- Name: mcp_oauth_retirements_account_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_oauth_retirements_account_history ON public.mcp_oauth_retirements USING btree (account_id, created_at DESC, id DESC);
+
+
+--
+-- Name: mcp_oauth_retirements_binding; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_oauth_retirements_binding ON public.mcp_oauth_retirements USING btree (account_id, binding_sha256, state);
+
+
+--
+-- Name: mcp_oauth_retirements_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mcp_oauth_retirements_due ON public.mcp_oauth_retirements USING btree (state, next_attempt_at);
 
 
 --
@@ -48455,6 +49056,13 @@ CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE
 
 
 --
+-- Name: edge_rules edge_rules_mcp_access_commit_fence_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER edge_rules_mcp_access_commit_fence_trg AFTER INSERT OR DELETE OR UPDATE ON public.edge_rules DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.edge_rules_mcp_access_commit_fence();
+
+
+--
 -- Name: edge_rules edge_rules_record_change_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -49572,6 +50180,27 @@ CREATE TRIGGER managed_realtime_notification_outcome AFTER INSERT OR UPDATE ON p
 --
 
 CREATE TRIGGER managed_realtime_push_timeline AFTER INSERT OR UPDATE ON public.managed_realtime_push_deliveries FOR EACH ROW EXECUTE FUNCTION public.faas_record_notification_timeline();
+
+
+--
+-- Name: apps mcp_oauth_aa_renewal_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mcp_oauth_aa_renewal_retirement BEFORE DELETE OR UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.mcp_oauth_retire_deleted_renewal();
+
+
+--
+-- Name: apps mcp_oauth_app_retirement; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mcp_oauth_app_retirement BEFORE DELETE OR UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.mcp_oauth_retire_deleted_app();
+
+
+--
+-- Name: app_secrets mcp_oauth_secret_credential_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mcp_oauth_secret_credential_change BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.mcp_oauth_secret_credential_change();
 
 
 --
@@ -54996,6 +55625,14 @@ ALTER TABLE ONLY public.invocations
 
 
 --
+-- Name: invocation_queue_lease_receipts invocation_queue_lease_receipts_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_queue_lease_receipts
+    ADD CONSTRAINT invocation_queue_lease_receipts_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: invocation_work_cancellations invocation_work_cancellations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56081,6 +56718,30 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_catalog_monitors mcp_catalog_monitors_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_catalog_monitors
+    ADD CONSTRAINT mcp_catalog_monitors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_catalog_monitors mcp_catalog_monitors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_catalog_monitors
+    ADD CONSTRAINT mcp_catalog_monitors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_oauth_retirements mcp_oauth_retirements_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_oauth_retirements
+    ADD CONSTRAINT mcp_oauth_retirements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

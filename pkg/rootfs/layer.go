@@ -21,6 +21,18 @@ import (
 // which return nil and safely no-op (per the wire.OpsMetrics contract).
 var ops *wire.OpsMetrics
 
+// preserveRootOwnership makes extraction chown root-owned entries to 0. See
+// SetPreserveRootOwnership.
+var preserveRootOwnership bool
+
+// SetPreserveRootOwnership is called once at imaged boot. imaged runs as an
+// unprivileged service user with CAP_CHOWN, and mkfs.ext4 -d publishes the
+// staging tree's owners as-is: an entry owned by uid or gid 0 that is left
+// unchanged would reach the guest owned by the service user, not root. Enable
+// it only when the process can chown to root; a daemon without CAP_CHOWN
+// keeps the previous behaviour instead of failing every build.
+func SetPreserveRootOwnership(enabled bool) { preserveRootOwnership = enabled }
+
 // SetOpsMetrics wires the imaged daemon's *wire.OpsMetrics into this
 // package so the ownership-clamp and layer-entry-skipped counters
 // surface on the daemon's /metrics endpoint (the same registry that
@@ -561,7 +573,12 @@ func parseOwnershipInt(intVal int, nameVal, kind string) (int, bool) {
 		}
 		return intVal, true
 	}
-	// Case 2: integer is 0 and string is non-empty → named user.
+	// Case 2: root (integer 0, name empty or "root"). Preserved when the
+	// daemon can chown to root; otherwise it falls through as before.
+	if preserveRootOwnership && (nameVal == "" || nameVal == "root") {
+		return 0, true
+	}
+	// Case 3: integer is 0 and string is non-empty → named user.
 	// M-3 will resolve against /etc/passwd at first start. Today we
 	// can't, so fall through and trip the tripwire.
 	if nameVal != "" {
@@ -573,8 +590,8 @@ func parseOwnershipInt(intVal int, nameVal, kind string) (int, bool) {
 		}
 		return 0, false
 	}
-	// Case 3: both empty → BuildKit default. Silent fall-through,
-	// no counter movement.
+	// Case 4: both empty and root preservation off. Silent
+	// fall-through, no counter movement.
 	return 0, false
 }
 

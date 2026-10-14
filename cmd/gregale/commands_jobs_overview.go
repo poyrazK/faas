@@ -44,9 +44,9 @@ func cmdJobsOverview(args []string) int {
 	}
 	name := fs.Arg(0)
 	if name == "" {
-		d, path, err := readJobDefaults()
+		d, path, err := readJobDefaultsForCommand([]string{"jobs", "overview", "my-job"})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		name = d.Job
 		if !jsonOutput {
@@ -56,6 +56,7 @@ func cmdJobsOverview(args []string) int {
 	if !jobSlugPattern.MatchString(name) {
 		return printErr("Invalid Job name", fmt.Errorf("provide a valid Job name"))
 	}
+	connection := configuredDisplayConnection()
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -80,17 +81,20 @@ func cmdJobsOverview(args []string) int {
 		LatestRun           *jobOverviewRun     `json:"latest_run"`
 		Actions             []jobOverviewAction `json:"actions"`
 		Check               *jobOverviewCheck   `json:"check,omitempty"`
-	}{Job: name, State: job.Status, ImageStatus: job.ImageMaterializationStatus, Actions: []jobOverviewAction{}}
+		Connection          displayConnection   `json:"connection"`
+	}{Job: name, State: job.Status, ImageStatus: job.ImageMaterializationStatus, Actions: []jobOverviewAction{}, Connection: connection}
 	add := func(purpose, command string) {
 		receipt.Actions = append(receipt.Actions, jobOverviewAction{purpose, command})
 	}
-	base := recoveryCLI() + " jobs "
+	command := func(args ...string) string {
+		return savedNameSuggestionCommand(append([]string{"jobs"}, args...))
+	}
 	switch job.ImageMaterializationStatus {
 	case "pending", "verifying_legacy":
-		add("Wait for image preparation", base+"info "+recoveryArgument(name)+" --wait-ready")
+		add("Wait for image preparation", command("info", name, "--wait-ready"))
 	case "ready":
 	default:
-		add("Inspect image preparation", base+"info "+recoveryArgument(name))
+		add("Inspect image preparation", command("info", name))
 	}
 	history, err := client.ListJobRunsPage(ctx, name, 1, 0)
 	if err != nil {
@@ -109,11 +113,12 @@ func cmdJobsOverview(args []string) int {
 			return printErr("Invalid Job run", fmt.Errorf("server returned another run, Job, or account"))
 		}
 		receipt.LatestRun = &jobOverviewRun{run.ID, run.AggregateStatus, run.Tasks, run.TasksRunning, run.TasksSucceeded, run.TasksFailed, run.TasksCancelled, run.DeadLetterCount}
-		target := recoveryArgument(name) + " " + recoveryArgument(id)
-		add("Inspect task outcomes", base+"tasks "+target+" --all")
+		add("Inspect task outcomes", command("tasks", name, id, "--all"))
+		if run.TasksFailed > 0 || run.TasksCancelled > 0 || run.AggregateStatus == "failed" || run.AggregateStatus == "dead_letter" || run.AggregateStatus == "cancelled" {
+			add("Inspect unsuccessful tasks", command("tasks", name, id, "--unsuccessful-only"))
+			add("Read unsuccessful-task logs", command("logs", name, id, "--unsuccessful-only"))
+		}
 		if run.TasksFailed > 0 || run.AggregateStatus == "failed" || run.AggregateStatus == "dead_letter" {
-			add("Inspect failed tasks", base+"tasks "+target+" --failed-only")
-			add("Read all failed-task logs", base+"logs "+target+" --failed-only")
 			tasks, err := collectJobTaskPagesContext(ctx, client, name, id, 200, 0, true)
 			if err != nil {
 				return printErr("Could not inspect failed tasks", err)
@@ -122,17 +127,20 @@ func cmdJobsOverview(args []string) int {
 				if i == 3 {
 					break
 				}
-				add(fmt.Sprintf("Read task %d logs", task.TaskIndex), base+"logs "+target+" --task "+strconv.Itoa(task.TaskIndex))
+				add(fmt.Sprintf("Read task %d logs", task.TaskIndex), command("logs", name, id, "--task", strconv.Itoa(task.TaskIndex)))
 			}
 		}
 		switch run.AggregateStatus {
 		case "succeeded":
-			add("Collect results", base+"results "+target)
+			add("Collect results", command("results", name, id))
 		case "queued", "running":
-			add("Wait for this run", base+"wait "+target)
+			add("Wait for this run", command("wait", name, id))
+			add("Preview cancellation", command("cancel", name, id, "--dry-run"))
+		case "failed", "dead_letter", "cancelled":
+			add("Preview replay of unsuccessful tasks", command("replay-failed", name, id, "--dry-run"))
 		}
 	} else {
-		add("Inspect Job configuration", base+"info "+recoveryArgument(name))
+		add("Inspect Job configuration", command("info", name))
 	}
 	receipt.ReadinessAssessment = assessJobOverviewReadiness(receipt.State, receipt.ImageStatus)
 	receipt.RunAssessment = assessJobOverviewRun(receipt.LatestRun)
@@ -152,7 +160,11 @@ func cmdJobsOverview(args []string) int {
 		return finish()
 	}
 
-	_, _ = fmt.Fprintf(osStdout, "Job: %s\nReadiness: %s\nState: %s\nImage preparation: %s\nLatest run assessment: %s\n", name, receipt.ReadinessAssessment, oneLine(receipt.State), oneLine(receipt.ImageStatus), receipt.RunAssessment)
+	_, _ = fmt.Fprintf(osStdout, "Job: %s\nProfile: %s (source=%s)\nAPI: %s (source=%s)\n", name, oneLine(connection.Profile), oneLine(connection.ProfileSource), oneLine(connection.APIBase), oneLine(connection.APISource))
+	if connection.AddressRedacted {
+		_, _ = fmt.Fprintln(osStdout, "API display omits credentials, query, and fragment; malformed addresses are hidden.")
+	}
+	_, _ = fmt.Fprintf(osStdout, "Readiness: %s\nState: %s\nImage preparation: %s\nLatest run assessment: %s\n", receipt.ReadinessAssessment, oneLine(receipt.State), oneLine(receipt.ImageStatus), receipt.RunAssessment)
 	if receipt.LatestRun == nil {
 		_, _ = fmt.Fprintln(osStdout, "Latest run: none recorded")
 	} else {

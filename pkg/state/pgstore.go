@@ -161,6 +161,9 @@ func (s *PgStore) acquireSessionAdvisoryLockConn(ctx context.Context, l sessionA
 			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			_ = conn.Hijack().Close(closeCtx)
 			cancel()
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
 			return nil, nil, fmt.Errorf("state: acquire %s for %q: %w", l.what, l.keyArg, err)
 		}
 		if locked {
@@ -7756,7 +7759,7 @@ func (s *PgStore) UpdateDeploymentTraffic(ctx context.Context, id string, newPer
 	return s.updateDeploymentTraffic(ctx, id, newPercent, expectedServingID, nil)
 }
 
-func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (Deployment, error) {
+func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPercent int, expectedServingID []string, guard *bindingTrafficGuard) (result Deployment, resultErr error) {
 	if newPercent < 0 || newPercent > 100 {
 		return Deployment{}, fmt.Errorf("state: update deployment traffic %d: %w", newPercent, ErrInvalidTrafficPercent)
 	}
@@ -7765,7 +7768,8 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: begin update traffic tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
+	defer s.finishMCPAdmission(ctx, tx, admission, &resultErr)
 
 	if _, err := pgLockCanaryRouteSnapshot(ctx, tx, id); err != nil {
 		return Deployment{}, err
@@ -7847,6 +7851,10 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 		return Deployment{}, ErrConflict
 	}
 
+	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
+		return Deployment{}, err
+	}
+
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return Deployment{}, err
 	}
@@ -7856,6 +7864,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			return Deployment{}, err
 		}
 		if current.TrafficPercent == 100 {
+			if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
+				return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
+			}
 			if err := tx.Commit(ctx); err != nil {
 				return Deployment{}, fmt.Errorf("state: commit checked promotion: %w", err)
 			}
@@ -7976,6 +7987,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	d, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: read deployment after stamp: %w", err)
+	}
+	if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
+		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: commit update traffic: %w", err)
@@ -8809,6 +8823,19 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 	// failure must leave the existing release untouched; attempting to zero
 	// and restore the live sibling would bypass the serving-transition fence.
 	if held && failedTraffic == 0 {
+		return nil
+	}
+	// The remaining live rows already carry all traffic: the failed row was
+	// not serving (a rollback target being re-primed, a 0% candidate). Moving
+	// everything to one fallback collapsed a 50/50 split to 100/0 when a
+	// rollback target failed verification (H10-11).
+	var remaining int
+	if err := tx.QueryRow(ctx, `
+		SELECT coalesce(sum(traffic_percent), 0) FROM deployments
+		 WHERE app_id=$1 AND id<>$2 AND status='live' AND deleted_at IS NULL`, appID, failedID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining == 100 {
 		return nil
 	}
 	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
