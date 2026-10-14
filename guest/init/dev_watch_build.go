@@ -44,8 +44,9 @@ var devWatchRuntimes = map[api.BuildFramework]devWatchRuntime{
 // and marks the image with api.DevWatchEnv=1, which tells guest-init to apply
 // live patches without restarting the server and to bridge the runtime port
 // to it. Node.js images also get NODE_ENV=development. The app's public
-// hostname goes in api.DevWatchHostEnv and, for Vite-based servers, which
-// answer 403 to a Host they do not know, in api.DevWatchViteAllowedHostsEnv.
+// hostname goes in api.DevWatchHostEnv; at workload start guest-init also
+// hands it to Vite-based servers, which answer 403 to a Host they do not
+// know (stampDevWatchEnv).
 func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	if m.DevWatchCommand == "" {
 		return nil
@@ -78,9 +79,23 @@ func devWatchRailpackConfig(config map[string]any, m api.BuildManifest) error {
 	variables[api.DevWatchEnv] = "1"
 	if m.DevWatchHost != "" && api.ValidDevWatchHost(m.DevWatchHost) {
 		variables[api.DevWatchHostEnv] = m.DevWatchHost
-		variables[api.DevWatchViteAllowedHostsEnv] = m.DevWatchHost
 	}
 	return nil
+}
+
+// stampDevWatchEnv adds Vite's allowed-hosts override, set to the
+// environment's hostname, to a watch-mode workload's environment. It cannot
+// travel in the image: guest-init only passes environment keys that start
+// with a letter (validEnvKey), and Vite's name starts with "__".
+func stampDevWatchEnv(env []string, watch bool) []string {
+	if !watch {
+		return env
+	}
+	host := devDebugEnvValue(env, api.DevWatchHostEnv)
+	if host == "" || !api.ValidDevWatchHost(host) {
+		return env
+	}
+	return append(env, api.DevWatchViteAllowedHostsEnv+"="+host)
 }
 
 // devWatchSourceMap finishes a watch-mode build's source map: the overlay

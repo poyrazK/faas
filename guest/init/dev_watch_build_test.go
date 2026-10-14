@@ -24,9 +24,13 @@ func TestDevWatchRailpackConfig(t *testing.T) {
 		t.Fatalf("deploy = %+v", deploy)
 	}
 	variables := deploy["variables"].(map[string]any)
-	if variables["NODE_ENV"] != "development" || variables[api.DevWatchEnv] != "1" ||
-		variables[api.DevWatchHostEnv] != "dev-api.gregale.dev" || variables[api.DevWatchViteAllowedHostsEnv] != "dev-api.gregale.dev" {
+	if variables["NODE_ENV"] != "development" || variables[api.DevWatchEnv] != "1" || variables[api.DevWatchHostEnv] != "dev-api.gregale.dev" {
 		t.Fatalf("variables = %+v", variables)
+	}
+	// Image environment keys must start with a letter; guest-init adds
+	// Vite's at workload start instead (stampDevWatchEnv).
+	if _, ok := variables[api.DevWatchViteAllowedHostsEnv]; ok || validEnvKey(api.DevWatchViteAllowedHostsEnv) {
+		t.Fatalf("Vite's variable is in the image or would survive the env filter: %+v", variables)
 	}
 	for _, host := range []string{"", "Dev-API.gregale.dev", "a.example,evil.example"} {
 		config := map[string]any{}
@@ -134,5 +138,22 @@ func TestDevPatchRestartSkippedInWatchMode(t *testing.T) {
 	devWatchActive.Store(false)
 	if err := restart(); err == nil || calls != 1 {
 		t.Fatalf("normal mode did not restart: calls=%d err=%v", calls, err)
+	}
+}
+
+// adr: 1170 — a watch-mode workload gets Vite's allowed-hosts override from
+// the environment's hostname; other workloads and bad hostnames get nothing.
+func TestStampDevWatchEnv(t *testing.T) {
+	env := []string{"PATH=/usr/bin", api.DevWatchHostEnv + "=dev-api.gregale.dev"}
+	got := stampDevWatchEnv(append([]string(nil), env...), true)
+	if devDebugEnvValue(got, api.DevWatchViteAllowedHostsEnv) != "dev-api.gregale.dev" {
+		t.Fatalf("watch env = %v", got)
+	}
+	if got := stampDevWatchEnv(append([]string(nil), env...), false); len(got) != len(env) {
+		t.Fatalf("non-watch env = %v", got)
+	}
+	bad := []string{api.DevWatchHostEnv + "=a.example,evil.example"}
+	if got := stampDevWatchEnv(bad, true); len(got) != 1 {
+		t.Fatalf("invalid host was stamped: %v", got)
 	}
 }
