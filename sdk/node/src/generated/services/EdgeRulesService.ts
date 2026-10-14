@@ -593,6 +593,7 @@ export class EdgeRulesService {
   public static getEdgeRuleStats({
     slug,
     window = '24h',
+    series = false,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -602,6 +603,10 @@ export class EdgeRulesService {
      * How far back to total hit counts.
      */
     window?: '1h' | '24h' | '7d',
+    /**
+     * Also return each rule's hourly totals (ADR-1194).
+     */
+    series?: boolean,
   }): CancelablePromise<EdgeRuleStatsResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -611,6 +616,7 @@ export class EdgeRulesService {
       },
       query: {
         'window': window,
+        'series': series,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

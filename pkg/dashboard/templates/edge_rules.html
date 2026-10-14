@@ -216,10 +216,32 @@
       {{end}}
     </section>
 
+    {{if .Data.Review}}
+    <section class="card" id="rule-review" aria-labelledby="rule-review-heading">
+      <h2 id="rule-review-heading">Rule review</h2>
+      <p class="muted">Log-mode rules are matched and counted but never act. Counts start at each rule's last change, so editing a rule restarts its evidence.</p>
+      <ul>
+        {{range .Data.Review}}
+          <li>
+            <strong>{{.Label}}</strong> <code>{{.Match}}</code><br>
+            {{if eq .Status "ready"}}
+              {{if .Matches}}Matched <strong>{{.Matches}}</strong> requests in log mode since {{.Since}} (about {{.PerDay}} a day). Enforcing applies its action to requests like these. <a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}&amp;outcome=logged&amp;since=7d#security-events">Review sampled requests</a>{{else}}No matches since {{.Since}}: enforcing it would not have changed any request so far.{{end}}
+              <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button></form>
+            {{else if eq .Status "collecting"}}
+              In log mode for {{.ObservedHours}} h. Give it a day of traffic before deciding.
+            {{else}}
+              No matches in 7 days. Check what it matches, or delete it if it is no longer needed.
+            {{end}}
+          </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
     <h2>Rules</h2>
     {{if .Data.Rules}}
       <table aria-label="Edge rules">
-        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Matches (24 h)</th><th>Action</th><th>Manage</th></tr></thead>
+        <thead><tr><th>Priority</th><th>Kind</th><th>Match</th><th>Methods</th><th>Status</th><th>Matches (24 h · 7 days)</th><th>Action</th><th>Manage</th></tr></thead>
         <tbody>
           {{range .Data.Rules}}
             <tr>
@@ -228,7 +250,7 @@
               <td>{{if .AppWide}}<em>every app host</em> <code>{{.MatchPath}}</code>{{else}}<code>{{.MatchHost}}{{.MatchPath}}</code>{{end}}</td>
               <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
               <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}</td>
-              <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
+              <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if .SparkPoints}}<br><svg class="sparkline" width="84" height="20" viewBox="0 0 84 20" role="img" aria-label="{{.Matches7d}} matches in the last 7 days"><title>{{.Matches7d}} matches in the last 7 days</title><polyline points="{{.SparkPoints}}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
               <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
               <td class="actions nowrap">
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">{{if eq .Mode "log"}}<input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button>{{else}}<input type="hidden" name="mode" value="log"><button type="submit">Log only</button>{{end}}</form>

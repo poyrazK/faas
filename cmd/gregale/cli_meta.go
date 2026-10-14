@@ -3110,6 +3110,11 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "window", Short: "window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
+			{Name: "review", Short: "Log-mode rules ready to enforce, still collecting, or quiet for 7 days, with the command for each", Examples: []string{
+				"gregale edge-rules review --app my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+			}},
 			{Name: "events", Short: "Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)", Examples: []string{
 				"gregale edge-rules events --app my-api --outcome logged --since 7d",
 			}, Flags: []cliFlag{

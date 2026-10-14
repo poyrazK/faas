@@ -15,5 +15,9 @@ export type EdgeRuleHitStatsResponse = {
    * Requests a log-mode rule matched.
    */
   logged: number;
+  /**
+   * With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the current hour (ADR-1194).
+   */
+  series?: Array<number>;
 };
 

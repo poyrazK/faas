@@ -81,7 +81,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		data.Rules = projectDashboardEdgeRules(rules)
 		data.Recipes = dashboardEdgeRuleRecipes(rules, acct.Plan)
 		data.Hosts = s.dashboardEdgeRuleHostCoverage(ctx, log, app, rules)
-		s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules)
+		if hits, ok := s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules); ok {
+			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
+		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {

@@ -31749,6 +31749,11 @@ paths:
           required: false
           description: How far back to total hit counts.
           schema: { type: string, enum: ['1h', '24h', '7d'], default: '24h' }
+        - name: series
+          in: query
+          required: false
+          description: Also return each rule's hourly totals (ADR-1194).
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Per-rule counts.
@@ -78920,6 +78925,10 @@ components:
         rule_id: { type: string }
         matched: { type: integer, format: int64, minimum: 0, description: Requests an enforced rule matched. }
         logged: { type: integer, format: int64, minimum: 0, description: Requests a log-mode rule matched. }
+        series:
+          type: array
+          description: With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the current hour (ADR-1194).
+          items: { type: integer, format: int64, minimum: 0 }
 
     EdgeRuleSetVersionResponse:
       description: One recorded state of an app's whole edge-rule set (ADR-961).

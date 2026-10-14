@@ -3445,6 +3445,17 @@ func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (Edg
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetEdgeRuleStatsWithSeries is GetEdgeRuleStats with each rule's hourly
+// match totals (ADR-1194).
+func (c *Client) GetEdgeRuleStatsWithSeries(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
+	v := url.Values{"series": {"true"}}
+	if window != "" {
+		v.Set("window", window)
+	}
+	var out EdgeRuleStatsResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/stats?"+v.Encode(), nil, &out)
+}
+
 // ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
 // first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {

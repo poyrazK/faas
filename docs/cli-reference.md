@@ -8991,6 +8991,22 @@ Per-rule match counts (matched for enforced rules, logged for log-mode rules)
 | `--app <slug>` | app slug | required |
 | `--window <WINDOW>` | window | one of `1h` · `24h` · `7d` |
 
+### edge-rules review
+
+Log-mode rules ready to enforce, still collecting, or quiet for 7 days, with the command for each
+
+`gregale edge-rules review [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+
+Examples:
+
+```sh
+gregale edge-rules review --app my-api
+```
+
 ### edge-rules events
 
 Sampled requests rules matched, newest first (up to 10 per rule per minute; kept 7 days)
