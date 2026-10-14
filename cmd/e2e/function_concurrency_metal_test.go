@@ -14,12 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"filippo.io/age"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -28,12 +30,15 @@ import (
 )
 
 // TestFunctionConcurrencyMetal is the ADR-1190 acceptance on real guests. A
-// binary function whose handler speaks the shared worker protocol, deployed
-// with function_concurrency=8, serves eight slow requests at once from one
-// worker process, and a request its client abandons is cancelled without
-// restarting that worker. The gregale CLI then deploys a functions manifest:
-// per-function settings, env and secrets reach each app before its build,
-// and the entry function's host routes /users/* to another function.
+// binary function whose handler speaks the shared worker protocol, and real
+// node22 and python312 (async and sync) functions, each deployed with
+// function_concurrency=8, serve eight slow requests at once from one worker
+// process, and a request its client abandons does not restart that worker.
+// Each guest's writable root also has the plan's ephemeral disk (#2529). The
+// gregale CLI then deploys a functions manifest: per-function settings, env
+// and secrets reach each app before its build, the entry function's host
+// routes /users/* to another function, queue bindings and event triggers
+// reach the function, and prune_env removes an undeclared key.
 func TestFunctionConcurrencyMetal(t *testing.T) {
 	if os.Getenv("FAAS_TEST_KERNEL") == "" {
 		t.Skip("FAAS_TEST_KERNEL unset; skipping metal function concurrency test")
@@ -56,7 +61,16 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
-	h := e2etest.Start(t, pool, e2etest.All, append(secretSealingEnv(t), "FAAS_FUNCTION_RUNNER_GO124="+runner)...)
+	env := append(secretSealingEnv(t), "FAAS_FUNCTION_RUNNER_GO124="+runner)
+	nodeRunner := os.Getenv("FAAS_E2E_FUNCTION_RUNNER_NODE22")
+	pythonRunner := os.Getenv("FAAS_E2E_FUNCTION_RUNNER_PYTHON312")
+	if nodeRunner != "" {
+		env = append(env, "FAAS_FUNCTION_RUNNER_NODE22="+nodeRunner)
+	}
+	if pythonRunner != "" {
+		env = append(env, "FAAS_FUNCTION_RUNNER_PYTHON312="+pythonRunner)
+	}
+	h := e2etest.Start(t, pool, e2etest.All, env...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -67,63 +81,29 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 	t.Run("shared worker", func(t *testing.T) {
 		result := deployBinaryFunctionWith(t, h, pool, key, "concfn", sharedWorkerCHandlerSource(t),
 			func(req *api.CreateAppRequest) { req.FunctionConcurrency = 8 })
-		host := result.slug + ".apps.test.example"
-		first := sharedWorkerGet(t, h, key, host, "/fast", time.Minute)
-		if first.slots != "8" {
-			t.Fatalf("handler saw FAAS_FUNCTION_CONCURRENCY=%q; want imaged's 8", first.slots)
-		}
+		exerciseSharedFunction(t, h, key, result.slug, "/hang", "1")
+	})
 
-		// One worker with eight slots answers eight 2 s requests together.
-		// One request per worker, four workers, would take at least 4 s.
-		started := time.Now()
-		var wg sync.WaitGroup
-		replies := make(chan sharedWorkerReply, 8)
-		for range 8 {
-			wg.Go(func() { replies <- sharedWorkerGet(t, h, key, host, "/slow", time.Minute) })
-		}
-		wg.Wait()
-		close(replies)
-		elapsed := time.Since(started)
-		pids := map[string]bool{}
-		for reply := range replies {
-			pids[reply.pid] = true
-		}
-		t.Logf("ADR-1190 evidence: 8 concurrent 2 s requests answered in %v by %d worker process(es) %v (first request pid %s)",
-			elapsed.Round(10*time.Millisecond), len(pids), sortedKeys(pids), first.pid)
-		if len(pids) != 1 || !pids[first.pid] {
-			t.Fatalf("requests ran in workers %v; want the one shared worker %s", sortedKeys(pids), first.pid)
-		}
-		if elapsed > 3500*time.Millisecond {
-			t.Fatalf("8 concurrent 2 s requests took %v; the worker served them one at a time", elapsed)
-		}
-
-		// A client that gives up does not cost the worker: the runner cancels
-		// the request and the worker acknowledges it.
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayAppURL(h, result.slug)+"hang", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Host = host
-		req.Header.Set("Authorization", "Bearer "+key)
-		if resp, err := (&http.Client{}).Do(req); err == nil {
-			_ = resp.Body.Close()
-			t.Fatalf("GET /hang answered %d; want the client to give up", resp.StatusCode)
-		}
-		cancel()
-		var after sharedWorkerReply
-		for deadline := time.Now().Add(45 * time.Second); ; time.Sleep(time.Second) {
-			after = sharedWorkerGet(t, h, key, host, "/fast", time.Minute)
-			if after.cancels != "0" || time.Now().After(deadline) {
-				break
-			}
-		}
-		t.Logf("ADR-1190 evidence: after an abandoned request, worker %s reports %s acknowledged cancel(s)", after.pid, after.cancels)
-		if after.cancels == "0" {
-			t.Fatal("the abandoned request was never cancelled")
-		}
-		if after.pid != first.pid {
-			t.Fatalf("worker %s replaced by %s; a cancel must not restart a responsive worker", first.pid, after.pid)
+	t.Run("interpreter workers", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, runtime, runner, file, source string
+			abandon, wantCancels                string
+		}{
+			// Node drops an abandoned request's output; its promise runs on.
+			{"node", "node22", nodeRunner, "handler.js", nodeSharedHandler, "/hang", ""},
+			// Python cancels an async handler's task, which counts it.
+			{"python async", "python312", pythonRunner, "handler.py", pythonAsyncSharedHandler, "/hang", "1"},
+			// A sync handler's thread finishes; the cancel is acknowledged then.
+			{"python sync", "python312", pythonRunner, "handler.py", pythonSyncSharedHandler, "/abandon", ""},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if tc.runner == "" {
+					t.Skipf("FAAS_E2E_FUNCTION_RUNNER_%s unset; %s functions need the real runner", strings.ToUpper(tc.runtime), tc.runtime)
+				}
+				slug := "conc-" + strings.ReplaceAll(tc.name, " ", "-")
+				result := deployRuntimeFunction(t, h, pool, key, slug, tc.runtime, tc.file, tc.source, 8)
+				exerciseSharedFunction(t, h, key, result.slug, tc.abandon, tc.wantCancels)
+			})
 		}
 	})
 
@@ -158,8 +138,15 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
     request_timeout_s: 120
     env:
       WHO: users
+    prune_env: true
     secrets_from_env: [USERS_TOKEN]
     routes: ["/users/*"]
+    queue_bindings:
+      - name: jobs
+        queue_name: user-jobs
+    event_triggers:
+      - source: shop.*
+        type: user.created
 `
 		if err := os.WriteFile(filepath.Join(project, "gregale.yaml"), []byte(manifest), 0o644); err != nil {
 			t.Fatal(err)
@@ -210,8 +197,23 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		if fallthrough_.who != "web" {
 			t.Fatalf("/about on the entry host reached who=%s; want the entry function", fallthrough_.who)
 		}
+		var bindings []api.QueueBindingResponse
+		mustGetJSON(t, h, key, "/v1/apps/shop-users/queue-bindings", &bindings)
+		var subscriptions api.EventSubscriptionListResponse
+		mustGetJSON(t, h, key, "/v1/apps/shop-users/event-subscriptions", &subscriptions)
+		t.Logf("ADR-1190 evidence: shop-users queue bindings %+v; event subscriptions %+v", bindings, subscriptions.Subscriptions)
+		if len(bindings) != 1 || bindings[0].Name != "jobs" || bindings[0].QueueName != "user-jobs" || bindings[0].Mode != "push" || bindings[0].WorkloadClass != "http" {
+			t.Fatalf("shop-users queue bindings = %+v; want one push/http binding jobs → user-jobs", bindings)
+		}
+		if len(subscriptions.Subscriptions) != 1 || subscriptions.Subscriptions[0].Source != "shop.*" || subscriptions.Subscriptions[0].Type != "user.created" {
+			t.Fatalf("shop-users event subscriptions = %+v; want shop.* / user.created", subscriptions.Subscriptions)
+		}
 
-		// A second deploy with nothing changed converges without new rules.
+		// A key set by hand on a prune_env function is gone after the next
+		// deploy, which otherwise converges without new rules or subscriptions.
+		if body, status := doReq(t, h, key, http.MethodPut, "/v1/apps/shop-users/env/EXTRA", api.PutAppEnvRequest{Value: "1"}); status/100 != 2 {
+			t.Fatalf("PUT env EXTRA: status=%d body=%s", status, body)
+		}
 		again := exec.CommandContext(ctx, cli, "deploy", "--path", project, "--name", "shop", "--no-doctor")
 		again.Dir, again.Env = cmd.Dir, cmd.Env
 		if out, err := again.CombinedOutput(); err != nil {
@@ -228,8 +230,198 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		if managed != 1 {
 			t.Fatalf("entry app has %d managed route rules after a repeat deploy; want 1: %+v", managed, rules)
 		}
+		var envList api.AppEnvListResponse
+		mustGetJSON(t, h, key, "/v1/apps/shop-users/env", &envList)
+		mustGetJSON(t, h, key, "/v1/apps/shop-users/event-subscriptions", &subscriptions)
+		envKeys := make([]string, 0, len(envList.Env))
+		for _, row := range envList.Env {
+			envKeys = append(envKeys, row.Key)
+		}
+		t.Logf("ADR-1190 evidence: after the repeat deploy shop-users env keys %v, %d event subscription(s)", envKeys, len(subscriptions.Subscriptions))
+		if strings.Join(envKeys, ",") != "WHO" {
+			t.Fatalf("shop-users env keys = %v; prune_env should leave only WHO", envKeys)
+		}
+		if len(subscriptions.Subscriptions) != 1 {
+			t.Fatalf("repeat deploy left %d event subscriptions; want 1", len(subscriptions.Subscriptions))
+		}
 	})
 }
+
+// exerciseSharedFunction checks a function deployed with
+// function_concurrency=8 (ADR-1190): one worker answers eight concurrent
+// 2 s requests, and after a client abandons abandonPath the same worker
+// still serves, past the runner's 5 s cancel deadline. wantCancels, when
+// set, is the cancel count the worker must report. The guest's writable
+// root must also be the plan's ephemeral disk (#2529).
+func exerciseSharedFunction(t *testing.T, h *e2etest.Harness, key, slug, abandonPath, wantCancels string) {
+	t.Helper()
+	host := slug + ".apps.test.example"
+	first := sharedWorkerGet(t, h, key, host, "/fast", time.Minute)
+	if first.slots != "8" {
+		t.Fatalf("handler saw FAAS_FUNCTION_CONCURRENCY=%q; want imaged's 8", first.slots)
+	}
+	checkWritableRoot(t, slug, first)
+
+	// One worker with eight slots answers eight 2 s requests together.
+	// One request per worker, four workers, would take at least 4 s.
+	started := time.Now()
+	var wg sync.WaitGroup
+	replies := make(chan sharedWorkerReply, 8)
+	for range 8 {
+		wg.Go(func() { replies <- sharedWorkerGet(t, h, key, host, "/slow", time.Minute) })
+	}
+	wg.Wait()
+	close(replies)
+	elapsed := time.Since(started)
+	pids := map[string]bool{}
+	for reply := range replies {
+		pids[reply.pid] = true
+	}
+	t.Logf("ADR-1190 evidence: %s: 8 concurrent 2 s requests answered in %v by %d worker process(es) %v (first request pid %s)",
+		slug, elapsed.Round(10*time.Millisecond), len(pids), sortedKeys(pids), first.pid)
+	if len(pids) != 1 || !pids[first.pid] {
+		t.Fatalf("requests ran in workers %v; want the one shared worker %s", sortedKeys(pids), first.pid)
+	}
+	if elapsed > 3500*time.Millisecond {
+		t.Fatalf("8 concurrent 2 s requests took %v; the worker served them one at a time", elapsed)
+	}
+
+	// A client that gives up does not cost the worker.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(h.GatewayURL, "/")+abandonPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = host
+	req.Header.Set("Authorization", "Bearer "+key)
+	if resp, err := (&http.Client{}).Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Fatalf("GET %s answered %d; want the client to give up", abandonPath, resp.StatusCode)
+	}
+	cancel()
+	// Past the runner's 5 s cancel deadline, so a missed acknowledgement
+	// would have restarted the worker.
+	time.Sleep(7 * time.Second)
+	var after sharedWorkerReply
+	for deadline := time.Now().Add(45 * time.Second); ; time.Sleep(time.Second) {
+		after = sharedWorkerGet(t, h, key, host, "/fast", time.Minute)
+		if wantCancels == "" || after.cancels == wantCancels || time.Now().After(deadline) {
+			break
+		}
+	}
+	t.Logf("ADR-1190 evidence: %s: after an abandoned %s, worker %s (first %s) reports %s cancel(s)", slug, abandonPath, after.pid, first.pid, after.cancels)
+	if wantCancels != "" && after.cancels != wantCancels {
+		t.Fatalf("worker reports %s cancels; want %s", after.cancels, wantCancels)
+	}
+	if after.pid != first.pid {
+		t.Fatalf("worker %s replaced by %s; an abandoned request must not restart a responsive worker", first.pid, after.pid)
+	}
+}
+
+// checkWritableRoot is the #2529 acceptance: a fresh function's writable
+// root is the plan's ephemeral disk, not a sliver above its app layer, and
+// starts below the 80% near-full threshold.
+func checkWritableRoot(t *testing.T, slug string, reply sharedWorkerReply) {
+	t.Helper()
+	allowance := api.MustLimitsFor(api.PlanPro).EphemeralDiskMaxMB()
+	total, totalErr := strconv.Atoi(reply.diskTotal)
+	free, freeErr := strconv.Atoi(reply.diskFree)
+	if totalErr != nil || freeErr != nil {
+		t.Errorf("%s: handler reported disk_total_mb=%q disk_free_mb=%q", slug, reply.diskTotal, reply.diskFree)
+		return
+	}
+	t.Logf("#2529 evidence: %s: fresh guest writable root %d MB, %d MB free (%d%% used); Pro allowance %d MB",
+		slug, total, free, (total-free)*100/max(total, 1), allowance)
+	if total < allowance*85/100 || total > allowance {
+		t.Errorf("%s: writable root is %d MB; want the Pro ephemeral disk allowance (%d MB, less filesystem overhead)", slug, total, allowance)
+	}
+	if (total-free)*100 >= total*80 {
+		t.Errorf("%s: a fresh guest starts %d%% full; want below the 80%% near-full threshold", slug, (total-free)*100/total)
+	}
+}
+
+// deployRuntimeFunction creates a public function app with
+// function_concurrency and deploys one handler file to it.
+func deployRuntimeFunction(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug, runtime, file, source string, concurrency int) buildResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
+	defer cancel()
+	public := false
+	create := api.CreateAppRequest{Slug: slug, Type: "function", Runtime: runtime, RequireAuthn: &public, FunctionConcurrency: concurrency}
+	if got := postOK(t, h, key, "/v1/apps", create); got != http.StatusCreated {
+		t.Fatalf("create %s function %s: status=%d", runtime, slug, got)
+	}
+	body, status := postBinaryFunctionDeployment(t, h, key, slug, buildTarGz(t, map[string]string{file: source}), runtime, "handler.handler")
+	if status != http.StatusAccepted {
+		t.Fatalf("deploy %s: status=%d body=%s", slug, status, body)
+	}
+	depID, buildID := parseQueuedDeployment(t, body)
+	if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
+		t.Fatalf("%s function %s (build %s, deployment %s) did not go live: %v", runtime, slug, buildID, depID, err)
+	}
+	return buildResult{deploymentID: depID, buildID: buildID, slug: slug}
+}
+
+// The interpreter handlers answer like the C handler: "key=value" fields
+// naming the worker's pid, its slots, its cancel count and its writable
+// root's size. /slow takes 2 s; /hang never answers; /abandon takes 3 s.
+const nodeSharedHandler = `const fs = require("fs");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function disk() {
+  const st = fs.statfsSync("/");
+  return "disk_total_mb=" + Math.floor(st.blocks * st.bsize / 1048576) + " disk_free_mb=" + Math.floor(st.bavail * st.bsize / 1048576);
+}
+exports.handler = async (event) => {
+  if (event.path === "/slow") await sleep(2000);
+  if (event.path === "/hang") await new Promise(() => {});
+  return {
+    statusCode: 200,
+    headers: { "content-type": "text/plain" },
+    body: "who=node pid=" + process.pid + " slots=" + (process.env.FAAS_FUNCTION_CONCURRENCY || "-") + " cancels=0 " + disk() + " path=" + event.path,
+  };
+};
+`
+
+const pythonAsyncSharedHandler = `import asyncio
+import os
+
+cancels = 0
+
+def disk():
+    st = os.statvfs("/")
+    return "disk_total_mb=%d disk_free_mb=%d" % (st.f_blocks * st.f_frsize // 1048576, st.f_bavail * st.f_frsize // 1048576)
+
+async def handler(event, ctx):
+    global cancels
+    path = event["path"]
+    try:
+        if path == "/slow":
+            await asyncio.sleep(2)
+        if path == "/hang":
+            await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        cancels += 1
+        raise
+    body = "who=python pid=%d slots=%s cancels=%d %s path=%s" % (os.getpid(), os.environ.get("FAAS_FUNCTION_CONCURRENCY", "-"), cancels, disk(), path)
+    return {"statusCode": 200, "headers": {"content-type": "text/plain"}, "body": body}
+`
+
+const pythonSyncSharedHandler = `import os
+import time
+
+def disk():
+    st = os.statvfs("/")
+    return "disk_total_mb=%d disk_free_mb=%d" % (st.f_blocks * st.f_frsize // 1048576, st.f_bavail * st.f_frsize // 1048576)
+
+def handler(event, ctx):
+    path = event["path"]
+    if path == "/slow":
+        time.sleep(2)
+    if path == "/abandon":
+        time.sleep(3)
+    body = "who=python-sync pid=%d slots=%s cancels=0 %s path=%s" % (os.getpid(), os.environ.get("FAAS_FUNCTION_CONCURRENCY", "-"), disk(), path)
+    return {"statusCode": 200, "headers": {"content-type": "text/plain"}, "body": body}
+`
 
 // secretSealingEnv gives the daemons a host and fleet age key and an HMAC
 // key, so apid can seal app secrets and wakes can deliver them.
@@ -266,7 +458,10 @@ func secretSealingEnv(t *testing.T) []string {
 	}
 }
 
-type sharedWorkerReply struct{ who, pid, slots, cancels, tok, path string }
+type sharedWorkerReply struct {
+	who, pid, slots, cancels, tok, path string
+	diskTotal, diskFree                 string
+}
 
 // sharedWorkerGet sends GET path to the function behind host and parses the
 // handler's "key=value" reply.
@@ -305,6 +500,10 @@ func sharedWorkerGet(t *testing.T, h *e2etest.Harness, key, host, path string, t
 			reply.cancels = value
 		case "tok":
 			reply.tok = value
+		case "disk_total_mb":
+			reply.diskTotal = value
+		case "disk_free_mb":
+			reply.diskFree = value
 		case "path":
 			reply.path = value
 		}
@@ -351,12 +550,14 @@ func sharedWorkerCHandlerSource(t *testing.T) []byte {
 // each request on its own thread with the id the runner sent, and
 // acknowledges cancels. /slow answers after 2 s and /hang never answers;
 // every reply names the worker's pid, its WHO env value, its slots, how many
-// cancels it has acknowledged and the length of its USERS_TOKEN secret.
+// cancels it has acknowledged, the length of its USERS_TOKEN secret and its
+// writable root's size.
 func sharedWorkerCHandlerFiles() map[string]string {
 	const handlerC = `#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 static const char protocol[] = "FAAS_PERSISTENT_PROTOCOL_V1";
@@ -408,10 +609,16 @@ static void *serve(void *arg) {
 	if (strcmp(job->path, "/hang") == 0) { free(job); return NULL; }
 	if (strcmp(job->path, "/slow") == 0) sleep(2);
 	const char *who = getenv("WHO"), *slots = getenv("FAAS_FUNCTION_CONCURRENCY"), *token = getenv("USERS_TOKEN");
-	char text[320], encoded[480];
+	struct statvfs st;
+	long total = -1, free_mb = -1;
+	if (statvfs("/", &st) == 0) {
+		total = (long)((unsigned long long)st.f_blocks * st.f_frsize / 1048576);
+		free_mb = (long)((unsigned long long)st.f_bavail * st.f_frsize / 1048576);
+	}
+	char text[400], encoded[560];
 	pthread_mutex_lock(&out);
-	snprintf(text, sizeof text, "who=%s pid=%d slots=%s cancels=%d tok=%d path=%s",
-		who ? who : "-", (int)getpid(), slots ? slots : "-", cancels, token ? (int)strlen(token) : 0, job->path);
+	snprintf(text, sizeof text, "who=%s pid=%d slots=%s cancels=%d tok=%d disk_total_mb=%ld disk_free_mb=%ld path=%s",
+		who ? who : "-", (int)getpid(), slots ? slots : "-", cancels, token ? (int)strlen(token) : 0, total, free_mb, job->path);
 	encode(text, encoded);
 	if (job->id[0])
 		printf("{\"__faas_id\":\"%s\",\"status\":200,\"headers\":{\"content-type\":\"text/plain\"},\"body_b64\":\"%s\"}\n", job->id, encoded);
