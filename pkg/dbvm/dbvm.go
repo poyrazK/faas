@@ -57,6 +57,9 @@ type Spec struct {
 	// Spare boots a spare: guest-init leaves the volume drive alone until
 	// it adopts one (spare.go).
 	Spare bool
+	// Standby boots the volume as a hot standby of the database's primary
+	// (replication.go), seeding an empty one first.
+	Standby bool
 }
 
 // Validate rejects a spec that would not boot a database VM.
@@ -76,6 +79,8 @@ func (s Spec) Validate() error {
 		return errors.New("dbvm: restore-until-end without a restore")
 	case s.Spare && !s.RestoreTarget.IsZero():
 		return errors.New("dbvm: a spare cannot boot a restore")
+	case s.Standby && (s.Spare || !s.RestoreTarget.IsZero()):
+		return errors.New("dbvm: a standby is neither a spare nor a restore")
 	}
 	return nil
 }
@@ -103,6 +108,9 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 	}
 	if s.Spare {
 		bootArgs += " " + dbguest.SpareArg
+	}
+	if s.Standby {
+		bootArgs += " " + dbguest.StandbyArg
 	}
 	return fcvm.VMConfig{
 		BootSource: fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},

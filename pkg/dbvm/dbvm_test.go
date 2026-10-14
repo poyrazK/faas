@@ -83,6 +83,11 @@ func TestBuildConfigRejectsInvalidSpecs(t *testing.T) {
 		"restore without archive": func(s *Spec) {
 			s.RestoreTarget = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 		},
+		"standby spare": func(s *Spec) { s.Standby, s.Spare = true, true },
+		"standby restore": func(s *Spec) {
+			s.Standby, s.Archive = true, true
+			s.RestoreTarget = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -294,5 +299,24 @@ func TestControlBoundsAGuestsReply(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the guest is still writing: the host never stopped reading")
+	}
+}
+
+// A standby boot carries the standby argument and nothing that would
+// make it a spare or a restore.
+func TestBuildConfigStandbyBoot(t *testing.T) {
+	s := validSpec()
+	s.Archive, s.Standby = true, true
+	cfg, err := BuildConfig(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := cfg.BootSource.BootArgs
+	if !dbguest.Standby(args) || !dbguest.ArchiveEnabled(args) || dbguest.Spare(args) || strings.Contains(args, dbguest.RestoreTargetArgKey) {
+		t.Fatalf("standby boot args %q", args)
+	}
+	s.Standby = false
+	if cfg, _ := BuildConfig(s); dbguest.Standby(cfg.BootSource.BootArgs) {
+		t.Fatalf("primary boot carries the standby argument: %q", cfg.BootSource.BootArgs)
 	}
 }

@@ -39,7 +39,13 @@ func volumeRuntime(t *testing.T) *dbvm.Runtime {
 	if err := os.WriteFile(fc, []byte("#!/bin/sh\n"), 0o755); err != nil { //nolint:gosec // test stub
 		t.Fatal(err)
 	}
-	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{JailBase: filepath.Join(dir, "jail"), VolumeRoot: filepath.Join(dir, "volumes"),
+	// The jail's relay sockets need a short path; macOS temp dirs are long.
+	short, err := os.MkdirTemp("/tmp", "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{JailBase: filepath.Join(short, "j"), VolumeRoot: filepath.Join(dir, "volumes"),
 		KernelPath: filepath.Join(dir, "vmlinux"), ParentCgroup: "faas-db-test", FirecrackerBin: fc, Leases: nopLeaser{}})
 	if err != nil {
 		t.Fatal(err)

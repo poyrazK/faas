@@ -10,9 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 // Database-mode layout (ADR-1027). drive0 is the read-only base carrying
@@ -125,11 +128,143 @@ func databaseInitdbArgs(major int) []string {
 // through guest-init's vsock bridge, which runs as root, so peer
 // authentication can never admit them as the superuser; the superuser is
 // reachable only by the admin control op running as the postgres OS user.
+//
+// The replication line admits physical replication connections as the
+// replication role only from the replication bridge's OS user
+// (databaseIdent). Tenant sessions arrive through the root-owned data
+// bridge, which the map does not name, and logical replication
+// connections never match a replication line.
 const databaseHBA = `# Managed by guest-init (ADR-1027). Do not edit.
 local all postgres peer
 local replication postgres peer
+local replication ` + databaseReplicationRole + ` peer map=replication
 local all all scram-sha-256
 `
+
+// databaseIdent maps the replication bridge's OS user to the replication
+// role and to nothing else.
+const databaseIdent = `# Managed by guest-init (ADR-1027). Do not edit.
+replication ` + databaseReplicationOSUser + ` ` + databaseReplicationRole + `
+`
+
+// Streaming replication (ADR-1027 production class).
+const (
+	// databaseReplicationRole is the role a standby streams as: LOGIN and
+	// REPLICATION, reachable only through the replication bridge.
+	databaseReplicationRole = "gregale_replication"
+	// databaseReplicationOSUser is the OS user a primary's bridge connects
+	// to PostgreSQL as. Nothing else in the guest runs as it.
+	databaseReplicationOSUser = "nobody"
+	// databaseStandbyName is the standby's application_name and slot.
+	databaseStandbyName = "gregale_standby"
+	// databaseReplicationSocketDir holds the socket a standby's guest-init
+	// serves: each connection is relayed to the primary.
+	databaseReplicationSocketDir = "/run/gregale-replication"
+	// databaseSeedMarker records that a standby's copy of its primary is
+	// complete; a standby boot without it seeds the volume again.
+	databaseSeedMarker = databaseMountPoint + "/standby-seeded"
+)
+
+// standbySettings make a server a hot standby streaming from its primary
+// through the bridge socket, falling back to the archive when it has one:
+// a standby that fell behind its slot's retained WAL catches up from there.
+func standbySettings(archive bool) []string {
+	settings := []string{
+		"-c", "primary_conninfo=host=" + databaseReplicationSocketDir + " user=" + databaseReplicationRole + " application_name=" + databaseStandbyName,
+		"-c", "primary_slot_name=" + databaseStandbyName,
+		"-c", "hot_standby=on",
+	}
+	if archive {
+		settings = append(settings, "-c", "restore_command="+databaseRestoreCommand)
+	}
+	return settings
+}
+
+// slotWALKeepMB bounds the WAL a primary keeps for an absent standby at a
+// quarter of its volume: a standby gone longer is copied again rather than
+// let the primary fill its volume.
+func slotWALKeepMB(volumeBytes int64) int64 {
+	return max(volumeBytes/4>>20, 64)
+}
+
+// databaseStandbySeedArgs copies the primary through the bridge socket
+// into an empty data directory, WAL included, holding the standby's slot
+// so the primary keeps the WAL from the copy's start.
+func databaseStandbySeedArgs(major int) []string {
+	return []string{
+		databaseBinDir(major) + "/pg_basebackup",
+		"-h", databaseReplicationSocketDir,
+		"-U", databaseReplicationRole,
+		"-D", databasePGData,
+		"-X", "stream",
+		"-S", databaseStandbyName,
+		"-c", "fast",
+		"-w",
+		"--no-manifest",
+	}
+}
+
+// resetSynchronousStatements stop commits waiting for a standby. Every
+// boot and every promotion starts asynchronous: only the host turns
+// synchronous replication on, once the standby streams.
+var resetSynchronousStatements = []string{
+	"ALTER SYSTEM RESET synchronous_standby_names",
+	"SELECT pg_catalog.pg_reload_conf()",
+}
+
+// replicationStatements set a primary's replication mode. Each runs as its
+// own statement: ALTER SYSTEM cannot run in a transaction.
+func replicationStatements(mode dbguest.ReplicationMode) []string {
+	if mode == dbguest.ReplicationOff {
+		return append(slices.Clone(resetSynchronousStatements),
+			"SELECT pg_catalog.pg_drop_replication_slot(slot_name) FROM pg_catalog.pg_replication_slots WHERE slot_name = '"+databaseStandbyName+"' AND NOT active")
+	}
+	names := "ALTER SYSTEM RESET synchronous_standby_names"
+	if mode == dbguest.ReplicationSync {
+		names = "ALTER SYSTEM SET synchronous_standby_names = '" + databaseStandbyName + "'"
+	}
+	return []string{
+		"DO $$BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '" + databaseReplicationRole + "') THEN CREATE ROLE " + databaseReplicationRole + " WITH LOGIN REPLICATION; END IF; END$$",
+		"SELECT pg_catalog.pg_create_physical_replication_slot('" + databaseStandbyName + "', true) WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = '" + databaseStandbyName + "')",
+		names,
+		"SELECT pg_catalog.pg_reload_conf()",
+	}
+}
+
+// replicationStatusQuery reports the standby as the primary sees it: one
+// row of state|sync_state|lag bytes (-1 unknown)|synchronous_standby_names|slot.
+const replicationStatusQuery = `SELECT coalesce(r.state, ''), coalesce(r.sync_state, ''),
+ coalesce(pg_catalog.pg_wal_lsn_diff(pg_catalog.pg_current_wal_lsn(), r.flush_lsn)::bigint, -1),
+ pg_catalog.current_setting('synchronous_standby_names'),
+ EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = '` + databaseStandbyName + `')
+FROM (SELECT 1) AS one
+LEFT JOIN LATERAL (SELECT state, sync_state, flush_lsn FROM pg_catalog.pg_stat_replication
+ WHERE application_name = '` + databaseStandbyName + `' ORDER BY state = 'streaming' DESC LIMIT 1) AS r ON true`
+
+// parseReplicationStatus reads replicationStatusQuery's row, as psql -tA
+// prints it with | between fields.
+func parseReplicationStatus(row string) (dbguest.ReplicationStatus, error) {
+	fields := strings.Split(strings.TrimSpace(row), "|")
+	if len(fields) != 5 {
+		return dbguest.ReplicationStatus{}, fmt.Errorf("replication status: %d fields", len(fields))
+	}
+	lag, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return dbguest.ReplicationStatus{}, fmt.Errorf("replication status: lag %q", fields[2])
+	}
+	status := dbguest.ReplicationStatus{Mode: dbguest.ReplicationOff, Streaming: fields[0] == "streaming"}
+	switch {
+	case fields[3] == databaseStandbyName:
+		status.Mode = dbguest.ReplicationSync
+	case fields[4] == "t":
+		status.Mode = dbguest.ReplicationAsync
+	}
+	status.Synchronous = status.Streaming && fields[1] == "sync"
+	if status.Streaming && lag > 0 {
+		status.LagBytes = lag
+	}
+	return status, nil
+}
 
 // databaseBaseBackupArgs streams a tar base backup of the whole cluster to
 // stdout. WAL is not included (-X none): the archive holds it, and the
@@ -189,8 +324,18 @@ func clusterMajor(pgVersion []byte) (int, error) {
 // postmasterReady reports whether postmaster.pid records the "ready"
 // status (line 8), which PostgreSQL writes once it accepts connections.
 func postmasterReady(pidFile []byte) bool {
+	return postmasterStatus(pidFile) == "ready"
+}
+
+// postmasterStatus is postmaster.pid's status line: "starting", "ready"
+// (also a hot standby taking read-only connections), "standby" (a
+// standby without hot_standby) or "stopping".
+func postmasterStatus(pidFile []byte) string {
 	lines := strings.Split(string(pidFile), "\n")
-	return len(lines) >= 8 && strings.TrimSpace(lines[7]) == "ready"
+	if len(lines) < 8 {
+		return ""
+	}
+	return strings.TrimSpace(lines[7])
 }
 
 // lookupPasswdUser finds a user's uid and gid in /etc/passwd content.

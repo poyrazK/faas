@@ -47,6 +47,16 @@ const (
 	// everything but leaves the volume drive alone until OpAdopt, after
 	// vmmd has pointed the drive at a tenant's volume.
 	SpareArg = "gregale.spare=1"
+	// ReplicationPort carries streaming replication between a production
+	// database's primary and its standby (ADR-1027 production class). A
+	// primary's guest-init serves it and admits each stream as the
+	// replication role only; a standby's guest-init dials it on the host,
+	// which relays the stream to the primary's node.
+	ReplicationPort uint32 = 5435
+	// StandbyArg boots the volume as a hot standby of the database's
+	// primary, streaming through the host relay. An empty volume is first
+	// seeded with a base backup of the primary over the same relay.
+	StandbyArg = "gregale.standby=1"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -92,7 +102,39 @@ const (
 	// its volume drive: the guest drops what it cached of the drive,
 	// mounts it and starts PostgreSQL. Accepted once, in StateSpare.
 	OpAdopt Op = "adopt"
+	// OpReplication reports a primary's view of its standby. With
+	// Request.Replication set it first changes it: async makes sure the
+	// replication role and the standby's slot exist, sync also makes
+	// every commit wait until the standby has flushed it, off stops
+	// waiting and drops the slot. Sync lasts until the next boot: every
+	// boot starts asynchronous.
+	OpReplication Op = "replication"
+	// OpPromote ends a standby's recovery: it becomes a primary on a new
+	// timeline and reports ready. Accepted in StateStandby.
+	OpPromote Op = "promote"
 )
+
+// ReplicationMode is how a primary treats its standby.
+type ReplicationMode string
+
+const (
+	ReplicationOff   ReplicationMode = "off"
+	ReplicationAsync ReplicationMode = "async"
+	ReplicationSync  ReplicationMode = "sync"
+)
+
+// ReplicationStatus is a primary's view of its standby.
+type ReplicationStatus struct {
+	// Mode is what the primary runs.
+	Mode ReplicationMode `json:"mode"`
+	// Streaming: the standby is connected and streaming.
+	Streaming bool `json:"streaming,omitempty"`
+	// Synchronous: commits wait for the standby, which has flushed every
+	// one acknowledged so far.
+	Synchronous bool `json:"synchronous,omitempty"`
+	// LagBytes is how far the standby's flushed WAL trails the primary's.
+	LagBytes int64 `json:"lag_bytes,omitempty"`
+}
 
 // MaxFlushAhead bounds how far in the future OpFlushWAL's After may be.
 const MaxFlushAhead = 5 * time.Second
@@ -103,7 +145,10 @@ type State string
 const (
 	StateNeedsBootstrap State = "needs_bootstrap"
 	// StateSpare: booted with no volume yet, waiting for OpAdopt.
-	StateSpare    State = "spare"
+	StateSpare State = "spare"
+	// StateStandby: a hot standby replaying from its primary; it serves
+	// no sessions until promoted.
+	StateStandby  State = "standby"
 	StateStarting State = "starting"
 	StateReady    State = "ready"
 	StateStopping State = "stopping"
@@ -127,6 +172,12 @@ const (
 	ErrCodeFlushFailed        = "flush_failed"
 	// ErrCodeNotSpare refuses OpAdopt outside StateSpare.
 	ErrCodeNotSpare = "not_spare"
+	// ErrCodeNotStandby refuses OpPromote outside StateStandby.
+	ErrCodeNotStandby        = "not_standby"
+	ErrCodeReplicationFailed = "replication_failed"
+	ErrCodePromoteFailed     = "promote_failed"
+	// ErrCodeSeedFailed: a standby could not copy its primary.
+	ErrCodeSeedFailed = "seed_failed"
 )
 
 // Request is one control request line.
@@ -137,6 +188,8 @@ type Request struct {
 	SQL string `json:"sql,omitempty"`
 	// After is OpFlushWAL's instant.
 	After time.Time `json:"after,omitzero"`
+	// Replication is the mode OpReplication sets; empty only reports.
+	Replication ReplicationMode `json:"replication,omitempty"`
 }
 
 // Response answers one control request.
@@ -152,12 +205,27 @@ type Response struct {
 	// before the target, and earlier when the archive ended first. Zero
 	// when recovery replayed none: the restore is its base backup.
 	RecoveredTo time.Time `json:"recovered_to,omitzero"`
+	// Replication answers OpReplication.
+	Replication *ReplicationStatus `json:"replication,omitempty"`
 }
 
 // Validate rejects malformed requests before the guest acts on them.
 func (r Request) Validate() error {
+	if r.Replication != "" && r.Op != OpReplication {
+		return fmt.Errorf("%s: unexpected replication mode", r.Op)
+	}
 	switch r.Op {
-	case OpStatus, OpStop, OpBootstrap, OpBaseBackup, OpAdopt:
+	case OpReplication:
+		switch r.Replication {
+		case "", ReplicationOff, ReplicationAsync, ReplicationSync:
+		default:
+			return fmt.Errorf("replication: unknown mode %q", r.Replication)
+		}
+		if r.SQL != "" || !r.After.IsZero() {
+			return errors.New("replication: unexpected arguments")
+		}
+		return nil
+	case OpStatus, OpStop, OpBootstrap, OpBaseBackup, OpAdopt, OpPromote:
 		if r.SQL != "" || !r.After.IsZero() {
 			return fmt.Errorf("%s: unexpected arguments", r.Op)
 		}
@@ -222,6 +290,9 @@ func RestoreUntilEnd(cmdline string) bool { return hasField(cmdline, RestoreUnti
 
 // Spare reports whether the kernel command line boots a spare.
 func Spare(cmdline string) bool { return hasField(cmdline, SpareArg) }
+
+// Standby reports whether the kernel command line boots a standby.
+func Standby(cmdline string) bool { return hasField(cmdline, StandbyArg) }
 
 func hasField(cmdline, want string) bool {
 	for _, field := range strings.Fields(cmdline) {

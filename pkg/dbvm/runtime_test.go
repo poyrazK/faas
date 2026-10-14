@@ -50,8 +50,12 @@ func testRuntime(t *testing.T, leases *fakeLeaser) *Runtime {
 	if err := os.WriteFile(fc, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	short, err := shortTempDir(t)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rt, err := NewRuntime(RuntimeConfig{
-		JailBase: filepath.Join(dir, "dbjail"), VolumeRoot: filepath.Join(dir, "volumes"),
+		JailBase: filepath.Join(short, "dbjail"), VolumeRoot: filepath.Join(dir, "volumes"),
 		KernelPath: filepath.Join(dir, "vmlinux"), Bases: map[int]string{17: filepath.Join(dir, "base.ext4")},
 		ParentCgroup: "faas.slice/faas-db.slice", FirecrackerBin: fc, Leases: leases,
 	})
@@ -74,8 +78,8 @@ func TestNewRuntimeRejectsIncompleteOrSharedJail(t *testing.T) {
 	}
 }
 
-// TestNewRuntimeRejectsAJailTooDeepForTheArchiveRelay: the relay socket
-// lives inside each jail, and Linux caps unix socket paths at 107 bytes.
+// TestNewRuntimeRejectsAJailTooDeepForTheArchiveRelay: the relay sockets
+// live inside each jail, and Linux caps unix socket paths at 107 bytes.
 func TestNewRuntimeRejectsAJailTooDeepForTheArchiveRelay(t *testing.T) {
 	dir := t.TempDir()
 	fc := filepath.Join(dir, "firecracker")
@@ -94,9 +98,10 @@ func TestNewRuntimeRejectsAJailTooDeepForTheArchiveRelay(t *testing.T) {
 	if _, err := NewRuntime(cfg); err == nil {
 		t.Fatal("a jail base too deep for the relay socket was accepted")
 	}
+	// Any VM may boot as a standby, whose replication relay lives there too.
 	cfg.ArchiveSocket = ""
-	if _, err := NewRuntime(cfg); err != nil {
-		t.Fatalf("without archiving the depth does not matter: %v", err)
+	if _, err := NewRuntime(cfg); err == nil {
+		t.Fatal("a jail base too deep for the replication relay was accepted")
 	}
 }
 

@@ -40,17 +40,18 @@ func (g *databaseGuest) restoreAndStart() {
 		g.fail(dbguest.ErrCodeRestoreFailed, "own recovery.signal", err)
 		return
 	}
-	if err := markRestoreExtracted(); err != nil {
+	if err := markDurable(databaseRestoreMarker); err != nil {
 		g.fail(dbguest.ErrCodeRestoreFailed, "mark restore extracted", err)
 		return
 	}
 	g.startPostgres()
 }
 
-// markRestoreExtracted makes the extracted cluster durable, then records it.
-func markRestoreExtracted() error {
+// markDurable makes the volume's contents durable, then records that in
+// the marker file at path.
+func markDurable(path string) error {
 	unix.Sync()
-	f, err := os.OpenFile(databaseRestoreMarker, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}

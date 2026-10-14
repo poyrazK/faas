@@ -66,6 +66,14 @@ func TestRequestValidate(t *testing.T) {
 		{name: "admin sql too large", req: Request{Op: OpAdminSQL, SQL: strings.Repeat("x", MaxAdminSQLBytes+1)}, wantErr: true},
 		{name: "admin sql NUL", req: Request{Op: OpAdminSQL, SQL: "select 1\x00"}, wantErr: true},
 		{name: "unknown op", req: Request{Op: "drop"}, wantErr: true},
+		{name: "promote", req: Request{Op: OpPromote}},
+		{name: "promote with sql", req: Request{Op: OpPromote, SQL: "select 1"}, wantErr: true},
+		{name: "replication report", req: Request{Op: OpReplication}},
+		{name: "replication sync", req: Request{Op: OpReplication, Replication: ReplicationSync}},
+		{name: "replication off", req: Request{Op: OpReplication, Replication: ReplicationOff}},
+		{name: "replication unknown mode", req: Request{Op: OpReplication, Replication: "quorum"}, wantErr: true},
+		{name: "replication with sql", req: Request{Op: OpReplication, SQL: "select 1"}, wantErr: true},
+		{name: "mode on another op", req: Request{Op: OpStatus, Replication: ReplicationSync}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

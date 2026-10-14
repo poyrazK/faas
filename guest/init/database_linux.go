@@ -70,8 +70,15 @@ type databaseGuest struct {
 	restoreUntilEnd bool
 	targetDropped   bool
 	recoveredTo     time.Time
-	uid             int
-	gid             int
+	// standby boots the volume as a hot standby of the primary until
+	// promoted (ADR-1027 production class).
+	standby bool
+	uid     int
+	gid     int
+	// bridgeUID and bridgeGID are the replication bridge's OS user; zero
+	// when the base has none, and then no standby is admitted.
+	bridgeUID int
+	bridgeGID int
 
 	mu         sync.Mutex
 	state      dbguest.State
@@ -83,13 +90,23 @@ type databaseGuest struct {
 	stopOnce sync.Once
 }
 
-func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget time.Time, restoreUntilEnd, spare bool) error {
+// databaseBoot is what the kernel command line asks of database mode.
+type databaseBoot struct {
+	major           int
+	archive         bool
+	restoreTarget   time.Time
+	restoreUntilEnd bool
+	spare           bool
+	standby         bool
+}
+
+func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 	if log == nil {
 		log = slog.Default()
 	}
-	g := &databaseGuest{log: log, major: major, archive: archive, restoreTarget: restoreTarget, restoreUntilEnd: restoreUntilEnd,
-		exited: make(chan struct{}), done: make(chan struct{})}
-	if spare {
+	g := &databaseGuest{log: log, major: boot.major, archive: boot.archive, restoreTarget: boot.restoreTarget, restoreUntilEnd: boot.restoreUntilEnd,
+		standby: boot.standby, exited: make(chan struct{}), done: make(chan struct{})}
+	if boot.spare {
 		// The volume drive is a placeholder until OpAdopt.
 		if g.prepareRuntime() {
 			g.setState(dbguest.StateSpare)
@@ -108,18 +125,35 @@ func runDatabaseGuest(log *slog.Logger, major int, archive bool, restoreTarget t
 		log.Error("database data listener unavailable", "err", err)
 		return errors.Join(err, poweroffDatabase())
 	}
+	replication, err := listenGuestVsockBacklog(dbguest.ReplicationPort, 8)
+	if err != nil {
+		_ = control.Close()
+		_ = data.Close()
+		log.Error("database replication listener unavailable", "err", err)
+		return errors.Join(err, poweroffDatabase())
+	}
 	go g.serveControl(control)
 	go g.serveData(data)
+	go g.serveReplication(replication)
+	state := g.currentState()
 	switch {
-	case g.currentState() == dbguest.StateNeedsBootstrap && !g.restoreTarget.IsZero():
+	case g.standby && (state == dbguest.StateNeedsBootstrap || state == dbguest.StateStarting):
+		if err := g.serveStandbyBridge(); err != nil {
+			g.fail(dbguest.ErrCodeStartFailed, "serve the standby bridge", err)
+			break
+		}
+		g.setState(dbguest.StateStarting)
+		go g.startStandby(state == dbguest.StateNeedsBootstrap)
+	case state == dbguest.StateNeedsBootstrap && !g.restoreTarget.IsZero():
 		g.setState(dbguest.StateStarting)
 		go g.restoreAndStart()
-	case g.currentState() == dbguest.StateStarting:
+	case state == dbguest.StateStarting:
 		g.startPostgres()
 	}
 	<-g.done
 	_ = control.Close()
 	_ = data.Close()
+	_ = replication.Close()
 	return poweroffDatabase()
 }
 
@@ -146,6 +180,11 @@ func (g *databaseGuest) prepareRuntime() bool {
 		return false
 	}
 	g.uid, g.gid = uid, gid
+	if bridgeUID, bridgeGID, ok := lookupPasswdUser(passwd, databaseReplicationOSUser); ok && bridgeUID != uid {
+		g.bridgeUID, g.bridgeGID = bridgeUID, bridgeGID
+	} else {
+		g.log.Warn("database replication unavailable: no bridge user", "user", databaseReplicationOSUser)
+	}
 	meminfo, err := os.ReadFile("/proc/meminfo")
 	if err == nil {
 		g.memKiB, err = parseMemTotalKiB(meminfo)
@@ -207,6 +246,13 @@ func flushBlockDevice(path string) error {
 }
 
 func (g *databaseGuest) decideClusterState() {
+	if g.standby {
+		// A standby whose copy of the primary never finished copies again.
+		if _, err := os.Stat(databaseSeedMarker); errors.Is(err, os.ErrNotExist) {
+			g.setState(dbguest.StateNeedsBootstrap)
+			return
+		}
+	}
 	if !g.restoreTarget.IsZero() {
 		// A restore whose extraction never finished starts over.
 		if _, err := os.Stat(databaseRestoreMarker); errors.Is(err, os.ErrNotExist) {
@@ -294,6 +340,10 @@ func (g *databaseGuest) handleControl(conn net.Conn) {
 		resp = g.flushArchive(req.After)
 	case req.Op == dbguest.OpAdopt:
 		resp = g.adopt()
+	case req.Op == dbguest.OpPromote:
+		resp = g.promote()
+	case req.Op == dbguest.OpReplication:
+		resp = g.replication(req.Replication)
 	}
 	_ = json.NewEncoder(conn).Encode(resp)
 }
@@ -332,12 +382,19 @@ func (g *databaseGuest) initCluster() error {
 	return g.writeHBA()
 }
 
+// writeHBA writes the authentication files guest-init owns: pg_hba.conf
+// and the pg_ident.conf map its replication line names.
 func (g *databaseGuest) writeHBA() error {
-	hba := filepath.Join(databasePGData, "pg_hba.conf")
-	if err := os.WriteFile(hba, []byte(databaseHBA), 0o600); err != nil {
-		return err
+	for name, content := range map[string]string{"pg_hba.conf": databaseHBA, "pg_ident.conf": databaseIdent} {
+		path := filepath.Join(databasePGData, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			return err
+		}
+		if err := os.Chown(path, g.uid, g.gid); err != nil {
+			return err
+		}
 	}
-	return os.Chown(hba, g.uid, g.gid)
+	return nil
 }
 
 // baseBackup streams pg_basebackup's tar to the host archive. Nothing of it
@@ -450,10 +507,13 @@ func (g *databaseGuest) startPostgres() {
 		g.fail(dbguest.ErrCodeStartFailed, "write pg_hba.conf", err)
 		return
 	}
-	args := databaseServerArgs(g.major, g.memKiB, g.archive)
+	args := append(databaseServerArgs(g.major, g.memKiB, g.archive), slotWALKeepSetting()...)
 	g.mu.Lock()
-	target, dropped := g.restoreTarget, g.targetDropped
+	target, dropped, standby := g.restoreTarget, g.targetDropped, g.standby
 	g.mu.Unlock()
+	if standby {
+		args = append(args, standbySettings(g.archive)...)
+	}
 	if !target.IsZero() {
 		if dropped {
 			target = time.Time{}
@@ -516,7 +576,22 @@ func (g *databaseGuest) awaitReady(exited chan struct{}) {
 			return
 		case <-time.After(databaseReadyPoll):
 		}
-		if data, err := os.ReadFile(pidFile); err == nil && postmasterReady(data) {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			continue
+		}
+		// A hot standby reports ready once it takes read-only
+		// connections; it stays a standby until promoted.
+		if status := postmasterStatus(data); g.standby && (status == "ready" || status == "standby") {
+			g.mu.Lock()
+			if g.state == dbguest.StateStarting {
+				g.state = dbguest.StateStandby
+			}
+			g.mu.Unlock()
+			guestStage("database-standby")
+			return
+		}
+		if postmasterReady(data) {
 			// A restoring server accepts read-only connections while it
 			// recovers; it is ready only once promoted.
 			if !g.restoreTarget.IsZero() {
@@ -529,6 +604,12 @@ func (g *databaseGuest) awaitReady(exited chan struct{}) {
 					return
 				}
 				g.noteRecoveredTo()
+			}
+			// A primary starts asynchronous: no commit may wait for a
+			// standby the host has not attached yet.
+			if err := g.resetSynchronousOnBoot(); err != nil {
+				g.fail(dbguest.ErrCodeStartFailed, "reset synchronous replication", err)
+				return
 			}
 			g.mu.Lock()
 			if g.state == dbguest.StateStarting {
@@ -558,7 +639,11 @@ func (g *databaseGuest) stop() {
 
 func (g *databaseGuest) shutdown(postmaster *os.Process, exited chan struct{}) {
 	defer close(g.done)
-	if postmaster != nil && g.archive {
+	g.mu.Lock()
+	standby := g.standby
+	g.mu.Unlock()
+	// A standby archives nothing until promoted.
+	if postmaster != nil && g.archive && !standby {
 		g.drainArchive()
 	}
 	if postmaster != nil {

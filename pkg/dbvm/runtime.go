@@ -130,6 +130,10 @@ type BootRequest struct {
 	RestoreWindowSeconds int64
 	// RestoreUntilEnd lets the restore end at the end of the archive.
 	RestoreUntilEnd bool
+	// Primary, when set, boots a standby: each replication stream the
+	// guest opens is relayed to the stream Primary dials, on the node
+	// running the database's primary (replication.go).
+	Primary ReplicationDialer
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.
@@ -159,7 +163,9 @@ type databaseVM struct {
 	// archive is the relay listener for guest archive streams; header is
 	// what it stamps on them, the database the VM serves.
 	archive net.Listener
-	header  atomic.Pointer[dbarchive.Header]
+	// replication relays a standby's streams to its primary.
+	replication net.Listener
+	header      atomic.Pointer[dbarchive.Header]
 	// spare is the shape of a spare VM, waiting while no database has
 	// adopted it; spareDir is the host directory bound into its jail.
 	spare    SpareShape
@@ -197,13 +203,15 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 	if real, err := filepath.EvalSymlinks(fc); err == nil {
 		fc = real
 	}
-	if cfg.ArchiveSocket != "" {
-		// The relay listens where Firecracker delivers the guest's archive
-		// connections, deep in the jail; a unix socket path has 107 bytes.
-		probe := &databaseVM{root: filepath.Join(cfg.JailBase, filepath.Base(fc), jailIDPrefix+strings.Repeat("0", 36), "root")}
-		r := &Runtime{}
-		if path := r.archiveUDSPath(probe); len(path) > maxUnixPath {
-			return nil, fmt.Errorf("dbvm: jail base %s is too long for the archive relay socket (%d > %d bytes)", cfg.JailBase, len(path), maxUnixPath)
+	// The archive and replication relays listen where Firecracker delivers
+	// the guest's connections, deep in the jail; a unix socket path has
+	// 107 bytes. Any VM may boot as a standby, so the check is not
+	// limited to archiving nodes.
+	probe := &databaseVM{root: filepath.Join(cfg.JailBase, filepath.Base(fc), jailIDPrefix+strings.Repeat("0", 36), "root")}
+	probeRuntime := &Runtime{}
+	for _, path := range []string{probeRuntime.archiveUDSPath(probe), probeRuntime.replicationUDSPath(probe)} {
+		if len(path) > maxUnixPath {
+			return nil, fmt.Errorf("dbvm: jail base %s is too long for the relay sockets (%d > %d bytes)", cfg.JailBase, len(path), maxUnixPath)
 		}
 	}
 	bases := make(map[int]string, len(cfg.Bases))
@@ -344,6 +352,9 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if (req.RestoreSource == "") != req.RestoreTarget.IsZero() || req.RestoreSource == req.ID {
 		return errors.New("dbvm: a restore names another source database and a target")
 	}
+	if req.Primary != nil && req.RestoreSource != "" {
+		return errors.New("dbvm: a standby is not a restore")
+	}
 	if req.RestoreSource != "" {
 		if err := validID(req.RestoreSource); err != nil {
 			return err
@@ -357,7 +368,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if _, err := os.Stat(volume); err != nil {
 		return ErrVolumeNotFound
 	}
-	if req.RestoreTarget.IsZero() && r.startFromSpare(ctx, req) {
+	if req.RestoreTarget.IsZero() && req.Primary == nil && r.startFromSpare(ctx, req) {
 		return nil
 	}
 	vm, err := r.reserve(req.ID)
@@ -379,6 +390,9 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if err = r.startArchiveRelay(vm, req.ID, req); err != nil {
 		return err
 	}
+	if err = r.startReplicationRelay(vm, req.Primary); err != nil { //nolint:contextcheck // the relay lives as long as the VM, past Start's context
+		return err
+	}
 	if err = r.launch(vm, req); err != nil {
 		return err
 	}
@@ -393,7 +407,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 		case <-alive.Done():
 		}
 	}()
-	if _, err = WaitState(alive, r.udsPath(vm), dbguest.StateNeedsBootstrap, dbguest.StateStarting, dbguest.StateReady); err != nil {
+	if _, err = WaitState(alive, r.udsPath(vm), dbguest.StateNeedsBootstrap, dbguest.StateStarting, dbguest.StateReady, dbguest.StateStandby); err != nil {
 		return fmt.Errorf("dbvm: boot %s: %w", req.ID, err)
 	}
 	return nil
@@ -429,7 +443,7 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
 		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
-		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd,
+		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd, Standby: req.Primary != nil,
 	})
 }
 
@@ -553,6 +567,9 @@ func (r *Runtime) Stop(ctx context.Context, id string) error {
 func (r *Runtime) teardown(id string, vm *databaseVM) {
 	if vm.archive != nil {
 		_ = vm.archive.Close()
+	}
+	if vm.replication != nil {
+		_ = vm.replication.Close()
 	}
 	if vm.cmd != nil && vm.cmd.Process != nil {
 		select {

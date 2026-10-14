@@ -74,6 +74,11 @@ func main() {
 	if os.Getpid() != 1 && len(os.Args) > 1 && os.Args[1] == "archive-wal" {
 		os.Exit(runArchiveWAL(os.Args[2:]))
 	}
+	// A primary's replication bridge runs guest-init as the replication OS
+	// user, one process per standby stream.
+	if os.Getpid() != 1 && len(os.Args) == 2 && os.Args[1] == replicationBridgeCommand {
+		os.Exit(runReplicationBridge())
+	}
 	if err := boot(); err != nil {
 		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
 		os.Exit(1)
@@ -104,12 +109,17 @@ func boot() error {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database restore mode: %w", targetErr)
 			}
-			spare := dbguest.Spare(string(cmdline))
-			if spare && restoring {
+			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
+				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline))}
+			if boot.spare && (restoring || boot.standby) {
 				_ = poweroffDatabase()
-				return errors.New("database mode: a spare cannot boot a restore")
+				return errors.New("database mode: a spare boots neither a restore nor a standby")
 			}
-			return runDatabaseGuest(slog.Default(), major, dbguest.ArchiveEnabled(string(cmdline)), target, dbguest.RestoreUntilEnd(string(cmdline)), spare)
+			if boot.standby && restoring {
+				_ = poweroffDatabase()
+				return errors.New("database mode: a standby cannot boot a restore")
+			}
+			return runDatabaseGuest(slog.Default(), boot)
 		}
 	}
 	root, err := assembleOverlay()

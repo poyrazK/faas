@@ -118,7 +118,7 @@ func TestDatabaseHBAKeepsSuperuserLocal(t *testing.T) {
 			rules = append(rules, strings.Join(strings.Fields(line), " "))
 		}
 	}
-	want := []string{"local all postgres peer", "local replication postgres peer", "local all all scram-sha-256"}
+	want := []string{"local all postgres peer", "local replication postgres peer", "local replication gregale_replication peer map=replication", "local all all scram-sha-256"}
 	if !slices.Equal(rules, want) {
 		t.Fatalf("pg_hba rules = %q, want %q", rules, want)
 	}
