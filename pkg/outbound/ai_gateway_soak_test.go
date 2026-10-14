@@ -2,7 +2,8 @@ package outbound
 
 // adr: 998 — preview soak: concurrent streamed AI calls through the handler
 // with a production-sized Postgres pool. Opt in with FAAS_AI_SOAK=1;
-// FAAS_AI_SOAK_SECONDS, FAAS_AI_SOAK_WORKERS and FAAS_AI_SOAK_POOL tune it.
+// FAAS_AI_SOAK_SECONDS, FAAS_AI_SOAK_WORKERS and FAAS_AI_SOAK_POOL tune it, and
+// FAAS_AI_SOAK_CIRCUIT=1 turns on the integration's circuit breaker.
 
 import (
 	"context"
@@ -16,8 +17,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -65,31 +64,15 @@ func TestAIGatewaySoak(t *testing.T) {
 	if _, err := f.pool.Exec(ctx, `UPDATE accounts SET plan = 'scale' WHERE id = $1`, f.account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.SetOutboundRequestPolicy(ctx, f.account.ID, f.offer.ID, api.OutboundRequestPolicy{
-		RatePerSecond: 500, Burst: 2000, MaxInFlight: 1000, RequestTimeoutMS: 30_000}); err != nil {
+	policy := api.OutboundRequestPolicy{RatePerSecond: 500, Burst: 2000, MaxInFlight: 1000, RequestTimeoutMS: 30_000}
+	if os.Getenv("FAAS_AI_SOAK_CIRCUIT") == "1" {
+		policy.CircuitBreakerFailureThreshold, policy.CircuitBreakerOpenSeconds = 5, 30
+	}
+	if err := f.store.SetOutboundRequestPolicy(ctx, f.account.ID, f.offer.ID, policy); err != nil {
 		t.Fatal(err)
 	}
-	config := f.pool.Config()
-	config.MaxConns = int32(poolSize)
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
-	resolver, err := NewPostgresResolver(pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	backend, err := NewPostgresBackend(pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, err := NewHandler(resolver, backend, f.upstream.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler.AIGatewayEnabled = true
-	handler.CredentialResolver = &changingCredential{value: "Bearer provider-secret"}
+	pool, tracer := f.tracedPool(poolSize)
+	handler := f.handlerOn(pool, nil, nil)
 
 	runtime.GC()
 	var before runtime.MemStats
@@ -99,6 +82,8 @@ func TestAIGatewaySoak(t *testing.T) {
 	var mu sync.Mutex
 	statuses := map[int]int{}
 	var latencies []time.Duration
+	var refusals []string
+	tracer.roundTrips.Store(0)
 	deadline := time.Now().Add(duration)
 	var wg sync.WaitGroup
 	for range workers {
@@ -111,6 +96,9 @@ func TestAIGatewaySoak(t *testing.T) {
 				elapsed := time.Since(started)
 				mu.Lock()
 				statuses[recorder.Code]++
+				if recorder.Code != http.StatusOK && len(refusals) < 5 {
+					refusals = append(refusals, recorder.Body.String())
+				}
 				if recorder.Code == http.StatusOK {
 					latencies = append(latencies, elapsed)
 				}
@@ -122,6 +110,7 @@ func TestAIGatewaySoak(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	roundTrips := tracer.roundTrips.Load()
 
 	ok := statuses[http.StatusOK]
 	usage, err := f.store.GetOutboundAIUsage(ctx, f.account.ID, f.offer.ID, "")
@@ -148,14 +137,17 @@ func TestAIGatewaySoak(t *testing.T) {
 		return latencies[min(len(latencies)-1, int(p*float64(len(latencies))))]
 	}
 	provider := time.Duration(soakChunks) * soakChunkInterval
-	t.Logf("soak: %s, %d workers, pool %d: %d calls (%.0f/s), statuses %v", duration, workers, poolSize, ok,
-		float64(ok)/duration.Seconds(), statuses)
+	t.Logf("soak: %s, %d workers, pool %d, circuit breaker %v: %d calls (%.0f/s), statuses %v", duration, workers, poolSize,
+		policy.CircuitBreakerFailureThreshold > 0, ok, float64(ok)/duration.Seconds(), statuses)
 	t.Logf("latency p50 %s p95 %s p99 %s; provider stream %s, so gateway overhead p50 %s p99 %s",
 		percentile(0.50), percentile(0.95), percentile(0.99), provider, percentile(0.50)-provider, percentile(0.99)-provider)
 	t.Logf("settled %d requests, %d tokens; live leases %d; goroutines %d -> %d; heap in use %d -> %d KiB",
 		settled, usage.DailyTokenCount, leases, goroutinesBefore, runtime.NumGoroutine(), before.HeapInuse>>10, after.HeapInuse>>10)
+	if ok > 0 {
+		t.Logf("postgres round trips: %.1f per call", float64(roundTrips)/float64(ok))
+	}
 	if len(statuses) != 1 || ok == 0 {
-		t.Errorf("non-200 responses: %v", statuses)
+		t.Errorf("non-200 responses: %v; first: %q", statuses, refusals)
 	}
 	if settled != int64(ok) || usage.DailyTokenCount != int64(ok)*(soakInputTokens+soakOutputTokens) {
 		t.Errorf("settlement drifted: %d calls, %d settled, %d tokens", ok, settled, usage.DailyTokenCount)

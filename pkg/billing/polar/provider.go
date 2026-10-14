@@ -704,14 +704,17 @@ func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account,
 // PublishObjectStorageLineItem emits one immutable month-close charge event.
 // Polar's catalog price is 0.001 cents per charge_millicent, so the integer
 // quantity reproduces Gregale's exact customer ledger without float money.
-func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record state.ObjectStorageBillingRecord) error {
+// chargeMillicents is the record's total held under the overage cap
+// (ADR-1320); the uncapped total travels as metadata for audit.
+func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error {
 	if p == nil || p.objectStorageMode != ObjectStorageBillingLive || !p.Capabilities().Has(billing.CapObjectStorageUsage) {
 		return errors.New("polar: object storage usage delivery is not live")
 	}
-	if record.ID == "" || record.Currency != "EUR" || !state.ValidObjectStorageBillingRecord(record) {
+	if record.ID == "" || record.Currency != "EUR" || !state.ValidObjectStorageBillingRecord(record) ||
+		chargeMillicents < 0 || chargeMillicents > record.TotalMillicents {
 		return errors.New("polar: invalid object storage billing record")
 	}
-	if record.TotalMillicents == 0 {
+	if chargeMillicents == 0 {
 		return nil
 	}
 	externalID := "faas-object-storage-" + record.ID
@@ -731,7 +734,8 @@ func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record stat
 			"storage_millicents":       record.StorageMillicents,
 			"requests_millicents":      record.RequestsMillicents,
 			"egress_millicents":        record.EgressMillicents,
-			"charge_millicents":        record.TotalMillicents,
+			"uncapped_millicents":      record.TotalMillicents,
+			"charge_millicents":        chargeMillicents,
 		},
 		Timestamp: record.PeriodEnd.Format(time.RFC3339),
 	}}}

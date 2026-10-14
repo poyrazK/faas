@@ -18,7 +18,11 @@ import (
 
 func seedWorkflowSchedule(t *testing.T, store Store, overlap string) (App, Deployment) {
 	t.Helper()
-	ctx := context.Background()
+	return seedWorkflowScheduleWithContext(t, context.Background(), store, overlap)
+}
+
+func seedWorkflowScheduleWithContext(t *testing.T, ctx context.Context, store Store, overlap string) (App, Deployment) {
+	t.Helper()
 	account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)

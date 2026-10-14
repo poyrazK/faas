@@ -2679,6 +2679,7 @@
     "columns": [
       "app_id",
       "command",
+      "host",
       "updated_at"
     ],
     "kind": "operational"
@@ -2926,6 +2927,7 @@
       "intent_version",
       "manifest_path",
       "mode",
+      "notification_state",
       "project_id",
       "provider",
       "prune",
@@ -6555,6 +6557,9 @@
       "egress_millicents_per_gib",
       "finalized_at",
       "id",
+      "included_egress_bytes",
+      "included_requests",
+      "included_stored_byte_hours",
       "period_end",
       "period_start",
       "provider_cost_millicents",
@@ -7261,6 +7266,15 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_settlements",
+    "columns": [
+      "integration_id",
+      "lease_id",
+      "settled_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_usage_daily",
@@ -10656,6 +10670,22 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_initial_recovery_reviews",
+    "columns": [
+      "app_id",
+      "completion_next_observe_at",
+      "expires_at",
+      "failure_id",
+      "id",
+      "job_id",
+      "policy_version",
+      "prepared_at",
+      "review",
+      "submitted_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_operation_effects",
     "columns": [
       "account_id",
@@ -10742,7 +10772,10 @@
       "automatic_failures",
       "automatic_pause_reason",
       "automatic_paused_at",
+      "automatic_poll_failure",
+      "automatic_poll_notification",
       "enabled",
+      "initial_failure_cursor",
       "job_cursor",
       "last_evaluated_at",
       "next_evaluate_at",

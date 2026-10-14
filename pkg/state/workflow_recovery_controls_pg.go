@@ -33,7 +33,7 @@ func (s *PgStore) ControlWorkflowRecoveryPolicy(ctx context.Context, account, ap
 		if readErr != nil {
 			return p, readErr
 		}
-		if recoveryControlMatches(p, r) && (!p.Policy.Enabled || p.Policy.Mode != "automatic_retry") {
+		if recoveryControlMatches(p, r) && (!p.Policy.Enabled || !api.WorkflowRecoveryPolicyAutomaticMode(p.Policy.Mode)) {
 			return p, ErrEventRecoveryQuery
 		}
 		return api.WorkflowRecoveryPolicyResponse{}, ErrWorkflowRecoveryPolicyConflict
@@ -41,7 +41,7 @@ func (s *PgStore) ControlWorkflowRecoveryPolicy(ctx context.Context, account, ap
 	if err != nil {
 		return api.WorkflowRecoveryPolicyResponse{}, fmt.Errorf("control recovery policy: %w", err)
 	}
-	return pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason)
+	return pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification)
 }
 func (s *PgStore) GetWorkflowRecoveryAutomaticQueue(ctx context.Context, account, app string) (api.WorkflowRecoveryAutomaticQueue, error) {
 	out := api.WorkflowRecoveryAutomaticQueue{ObservedAt: time.Now().UTC(), Entries: []api.WorkflowRecoveryAutomaticQueueEntry{}}
@@ -57,6 +57,9 @@ func (s *PgStore) GetWorkflowRecoveryAutomaticQueue(ctx context.Context, account
 	defer func() { _ = tx.Rollback(ctx) }()
 	out, _, err = pgWorkflowRecoveryAutomaticQueue(ctx, sqlc.New(), tx, account, app, out.ObservedAt, false)
 	if err != nil {
+		return out, err
+	}
+	if err = pgRecoveryQueueEvidence(ctx, sqlc.New(), tx, account, app, &out); err != nil {
 		return out, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -80,7 +83,7 @@ func pgWorkflowRecoveryAutomaticQueue(ctx context.Context, q *sqlc.Queries, tx p
 	if err != nil {
 		return out, nil, fmt.Errorf("read queue policy: %w", err)
 	}
-	out.Policy, err = pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason)
+	out.Policy, err = pgPolicyResponse(uuidString(row.AppID), row.Version, row.Policy, row.UpdatedAt, row.ActorKind, row.ActorID, row.LastEvaluatedAt, row.Status, row.AutomaticFailures, row.AutomaticPausedAt, row.AutomaticPauseReason, row.AutomaticPollFailure, row.AutomaticPollNotification)
 	if err != nil {
 		return out, nil, err
 	}

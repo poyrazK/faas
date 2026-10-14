@@ -51,9 +51,11 @@ func WatchUnsupported(app state.App, watch *api.DevWatch) *api.Problem {
 // without developer watch settings.
 var ErrWatchUnavailable = errors.New("developer watch settings are not available on this control plane")
 
-// SaveWatch records the setting for the next developer build. A store
-// without the capability can only accept watch mode off.
-func SaveWatch(ctx context.Context, store state.Store, appID string, watch *api.DevWatch) error {
+// SaveWatch records the setting for the next developer build, with host,
+// the developer app's public hostname, for the development server to accept
+// (api.DevWatchHostEnv). A store without the capability can only accept
+// watch mode off.
+func SaveWatch(ctx context.Context, store state.Store, appID string, watch *api.DevWatch, host string) error {
 	watchStore, ok := store.(state.DevWatchStore)
 	if !ok {
 		if watch == nil {
@@ -61,11 +63,22 @@ func SaveWatch(ctx context.Context, store state.Store, appID string, watch *api.
 		}
 		return ErrWatchUnavailable
 	}
-	command := ""
+	setting := state.DevWatchSetting{}
 	if watch != nil {
-		command = watch.Command
+		setting = state.DevWatchSetting{Command: watch.Command, Host: WatchHost(host)}
 	}
-	return watchStore.SetDevWatchCommand(ctx, appID, command)
+	return watchStore.SetDevWatch(ctx, appID, setting)
+}
+
+// WatchHost normalizes a public hostname for dev_watch_settings.host; one
+// it cannot store is dropped, which only costs the development server's
+// host allowance, never the session.
+func WatchHost(host string) string {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if !api.ValidDevWatchHost(host) {
+		return ""
+	}
+	return host
 }
 
 // LoadWatch reports the stored setting; nil when off or unavailable.
@@ -74,9 +87,9 @@ func LoadWatch(ctx context.Context, store state.Store, appID string) *api.DevWat
 	if !ok {
 		return nil
 	}
-	command, err := watchStore.DevWatchCommand(ctx, appID)
-	if err != nil || command == "" {
+	setting, err := watchStore.DevWatch(ctx, appID)
+	if err != nil || setting.Command == "" {
 		return nil
 	}
-	return &api.DevWatch{Command: command}
+	return &api.DevWatch{Command: setting.Command}
 }

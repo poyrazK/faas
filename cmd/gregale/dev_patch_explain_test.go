@@ -13,20 +13,24 @@ func TestDevPatchExplanationCoversActionableReasons(t *testing.T) {
 		api.DevPatchReasonSourceNotDeployed, api.DevPatchReasonPlanUnreadable, api.DevPatchReasonRebuildInput,
 		api.DevPatchReasonUnsupportedEntry, api.DevPatchReasonTooLarge, api.DevPatchReasonUnsupportedVersion,
 	} {
-		if why, ok := devPatchExplanation(api.DevPatchPreview{Reason: reason}); !ok || why == "" {
+		if why, ok := devPatchExplanation(api.DevPatchPreview{Reason: reason}, ""); !ok || why == "" {
 			t.Errorf("reason %q has no explanation", reason)
 		}
 	}
 	// Expected on a first sync or right after enabling live patches: quiet.
 	for _, reason := range []string{api.DevPatchReasonNoLiveBuild, api.DevPatchReasonNoBaseManifest, api.DevPatchReasonFullSnapshot, "future_reason"} {
-		if _, ok := devPatchExplanation(api.DevPatchPreview{Reason: reason}); ok {
+		if _, ok := devPatchExplanation(api.DevPatchPreview{Reason: reason}, ""); ok {
 			t.Errorf("reason %q should stay quiet", reason)
 		}
 	}
-	if why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonBuildCommand}); !strings.Contains(why, "gregale dev --watch") {
+	// --watch is suggested only where it can pick a development command.
+	if why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonBuildCommand}, "npm run dev"); !strings.Contains(why, "gregale dev --watch") || !strings.Contains(why, "(npm run dev)") {
 		t.Fatalf("build-step explanation = %q, want the --watch suggestion", why)
 	}
-	why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonTooLarge, ChangedPaths: 312, PatchBytes: 9 << 20})
+	if why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonBuildCommand}, ""); strings.Contains(why, "--watch") {
+		t.Fatalf("build-step explanation = %q suggests watch mode for an app it cannot run", why)
+	}
+	why, _ := devPatchExplanation(api.DevPatchPreview{Reason: api.DevPatchReasonTooLarge, ChangedPaths: 312, PatchBytes: 9 << 20}, "")
 	if !strings.Contains(why, "312 files, 9.0 MiB") || !strings.Contains(why, "200 files, 8.0 MiB") {
 		t.Fatalf("too-large explanation = %q", why)
 	}

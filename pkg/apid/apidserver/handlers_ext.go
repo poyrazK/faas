@@ -6817,12 +6817,12 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		usage := state.SummarizeObjectUsage(snapshot, s.objectStorage.Accounting, now)
-		charges, err := s.objectStorage.ChargeForUsage(usage)
+		charges, err := s.objectStorage.ChargeForUsage(usage, api.MustLimitsFor(acct.Plan).ObjectStorage.Allowance())
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not calculate object storage usage"))
 			return
 		}
-		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges)
+		objectStorage := s.object.ObjectStorageUsageResponse(usage, charges, acct.Plan)
 		out.ObjectStorage = &objectStorage
 	}
 

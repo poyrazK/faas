@@ -3568,7 +3568,7 @@ CREATE FUNCTION public.environment_runtime_inputs_fresh(target_app uuid, target_
    (s.managed_postgres_binding_id IS NULL OR EXISTS (
     SELECT 1 FROM managed_postgres_bindings b WHERE b.id=s.managed_postgres_binding_id
      AND b.account_id=s.account_id AND b.app_id=s.app_id AND b.scope=s.scope
-     AND b.environment_key=s.key AND b.access IN ('read_write','read_only','data_api')))
+     AND b.environment_key=s.key AND b.access IN ('read_write','read_only','data_api','auth')))
  ),
  baseline AS (SELECT coalesce(jsonb_object_agg(s.key,'secret:'||s.key),'{}'::jsonb) AS refs,
   coalesce(jsonb_object_agg(s.scope||'/'||s.key,s.delivery_version),'{}'::jsonb) AS versions FROM eligible s)
@@ -16189,6 +16189,7 @@ CREATE TABLE public.environment_git_sources (
     source_verified_at timestamp with time zone,
     detached boolean DEFAULT false NOT NULL,
     provider text DEFAULT 'github'::text NOT NULL,
+    notification_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
     CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
     CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
@@ -16199,6 +16200,7 @@ CREATE TABLE public.environment_git_sources (
     CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
     CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT environment_git_sources_notification_state_check CHECK (((jsonb_typeof(notification_state) = 'object'::text) AND (octet_length((notification_state)::text) <= 2048))),
     CONSTRAINT environment_git_sources_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'gitlab'::text]))),
     CONSTRAINT environment_git_sources_repository_check CHECK ((((provider = 'github'::text) AND (repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)) OR ((provider = 'gitlab'::text) AND (length(repository) <= 512) AND (repository ~ '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$'::text) AND (repository !~ '(^|/)[.]{1,2}(/|$)'::text) AND (repository !~ '[.]git(/|$)'::text)))),
     CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
@@ -17842,7 +17844,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -17870,7 +17872,7 @@ CREATE TABLE public.app_webhooks (
     receiver_cooldown_until timestamp with time zone,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
-    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
+    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 5)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text, 'environment.gitops.changed'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
@@ -20141,7 +20143,9 @@ CREATE TABLE public.dev_watch_settings (
     app_id uuid NOT NULL,
     command text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT dev_watch_settings_command_check CHECK ((((octet_length(command) >= 1) AND (octet_length(command) <= 512)) AND (command !~ '[\n\r]'::text)))
+    host text DEFAULT ''::text NOT NULL,
+    CONSTRAINT dev_watch_settings_command_check CHECK ((((octet_length(command) >= 1) AND (octet_length(command) <= 512)) AND (command !~ '[\n\r]'::text))),
+    CONSTRAINT dev_watch_settings_host_check CHECK (((octet_length(host) <= 253) AND (host ~ '^[a-z0-9.-]*$'::text)))
 );
 
 
@@ -23936,7 +23940,7 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
     cutover_id uuid,
-    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text]))),
+    CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
@@ -24034,7 +24038,7 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     value_hash text,
     verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
-    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
@@ -26346,6 +26350,9 @@ CREATE TABLE public.object_storage_billing_periods (
     egress_millicents bigint NOT NULL,
     total_millicents bigint NOT NULL,
     finalized_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_stored_byte_hours bigint DEFAULT 0 NOT NULL,
+    included_requests bigint DEFAULT 0 NOT NULL,
+    included_egress_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_storage_billing_perio_requests_millicents_per_mill_check CHECK (((requests_millicents_per_million >= 0) AND (requests_millicents_per_million <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_perio_storage_millicents_per_gib_m_check CHECK (((storage_millicents_per_gib_month >= 0) AND (storage_millicents_per_gib_month <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_check CHECK ((period_end = (period_start + '1 mon'::interval))),
@@ -26354,6 +26361,9 @@ CREATE TABLE public.object_storage_billing_periods (
     CONSTRAINT object_storage_billing_periods_egress_bytes_check CHECK (((egress_bytes >= 0) AND (egress_bytes <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_egress_millicents_check CHECK (((egress_millicents >= 0) AND (egress_millicents <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_egress_millicents_per_gib_check CHECK (((egress_millicents_per_gib >= 0) AND (egress_millicents_per_gib <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_periods_included_egress_bytes_check CHECK (((included_egress_bytes >= 0) AND (included_egress_bytes <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_periods_included_requests_check CHECK (((included_requests >= 0) AND (included_requests <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_periods_included_stored_byte_hours_check CHECK (((included_stored_byte_hours >= 0) AND (included_stored_byte_hours <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT object_storage_billing_periods_provider_cost_millicents_check CHECK (((provider_cost_millicents >= 0) AND (provider_cost_millicents <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_request_count_check CHECK (((request_count >= 0) AND (request_count <= '1152921504606846976'::bigint))),
@@ -27277,6 +27287,17 @@ CREATE TABLE public.outbound_ai_routes (
     format text DEFAULT 'native'::text NOT NULL,
     CONSTRAINT outbound_ai_routes_format_chk CHECK ((format = ANY (ARRAY['native'::text, 'openai'::text]))),
     CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: outbound_ai_settlements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_settlements (
+    lease_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    settled_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -32647,6 +32668,33 @@ CREATE TABLE public.workflow_events (
 
 
 --
+-- Name: workflow_initial_recovery_reviews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_initial_recovery_reviews (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    failure_id uuid NOT NULL,
+    policy_version bigint NOT NULL,
+    prepared_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    submitted_at timestamp with time zone,
+    job_id uuid,
+    review jsonb NOT NULL,
+    completion_next_observe_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_initial_automatic_result_check CHECK ((((NOT (review ? 'automatic_result'::text)) OR ((((review -> 'policy'::text) ->> 'mode'::text) = 'automatic_initial'::text) AND (job_id IS NOT NULL) AND (jsonb_typeof((review -> 'automatic_result'::text)) = 'object'::text) AND (((review -> 'automatic_result'::text) ->> 'complete'::text))::boolean AND (((review -> 'automatic_result'::text) ->> 'outcome'::text) = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text])) AND (((review -> 'automatic_result'::text) ->> 'run_id'::text) = ((review -> 'target'::text) ->> 'run_id'::text)) AND ((((review -> 'automatic_result'::text) ->> 'resume_count'::text))::integer = 1) AND (((review -> 'automatic_result'::text) ->> 'child_job_id'::text) = (job_id)::text))) IS TRUE)),
+    CONSTRAINT workflow_initial_manual_result_check CHECK ((((NOT (review ? 'result'::text)) OR ((((review -> 'policy'::text) ->> 'mode'::text) = 'preview'::text) AND (job_id IS NOT NULL) AND (NOT (review ? 'automatic_result'::text)) AND (jsonb_typeof((review -> 'result'::text)) = 'object'::text) AND (((review -> 'result'::text) ->> 'complete'::text))::boolean AND (((review -> 'result'::text) ->> 'outcome'::text) = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text])) AND (((review -> 'result'::text) ->> 'run_id'::text) = ((review -> 'target'::text) ->> 'run_id'::text)) AND ((((review -> 'result'::text) ->> 'resume_count'::text))::integer = 1) AND (((review -> 'result'::text) ->> 'child_job_id'::text) = (job_id)::text))) IS TRUE)),
+    CONSTRAINT workflow_initial_recovery_revi_completion_next_observe_at_check CHECK (isfinite(completion_next_observe_at)),
+    CONSTRAINT workflow_initial_recovery_reviews_check CHECK ((isfinite(expires_at) AND (expires_at > prepared_at))),
+    CONSTRAINT workflow_initial_recovery_reviews_check1 CHECK ((((jsonb_typeof(review) = 'object'::text) AND ((review ->> 'status'::text) = ANY (ARRAY['prepared'::text, 'submitted'::text, 'cancelled'::text, 'expired'::text, 'stale'::text])) AND ((review ->> 'id'::text) = (id)::text) AND ((review ->> 'app_id'::text) = (app_id)::text) AND (((review -> 'failure'::text) ->> 'id'::text) = (failure_id)::text) AND (((review ->> 'policy_version'::text))::bigint = policy_version) AND (((review ->> 'prepared_at'::text))::timestamp with time zone = prepared_at) AND (((review ->> 'expires_at'::text))::timestamp with time zone = expires_at) AND (jsonb_typeof((review -> 'events'::text)) = 'array'::text) AND (jsonb_array_length((review -> 'events'::text)) > 0) AND (((review ->> 'status'::text) = 'submitted'::text) = (job_id IS NOT NULL)) AND ((job_id IS NULL) OR (((review ->> 'job_id'::text) = (job_id)::text) AND (((review ->> 'submitted_at'::text))::timestamp with time zone = submitted_at)))) IS TRUE)),
+    CONSTRAINT workflow_initial_recovery_reviews_check2 CHECK (((job_id IS NULL) = (submitted_at IS NULL))),
+    CONSTRAINT workflow_initial_recovery_reviews_policy_version_check CHECK ((policy_version > 0)),
+    CONSTRAINT workflow_initial_recovery_reviews_prepared_at_check CHECK (isfinite(prepared_at)),
+    CONSTRAINT workflow_initial_recovery_reviews_submitted_at_check CHECK (((submitted_at IS NULL) OR isfinite(submitted_at)))
+);
+
+
+--
 -- Name: workflow_operation_effects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32767,10 +32815,21 @@ CREATE TABLE public.workflow_recovery_history_events (
     recorded_at timestamp with time zone NOT NULL,
     entry jsonb NOT NULL,
     CONSTRAINT workflow_recovery_history_candidate_evidence_check CHECK (((((entry ->> 'kind'::text) <> 'candidates_observed'::text) OR ((jsonb_typeof((entry -> 'candidate_evidence'::text)) = 'object'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'decisions'::text)) = 'array'::text) AND (jsonb_typeof(((entry -> 'candidate_evidence'::text) -> 'policy'::text)) = 'object'::text) AND (((entry -> 'candidate_evidence'::text) ->> 'app_id'::text) = (app_id)::text) AND (((entry -> 'candidate_evidence'::text) ->> 'review_id'::text) = (entry ->> 'review_id'::text)) AND (((entry -> 'candidate_evidence'::text) ->> 'job_id'::text) = (entry ->> 'job_id'::text)) AND (((entry -> 'candidate_evidence'::text) -> 'policy_version'::text) = (entry -> 'policy_version'::text)) AND ((((entry -> 'candidate_evidence'::text) ->> 'observed_at'::text))::timestamp with time zone = occurred_at) AND (NOT ((entry -> 'candidate_evidence'::text) ? 'plan'::text)))) IS TRUE)),
-    CONSTRAINT workflow_recovery_history_events_check CHECK ((((jsonb_typeof(entry) = 'object'::text) AND ((entry -> 'durable'::text) = 'true'::jsonb) AND ((entry ->> 'id'::text) = ('audit:'::text || (id)::text)) AND ((entry ->> 'kind'::text) = ANY (ARRAY['candidates_observed'::text, 'policy_changed'::text, 'policy_paused'::text, 'retry_transition'::text, 'health_opened'::text, 'health_changed'::text, 'health_closed'::text, 'health_alert_captured'::text, 'health_recovered_captured'::text])) AND (jsonb_typeof((entry -> 'reason'::text)) = 'string'::text) AND (jsonb_typeof((entry -> 'outcome'::text)) = 'string'::text) AND (((entry ->> 'policy_version'::text))::bigint > 0) AND (((entry ->> 'occurred_at'::text))::timestamp with time zone = occurred_at) AND (((entry ->> 'kind'::text) <> 'policy_changed'::text) OR (jsonb_typeof((entry -> 'policy'::text)) = 'object'::text))) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_events_check CHECK ((((jsonb_typeof(entry) = 'object'::text) AND ((entry -> 'durable'::text) = 'true'::jsonb) AND ((entry ->> 'id'::text) = ('audit:'::text || (id)::text)) AND ((entry ->> 'kind'::text) = ANY (ARRAY['candidates_observed'::text, 'policy_changed'::text, 'policy_paused'::text, 'retry_transition'::text, 'health_opened'::text, 'health_changed'::text, 'health_closed'::text, 'health_alert_captured'::text, 'health_recovered_captured'::text, 'retry_parent_evidence_repaired'::text, 'retry_child_evidence_repaired'::text, 'retry_evidence_blocked'::text, 'retry_evidence_cleared'::text, 'initial_evidence_repaired'::text, 'initial_recovery_blocked'::text, 'initial_recovery_cleared'::text, 'initial_recovery_prepared'::text, 'initial_recovery_submitted'::text, 'initial_recovery_cancelled'::text, 'initial_recovery_expired'::text, 'initial_recovery_stale'::text, 'initial_recovery_result'::text, 'polling_failed'::text, 'polling_recovered'::text])) AND (jsonb_typeof((entry -> 'reason'::text)) = 'string'::text) AND (jsonb_typeof((entry -> 'outcome'::text)) = 'string'::text) AND (((entry ->> 'policy_version'::text))::bigint > 0) AND (((entry ->> 'occurred_at'::text))::timestamp with time zone = occurred_at) AND (((entry ->> 'kind'::text) <> 'policy_changed'::text) OR (jsonb_typeof((entry -> 'policy'::text)) = 'object'::text))) IS TRUE)),
     CONSTRAINT workflow_recovery_history_events_occurred_at_check CHECK (isfinite(occurred_at)),
     CONSTRAINT workflow_recovery_history_events_recorded_at_check CHECK (isfinite(recorded_at)),
-    CONSTRAINT workflow_recovery_history_events_sequence_check CHECK ((sequence > 0))
+    CONSTRAINT workflow_recovery_history_events_sequence_check CHECK ((sequence > 0)),
+    CONSTRAINT workflow_recovery_history_evidence_check CHECK (((((entry ->> 'kind'::text) <> ALL (ARRAY['retry_parent_evidence_repaired'::text, 'retry_child_evidence_repaired'::text, 'retry_evidence_blocked'::text, 'retry_evidence_cleared'::text])) OR (((entry ->> 'evidence_kind'::text) = ANY (ARRAY['parent'::text, 'child'::text])) AND (((entry ->> 'resume_count'::text))::integer > 0) AND ((entry ->> 'run_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'action_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'review_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND
+CASE
+    WHEN ((entry ->> 'kind'::text) = ANY (ARRAY['retry_parent_evidence_repaired'::text, 'retry_child_evidence_repaired'::text])) THEN ((entry ->> 'request_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)
+    ELSE ((entry ->> 'notification_event_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)
+END)) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_initial_evidence_check CHECK (((((entry ->> 'kind'::text) <> ALL (ARRAY['initial_evidence_repaired'::text, 'initial_recovery_blocked'::text, 'initial_recovery_cleared'::text])) OR (((entry ->> 'evidence_kind'::text) = 'initial'::text) AND (((entry ->> 'resume_count'::text))::integer = 1) AND ((entry ->> 'run_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'initial_failure_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'review_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'action_id'::text) = (entry ->> 'review_id'::text)) AND
+CASE
+    WHEN ((entry ->> 'kind'::text) = 'initial_evidence_repaired'::text) THEN ((entry ->> 'request_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)
+    ELSE ((entry ->> 'notification_event_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)
+END)) IS TRUE)),
+    CONSTRAINT workflow_recovery_history_initial_lifecycle_check CHECK (((((entry ->> 'kind'::text) <> ALL (ARRAY['initial_recovery_prepared'::text, 'initial_recovery_submitted'::text, 'initial_recovery_cancelled'::text, 'initial_recovery_expired'::text, 'initial_recovery_stale'::text, 'initial_recovery_result'::text])) OR (((entry ->> 'evidence_kind'::text) = 'initial'::text) AND (((entry ->> 'resume_count'::text))::integer = 1) AND ((entry ->> 'run_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'initial_failure_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'review_id'::text) ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text) AND ((entry ->> 'action_id'::text) = (entry ->> 'review_id'::text)) AND (jsonb_typeof((entry -> 'actor_kind'::text)) = 'string'::text) AND (length((entry ->> 'actor_kind'::text)) > 0) AND (jsonb_typeof((entry -> 'actor_id'::text)) = 'string'::text) AND (length((entry ->> 'actor_id'::text)) > 0) AND (((entry ->> 'kind'::text) <> 'initial_recovery_result'::text) OR ((entry ->> 'outcome'::text) = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text]))))) IS TRUE))
 );
 
 
@@ -32809,9 +32868,14 @@ CREATE TABLE public.workflow_recovery_policies (
     automatic_paused_at timestamp with time zone,
     automatic_pause_reason text DEFAULT ''::text NOT NULL,
     next_health_at timestamp with time zone DEFAULT now() NOT NULL,
+    initial_failure_cursor uuid,
+    automatic_poll_failure jsonb,
+    automatic_poll_notification jsonb,
     CONSTRAINT workflow_recovery_policies_automatic_failures_check CHECK ((automatic_failures >= 0)),
+    CONSTRAINT workflow_recovery_policies_automatic_poll_failure_check CHECK (((automatic_poll_failure IS NULL) OR (((jsonb_typeof(automatic_poll_failure) = 'object'::text) AND ((automatic_poll_failure ->> 'code'::text) = ANY (ARRAY['invalid_policy_authority'::text, 'invalid_polling_data'::text, 'invalid_recovery_identity'::text])) AND ((((automatic_poll_failure ->> 'attempts'::text))::bigint >= 1) AND (((automatic_poll_failure ->> 'attempts'::text))::bigint <= 32)) AND isfinite(((automatic_poll_failure ->> 'failed_at'::text))::timestamp with time zone) AND isfinite(((automatic_poll_failure ->> 'retry_at'::text))::timestamp with time zone) AND (((automatic_poll_failure ->> 'retry_at'::text))::timestamp with time zone > ((automatic_poll_failure ->> 'failed_at'::text))::timestamp with time zone)) IS TRUE))),
+    CONSTRAINT workflow_recovery_policies_automatic_poll_notification_check CHECK (((automatic_poll_notification IS NULL) OR (((jsonb_typeof(automatic_poll_notification) = 'object'::text) AND ((automatic_poll_notification ->> 'status'::text) = ANY (ARRAY['queued'::text, 'no_receivers'::text])) AND (((automatic_poll_notification -> 'payload'::text) ->> 'state'::text) = ANY (ARRAY['failed'::text, 'recovered'::text])) AND (((automatic_poll_notification -> 'payload'::text) ->> 'scope'::text) = 'automatic_policy'::text) AND ((((automatic_poll_notification -> 'payload'::text) ->> 'sequence'::text))::bigint > 0) AND (jsonb_typeof((automatic_poll_notification -> 'receiver_webhook_ids'::text)) = 'array'::text) AND isfinite(((automatic_poll_notification ->> 'captured_at'::text))::timestamp with time zone)) IS TRUE))),
     CONSTRAINT workflow_recovery_policies_next_health_at_check CHECK (isfinite(next_health_at)),
-    CONSTRAINT workflow_recovery_policies_policy_check CHECK (((jsonb_typeof(policy) = 'object'::text) AND ((policy ->> 'mode'::text) = ANY (ARRAY['preview'::text, 'automatic_retry'::text])))),
+    CONSTRAINT workflow_recovery_policies_policy_check CHECK (((jsonb_typeof(policy) = 'object'::text) AND ((policy ->> 'mode'::text) = ANY (ARRAY['preview'::text, 'automatic_retry'::text, 'automatic_initial'::text])))),
     CONSTRAINT workflow_recovery_policies_status_check CHECK ((status = ANY (ARRAY['disabled'::text, 'monitoring'::text, 'review_limit'::text, 'paused'::text]))),
     CONSTRAINT workflow_recovery_policies_version_check CHECK ((version > 0))
 );
@@ -37736,6 +37800,14 @@ ALTER TABLE ONLY public.outbound_ai_routes
 
 
 --
+-- Name: outbound_ai_settlements outbound_ai_settlements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_settlements
+    ADD CONSTRAINT outbound_ai_settlements_pkey PRIMARY KEY (lease_id);
+
+
+--
 -- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40301,6 +40373,22 @@ ALTER TABLE ONLY public.workflow_events
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_foreach_position UNIQUE (run_id, foreach_parent, foreach_index);
+
+
+--
+-- Name: workflow_initial_recovery_reviews workflow_initial_recovery_rev_app_id_failure_id_policy_vers_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_initial_recovery_reviews
+    ADD CONSTRAINT workflow_initial_recovery_rev_app_id_failure_id_policy_vers_key UNIQUE (app_id, failure_id, policy_version);
+
+
+--
+-- Name: workflow_initial_recovery_reviews workflow_initial_recovery_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_initial_recovery_reviews
+    ADD CONSTRAINT workflow_initial_recovery_reviews_pkey PRIMARY KEY (id);
 
 
 --
@@ -45561,6 +45649,13 @@ CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_rou
 
 
 --
+-- Name: outbound_ai_settlements_settled_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_settlements_settled_at_idx ON public.outbound_ai_settlements USING btree (settled_at);
+
+
+--
 -- Name: outbound_ai_usage_daily_usage_date_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -47231,6 +47326,27 @@ CREATE INDEX workflow_events_run_event_idx ON public.workflow_events USING btree
 --
 
 CREATE INDEX workflow_failure_eligibility_queue_idx ON public.workflow_recovery_failure_evidence USING btree (eligibility_observed_at NULLS FIRST, observed_at, id);
+
+
+--
+-- Name: workflow_initial_manual_completion_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_initial_manual_completion_due ON public.workflow_initial_recovery_reviews USING btree (completion_next_observe_at, id) WHERE ((submitted_at IS NOT NULL) AND (((review -> 'policy'::text) ->> 'mode'::text) = 'preview'::text) AND (NOT (review ? 'result'::text)));
+
+
+--
+-- Name: workflow_initial_recovery_reviews_app_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_initial_recovery_reviews_app_time ON public.workflow_initial_recovery_reviews USING btree (app_id, prepared_at);
+
+
+--
+-- Name: workflow_initial_recovery_reviews_job; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workflow_initial_recovery_reviews_job ON public.workflow_initial_recovery_reviews USING btree (job_id) WHERE (job_id IS NOT NULL);
 
 
 --
@@ -57535,6 +57651,14 @@ ALTER TABLE ONLY public.outbound_ai_routes
 
 
 --
+-- Name: outbound_ai_settlements outbound_ai_settlements_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_settlements
+    ADD CONSTRAINT outbound_ai_settlements_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: outbound_ai_usage_daily outbound_ai_usage_daily_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60756,6 +60880,14 @@ ALTER TABLE ONLY public.workflow_events
 
 ALTER TABLE ONLY public.workflow_steps
     ADD CONSTRAINT workflow_foreach_parent FOREIGN KEY (run_id, foreach_parent) REFERENCES public.workflow_steps(run_id, step_name) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_initial_recovery_reviews workflow_initial_recovery_reviews_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_initial_recovery_reviews
+    ADD CONSTRAINT workflow_initial_recovery_reviews_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.workflow_recovery_policies(app_id) ON DELETE CASCADE;
 
 
 --
