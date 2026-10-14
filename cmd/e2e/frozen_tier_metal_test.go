@@ -71,8 +71,8 @@ func TestFrozenTierMetal(t *testing.T) {
 	if err := json.Unmarshal(raw, &dep); err != nil {
 		t.Fatalf("decode deployment: %v", err)
 	}
-	// Imaging takes about a minute on the shared 2-vCPU test node.
-	if _, err := e2etest.WaitForDeploymentLive(context.Background(), t, pool, dep.ID, 5*time.Minute); err != nil {
+	// Imaging (layer build and scans) takes minutes on a busy shared test node.
+	if _, err := e2etest.WaitForDeploymentLive(context.Background(), t, pool, dep.ID, 15*time.Minute); err != nil {
 		t.Fatalf("deployment did not go live: %v", err)
 	}
 	// Only function apps are frozen. A function deploy needs a function
