@@ -87,3 +87,15 @@ test('reports an unavailable upstream', async t => {
   assert.equal((await fetch(`http://127.0.0.1:${port}/auth/v1/settings`)).status, 502)
   assert.equal((await fetch(`http://127.0.0.1:${port}/healthz`)).status, 503)
 })
+
+test('serves public settings without credentials', async t => {
+  const settings = { app: 'shop.example.com', keys: { signing: '0A1B2C3D', verifying: [] } }
+  const { base, seen } = await harness(t, (req, res) => res.end(), { settings })
+  const res = await fetch(`${base}/settings/v1`)
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('access-control-allow-origin'), '*')
+  assert.equal(res.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(await res.json(), settings)
+  assert.equal((await fetch(`${base}/settings/v1`, { method: 'POST' })).status, 405)
+  assert.equal(seen.length, 0)
+})
