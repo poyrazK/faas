@@ -4,7 +4,9 @@ package e2e_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,9 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
 // TestFunctionConcurrencyMetal is the ADR-1190 acceptance on real guests. A
@@ -51,7 +56,7 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
-	h := e2etest.Start(t, pool, e2etest.All, "FAAS_FUNCTION_RUNNER_GO124="+runner)
+	h := e2etest.Start(t, pool, e2etest.All, append(secretSealingEnv(t), "FAAS_FUNCTION_RUNNER_GO124="+runner)...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -194,10 +199,13 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 		}
 		routed := sharedWorkerGet(t, h, key, entry.Hostname(), "/users/42", time.Minute)
 		fallthrough_ := sharedWorkerGet(t, h, key, entry.Hostname(), "/about", time.Minute)
-		t.Logf("ADR-1190 evidence: %s/users/42 -> who=%s slots=%s; %s/about -> who=%s slots=%s",
-			entry.Hostname(), routed.who, routed.slots, entry.Hostname(), fallthrough_.who, fallthrough_.slots)
+		t.Logf("ADR-1190 evidence: %s/users/42 -> who=%s slots=%s secret bytes=%s; %s/about -> who=%s slots=%s",
+			entry.Hostname(), routed.who, routed.slots, routed.tok, entry.Hostname(), fallthrough_.who, fallthrough_.slots)
 		if routed.who != "users" || routed.slots != "4" {
 			t.Fatalf("/users/42 on the entry host reached who=%s slots=%s; want the users function built with concurrency 4", routed.who, routed.slots)
+		}
+		if routed.tok != fmt.Sprint(len("s3cret-users-token")) {
+			t.Fatalf("users function saw a %s-byte USERS_TOKEN; want the sealed secret from the deployer's environment", routed.tok)
 		}
 		if fallthrough_.who != "web" {
 			t.Fatalf("/about on the entry host reached who=%s; want the entry function", fallthrough_.who)
@@ -223,7 +231,42 @@ func TestFunctionConcurrencyMetal(t *testing.T) {
 	})
 }
 
-type sharedWorkerReply struct{ who, pid, slots, cancels, path string }
+// secretSealingEnv gives the daemons a host and fleet age key and an HMAC
+// key, so apid can seal app secrets and wakes can deliver them.
+func secretSealingEnv(t *testing.T) []string {
+	t.Helper()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := t.TempDir()
+	for _, name := range []string{"host.age", "fleet.age"} {
+		if err := secretbox.WriteHostKeyAtPath(filepath.Join(keys, name), identity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	public := filepath.Join(keys, "host.age.pub")
+	if err := secretbox.WriteRecipientFile(public, identity); err != nil {
+		t.Fatal(err)
+	}
+	hmac := make([]byte, 32)
+	if _, err := rand.Read(hmac); err != nil {
+		t.Fatal(err)
+	}
+	hmacPath := filepath.Join(keys, "host.hmac")
+	if err := os.WriteFile(hmacPath, hmac, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	return []string{
+		"FAAS_HOST_HMAC_KEY_PATH=" + hmacPath,
+		"FAAS_HOST_KEY_PATH=" + filepath.Join(keys, "host.age"),
+		"FAAS_HOST_AGE_IDENTITY_PATH=" + filepath.Join(keys, "host.age"),
+		"FAAS_HOST_AGE_RECIPIENT_PATH=" + public,
+		"FAAS_FLEET_AGE_RECIPIENT_PATH=" + public,
+	}
+}
+
+type sharedWorkerReply struct{ who, pid, slots, cancels, tok, path string }
 
 // sharedWorkerGet sends GET path to the function behind host and parses the
 // handler's "key=value" reply.
@@ -260,6 +303,8 @@ func sharedWorkerGet(t *testing.T, h *e2etest.Harness, key, host, path string, t
 			reply.slots = value
 		case "cancels":
 			reply.cancels = value
+		case "tok":
+			reply.tok = value
 		case "path":
 			reply.path = value
 		}
@@ -305,8 +350,8 @@ func sharedWorkerCHandlerSource(t *testing.T) []byte {
 // protocol (ADR-1190): it advertises FAAS_FUNCTION_CONCURRENCY slots, answers
 // each request on its own thread with the id the runner sent, and
 // acknowledges cancels. /slow answers after 2 s and /hang never answers;
-// every reply names the worker's pid, its WHO env value, its slots and how
-// many cancels it has acknowledged.
+// every reply names the worker's pid, its WHO env value, its slots, how many
+// cancels it has acknowledged and the length of its USERS_TOKEN secret.
 func sharedWorkerCHandlerFiles() map[string]string {
 	const handlerC = `#include <pthread.h>
 #include <stdio.h>
@@ -362,11 +407,11 @@ static void *serve(void *arg) {
 	struct job *job = arg;
 	if (strcmp(job->path, "/hang") == 0) { free(job); return NULL; }
 	if (strcmp(job->path, "/slow") == 0) sleep(2);
-	const char *who = getenv("WHO"), *slots = getenv("FAAS_FUNCTION_CONCURRENCY");
+	const char *who = getenv("WHO"), *slots = getenv("FAAS_FUNCTION_CONCURRENCY"), *token = getenv("USERS_TOKEN");
 	char text[320], encoded[480];
 	pthread_mutex_lock(&out);
-	snprintf(text, sizeof text, "who=%s pid=%d slots=%s cancels=%d path=%s",
-		who ? who : "-", (int)getpid(), slots ? slots : "-", cancels, job->path);
+	snprintf(text, sizeof text, "who=%s pid=%d slots=%s cancels=%d tok=%d path=%s",
+		who ? who : "-", (int)getpid(), slots ? slots : "-", cancels, token ? (int)strlen(token) : 0, job->path);
 	encode(text, encoded);
 	if (job->id[0])
 		printf("{\"__faas_id\":\"%s\",\"status\":200,\"headers\":{\"content-type\":\"text/plain\"},\"body_b64\":\"%s\"}\n", job->id, encoded);
