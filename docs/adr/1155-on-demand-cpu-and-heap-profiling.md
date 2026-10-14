@@ -224,8 +224,8 @@ captures without a kill are not announced; whoever asked is already waiting.
   many in the retention window, how many an OOM kill followed, and a link to
   the newest.
 
-schedd already writes the outbox for other producers (`app.parked`); no new
-writer or table is introduced. Volume stays bounded by the capture quotas:
+schedd already writes the outbox for `app.woken`; no new writer or table is
+introduced. Volume stays bounded by the capture quotas:
 one automatic capture per app and trigger per minimum interval, 60 captures
 per account per hour.
 
