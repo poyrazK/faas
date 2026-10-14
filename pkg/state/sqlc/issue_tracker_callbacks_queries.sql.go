@@ -87,6 +87,51 @@ func (q *Queries) IssueTrackerCallbackFind(ctx context.Context, db DBTX, arg Iss
 	return items, nil
 }
 
+const issueTrackerCallbackHealth = `-- name: IssueTrackerCallbackHealth :one
+SELECT count(*)::bigint AS retained_deliveries,
+ count(*) FILTER (WHERE cb.processed_at IS NULL)::bigint AS pending_hints,
+ max(cb.received_at)::timestamptz AS last_received_at,
+ max(cb.processed_at)::timestamptz AS last_processed_at
+FROM issue_tracker_callbacks cb
+JOIN issue_tracker_auto_sync p ON p.link_id=$1
+JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+LEFT JOIN issue_tracker_linear_connections c ON c.app_id=a.id AND c.account_id=a.account_id
+WHERE a.id=$2 AND a.account_id=$3
+ AND a.deleted_at IS NULL AND a.status<>'deleted'
+ AND cb.provider=p.baseline->>'provider' AND cb.ticket_id=p.baseline->>'id'
+ AND ((cb.provider='github' AND cb.installation_id=a.github_install_id AND cb.repository_id=a.github_repo_id
+  AND cb.ticket_url=p.baseline->>'url' AND a.github_install_account_id=a.account_id
+  AND EXISTS(SELECT 1 FROM github_installations gi WHERE gi.account_id=a.account_id AND gi.installation_id=a.github_install_id))
+ OR (cb.provider='linear' AND cb.app_id=a.id AND c.connected AND c.webhook_enabled
+  AND cb.connection_revision=c.revision AND cb.workspace_id=c.workspace_id AND cb.team_id=c.team_id
+  AND p.baseline->>'team_id'=c.team_id::text))
+`
+
+type IssueTrackerCallbackHealthParams struct {
+	LinkID    pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+type IssueTrackerCallbackHealthRow struct {
+	RetainedDeliveries int64
+	PendingHints       int64
+	LastReceivedAt     pgtype.Timestamptz
+	LastProcessedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) IssueTrackerCallbackHealth(ctx context.Context, db DBTX, arg IssueTrackerCallbackHealthParams) (IssueTrackerCallbackHealthRow, error) {
+	row := db.QueryRow(ctx, issueTrackerCallbackHealth, arg.LinkID, arg.AppID, arg.AccountID)
+	var i IssueTrackerCallbackHealthRow
+	err := row.Scan(
+		&i.RetainedDeliveries,
+		&i.PendingHints,
+		&i.LastReceivedAt,
+		&i.LastProcessedAt,
+	)
+	return i, err
+}
+
 const issueTrackerCallbackInsert = `-- name: IssueTrackerCallbackInsert :exec
 INSERT INTO issue_tracker_callbacks(scope_key,delivery_id,provider,app_id,connection_revision,installation_id,repository_id,workspace_id,team_id,ticket_id,ticket_url,payload_hash)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)

@@ -851,7 +851,7 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	e.AddAdminSession(t, get)
 	response := httptest.NewRecorder()
 	(*e.H()).ServeHTTP(response, get)
-	if response.Code != 200 || provider.reads != 0 || provider.workflowReads != 0 || !strings.Contains(response.Body.String(), "Review tracker sync") {
+	if response.Code != 200 || provider.reads != 0 || provider.workflowReads != 0 || !strings.Contains(response.Body.String(), "Refresh provider status and review sync") {
 		t.Fatal("page load fetched provider or omitted controls", response.Code, response.Body.String())
 	}
 	var csrf *http.Cookie
@@ -1030,6 +1030,18 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 	if first.Code != 200 || !strings.Contains(first.Body.String(), "accepted") || strings.Contains(first.Body.String(), secret) {
 		t.Fatal(first.Code, first.Body.String())
 	}
+	healthStore := apidserver.IssueNativeStore(e).(state.IssueTrackerCallbackHealthStore)
+	checkHealth := func(retained, pending int64) {
+		t.Helper()
+		health, err := healthStore.GetIssueTrackerCallbackHealth(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+		if err != nil || health.RetainedDeliveries != retained || health.PendingHints != pending || (retained > 0 && health.LastReceivedAt == nil) {
+			t.Fatal("callback health", health, err)
+		}
+	}
+	checkHealth(1, 1)
+	if _, err := healthStore.GetIssueTrackerCallbackHealth(t.Context(), app.ID, uuid.NewString(), accepted.IssueID, link.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("health crossed account scope", err)
+	}
 	payload["webhookTimestamp"] = time.Now().Add(-10 * time.Minute).UnixMilli()
 	if out := send(delivery, payload, true); out.Code != 200 || !strings.Contains(out.Body.String(), "duplicate") {
 		t.Fatal("known late retry failed", out.Code, out.Body.String())
@@ -1050,6 +1062,7 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 	if policy.Outcome != "matched" || provider.writes != 0 {
 		t.Fatal("signed payload overrode fresh provider state", policy)
 	}
+	checkHealth(1, 0)
 	payload["data"].(map[string]string)["updatedAt"] = "event-two"
 	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
 		t.Fatal(err)
@@ -1071,6 +1084,7 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 	if processed, err := callbacks.ProcessIssueTrackerCallback(t.Context()); err != nil || !processed {
 		t.Fatal("in-flight hint lost", processed, err)
 	}
+	checkHealth(2, 0)
 	provider.status.State = "resolved"
 	provider.status.StateID = input.LinearResolvedStateID
 	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
@@ -1084,6 +1098,7 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 		t.Fatal("callback resumed paused policy", out.Code, out.Body.String())
 	}
 	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 1}, nil), 200)
+	checkHealth(0, 0)
 	if out := send(uuid.NewString(), payload, true); out.Code != 404 {
 		t.Fatal("disconnected callbacks accepted", out.Code)
 	}

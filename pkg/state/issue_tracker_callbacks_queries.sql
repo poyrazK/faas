@@ -30,3 +30,21 @@ UPDATE issue_tracker_callbacks SET processed_at=now() WHERE scope_key=$1 AND del
 -- name: IssueTrackerCallbackCleanup :exec
 WITH expired AS (SELECT scope_key,delivery_id FROM issue_tracker_callbacks WHERE processed_at<sqlc.arg(before)::timestamptz ORDER BY processed_at LIMIT sqlc.arg(batch_size))
 DELETE FROM issue_tracker_callbacks c USING expired e WHERE c.scope_key=e.scope_key AND c.delivery_id=e.delivery_id;
+-- name: IssueTrackerCallbackHealth :one
+SELECT count(*)::bigint AS retained_deliveries,
+ count(*) FILTER (WHERE cb.processed_at IS NULL)::bigint AS pending_hints,
+ max(cb.received_at)::timestamptz AS last_received_at,
+ max(cb.processed_at)::timestamptz AS last_processed_at
+FROM issue_tracker_callbacks cb
+JOIN issue_tracker_auto_sync p ON p.link_id=sqlc.arg(link_id)
+JOIN apps a ON a.id=p.app_id AND a.account_id=p.account_id
+LEFT JOIN issue_tracker_linear_connections c ON c.app_id=a.id AND c.account_id=a.account_id
+WHERE a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id)
+ AND a.deleted_at IS NULL AND a.status<>'deleted'
+ AND cb.provider=p.baseline->>'provider' AND cb.ticket_id=p.baseline->>'id'
+ AND ((cb.provider='github' AND cb.installation_id=a.github_install_id AND cb.repository_id=a.github_repo_id
+  AND cb.ticket_url=p.baseline->>'url' AND a.github_install_account_id=a.account_id
+  AND EXISTS(SELECT 1 FROM github_installations gi WHERE gi.account_id=a.account_id AND gi.installation_id=a.github_install_id))
+ OR (cb.provider='linear' AND cb.app_id=a.id AND c.connected AND c.webhook_enabled
+  AND cb.connection_revision=c.revision AND cb.workspace_id=c.workspace_id AND cb.team_id=c.team_id
+  AND p.baseline->>'team_id'=c.team_id::text));

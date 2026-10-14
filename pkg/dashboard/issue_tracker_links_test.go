@@ -39,6 +39,7 @@ func TestIssueTrackerSyncControlsRespectOwnershipAndShowPendingOutcome(t *testin
 		t.Fatal(err)
 	}
 	view := IssueTrackerLinksView{AppSlug: "payments", IssueID: "group", CSRF: "csrf", CanManage: true, Items: []api.IssueTrackerLink{{ID: "link", Provider: "linear", URL: "https://linear.app/acme/issue/PAY-42"}}, Policies: map[string]api.IssueTrackerAutoSync{"link": {LinkID: "link", Enabled: true, Revision: 7, PendingState: "resolved", Outcome: "error"}}, Reasons: map[string]string{"link": IssueTrackerSyncReason("pending_outcome_unconfirmed")}, LinearConnection: &api.IssueTrackerLinearConnection{Connected: true, Revision: 3, TeamID: "team"}}
+	view.CallbackHealth = map[string]issuetracker.CallbackHealth{"link": {RetainedDeliveries: 3, PendingHints: 1}}
 	for _, owner := range []bool{true, false} {
 		view.CanManage = owner
 		var out bytes.Buffer
@@ -50,12 +51,12 @@ func TestIssueTrackerSyncControlsRespectOwnershipAndShowPendingOutcome(t *testin
 			t.Fatal("pending recovery guidance missing")
 		}
 		if owner {
-			for _, want := range []string{"Review tracker sync", "Disable automatic sync", `name="expected_revision" value="7"`, `type="password" name="api_key"`, "Disconnect Linear"} {
+			for _, want := range []string{"Refresh provider status and review sync", "Disable automatic sync", `name="expected_revision" value="7"`, `type="password" name="api_key"`, "Disconnect Linear", "3 retained", "1 pending", "Signature rejection counts are unavailable", "Provider webhook registration is not verified"} {
 				if !strings.Contains(rendered, want) {
 					t.Fatal("owner control missing", want)
 				}
 			}
-		} else if strings.Contains(rendered, "Review tracker sync") || strings.Contains(rendered, `name="api_key"`) {
+		} else if strings.Contains(rendered, "Refresh provider status and review sync") || strings.Contains(rendered, `name="api_key"`) {
 			t.Fatal("non-owner can manage provider access")
 		}
 	}

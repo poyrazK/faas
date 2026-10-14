@@ -82,3 +82,28 @@ PostgreSQL acceptance covers both providers, duplicate/stale/foreign deliveries,
 claim deferral and eventual wake, manual-edit conflicts without inbound resolution,
 paused policies and disconnect. CLI/SDK contracts retain write-only secret handling
 and expose only callback metadata.
+
+## Operational visibility
+
+The owner dashboard shows retained verified delivery count, pending hints, last
+received time and last processed time for each linked ticket. Read these aggregates
+in a repeatable-read transaction after checking the current app/account, canonical
+issue group and link. Match only the currently owned GitHub installation/repository
+or connected Linear revision/workspace/team. A disconnected or replaced connection
+must not display old receipts as evidence of current callback health. Paused policies
+can still display retained evidence without being resumed.
+
+The status refresh control performs the existing explicit provider preview, including
+fresh connection and workflow scope checks. It does not enqueue callback replay,
+change the policy, or dispatch a provider write. Owners must explicitly review and
+align a paused policy before re-enabling. Normal worker polling recovers missed
+hints and observes uncertain writes with the existing safeguards.
+
+Counts cover retained tracked deliveries, not all incoming HTTP requests. Duplicate
+retries do not increase them; ignored and rejected requests are not retained. Last
+processed means the hint was consumed, not provider confirmation. Paused or outdated
+hints are consumed without scheduling.
+Signing rejection counters and live provider webhook registration checks remain
+unavailable; the dashboard must describe these limits rather than imply a successful
+setup or a zero rejection rate. The callback path, connected team, configured signing
+secret flag and fresh provider preview help owners check local setup.

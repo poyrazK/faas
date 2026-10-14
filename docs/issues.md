@@ -1269,3 +1269,27 @@ and cleanup each handle at most 100 receipts per pass. Callbacks for untracked,
 disabled or paused policies do not enable delegation.
 See [ADR-1221](adr/1221-provider-issue-callback-hints.md) and
 [Linear's webhook protocol](https://linear.app/developers/webhooks).
+
+### Callback health and recovery
+
+App owners can inspect each linked ticket's retained verified callback count, pending
+hints, last received time and last processed time in the Issues dashboard. These
+figures cover the current GitHub installation/repository or Linear connection
+revision/team. Processed receipts expire after seven days, duplicate retries do not
+add another receipt, and ignored/untracked requests are excluded. Disconnecting or
+replacing the connection removes old receipts from the current health view.
+
+Choose **Refresh provider status and review sync** to fetch the provider's current
+status and, for Linear, the connected team's active workflow choices. This performs
+reads only. It leaves paused policies and pending writes intact. Review the displayed
+reason, restore access or align the lifecycle as needed, then explicitly re-enable
+automatic sync. Periodic polling continues to recover missed callback hints.
+
+A processed hint was consumed; paused or outdated hints do not schedule a check.
+Processing does not mean synchronization succeeded.
+Check the automatic policy's last confirmed provider state and last check separately.
+Signature rejection counts and provider-side webhook registration checks are not
+available. For Linear, confirm the displayed callback path and connected team match
+your team-scoped Issue webhook and its signing secret. For GitHub, enable Issues
+events for the installed GitHub App. An empty delivery history does not establish whether setup succeeded; send a relevant
+provider event to verify delivery.

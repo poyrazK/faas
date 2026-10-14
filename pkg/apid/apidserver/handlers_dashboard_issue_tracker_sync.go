@@ -20,6 +20,17 @@ import (
 
 func (s *server) populateDashboardTrackerSync(w http.ResponseWriter, r *http.Request, app state.App, account string, view *dashboard.IssueTrackerLinksView) bool {
 	view.CanManage = app.AccountID == account
+	if store, ok := s.store.(state.IssueTrackerCallbackHealthStore); ok && view.CanManage {
+		view.CallbackHealth = map[string]issuetracker.CallbackHealth{}
+		for _, link := range view.Items {
+			health, err := store.GetIssueTrackerCallbackHealth(r.Context(), app.ID, app.AccountID, view.IssueID, link.ID)
+			if err != nil {
+				writeIssueError(w, err)
+				return false
+			}
+			view.CallbackHealth[link.ID] = health
+		}
+	}
 	if store, ok := s.store.(state.IssueTrackerAutoSyncStore); ok {
 		view.Policies = map[string]api.IssueTrackerAutoSync{}
 		view.Reasons = map[string]string{}
