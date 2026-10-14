@@ -70,10 +70,11 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
   async function stopCapture() {
     const c = capture; capture = null;
     if (!c) return;
-    // Read both profiles before encoding so the heap excludes the encoder.
+    // Read the heap first, then stop CPU, and encode only afterwards: building
+    // and encoding the CPU profile allocates, and must not show as app heap.
     let cpu = null, heap = null;
-    try { if (c.cpu) cpu = pprof.time.stop(); } catch (_) { /* best effort */ }
     try { if (c.heap && heapRunning) heap = pprof.heap.profile(); } catch (_) { /* best effort */ }
+    try { if (c.cpu) cpu = pprof.time.stop(); } catch (_) { /* best effort */ }
     if (heapRunning) { pprof.heap.stop(); heapRunning = false; }
     if (cpu) await upload('cpu', c.epoch, c.from, await pprof.encode(cpu));
     if (heap) await upload('heap', c.epoch, c.from, await pprof.encode(heap));

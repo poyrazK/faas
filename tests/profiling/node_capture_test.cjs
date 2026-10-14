@@ -12,7 +12,7 @@ const zlib = require('node:zlib');
 
 const EPOCH = 'e'.repeat(32);
 const APP = `
-class Cache { constructor() { this.items = []; } grow() { this.items.push({label: "item-" + this.items.length, values: new Array(256).fill(this.items.length)}); } }
+class Cache { constructor() { this.items = []; } grow() { this.items.push({label: "item-" + this.items.length, values: new Array(4096).fill(this.items.length)}); } }
 const cache = new Cache();
 function spin() { let x = 1; for (let i = 0; i < 2e5; i++) x = (x * 31 + i) % 1000003; return x; }
 const end = Date.now() + 9000;

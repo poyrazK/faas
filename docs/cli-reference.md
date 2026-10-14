@@ -10119,7 +10119,7 @@ Capture CPU or heap profiles from a running instance now
 
 | Flag | Meaning | |
 |---|---|---|
-| `--type <KINDS>` | cpu, heap or cpu,heap (default cpu) |  |
+| `--type <KINDS>` | cpu, heap, stacks, comma-separated (default cpu) |  |
 | `--duration <DURATION>` | capture window, 1s..60s (default 10s) |  |
 | `--instance <UUID>` | running instance; default the earliest |  |
 | `--output <DIR>` | write merged .pb.gz pprof files |  |
@@ -10146,7 +10146,7 @@ Compare a profile capture with an earlier one to see what grew
 | Flag | Meaning | |
 |---|---|---|
 | `--base <ID>` | baseline capture id of the same app |  |
-| `--type <KIND>` | cpu or heap (default: shared kind, heap first) |  |
+| `--type <KIND>` | cpu, heap or stacks (default: shared kind, heap first) |  |
 | `--top <N>` | functions to print |  |
 
 ### debug dependencies
