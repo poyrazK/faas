@@ -111,4 +111,11 @@ func TestPostgresRestoreVerificationMigrationRetainsRecords(t *testing.T) {
 	if got, err := store.GetRestoreVerification(ctx, target.AccountID, target.ID); err != nil || !sameRestoreVerification(got, v) {
 		t.Fatalf("verification changed during replay/rollback: %+v %v", got, err)
 	}
+	// Final account erasure hard-deletes deleted database tombstones; a
+	// verification must go with its row, never block GDPR deletion.
+	var onDelete string
+	if err := store.pool.QueryRow(ctx, `SELECT confdeltype::text FROM pg_constraint
+		WHERE conrelid='managed_postgres_restore_verifications'::regclass AND confrelid='managed_postgres_databases'::regclass`).Scan(&onDelete); err != nil || onDelete != "c" {
+		t.Fatalf("verification foreign key on delete = %q, want cascade: %v", onDelete, err)
+	}
 }

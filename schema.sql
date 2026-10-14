@@ -54319,7 +54319,7 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 --
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
-    ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

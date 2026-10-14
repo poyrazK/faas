@@ -1,9 +1,11 @@
 -- +goose Up
 -- ADR-1259: the first independent verification of a restore target's lineage.
 -- Later observations confirm its immutable-metadata evidence instead of
--- remapping a historical position the provider resolves inexactly.
+-- remapping a historical position the provider resolves inexactly. A record
+-- lives exactly as long as its database row: final account erasure removes
+-- deleted tombstones, and their verifications go with them.
 CREATE TABLE IF NOT EXISTS managed_postgres_restore_verifications (
-    database_id uuid PRIMARY KEY REFERENCES managed_postgres_databases(id) ON DELETE RESTRICT,
+    database_id uuid PRIMARY KEY REFERENCES managed_postgres_databases(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
     backend_id text NOT NULL CHECK (backend_id<>'' AND length(backend_id)<=255),
     backend_fingerprint text NOT NULL CHECK (backend_fingerprint ~ '^[a-f0-9]{64}$'),

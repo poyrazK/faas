@@ -54,8 +54,10 @@ computes report a synthetic snapshot (`1024:1024:`).
    lease and the database's recorded target, source and point. The record is
    append-once: a second, different record for the same database is a conflict.
    Gregale observed this evidence. It is not a receipt fabricated from request
-   parameters, so ADR-677's prohibition does not apply. Records are retained
-   with their database row. The down migration refuses to drop retained records.
+   parameters, so ADR-677's prohibition does not apply. A record lives exactly
+   as long as its database row: final account erasure removes deleted
+   tombstones and their records with them. The down migration refuses to drop
+   retained records.
 3. **Later observations confirm instead of re-resolving.** Inspection,
    readiness, recovery of an acknowledged creation, and idempotent replay all
    receive the record. The adapter re-reads the exact target and requires it to

@@ -5153,6 +5153,22 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_restore_verifications",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "backend_id",
+      "database_id",
+      "evidence",
+      "generation",
+      "point_in_time",
+      "provider_resource_id",
+      "source_resource_id",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_usage",
     "columns": [
       "account_id",
