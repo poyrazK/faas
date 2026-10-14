@@ -8,8 +8,8 @@
 // The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from
 // `src/generated/core/OpenAPI.ts` — the `FaaSClient` constructor
 // sets these once at construction time. Mutating methods receive a
-// fresh `Idempotency-Key` per attempt via the fetch wrapper stack
-// installed on `globalThis.fetch` (see `client.ts`).
+// fresh `Idempotency-Key` per logical call, preserved across retries, via
+// the fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
 
 // Generated surface.
 export {
