@@ -2435,6 +2435,32 @@ UPDATE trigger_records
  WHERE id = $1 AND state = 'claimed' AND claim_generation = $2
    AND claim_expires_at > now();
 
+-- name: DeleteExpiredTriggerRecords :execrows
+-- One bounded retention batch: rows past an explicit result_retention_until,
+-- and unpinned terminal rows older than the default ages. Dead letters keep
+-- the longer age; work-policy records keep explicit retention only.
+WITH candidates AS (
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NOT NULL AND result_retention_until <= sqlc.arg(now)::timestamptz
+        AND state IN ('succeeded', 'dead_letter', 'superseded', 'cancelled', 'expired')
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL
+        AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(terminal_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL AND state = 'dead_letter'
+        AND coalesce(last_dispatched_at, received_at) < sqlc.arg(dead_letter_before)::timestamptz
+      LIMIT sqlc.arg(batch)::integer)
+), doomed AS (
+    SELECT r.id FROM trigger_records r WHERE r.id IN (SELECT id FROM candidates)
+     LIMIT sqlc.arg(batch)::integer FOR UPDATE SKIP LOCKED
+)
+DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id;
+
 -- name: SupersedeTriggerRecordItems :execrows
 -- Ends one realtime delivery's records whatever stage they reached; the
 -- consumer group redelivers under a new item identifier (ADR-1237).

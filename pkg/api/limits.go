@@ -344,6 +344,18 @@ const QueueBindingMaxConcurrency = 10000
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
 
+// Trigger ledger retention: terminal trigger_records rows without an explicit
+// result_retention_until are deleted this long after their last dispatch.
+// Dead letters stay longer so operators can review, retry or drop them.
+const (
+	TriggerRecordRetention     = 7 * 24 * time.Hour
+	TriggerDeadLetterRetention = 30 * 24 * time.Hour
+	// TriggerRetentionBatchMax and TriggerRetentionPassesMax bound one sweep
+	// to 10,000 deletions so a large backlog drains over several sweeps.
+	TriggerRetentionBatchMax  = 1000
+	TriggerRetentionPassesMax = 10
+)
+
 // RealtimeTriggerMinLeaseSeconds is the shortest consumer-group lease a
 // realtime trigger may bind (ADR-1237): one GatewaySynthDispatchTimeout
 // invocation plus wake and queueing margin.

@@ -1720,6 +1720,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
 		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
+		// Terminal trigger_records past their explicit retention or the
+		// default ages in pkg/api (TriggerRecordRetention and
+		// TriggerDeadLetterRetention).
+		WithTriggersRetention(sched.NewTriggersRetention(store, log)).
 		WithHeartbeat(hb).
 		WithInstanceStats(statsPoller).
 		WithInstanceActivity(autoscaleReader).

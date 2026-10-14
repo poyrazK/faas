@@ -11654,6 +11654,53 @@ func (q *Queries) DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ru
 	return result.RowsAffected(), nil
 }
 
+const deleteExpiredTriggerRecords = `-- name: DeleteExpiredTriggerRecords :execrows
+WITH candidates AS (
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NOT NULL AND result_retention_until <= $1::timestamptz
+        AND state IN ('succeeded', 'dead_letter', 'superseded', 'cancelled', 'expired')
+      LIMIT $2::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL
+        AND state IN ('succeeded', 'superseded', 'cancelled', 'expired')
+        AND coalesce(last_dispatched_at, received_at) < $3::timestamptz
+      LIMIT $2::integer)
+    UNION ALL
+    (SELECT id FROM trigger_records
+      WHERE result_retention_until IS NULL AND work_policy_name IS NULL AND state = 'dead_letter'
+        AND coalesce(last_dispatched_at, received_at) < $4::timestamptz
+      LIMIT $2::integer)
+), doomed AS (
+    SELECT r.id FROM trigger_records r WHERE r.id IN (SELECT id FROM candidates)
+     LIMIT $2::integer FOR UPDATE SKIP LOCKED
+)
+DELETE FROM trigger_records USING doomed WHERE trigger_records.id = doomed.id
+`
+
+type DeleteExpiredTriggerRecordsParams struct {
+	Now              pgtype.Timestamptz
+	Batch            int32
+	TerminalBefore   pgtype.Timestamptz
+	DeadLetterBefore pgtype.Timestamptz
+}
+
+// One bounded retention batch: rows past an explicit result_retention_until,
+// and unpinned terminal rows older than the default ages. Dead letters keep
+// the longer age; work-policy records keep explicit retention only.
+func (q *Queries) DeleteExpiredTriggerRecords(ctx context.Context, db DBTX, arg DeleteExpiredTriggerRecordsParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteExpiredTriggerRecords,
+		arg.Now,
+		arg.Batch,
+		arg.TerminalBefore,
+		arg.DeadLetterBefore,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteExternalTriggerDeadLetterAudit = `-- name: DeleteExternalTriggerDeadLetterAudit :exec
 delete from trigger_dead_letter d using trigger_records r, triggers t
 where d.record_id=$1::uuid and r.id=d.record_id and t.id=r.trigger_id

@@ -570,6 +570,10 @@ type Querier interface {
 	DeleteEnvironmentWorkloadServingAcks(ctx context.Context, db DBTX, graphID pgtype.UUID) error
 	DeleteEventSubscription(ctx context.Context, db DBTX, arg DeleteEventSubscriptionParams) error
 	DeleteExpiredMirrorSlotLeases(ctx context.Context, db DBTX, ruleID pgtype.UUID) (int64, error)
+	// One bounded retention batch: rows past an explicit result_retention_until,
+	// and unpinned terminal rows older than the default ages. Dead letters keep
+	// the longer age; work-policy records keep explicit retention only.
+	DeleteExpiredTriggerRecords(ctx context.Context, db DBTX, arg DeleteExpiredTriggerRecordsParams) (int64, error)
 	DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error
 	DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;

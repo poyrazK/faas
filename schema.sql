@@ -45228,6 +45228,8 @@ CREATE INDEX trigger_records_trigger_deadline_idx ON public.trigger_records USIN
 
 CREATE INDEX trigger_records_trigger_retention_idx ON public.trigger_records USING btree (trigger_id, result_retention_until) WHERE (result_retention_until IS NOT NULL);
 
+CREATE INDEX trigger_records_terminal_age_idx ON public.trigger_records USING btree ((COALESCE(last_dispatched_at, received_at))) WHERE ((result_retention_until IS NULL) AND (work_policy_name IS NULL) AND (state = ANY (ARRAY['succeeded'::text, 'superseded'::text, 'cancelled'::text, 'expired'::text, 'dead_letter'::text])));
+
 
 --
 -- Name: trigger_records_work_expiring_idx; Type: INDEX; Schema: public; Owner: -
