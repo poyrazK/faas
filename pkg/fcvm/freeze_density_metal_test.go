@@ -106,7 +106,7 @@ func TestMetalFreezeDensity(t *testing.T) {
 	var swapped int64
 	for _, id := range ids {
 		start := time.Now()
-		rep, err := m.Freeze(ctx, id)
+		rep, err := m.Freeze(ctx, id, FreezeOptions{Reclaim: true})
 		if err != nil {
 			t.Fatalf("freeze %s: %v", id, err)
 		}

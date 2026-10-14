@@ -466,6 +466,10 @@ var guestInitPlatformMessages = []string{
 	"workload identity proxy ", "event publish proxy ", "outbound relay ",
 	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
 	"sidecar ", "healthcheck: ", "WatchOOM",
+	// Job exit/cancel delivery over vsock: "INFO job-exit shipped ... attempt=1"
+	// ended every job task log, its attempt being the vsock retry rather than
+	// the task attempt the log header names (hunt #10).
+	"job-exit ", "job cancel ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05
@@ -506,7 +510,13 @@ func benignGuestKernelLine(line []byte) bool {
 			text = strings.TrimSpace(text[end+1:])
 		}
 	}
-	return text == "PCI: Fatal: No config space access function found"
+	switch text {
+	case "PCI: Fatal: No config space access function found",
+		// Every job task and stopped VM halts without ACPI power-off.
+		"reboot: Power off not available: System halted instead":
+		return true
+	}
+	return false
 }
 
 // stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
@@ -564,6 +574,8 @@ func firecrackerControlLine(line []byte) bool {
 	for _, marker := range []string{
 		"running firecracker",
 		"listening on api socket",
+		"vmm is stopping",
+		"killing vcpu threads",
 		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
@@ -574,6 +586,12 @@ func firecrackerControlLine(line []byte) bool {
 		"kick entropy ",
 		"kick block ",
 		"kick vsock",
+		"kick pmem ",
+		// Restore's per-device kicks: "[Vsock:vsock] notifying tx queue",
+		// "[Balloon:balloon] notifying queues", "[Vsock:vsock] signaling
+		// event queue" (hunt #10, every wake of an rc.257 app).
+		"] notifying ",
+		"] signaling ",
 		"development preview",
 		"vmm action took",
 		"api server",

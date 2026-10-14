@@ -3838,6 +3838,7 @@ const (
 	AppWebhookEventRecoveryReviewFinished                  AppWebhookEvent = "automation.recovery_review_finished"
 	AppWebhookEventRecoveryReviewReady                     AppWebhookEvent = "automation.recovery_review_ready"
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
+	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3896,7 +3897,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
+	AppWebhookEventRecoveryPollingStatus, AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 }
 

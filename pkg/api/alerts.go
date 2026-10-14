@@ -192,6 +192,10 @@ var AllowedAlertRuleMetrics = []string{
 	"mcp_tasks_oldest_age_seconds",
 	"mcp_tasks_metrics_stale",
 	"mcp_task_promotion_hold_age_seconds",
+	"mcp_policy_unconverged_gateways",
+	"mcp_policy_unverified",
+	MetricMCPCatalogDrift, MetricMCPCatalogMonitorUnavailable,
+	MetricMCPOAuthReauthorization, MetricMCPOAuthRenewalFailed, MetricMCPOAuthRetirementExpiring, MetricMCPOAuthIssuanceUnknown,
 	// ADR-745: one pushed custom metric, named by custom_metric_name.
 	AlertRuleMetricCustomMetric,
 }
@@ -324,7 +328,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 		metric == AlertRuleMetricCustomMetric || IsEdgeRuleAlertMetric(metric) {
 		return action == "" || action == "webhook"
 	}
-	if metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
+	if IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true
@@ -596,4 +600,27 @@ func IsEventConsumerAlertMetric(metric string) bool {
 		return true
 	}
 	return false
+}
+
+// AlertMetricActionRestriction explains why an observation-only metric cannot
+// run a deployment action.
+func AlertMetricActionRestriction(metric string) string {
+	if IsMCPConnectionHealthMetric(metric) {
+		return "MCP connection health alerts support webhook action only"
+	}
+	if IsMCPCatalogMonitorMetric(metric) {
+		return "MCP catalog monitoring alerts support webhook action only"
+	}
+	if IsMCPPolicyConvergenceMetric(metric) {
+		return "MCP policy convergence alerts support webhook action only"
+	}
+	switch metric {
+	case "mcp_task_promotion_hold_age_seconds":
+		return "MCP promotion hold alerts support webhook action only"
+	case "mcp_tasks_oldest_age_seconds":
+		return "MCP task age alerts support webhook action only"
+	case "mcp_tasks_metrics_stale":
+		return "MCP task metrics freshness alerts support webhook action only"
+	}
+	return "pre-auth target metrics support webhook action only"
 }

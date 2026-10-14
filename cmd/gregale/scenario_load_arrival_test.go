@@ -261,6 +261,38 @@ func TestLoadArrivalDroppedWorkFailsCLIAndJUnitAfterCleanup(t *testing.T) {
 }
 
 func TestLoadArrivalSuiteCLIReportsDataHooksProgressAndJUnit(t *testing.T) {
+	// Reports/hooks must account for all 16 requests deterministically. This test
+	// is not a host scheduling benchmark: lateness, capacity drops and canceled
+	// requests are exercised separately against the real monotonic clock.
+	originalRunner := arrivalLoadRunner
+	t.Cleanup(func() { arrivalLoadRunner = originalRunner })
+	arrivalLoadRunner = func(ctx context.Context, collector *testLoadCollector, cfg *testLoadConfig, _ time.Time, journey func(int)) {
+		elapsed := time.Duration(0)
+		wait := func(ctx context.Context, delay time.Duration) bool {
+			for {
+				collector.mu.Lock()
+				active := collector.active
+				collector.mu.Unlock()
+				if active == 0 {
+					break
+				}
+				if !waitTestLoad(ctx, time.Millisecond) {
+					return false
+				}
+			}
+			if ctx.Err() != nil {
+				return false
+			}
+			previous := elapsed
+			elapsed += delay
+			if cfg.Progress != nil && elapsed/time.Second > previous/time.Second {
+				cfg.Progress(collector.progress(cfg, elapsed))
+			}
+			return true
+		}
+		runTestArrivalLoadWithClock(ctx, collector, cfg, func() time.Duration { return elapsed }, wait, journey)
+	}
+
 	dir := t.TempDir()
 	stdout, stderr := captureSuiteTestOutput(t)
 	t.Setenv("FAAS_TOKEN", "private-account-key")

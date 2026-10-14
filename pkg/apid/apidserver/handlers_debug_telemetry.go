@@ -737,6 +737,78 @@ type debugDependencyHistoryAggregate struct {
 	dependencyKind string
 	name           string
 	debugDependencyHistoryRollup
+	// queries breaks a database dependency down by normalized query
+	// pattern; at most debugDependencyQueryMaxPatterns distinct patterns.
+	queries          map[string]*debugDependencyHistoryRollup
+	queriesTruncated bool
+}
+
+// debugDependencyQueryMaxPatterns bounds the query patterns tracked per
+// dependency; debugDependencyQueryMaxOutput bounds those returned.
+const (
+	debugDependencyQueryMaxPatterns = 16
+	debugDependencyQueryMaxOutput   = 5
+)
+
+// addQuerySample files a database span's sample under its query pattern.
+func (a *debugDependencyHistoryAggregate) addQuerySample(statement string, sample debugDependencyHistorySample, isCurrent bool) {
+	pattern := debugger.QueryPattern(statement)
+	if pattern == "" {
+		return
+	}
+	rollup := a.queries[pattern]
+	if rollup == nil {
+		if len(a.queries) >= debugDependencyQueryMaxPatterns {
+			a.queriesTruncated = true
+			return
+		}
+		if a.queries == nil {
+			a.queries = make(map[string]*debugDependencyHistoryRollup)
+		}
+		rollup = &debugDependencyHistoryRollup{}
+		a.queries[pattern] = rollup
+	}
+	addDebugDependencyHistorySample(rollup, sample, isCurrent)
+}
+
+// queryItems summarizes the query breakdown, regressions first, then by
+// current p95 and calls.
+func (a *debugDependencyHistoryAggregate) queryItems() ([]api.DebugDependencyQueryItem, bool) {
+	if len(a.queries) == 0 {
+		return nil, false
+	}
+	out := make([]api.DebugDependencyQueryItem, 0, len(a.queries))
+	for pattern, rollup := range a.queries {
+		metrics := summarizeDebugDependencyHistory(rollup)
+		out = append(out, api.DebugDependencyQueryItem{
+			Pattern: pattern, Calls: rollup.calls, ErrorCalls: rollup.errors,
+			P95MS: metrics.p95MS, BaselineP95MS: metrics.baselineP95MS, CurrentP95MS: metrics.currentP95MS,
+			RegressionFactor: metrics.regressionFactor, Regression: metrics.regression,
+			BaselineErrorRatePct: metrics.baselineErrorRatePct, CurrentErrorRatePct: metrics.currentErrorRatePct,
+			FailureRegression: metrics.failureRegression, TopErrorType: metrics.topErrorType,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Regression != out[j].Regression {
+			return out[i].Regression
+		}
+		if out[i].FailureRegression != out[j].FailureRegression {
+			return out[i].FailureRegression
+		}
+		if out[i].CurrentP95MS != out[j].CurrentP95MS {
+			return out[i].CurrentP95MS > out[j].CurrentP95MS
+		}
+		if out[i].Calls != out[j].Calls {
+			return out[i].Calls > out[j].Calls
+		}
+		return out[i].Pattern < out[j].Pattern
+	})
+	truncated := a.queriesTruncated
+	if len(out) > debugDependencyQueryMaxOutput {
+		out = out[:debugDependencyQueryMaxOutput]
+		truncated = true
+	}
+	return out, truncated
 }
 
 type debugDependencyImpactAggregate struct {
@@ -836,6 +908,9 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			}
 			if aggregate != nil {
 				addDebugDependencyHistorySample(&aggregate.debugDependencyHistoryRollup, sample, isCurrent)
+				if span.DBStatement != "" {
+					aggregate.addQuerySample(span.DBStatement, sample, isCurrent)
+				}
 			}
 
 			from := debugDependencyRootSegment()
@@ -892,6 +967,7 @@ func buildDebugDependencyRollup(rows []sqlc.ListRequestTelemetryDependencySpansR
 			FailureRegression:      metrics.failureRegression,
 			TopErrorType:           metrics.topErrorType,
 		})
+		out[len(out)-1].Queries, out[len(out)-1].QueriesTruncated = aggregate.queryItems()
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Regression != out[j].Regression {
@@ -1331,44 +1407,40 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 	// The gateway/apid hosts can differ by a small NTP skew; the journal RPC
 	// accepts up to one minute of future skew, so its matching window must too.
 	receivedUntil := now.Add(time.Minute)
-	if journalStore, ok := s.store.(state.RequestIDJournalReader); ok {
-		journal, journalErr := journalStore.FindRequestIDJournalByAppAndIdentifier(
-			r.Context(), acct.ID, app.ID, identifier, receivedFrom, receivedUntil, now,
-		)
-		if journalErr == nil {
-			if journal.TraceID != "" {
-				row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-					AppID:         stringToPgUUID(app.ID),
-					Identifier:    journal.TraceID,
-					ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
-					ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
-				})
-				if telemetryErr == nil {
-					item := debugTelemetryGetRowToItem(row)
-					item.RequestID = identifier
-					writeJSON(w, http.StatusOK, item)
-					return
-				}
-				if !errors.Is(telemetryErr, pgx.ErrNoRows) {
-					api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
-					return
-				}
+	journal, found, journalErr := s.findDebugRequestJournal(r.Context(), acct.ID, app.ID, identifier, receivedFrom, now)
+	if journalErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
+		return
+	}
+	if found {
+		if journal.TraceID != "" {
+			row, telemetryErr := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
+				AppID:         stringToPgUUID(app.ID),
+				Identifier:    journal.TraceID,
+				ReceivedFrom:  pgtype.Timestamptz{Time: receivedFrom, Valid: true},
+				ReceivedUntil: pgtype.Timestamptz{Time: receivedUntil, Valid: true},
+			})
+			if telemetryErr == nil {
+				item := debugTelemetryGetRowToItem(row)
+				item.RequestID = identifier
+				writeJSON(w, http.StatusOK, item)
+				return
 			}
-			item := api.DebugTelemetryRequestItem{
-				RequestID: identifier, EvidenceStatus: "request_id_only",
-				ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
+			if !errors.Is(telemetryErr, pgx.ErrNoRows) {
+				api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
+				return
 			}
-			if journal.TraceID != "" {
-				traceID := journal.TraceID
-				item.TraceID = &traceID
-			}
-			writeJSON(w, http.StatusOK, item)
-			return
 		}
-		if !errors.Is(journalErr, pgx.ErrNoRows) {
-			api.WriteProblem(w, api.ErrCapacity("get request ID journal"))
-			return
+		item := api.DebugTelemetryRequestItem{
+			RequestID: identifier, EvidenceStatus: "request_id_only",
+			ReceivedAt: journal.ReceivedAt.UTC().Format(time.RFC3339Nano),
 		}
+		if journal.TraceID != "" {
+			traceID := journal.TraceID
+			item.TraceID = &traceID
+		}
+		writeJSON(w, http.StatusOK, item)
+		return
 	}
 	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
 		AppID:         stringToPgUUID(app.ID),
@@ -1412,12 +1484,7 @@ func (s *server) debugRequestEvidenceHandler(w http.ResponseWriter, r *http.Requ
 	}
 	now := time.Now().UTC()
 	retention := time.Duration(limits.DebugTelemetryRetentionDays) * 24 * time.Hour
-	row, err := s.store.GetRequestTelemetryByAppAndIdentifier(r.Context(), sqlc.GetRequestTelemetryByAppAndIdentifierParams{
-		AppID:         stringToPgUUID(app.ID),
-		Identifier:    identifier,
-		ReceivedFrom:  pgtype.Timestamptz{Time: now.Add(-retention), Valid: true},
-		ReceivedUntil: pgtype.Timestamptz{Time: now, Valid: true},
-	})
+	row, err := s.getDebugRequestTelemetry(r.Context(), acct.ID, app.ID, identifier, now.Add(-retention), now, now)
 	if errors.Is(err, pgx.ErrNoRows) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "request telemetry not found"))
 		return
@@ -2291,6 +2358,7 @@ func debugRegressionRowToItem(row sqlc.ListActiveRegressionsByAppRow) api.DebugR
 		}
 	}
 	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
+	applyDebugRegressionSignal(&item, row.Kind, row.ErrorRatePct, row.ErrorRateBasePct, row.ErrorCount)
 	return item
 }
 

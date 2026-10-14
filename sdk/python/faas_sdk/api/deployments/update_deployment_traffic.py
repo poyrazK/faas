@@ -77,6 +77,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -111,6 +116,10 @@ def sync_detailed(
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
     `traffic_percent_sum_invalid`).
+    Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+    audit timeline. Accepted evidence commits with traffic; rejected evidence
+    is saved after rollback. Audit-storage failure returns 503
+    mcp_admission_evidence_unavailable.
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
@@ -164,6 +173,10 @@ def sync(
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
     `traffic_percent_sum_invalid`).
+    Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+    audit timeline. Accepted evidence commits with traffic; rejected evidence
+    is saved after rollback. Audit-storage failure returns 503
+    mcp_admission_evidence_unavailable.
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
@@ -212,6 +225,10 @@ async def asyncio_detailed(
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
     `traffic_percent_sum_invalid`).
+    Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+    audit timeline. Accepted evidence commits with traffic; rejected evidence
+    is saved after rollback. Audit-storage failure returns 503
+    mcp_admission_evidence_unavailable.
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.
@@ -263,6 +280,10 @@ async def asyncio(
     `invalid_traffic_percent`). The Σ invariant is asserted
     post-write as a defensive backstop (409
     `traffic_percent_sum_invalid`).
+    Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+    audit timeline. Accepted evidence commits with traffic; rejected evidence
+    is saved after rollback. Audit-storage failure returns 503
+    mcp_admission_evidence_unavailable.
     An optional expected_serving_deployment_id is checked under the
     same live-row locks before rebalance. A stale expectation returns
     409 `traffic_serving_changed` without changing traffic.

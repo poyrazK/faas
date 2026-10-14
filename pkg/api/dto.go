@@ -3535,7 +3535,8 @@ type DeploymentAliasListResponse struct {
 type UpdateDeploymentTrafficRequest struct {
 	TrafficPercent int `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
-	ExpectedServingDeploymentID *string `json:"expected_serving_deployment_id,omitempty"`
+	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
+	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
 }
 
 // AdvanceCanaryRequest is the compare-and-swap body for
@@ -11184,6 +11185,28 @@ type DebugDependencyLatencyItem struct {
 	// TopErrorType is the most frequent span failure class, from the current
 	// side when it has failures.
 	TopErrorType string `json:"top_error_type,omitempty"`
+	// Queries breaks a database dependency down by normalized query pattern
+	// (literals, placeholders, IN lists and VALUES rows folded), at most 5,
+	// regressions first. QueriesTruncated is set when more patterns were seen.
+	Queries          []DebugDependencyQueryItem `json:"queries,omitempty"`
+	QueriesTruncated bool                       `json:"queries_truncated,omitempty"`
+}
+
+// DebugDependencyQueryItem is one query pattern within a database
+// dependency, with the same latency and failure comparison as its parent.
+type DebugDependencyQueryItem struct {
+	Pattern              string  `json:"pattern"`
+	Calls                int64   `json:"calls"`
+	ErrorCalls           int64   `json:"error_calls"`
+	P95MS                int64   `json:"p95_ms"`
+	BaselineP95MS        int64   `json:"baseline_p95_ms,omitempty"`
+	CurrentP95MS         int64   `json:"current_p95_ms,omitempty"`
+	RegressionFactor     float64 `json:"regression_factor,omitempty"`
+	Regression           bool    `json:"regression"`
+	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
+	CurrentErrorRatePct  float64 `json:"current_error_rate_pct,omitempty"`
+	FailureRegression    bool    `json:"failure_regression"`
+	TopErrorType         string  `json:"top_error_type,omitempty"`
 }
 
 // DebugDependencyImpactEdge is a bounded parent-to-child rollup reconstructed
@@ -11724,6 +11747,14 @@ type DebugRegressionItem struct {
 	// the previous and this deployment on the route (ADR-958 §5); absent when
 	// no dependency regressed or no spans were retained.
 	SuspectedDependency *DebugSuspectedDependency `json:"suspected_dependency,omitempty"`
+	// Kind is which signal regressed: "latency" (p95, the original
+	// detector), "errors" (the share of HTTP 5xx responses rose) or
+	// "latency_and_errors". For an errors-only observation AffectedCount is
+	// the number of failed requests and Factor is at least 1.00.
+	Kind             string  `json:"kind"`
+	ErrorRatePct     float64 `json:"error_rate_pct,omitempty"`
+	ErrorRateBasePct float64 `json:"error_rate_base_pct,omitempty"`
+	ErrorCount       int     `json:"error_count,omitempty"`
 }
 
 // DebugSuspectedDependency is a bounded, redacted dependency identity with
@@ -11743,6 +11774,9 @@ type DebugSuspectedDependency struct {
 	BaselineErrorRatePct float64 `json:"baseline_error_rate_pct,omitempty"`
 	ErrorRatePct         float64 `json:"error_rate_pct,omitempty"`
 	ErrorType            string  `json:"error_type,omitempty"`
+	// Query is the normalized pattern of the database query that regressed
+	// within the dependency, when one did.
+	Query string `json:"query,omitempty"`
 }
 
 // DebugRegressionsResponse is the wire envelope for the debug

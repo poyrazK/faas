@@ -1083,7 +1083,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	    cp "pkg/state/$$realtime_package/queries.sql" "pkg/state/$$realtime_package/schema.sql" "$$tmp/pkg/state/$$realtime_package/"; \
 	  done; \
 	  cp pkg/state/queries.sql pkg/state/managed_postgres_drain_queries.sql pkg/state/managed_postgres_drain_plan_queries.sql pkg/state/telemetry_coverage_queries.sql pkg/state/financial_queries.sql pkg/state/financial_budget_queries.sql pkg/state/event_recipient_queries.sql pkg/state/event_receipt_queries.sql pkg/state/keyed_replay_queries.sql pkg/state/invocation_attempt_queries.sql pkg/state/queue_lease_queries.sql pkg/state/plain_replay_queries.sql pkg/state/work_admission_queries.sql pkg/state/deployment_dependency_queries.sql pkg/state/dev_source_patch_queries.sql pkg/state/profile_investigation_queries.sql pkg/state/profile_periodic_queries.sql pkg/state/profile_gate_queries.sql pkg/state/route_advice_queries.sql pkg/state/service_wake_ahead_queries.sql pkg/state/route_priority_queries.sql "$$tmp/pkg/state/"; \
-	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql pkg/state/edge_rule_replay_retention_queries.sql pkg/state/mcp_access_policy_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
 	  cp pkg/managedpostgres/copyroles/queries.sql pkg/managedpostgres/copyroles/memberships.sql pkg/managedpostgres/copyroles/schema.sql "$$tmp/pkg/managedpostgres/copyroles/"; \
@@ -1356,6 +1356,19 @@ data-api-browser-acceptance: ## Real browser CORS acceptance with disposable Pos
 
 data-api-packaging-check: ## Reproducible CLI/SDK bundle and fresh starter installation
 	@bash scripts/test-data-api-packaging.sh
+
+.PHONY: test-auth-app
+test-auth-app: ## Application Auth template and @gregale/auth SDK unit tests (ADR-1190); needs Node 22+ and npm
+	@scratch="$$(mktemp -d)" && trap 'rm -rf "$$scratch"' EXIT && \
+	  cp -R cmd/gregale/templates/auth "$$scratch/template" && (cd "$$scratch/template" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test) && \
+	  cp -R sdk/auth "$$scratch/sdk" && rm -rf "$$scratch/sdk/dist" "$$scratch/sdk/node_modules" && (cd "$$scratch/sdk" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm test)
+
+.PHONY: auth-staging-check auth-staging-canary
+auth-staging-check: ## Application Auth canary harness contracts without provider calls (ADR-1190)
+	@node --test tests/auth/staging/*.test.mjs
+
+auth-staging-canary: ## Opt-in application Auth native acceptance through Gregale's remote builder (ADR-1190)
+	@bash scripts/ci/run-auth-staging-canary.sh
 
 .PHONY: data-api-staging-check data-api-staging-canary
 data-api-staging-check: ## Staging canary harness contracts without provider calls

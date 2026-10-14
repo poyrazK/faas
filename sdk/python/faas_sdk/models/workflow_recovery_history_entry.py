@@ -8,11 +8,16 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.workflow_recovery_history_entry_evidence_kind import (
+    WorkflowRecoveryHistoryEntryEvidenceKind,
+    check_workflow_recovery_history_entry_evidence_kind,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.workflow_recovery_candidate_evidence import WorkflowRecoveryCandidateEvidence
     from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
+    from ..models.workflow_recovery_polling_notification import WorkflowRecoveryPollingNotification
 
 
 T = TypeVar("T", bound="WorkflowRecoveryHistoryEntry")
@@ -27,6 +32,19 @@ class WorkflowRecoveryHistoryEntry:
     kind: str
     outcome: str
     reason: str
+    polling_notification: WorkflowRecoveryPollingNotification | Unset = UNSET
+    """Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
+    later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
+   """
+    initial_failure_id: UUID | Unset = UNSET
+    evidence_kind: WorkflowRecoveryHistoryEntryEvidenceKind | Unset = UNSET
+    resume_count: int | Unset = UNSET
+    request_id: UUID | Unset = UNSET
+    notification_event_id: UUID | Unset = UNSET
+    diagnosis_reason: str | Unset = UNSET
+    review_url: str | Unset = UNSET
+    evidence_url: str | Unset = UNSET
+    job_url: str | Unset = UNSET
     candidate_evidence: WorkflowRecoveryCandidateEvidence | Unset = UNSET
     """Immutable policy-review candidate facts, captured prospectively without execution inputs or outputs."""
     durable: bool | Unset = UNSET
@@ -37,9 +55,11 @@ class WorkflowRecoveryHistoryEntry:
     episode_id: UUID | Unset = UNSET
     """Health incident episode association preserved across later incidents."""
     policy: WorkflowRecoveryPolicy | Unset = UNSET
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure
-    only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation
-    and execution budgets are separate. Cancellation remains manual."""
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual."""
     policy_version: int | Unset = UNSET
     workflow: str | Unset = UNSET
     run_id: str | Unset = UNSET
@@ -61,6 +81,36 @@ class WorkflowRecoveryHistoryEntry:
         outcome = self.outcome
 
         reason = self.reason
+
+        polling_notification: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.polling_notification, Unset):
+            polling_notification = self.polling_notification.to_dict()
+
+        initial_failure_id: str | Unset = UNSET
+        if not isinstance(self.initial_failure_id, Unset):
+            initial_failure_id = str(self.initial_failure_id)
+
+        evidence_kind: str | Unset = UNSET
+        if not isinstance(self.evidence_kind, Unset):
+            evidence_kind = self.evidence_kind
+
+        resume_count = self.resume_count
+
+        request_id: str | Unset = UNSET
+        if not isinstance(self.request_id, Unset):
+            request_id = str(self.request_id)
+
+        notification_event_id: str | Unset = UNSET
+        if not isinstance(self.notification_event_id, Unset):
+            notification_event_id = str(self.notification_event_id)
+
+        diagnosis_reason = self.diagnosis_reason
+
+        review_url = self.review_url
+
+        evidence_url = self.evidence_url
+
+        job_url = self.job_url
 
         candidate_evidence: dict[str, Any] | Unset = UNSET
         if not isinstance(self.candidate_evidence, Unset):
@@ -107,6 +157,26 @@ class WorkflowRecoveryHistoryEntry:
                 "reason": reason,
             }
         )
+        if polling_notification is not UNSET:
+            field_dict["polling_notification"] = polling_notification
+        if initial_failure_id is not UNSET:
+            field_dict["initial_failure_id"] = initial_failure_id
+        if evidence_kind is not UNSET:
+            field_dict["evidence_kind"] = evidence_kind
+        if resume_count is not UNSET:
+            field_dict["resume_count"] = resume_count
+        if request_id is not UNSET:
+            field_dict["request_id"] = request_id
+        if notification_event_id is not UNSET:
+            field_dict["notification_event_id"] = notification_event_id
+        if diagnosis_reason is not UNSET:
+            field_dict["diagnosis_reason"] = diagnosis_reason
+        if review_url is not UNSET:
+            field_dict["review_url"] = review_url
+        if evidence_url is not UNSET:
+            field_dict["evidence_url"] = evidence_url
+        if job_url is not UNSET:
+            field_dict["job_url"] = job_url
         if candidate_evidence is not UNSET:
             field_dict["candidate_evidence"] = candidate_evidence
         if durable is not UNSET:
@@ -142,6 +212,7 @@ class WorkflowRecoveryHistoryEntry:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.workflow_recovery_candidate_evidence import WorkflowRecoveryCandidateEvidence
         from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
+        from ..models.workflow_recovery_polling_notification import WorkflowRecoveryPollingNotification
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -153,6 +224,51 @@ class WorkflowRecoveryHistoryEntry:
         outcome = d.pop("outcome")
 
         reason = d.pop("reason")
+
+        _polling_notification = d.pop("polling_notification", UNSET)
+        polling_notification: WorkflowRecoveryPollingNotification | Unset
+        if isinstance(_polling_notification, Unset):
+            polling_notification = UNSET
+        else:
+            polling_notification = WorkflowRecoveryPollingNotification.from_dict(_polling_notification)
+
+        _initial_failure_id = d.pop("initial_failure_id", UNSET)
+        initial_failure_id: UUID | Unset
+        if isinstance(_initial_failure_id, Unset):
+            initial_failure_id = UNSET
+        else:
+            initial_failure_id = UUID(_initial_failure_id)
+
+        _evidence_kind = d.pop("evidence_kind", UNSET)
+        evidence_kind: WorkflowRecoveryHistoryEntryEvidenceKind | Unset
+        if isinstance(_evidence_kind, Unset):
+            evidence_kind = UNSET
+        else:
+            evidence_kind = check_workflow_recovery_history_entry_evidence_kind(_evidence_kind)
+
+        resume_count = d.pop("resume_count", UNSET)
+
+        _request_id = d.pop("request_id", UNSET)
+        request_id: UUID | Unset
+        if isinstance(_request_id, Unset):
+            request_id = UNSET
+        else:
+            request_id = UUID(_request_id)
+
+        _notification_event_id = d.pop("notification_event_id", UNSET)
+        notification_event_id: UUID | Unset
+        if isinstance(_notification_event_id, Unset):
+            notification_event_id = UNSET
+        else:
+            notification_event_id = UUID(_notification_event_id)
+
+        diagnosis_reason = d.pop("diagnosis_reason", UNSET)
+
+        review_url = d.pop("review_url", UNSET)
+
+        evidence_url = d.pop("evidence_url", UNSET)
+
+        job_url = d.pop("job_url", UNSET)
 
         _candidate_evidence = d.pop("candidate_evidence", UNSET)
         candidate_evidence: WorkflowRecoveryCandidateEvidence | Unset
@@ -203,6 +319,16 @@ class WorkflowRecoveryHistoryEntry:
             kind=kind,
             outcome=outcome,
             reason=reason,
+            polling_notification=polling_notification,
+            initial_failure_id=initial_failure_id,
+            evidence_kind=evidence_kind,
+            resume_count=resume_count,
+            request_id=request_id,
+            notification_event_id=notification_event_id,
+            diagnosis_reason=diagnosis_reason,
+            review_url=review_url,
+            evidence_url=evidence_url,
+            job_url=job_url,
             candidate_evidence=candidate_evidence,
             durable=durable,
             evaluation_reason=evaluation_reason,

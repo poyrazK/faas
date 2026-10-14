@@ -50,6 +50,7 @@ vmlinux-*
 # JavaScript dependencies and generated Data API client output
 node_modules/
 sdk/data/dist/
+sdk/auth/dist/
 
 # Manifest-derived Ansible inventory (generated; never hand-edit)
 /deploy/ansible/.generated/
