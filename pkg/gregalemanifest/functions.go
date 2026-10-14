@@ -3,10 +3,13 @@ package gregalemanifest
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -24,6 +27,32 @@ type FunctionSpec struct {
 	IdleTimeoutS int                   `yaml:"idle_timeout_s,omitempty"`
 	BucketEvents []FunctionBucketEvent `yaml:"bucket_events,omitempty"`
 	Webhooks     []FunctionWebhook     `yaml:"webhooks,omitempty"`
+
+	// Per-function app settings (ADR-1190). An omitted key leaves the
+	// app's current setting alone. Concurrency is the function's
+	// function_concurrency: requests one Node or Python worker serves at
+	// once.
+	RAMMB           int               `yaml:"ram_mb,omitempty"`
+	RequestTimeoutS int               `yaml:"request_timeout_s,omitempty"`
+	MinInstances    *int              `yaml:"min_instances,omitempty"`
+	Concurrency     int               `yaml:"concurrency,omitempty"`
+	Env             map[string]string `yaml:"env,omitempty"`
+	// SecretsFromEnv names secrets whose values the deploy reads from the
+	// deployer's environment and seals; the values never appear in the
+	// manifest.
+	SecretsFromEnv []string `yaml:"secrets_from_env,omitempty"`
+	// Routes are the request path globs the entry function's hosts send to
+	// this function. Entry marks that front-door function, which serves
+	// every path no route claims.
+	Routes []string `yaml:"routes,omitempty"`
+	Entry  bool     `yaml:"entry,omitempty"`
+}
+
+// HasPreDeploySettings reports whether the function sets anything that must
+// be on its app before the deployment is built: RAM and concurrency shape
+// the build, and env and secrets reach the first wake.
+func (fn FunctionSpec) HasPreDeploySettings() bool {
+	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || len(fn.SecretsFromEnv) > 0
 }
 
 // FunctionBucketEvent routes object-storage notifications for one bucket to
@@ -85,8 +114,12 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 	if err := m.rejectSectionsBesideFunctions(); err != nil {
 		return err
 	}
-	_, ceiling := api.MustLimitsFor(plan).IdleTimeoutBounds()
+	limits := api.MustLimitsFor(plan)
+	_, ceiling := limits.IdleTimeoutBounds()
 	names := make(map[string]struct{}, len(m.Functions))
+	routes := map[string]string{}
+	var entries []string
+	routed := false
 	roots := make(map[string]string, len(m.Functions))
 	byBucket := map[string][]api.ObjectNotificationRule{}
 	for i, fn := range m.Functions {
@@ -121,6 +154,19 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 		roots[entry] = fn.Name
 		if fn.IdleTimeoutS != 0 && (fn.IdleTimeoutS < api.IdleTimeoutFloorSeconds || fn.IdleTimeoutS > ceiling) {
 			return fmt.Errorf("%s.idle_timeout_s %d must be between %d and %d on this plan", field, fn.IdleTimeoutS, api.IdleTimeoutFloorSeconds, ceiling)
+		}
+		if err := validateFunctionSettings(field, fn, limits); err != nil {
+			return err
+		}
+		for j, route := range fn.Routes {
+			if other, dup := routes[route]; dup {
+				return fmt.Errorf("%s.routes[%d] %q is already a route of function %q", field, j, route, other)
+			}
+			routes[route] = fn.Name
+			routed = true
+		}
+		if fn.Entry {
+			entries = append(entries, fn.Name)
 		}
 		ids := map[string]struct{}{}
 		for j, event := range fn.BucketEvents {
@@ -170,6 +216,12 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 			}
 		}
 	}
+	if len(entries) > 1 {
+		return fmt.Errorf("functions: only one function can be the entry; %s all set entry: true", strings.Join(entries, ", "))
+	}
+	if routed && len(entries) == 0 {
+		return errors.New("functions: routes need a front door; set entry: true on the function whose address serves them")
+	}
 	for key, rules := range byBucket {
 		if _, err := api.NormalizeObjectNotificationRules(rules); err != nil {
 			_, bucket, _ := strings.Cut(key, "\x00")
@@ -182,6 +234,60 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 		}
 		if _, ok := names[trigger.App]; !ok {
 			return fmt.Errorf("trigger[%d].app %q must name one of the functions", i, trigger.App)
+		}
+	}
+	return nil
+}
+
+// validateFunctionSettings checks one function's app settings (ADR-1190)
+// against the plan. apid stays authoritative; this catches mistakes before
+// any function deploys.
+func validateFunctionSettings(field string, fn FunctionSpec, limits api.Limits) error {
+	if fn.RAMMB < 0 || fn.RAMMB > limits.RAMMB {
+		return fmt.Errorf("%s.ram_mb %d must be between 1 and %d on the %s plan", field, fn.RAMMB, limits.RAMMB, limits.Plan)
+	}
+	if maxTimeout := int(limits.RequestBudgetMaxDuration() / time.Second); fn.RequestTimeoutS < 0 || fn.RequestTimeoutS > maxTimeout {
+		return fmt.Errorf("%s.request_timeout_s %d must be between 1 and %d on the %s plan", field, fn.RequestTimeoutS, maxTimeout, limits.Plan)
+	}
+	if fn.MinInstances != nil && (*fn.MinInstances < 0 || *fn.MinInstances > limits.MaxMinInstances) {
+		return fmt.Errorf("%s.min_instances %d must be between 0 and %d on the %s plan", field, *fn.MinInstances, limits.MaxMinInstances, limits.Plan)
+	}
+	if fn.Concurrency < 0 || fn.Concurrency > limits.ConcurrencyPerVMBound {
+		return fmt.Errorf("%s.concurrency %d must be between 1 and %d on the %s plan", field, fn.Concurrency, limits.ConcurrencyPerVMBound, limits.Plan)
+	}
+	if fn.Concurrency > 1 && (strings.HasPrefix(fn.Runtime, "go") || fn.Runtime == "binary") {
+		return fmt.Errorf("%s.concurrency applies to Node and Python functions; a %s handler serves one request per process", field, fn.Runtime)
+	}
+	for _, key := range slices.Sorted(maps.Keys(fn.Env)) {
+		if problem := api.ValidateEnvKey(key); problem != nil {
+			return fmt.Errorf("%s.env %q: %s", field, key, problem.Detail)
+		}
+	}
+	seen := map[string]bool{}
+	for j, name := range fn.SecretsFromEnv {
+		if problem := api.ValidateEnvKey(name); problem != nil {
+			return fmt.Errorf("%s.secrets_from_env[%d] %q: %s", field, j, name, problem.Detail)
+		}
+		if seen[name] {
+			return fmt.Errorf("%s.secrets_from_env[%d]: %q is listed twice", field, j, name)
+		}
+		seen[name] = true
+		if _, plain := fn.Env[name]; plain {
+			return fmt.Errorf("%s: %q is both a plain env value and a secret; keep one", field, name)
+		}
+	}
+	if fn.Entry && len(fn.Routes) > 0 {
+		return fmt.Errorf("%s: the entry function serves every path no route claims; remove its routes", field)
+	}
+	for j, route := range fn.Routes {
+		if !strings.HasPrefix(route, "/") {
+			return fmt.Errorf("%s.routes[%d] %q must start with /", field, j, route)
+		}
+		if _, err := api.MatchEdgeRulePath(route, "/"); err != nil {
+			return fmt.Errorf("%s.routes[%d] %q is not a path glob: %w", field, j, route, err)
+		}
+		if _, templated := api.EdgeRuleTemplatedPath(route); templated {
+			return fmt.Errorf("%s.routes[%d] %q: routes are globs such as /users/*, not {param} templates", field, j, route)
 		}
 	}
 	return nil

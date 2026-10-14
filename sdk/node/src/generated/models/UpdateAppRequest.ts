@@ -102,6 +102,10 @@ export type UpdateAppRequest = {
    */
   request_timeout_s?: number | null;
   /**
+   * Requests one Node or Python function worker serves at once (ADR-1190). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python multiplexes only async handlers. Takes effect on the next deploy.
+   */
+  function_concurrency?: number | null;
+  /**
    * Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values may only tighten the plan ceiling. Does not create a deployment.
    */
   request_rate_limit_rps?: number | null;

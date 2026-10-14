@@ -75,6 +75,10 @@ export type AppManifest = {
    * Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default.
    */
   request_timeout_s?: number | null;
+  /**
+   * Requests one Node or Python function worker serves at once (ADR-1190). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python multiplexes only async handlers. Takes effect on the next deploy.
+   */
+  function_concurrency?: number | null;
   service_replicas?: ServiceReplicas;
   worker_replicas?: WorkerScaling;
   /**

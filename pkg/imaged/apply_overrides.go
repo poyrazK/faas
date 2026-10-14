@@ -17,6 +17,8 @@ package imaged
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"strconv"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -233,5 +235,20 @@ func applyAppLifecycle(manifest api.AppManifest, app state.App) api.AppManifest 
 			Desired: app.Manifest.ServiceReplicas.Desired,
 		}
 	}
+	return manifest
+}
+
+// applyFunctionConcurrency tells a function's generated adapter how many
+// requests one worker may serve at once (ADR-1190). The default of one
+// leaves the env untouched, so existing functions build exactly as before.
+// The value is fixed at build time: a changed setting needs a deploy.
+func applyFunctionConcurrency(manifest api.AppManifest, app state.App) api.AppManifest {
+	if app.Manifest.FunctionConcurrency <= 1 {
+		return manifest
+	}
+	env := make(map[string]string, len(manifest.Env)+1)
+	maps.Copy(env, manifest.Env)
+	env[api.FunctionConcurrencyEnv] = strconv.Itoa(app.Manifest.FunctionConcurrency)
+	manifest.Env = env
 	return manifest
 }
