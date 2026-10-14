@@ -84,12 +84,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	resumePreview := os.Getenv("FAAS_REALTIME_RESUME_PREVIEW_ENABLED") == "1"
 	ticketPreview := os.Getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1"
 	accessPreview := os.Getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1"
+	// ADR-1238: record per-endpoint usage with apid. Recorded only; nothing
+	// bills or limits from it yet.
+	usageEnabled := os.Getenv("FAAS_REALTIME_USAGE_ENABLED") == "1"
 	var ticketReader realtime.SubscriptionTicketReader
 	var accessReader realtime.ManagedRealtimeAccessReader
 	var historyReader realtime.ManagedRealtimeHistoryReader
 	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
 	var fleetClient realtime.ManagedRealtimeFleetClient
-	if resumePreview || accessPreview || ticketPreview {
+	var usageReporter realtime.UsageReporter
+	if resumePreview || accessPreview || ticketPreview || usageEnabled {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
@@ -112,6 +116,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ticketReader = reader
 		routeReporter = reader
 		fleetClient = reader
+		if usageEnabled {
+			usageReporter = reader
+		}
 	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
@@ -137,6 +144,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		},
 		ChannelRouteReportFailure: func(err error) {
 			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
+		},
+		UsageReporter: usageReporter,
+		UsageReportFailure: func(err error) {
+			log.Warn("realtimed: usage report failed; the hour is kept and retried", "err", err)
 		},
 	}, hooks)
 	defer func() { _ = manager.Close() }()

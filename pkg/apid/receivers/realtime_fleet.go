@@ -58,6 +58,7 @@ type realtimeFleetReceiver struct {
 	inbox        state.ManagedRealtimeInboxStore
 	router       RealtimeEphemeralRouter
 	registerPush PushRegistrar
+	usage        state.RealtimeUsageStore
 }
 
 type realtimeFleetPresenceRequest struct {
@@ -109,6 +110,7 @@ type realtimeFleetServer interface {
 	PresenceOperation(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	RelayEphemeral(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	DirectMessageOperation(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+	ReportUsage(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 }
 
 func (r *realtimeFleetReceiver) PresenceOperation(ctx context.Context, envelope *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
@@ -423,6 +425,9 @@ var realtimeFleetServiceDesc = grpc.ServiceDesc{
 		realtimeFleetUnaryHandler("DirectMessageOperation", func(server realtimeFleetServer, ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 			return server.DirectMessageOperation(ctx, req)
 		}),
+		realtimeFleetUnaryHandler("ReportUsage", func(server realtimeFleetServer, ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+			return server.ReportUsage(ctx, req)
+		}),
 	},
 }
 
@@ -436,5 +441,6 @@ func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 	receipts, _ := store.(state.ManagedRealtimeDirectMessageReceiptStore)
 	inbox, _ := store.(state.ManagedRealtimeInboxStore)
 	router, _ := owner.(RealtimeEphemeralRouter)
-	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush})
+	usage, _ := store.(state.RealtimeUsageStore)
+	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage})
 }

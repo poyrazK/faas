@@ -524,6 +524,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_SOCKET", Owners: []string{"apid", "gatewayd-internal", "realtimed", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_REALTIME_TICKETS_PREVIEW_ENABLED", Owners: []string{"apid", "realtimed"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only short-lived channel subscription tickets; requires resume preview and private ticket reader"},
 	{Name: "FAAS_REALTIME_TRANSACTIONAL_PREVIEW_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "0", Note: "opt-in transactional realtime outbox dispatcher; requires managed Commit relay and explicit customer schema installation"},
+	{Name: "FAAS_REALTIME_USAGE_ENABLED", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "0", Note: "record per-endpoint realtime usage with apid (ADR-1238); recorded only, not billed; uses the private history target"},
 	{Name: "FAAS_REALTIME_WRITE_WAIT", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_COOLDOWN_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REBALANCE_MAX_PER_TICK", Owners: []string{"schedd"}, Source: EnvSourceDefault},

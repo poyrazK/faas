@@ -1244,5 +1244,8 @@ func (m *Manager) queueResume(ctx context.Context, c *connection, frame resumeSe
 	}
 	m.sentMessages.Add(1)
 	m.sentBytes.Add(uint64(len(data)))
+	if usagePayloadFrames[frame.Type] {
+		c.state.usage.delivered(len(data))
+	}
 	return nil
 }

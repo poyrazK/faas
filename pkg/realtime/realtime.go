@@ -260,6 +260,14 @@ type Config struct {
 	PresenceSyncInterval       time.Duration
 	PresenceLeaseRenewInterval time.Duration
 	FleetReportFailure         func(error)
+	// UsageReporter records per-endpoint usage with the control plane
+	// (ADR-1238). Nil disables usage recording.
+	UsageReporter       UsageReporter
+	UsageSampleInterval time.Duration
+	UsageReportInterval time.Duration
+	UsageReportFailure  func(error)
+	// usageClock replaces time.Now in usage tests.
+	usageClock func() time.Time
 }
 
 func (c Config) withDefaults() Config {
@@ -295,6 +303,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.PresenceSyncInterval <= 0 {
 		c.PresenceSyncInterval = 5 * time.Second
+	}
+	if c.UsageSampleInterval <= 0 {
+		c.UsageSampleInterval = defaultUsageSampleInterval
+	}
+	if c.UsageReportInterval <= 0 {
+		c.UsageReportInterval = api.RealtimeUsageReportInterval
 	}
 	if c.PresenceLeaseRenewInterval <= 0 {
 		c.PresenceLeaseRenewInterval = 15 * time.Second
@@ -387,6 +401,10 @@ type Stats struct {
 	CallbackDeadLetterEvictions        uint64  `json:"callback_dead_letter_evictions"`
 	CallbackDeadLetterLastEvictionUnix int64   `json:"callback_dead_letter_last_eviction_unix"`
 	CallbackDeadLetterDiscards         uint64  `json:"callback_dead_letter_discards"`
+	UsageReports                       uint64  `json:"usage_reports"`
+	UsageReportFailures                uint64  `json:"usage_report_failures"`
+	UsageDroppedHours                  uint64  `json:"usage_dropped_hours"`
+	UsageHeldHours                     uint64  `json:"usage_held_hours"`
 }
 
 type connection struct {
@@ -452,6 +470,8 @@ type endpointState struct {
 	// to release against the count used during admission.
 	reserved *atomic.Int64
 	revoked  atomic.Bool
+	// usage is shared across policy refreshes like reserved (ADR-1238).
+	usage *usageCounters
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -490,6 +510,13 @@ type Manager struct {
 
 	upgrader websocket.Upgrader
 
+	// usage records per-endpoint usage when Config.UsageReporter is set.
+	usage               *usageRecorder
+	usageReports        atomic.Uint64
+	usageReportFailures atomic.Uint64
+	usageDroppedHours   atomic.Uint64
+	usageHeldHours      atomic.Int64
+
 	acceptedConnections           atomic.Uint64
 	rejectedConnections           atomic.Uint64
 	receivedMessages              atomic.Uint64
@@ -519,7 +546,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		hooks = NopHooks{}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{
+	m := &Manager{
 		cfg:                     cfg,
 		hooks:                   hooks,
 		ctx:                     ctx,
@@ -541,6 +568,8 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 			CheckOrigin:     func(*http.Request) bool { return true },
 		},
 	}
+	m.startUsageRecorder()
+	return m
 }
 
 // RegisterEndpoint publishes an endpoint to the local ingress route.
@@ -656,7 +685,7 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			return err
 		}
 	}
-	state := &endpointState{reserved: new(atomic.Int64)}
+	state := &endpointState{reserved: new(atomic.Int64), usage: new(usageCounters)}
 	state.config.Store(&e)
 	m.endpoints.Store(e.ID, state)
 	return nil
@@ -947,6 +976,7 @@ func (m *Manager) tryReserve(state *endpointState) bool {
 					return false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
+					state.usage.observeConnections(endpointCurrent + 1)
 					return true
 				}
 			}
@@ -1144,6 +1174,7 @@ func (m *Manager) runConnection(ctx context.Context, c *connection) {
 		event.CallbackAuthToken = c.currentCallbackAuthToken()
 		m.receivedMessages.Add(1)
 		m.receivedBytes.Add(uint64(len(data)))
+		c.state.usage.received(len(data))
 		callbackCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
 		callbackErr := m.hooks.Message(callbackCtx, event)
 		cancel()
@@ -1418,6 +1449,7 @@ func (m *Manager) Send(ctx context.Context, connectionID string, msg Message) er
 	}
 	m.sentMessages.Add(1)
 	m.sentBytes.Add(uint64(len(msg.Data)))
+	c.state.usage.delivered(len(msg.Data))
 	return nil
 }
 
@@ -2038,6 +2070,10 @@ func (m *Manager) Stats() Stats {
 		CallbackOutboxFull:            m.callbackOutboxFull.Load(),
 		CallbackOutboxAdmissionErrors: m.callbackOutboxAdmissionErrors.Load(),
 		CallbackUnpersistedFailures:   m.callbackUnpersistedFailures.Load(),
+		UsageReports:                  m.usageReports.Load(),
+		UsageReportFailures:           m.usageReportFailures.Load(),
+		UsageDroppedHours:             m.usageDroppedHours.Load(),
+		UsageHeldHours:                uint64(maxInt64(m.usageHeldHours.Load(), 0)),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {
 		outbox := provider.OutboxStats()
@@ -2087,6 +2123,13 @@ func (m *Manager) Close() error {
 	m.mu.RUnlock()
 	for _, c := range connections {
 		_ = c.close(websocket.CloseGoingAway, "service shutdown")
+	}
+	if m.usage != nil {
+		// Give the recorder its final report, bounded by its own timeout.
+		select {
+		case <-m.usage.done:
+		case <-time.After(usageFinalReportTimeout + time.Second):
+		}
 	}
 	return nil
 }

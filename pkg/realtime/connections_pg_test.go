@@ -33,6 +33,18 @@ type pgConnectionsNode struct {
 	endpoint string
 	server   *httptest.Server
 	hooks    *testChannelHooks
+	manager  *Manager
+}
+
+// delivered is the endpoint's usage count of payload deliveries not yet
+// drained by a usage recorder (none runs in these tests).
+func (n *pgConnectionsNode) delivered(t *testing.T) int64 {
+	t.Helper()
+	value, ok := n.manager.endpoints.Load(n.endpoint)
+	if !ok {
+		t.Fatal("endpoint not registered")
+	}
+	return value.(*endpointState).usage.deliveredMessages.Load()
 }
 
 func startPGConnectionsNode(t *testing.T) *pgConnectionsNode {
@@ -85,7 +97,7 @@ func startPGConnectionsNode(t *testing.T) *pgConnectionsNode {
 	}
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { _ = m.Close(); server.Close() })
-	return &pgConnectionsNode{store: store, endpoint: endpoint.ID, server: server, hooks: hooks}
+	return &pgConnectionsNode{store: store, endpoint: endpoint.ID, server: server, hooks: hooks, manager: m}
 }
 
 func (n *pgConnectionsNode) publish(t *testing.T, channel, data string) {
@@ -224,6 +236,10 @@ func TestSSETicketStreamsPostgresHistoryAndEndsOnRevoke(t *testing.T) {
 		t.Fatalf("resume subscribed = %+v", ev)
 	}
 	expectSSEMessage(t, resumed, "3", "dGhyZWU=")
+	// Usage counts message events only: 3 on the first stream, 1 on the resume.
+	if got := node.delivered(t); got != 4 {
+		t.Fatalf("delivered usage = %d, want 4 SSE message events", got)
+	}
 
 	if status, _ := node.openSSE(t, ticket, "other", ""); status != http.StatusForbidden {
 		t.Fatalf("channel outside the ticket status = %d, want 403", status)
@@ -330,6 +346,10 @@ func TestWebSocketTicketIsReadOnlyAndClosesOnSessionRevoke(t *testing.T) {
 	node.publish(t, "updates", "two")
 	if frame := readResumeTestFrame(t, client); frame.Type != "message" || frame.Sequence != 2 || frame.DataBase64 != "dHdv" {
 		t.Fatalf("live message = %+v", frame)
+	}
+	// subscribed and error frames are control frames, not usage.
+	if got := node.delivered(t); got != 2 {
+		t.Fatalf("delivered usage = %d, want the 2 message frames", got)
 	}
 
 	// Revoking the principal's sessions invalidates the ticket; the monitor

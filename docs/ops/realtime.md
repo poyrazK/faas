@@ -3605,6 +3605,46 @@ waiting work (unassigned plus ready) is reported as broker lag, so an app with a
 Rollback: delete realtime triggers before running the migration's Down step,
 which refuses while any exist.
 
+## Realtime usage recording
+
+ADR-1238 step 2 records realtime usage per endpoint. It is not billed and no
+limit reads it. Enable it on every realtimed node with
+`FAAS_REALTIME_USAGE_ENABLED=1`; realtimed then reaches apid's private
+listener exactly like the resume preview (`FAAS_REALTIME_HISTORY_TARGET` and,
+for a TCP target, the `FAAS_REALTIME_HISTORY_TLS_*` paths). The node name
+(`FAAS_NODE_NAME`) must be a registered compute node, or apid refuses the
+report with `NotFound`.
+
+Each realtimed process sends its cumulative totals for the current UTC hour
+once a minute, and on shutdown. apid stores one row per endpoint, hour,
+node and process run in `realtime_usage_hours`; a repeated or late report can
+only raise a row's values. meterd deletes rows older than 13 months.
+
+| Column | Meaning |
+|---|---|
+| `minute_peak_connections` | 60 values: the most connections open at once on that process in each minute |
+| `connection_seconds` | connections held × seconds, sampled every second |
+| `delivered_messages`, `delivered_bytes` | payload frames sent to clients, one per recipient (control frames excluded) |
+| `received_messages`, `received_bytes` | client messages forwarded to the app |
+
+An account's fleet usage per endpoint and hour, with the peak taken as the
+largest per-minute sum across nodes:
+
+```sql
+WITH m AS (
+  SELECT endpoint_id, hour, i, sum(v) AS connections
+  FROM realtime_usage_hours, unnest(minute_peak_connections) WITH ORDINALITY AS u(v, i)
+  WHERE account_id = $1 AND hour >= now() - interval '1 day'
+  GROUP BY endpoint_id, hour, i)
+SELECT endpoint_id, hour, max(connections) AS peak_connections
+FROM m GROUP BY endpoint_id, hour ORDER BY hour;
+```
+
+Watch `realtimed_usage_report_failures_total` (apid unreachable or rejecting
+reports), `realtimed_usage_held_hours` (above 1 means completed hours are
+waiting to be delivered) and `realtimed_usage_dropped_hours_total` (hours lost
+after 24 h undelivered).
+
 ## Batch claims and concurrent workers
 
 Account and scoped-worker group APIs expose `POST .../claims/batch`. Supply a

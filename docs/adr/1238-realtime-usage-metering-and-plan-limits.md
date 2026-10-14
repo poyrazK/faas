@@ -1,6 +1,6 @@
 # ADR-1238: Realtime usage metering and plan limits
 
-- **Status:** draft. The meters and enforcement points below are proposed; the per-plan numbers and prices are left blank for the owner to fill in from `ex44_faas_financial_model.xlsx`. Nothing here is implemented.
+- **Status:** draft. Rollout steps 1 and 2 are implemented (usage is recorded, not billed). The billed meters, limits and prices are proposed; the per-plan numbers are left blank for the owner to fill in from `ex44_faas_financial_model.xlsx`.
 - **Date:** 2026-10-14
 - **Decision:** Meter managed realtime per endpoint (connections and messages), roll the counts into the existing hourly billing-meter pipeline, deliver them in shadow mode for one billing period, then enforce per-plan connection and message limits from `pkg/api/limits.go`.
 - **Why:** Realtime is the only managed service with no usage meter and no plan limit beyond an endpoint count. Its costs (realtimed memory per connection, Postgres writes per retained message, fan-out bytes) grow with use that no bill or quota sees.
@@ -9,7 +9,7 @@
 
 What exists today:
 
-- **Plan limits.** Endpoint counts only: Free 0, Hobby 2 per app / 10 per account, Pro 10 / 50, Scale 25 / 250. The table is `realtimeLimits` in `pkg/api/realtime.go`, not in `pkg/api/limits.go` as the repository rule requires.
+- **Plan limits.** Endpoint counts only: Free 0, Hobby 2 per app / 10 per account, Pro 10 / 50, Scale 25 / 250. The table was `realtimeLimits` in `pkg/api/realtime.go` rather than `pkg/api/limits.go`, as the repository rule requires; step 1 moved it.
 - **Connections.** Each endpoint's `max_connections` is customer-set, up to `RealtimeMaxConnections` (10,000) on every plan, and defaults to 10,000. No account-wide cap exists, so a Hobby account can hold 10 endpoints × 10,000 connections.
 - **Messages.** Retained history is bounded per endpoint (32 channels × 1,024 messages × 4 KiB, 24 h). Live publish and fan-out have no plan limit.
 - **Usage data.** realtimed's counters (`realtimed_current_connections`, `realtimed_sent_messages_total`, `realtimed_sent_bytes_total`, …) are process-wide, with no account or endpoint label. realtimed is a host daemon, so its bytes are not in the per-instance egress meter (`usage_minutes.net_tx_bytes` comes from VM taps).
@@ -20,7 +20,14 @@ What exists today:
 
 ### Meters
 
-realtimed keeps per-endpoint counters in memory and flushes one row per endpoint per minute to `realtime_usage_minutes (account_id, app_id, endpoint_id, minute, peak_connections, connection_seconds, published_messages, delivered_messages, delivered_bytes)`, keyed for idempotent upsert so a retried flush cannot double-count. Each node writes its own rows; the hourly roll-up sums nodes, and takes the per-minute sum of node peaks as the fleet peak.
+realtimed keeps per-endpoint counters in memory, samples them every second into per-hour totals, and every minute sends each realtimed process's **cumulative** totals for the current UTC hour to apid over the existing private `RealtimeFleet` gRPC service. apid stores them in `realtime_usage_hours (endpoint_id, hour, node_name, incarnation, account_id, app_id, minute_peak_connections[60], connection_seconds, delivered_messages, delivered_bytes, received_messages, received_bytes)`:
+
+- A report keeps the larger of the stored and reported value for every column, so repeats and out-of-order delivery cannot double-count or lower a row. A process restart gets a new `incarnation`, so it starts new rows instead of overwriting the old run's totals.
+- `account_id` and `app_id` come from the endpoint row at ingest, never from the report, and have no foreign keys: usage outlives endpoint deletion until retention.
+- The fleet peak for an hour is the largest per-minute sum of the nodes' peaks, so connections on different nodes in the same minute add up and a single spike is not double-counted across minutes.
+- A completed hour realtimed cannot deliver is retried for `RealtimeUsageReportMaxAge` (24 h), then dropped and counted in `realtimed_usage_dropped_hours_total`.
+- Delivered counts cover frames carrying a customer payload (v1 messages, v2 `message`, `direct_message`, `inbox_message` and `signal` frames, SSE `message` events), one per recipient. Received counts cover client messages forwarded to the app. Retained-channel publishes are already countable from channel heads, so realtimed does not count them.
+- Rows age out with `usage_minutes` (13 months) in meterd's retention loop.
 
 Billed meters, added beside `compute` and `egress`:
 
@@ -29,7 +36,7 @@ Billed meters, added beside `compute` and `egress`:
 | `realtime_connections` | **owner choice:** peak concurrent connections, or connection-minutes | See question 1 |
 | `realtime_messages` | delivered messages (one per recipient) | Publishes to retained channels count once more at write; trigger deliveries do not count |
 
-`delivered_bytes` and `published_messages` are recorded as telemetry for capacity planning, not billed.
+`delivered_bytes`, `received_messages` and `received_bytes` are recorded for capacity planning, not billed.
 
 ### Plan limits
 
@@ -66,13 +73,13 @@ An endpoint's `max_connections` is clamped to the account's connection limit at 
 
 ## Rollout
 
-1. Move `realtimeLimits` into `pkg/api/limits.go`. No behaviour change.
-2. Per-endpoint counters, the minute flush and the hourly roll-up; telemetry only.
+1. **Done.** Move `realtimeLimits` into `pkg/api/limits.go`. No behaviour change.
+2. **Done, off by default.** Per-endpoint counters, minute reports and hourly rows; recorded only. Enable with `FAAS_REALTIME_USAGE_ENABLED=1` on realtimed.
 3. Billing meters in shadow mode; usage shown in the dashboard and `gregale usage`.
 4. After the shadow period: live delivery, the connection cap, and message quotas.
 
 ## Consequences
 
 - Customers see realtime usage before they are billed for it.
-- realtimed writes one row per active endpoint per minute per node.
+- apid upserts one row per active endpoint per realtimed process each minute; the table grows by one row per active endpoint per process per hour.
 - Admission takes a soft dependency on fleet counts: if counts are stale for more than 30 s, a node admits against its local count only and alerts, rather than refusing all connections.

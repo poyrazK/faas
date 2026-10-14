@@ -62,6 +62,11 @@ type StatsCollector struct {
 	expiredOutboundDrops *prometheus.Desc
 	manager              *Manager
 
+	usageReports        *prometheus.Desc
+	usageReportFailures *prometheus.Desc
+	usageDroppedHours   *prometheus.Desc
+	usageHeldHours      *prometheus.Desc
+
 	currentConnections              *prometheus.Desc
 	currentResumeSubscriptions      *prometheus.Desc
 	resumeHistoryReads              *prometheus.Desc
@@ -219,6 +224,10 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		callbackDeadLetterLastEviction:  prometheus.NewDesc(subsystem+"_callback_dead_letter_last_eviction_timestamp_seconds", "Unix timestamp of the most recent callback dead-letter eviction, or zero if none.", nil, nil),
 		callbackDeadLetterDiscards:      prometheus.NewDesc(subsystem+"_callback_dead_letter_discards_total", "Callback dead letters discarded by an operator since process start.", nil, nil),
 		authOutcomes:                    prometheus.NewDesc(subsystem+"_auth_outcomes_total", "Realtime client authentication outcomes since process start.", []string{"mode", "outcome"}, nil),
+		usageReports:                    prometheus.NewDesc(subsystem+"_usage_reports_total", "Hourly usage reports delivered to the control plane (ADR-1238).", nil, nil),
+		usageReportFailures:             prometheus.NewDesc(subsystem+"_usage_report_failures_total", "Usage report passes that failed and will be retried.", nil, nil),
+		usageDroppedHours:               prometheus.NewDesc(subsystem+"_usage_dropped_hours_total", "Completed usage hours discarded undelivered after the report age limit.", nil, nil),
+		usageHeldHours:                  prometheus.NewDesc(subsystem+"_usage_held_hours", "Usage hours held in memory: the current hour plus completed hours not yet delivered.", nil, nil),
 	}
 }
 
@@ -242,6 +251,10 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredInboxCheckpoints), "inbox_websocket")
 	ch <- prometheus.MustNewConstMetric(c.expiredCheckpoints, prometheus.CounterValue, float64(stats.ExpiredSSECheckpoints), "sse")
 	ch <- prometheus.MustNewConstMetric(c.expiredOutboundDrops, prometheus.CounterValue, float64(stats.ExpiredOutboundDrops))
+	ch <- prometheus.MustNewConstMetric(c.usageReports, prometheus.CounterValue, float64(stats.UsageReports))
+	ch <- prometheus.MustNewConstMetric(c.usageReportFailures, prometheus.CounterValue, float64(stats.UsageReportFailures))
+	ch <- prometheus.MustNewConstMetric(c.usageDroppedHours, prometheus.CounterValue, float64(stats.UsageDroppedHours))
+	ch <- prometheus.MustNewConstMetric(c.usageHeldHours, prometheus.GaugeValue, float64(stats.UsageHeldHours))
 	ch <- prometheus.MustNewConstMetric(c.currentConnections, prometheus.GaugeValue, float64(stats.CurrentConnections))
 	ch <- prometheus.MustNewConstMetric(c.currentResumeSubscriptions, prometheus.GaugeValue, float64(stats.CurrentResumeSubscriptions))
 	for result := resumeHistoryReadResult(0); result < resumeHistoryReadResultCount; result++ {
@@ -338,5 +351,9 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.callbackDeadLetterLastEviction,
 		c.callbackDeadLetterDiscards,
 		c.authOutcomes,
+		c.usageReports,
+		c.usageReportFailures,
+		c.usageDroppedHours,
+		c.usageHeldHours,
 	}
 }

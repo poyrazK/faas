@@ -181,7 +181,13 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		if _, e = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded); e != nil {
 			return false
 		}
-		return controller.Flush() == nil
+		if controller.Flush() != nil {
+			return false
+		}
+		if event == "message" {
+			node.usage.delivered(len(encoded))
+		}
+		return true
 	}
 	if !send("subscribed", "", map[string]string{
 		"channel":         channel,
