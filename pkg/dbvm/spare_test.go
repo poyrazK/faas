@@ -2,6 +2,7 @@
 package dbvm
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -48,5 +49,18 @@ func TestSpareBootArgs(t *testing.T) {
 	spec.RestoreTarget = spec.RestoreTarget.AddDate(2026, 0, 0)
 	if _, err := BuildConfig(spec); err == nil {
 		t.Fatal("a spare booting a restore was accepted")
+	}
+}
+
+func TestStopSparesEndsFilling(t *testing.T) {
+	rt := testRuntime(t, &fakeLeaser{})
+	rt.cfg.Spares = map[SpareShape]int{{Major: 17, VcpuCount: 1, MemSizeMiB: 512}: 1}
+	if n := rt.StopSpares(context.Background()); n != 0 {
+		t.Fatalf("stopped %d with none waiting", n)
+	}
+	// Filling after the stop boots nothing, so it never reaches the
+	// jail (which this host could not build anyway).
+	if n, err := rt.FillSpares(context.Background()); n != 0 || err != nil {
+		t.Fatalf("fill after stop = %d, %v", n, err)
 	}
 }

@@ -116,8 +116,10 @@ type Runtime struct {
 	// transfers are the stopped databases whose volumes are being
 	// exported or imported (transfer.go).
 	transfers map[string]bool
-	// filling serializes FillSpares.
-	filling sync.Mutex
+	// filling serializes FillSpares; sparesStopped, set by StopSpares
+	// under it, ends filling for good.
+	filling       sync.Mutex
+	sparesStopped bool
 }
 
 type databaseVM struct {

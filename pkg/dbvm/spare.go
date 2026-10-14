@@ -56,6 +56,9 @@ func (r *Runtime) FillSpares(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 	defer r.filling.Unlock()
+	if r.sparesStopped {
+		return 0, nil
+	}
 	booted := 0
 	for shape, want := range r.cfg.Spares {
 		for r.waitingSpares(shape) < want {
@@ -284,9 +287,13 @@ func patchDrive(ctx context.Context, apiSock string, update driveUpdate) error {
 	return nil
 }
 
-// StopSpares stops every spare no database has adopted, for shutdown. It
-// reports how many it stopped.
+// StopSpares stops every spare no database has adopted and ends filling,
+// for shutdown: a fill in flight finishes first, and no later one boots
+// anything. It reports how many it stopped.
 func (r *Runtime) StopSpares(ctx context.Context) int {
+	r.filling.Lock()
+	r.sparesStopped = true
+	r.filling.Unlock()
 	r.mu.Lock()
 	var ids []string
 	for id, vm := range r.vms {
