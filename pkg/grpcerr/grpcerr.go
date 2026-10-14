@@ -72,9 +72,12 @@ func codeToGRPC(code string) codes.Code {
 	case api.CodeBuildOOM,
 		api.CodeBuildTimeout:
 		return codes.ResourceExhausted
-	case api.CodeSourceRefUnavailable, api.CodeAppAdmissionUnavailable:
+	case api.CodeSourceRefUnavailable, api.CodeAppAdmissionUnavailable, api.CodeInstanceFrozen:
+		// CodeInstanceFrozen (ADR-1151): the gateway treats Unavailable as a
+		// stale route and wakes the instance through schedd.
 		return codes.Unavailable
-	case api.CodeBeforeCheckpointFailed, api.CodeDatabaseCutoverFenced, api.CodeEnvironmentQualificationUnconfirmed:
+	case api.CodeBeforeCheckpointFailed, api.CodeDatabaseCutoverFenced, api.CodeEnvironmentQualificationUnconfirmed,
+		api.CodeInstanceNotFreezable, api.CodeInstanceBusy, api.CodeFrozenInstanceRefused:
 		return codes.FailedPrecondition
 	case api.CodeBillingPastDue,
 		api.CodeUnauthorized:

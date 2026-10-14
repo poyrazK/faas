@@ -197,6 +197,20 @@ origin TLS and forwards this hostname to s3-gatewayd on
 `127.0.0.1:8084`; preserve the original Host header. Do not share the
 `api.gregale.dev` reverse-proxy route, request-body limits, or auth middleware.
 
+The proxied endpoint needs the CDN to leave S3 requests alone. For
+`s3.gregale.dev`, configure a cache rule that bypasses cache (otherwise the
+first HEAD of a key such as `logo.png` reaches the gateway as a GET and fails
+SigV4 with 403), and a configuration rule that turns off Browser Integrity
+Check, Email Obfuscation, Rocket Loader, Automatic HTTPS Rewrites, Real User
+Monitoring, Zaraz and Fonts. Keep "Normalize URLs to origin" off. On this
+profile the gateway also returns `Cache-Control: ... no-transform` for
+`text/html` and `application/xhtml+xml` objects, so zone-wide bot detection
+cannot inject scripts into them (ADR-553 amendment). Objects stored with
+`Content-Encoding: gzip` are still returned decompressed to clients that do not
+send `Accept-Encoding: gzip`, and keys with `/./` or `/../` segments cannot be
+used (see the S3 compatibility notes below); the direct profile has neither
+limit.
+
 Create a credential with
 `POST /v1/apps/{slug}/buckets/{bucket-id}/s3-credentials` and a body such as
 `{"label":"laptop","permission":"read_write"}`. The response contains the

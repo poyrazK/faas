@@ -323,7 +323,10 @@ var DataAPITaskKind = dataAPITaskKind
 var DataUpstreamResponseFromState = dataUpstreamResponseFromState
 var DebugCoverageSignal = debugCoverageSignal
 var DebugCoverageTimestamp = debugCoverageTimestamp
+var DebugRegressionCandidateRoutes = debugRegressionCandidateRoutes
 var DebugRegressionObservationToItem = debugRegressionObservationToItem
+var DebugRegressionParams = debugRegressionParams
+var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename
@@ -587,6 +590,7 @@ var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
 var SuspectedDependency = suspectedDependency
+var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
 var SweepUploadSessions = sweepUploadSessions
 var TcpListenerTLSStatusResponse = tcpListenerTLSStatusResponse
@@ -759,6 +763,7 @@ func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.complete
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
 func (r *mfaTestEnv) Cookie() **http.Cookie   { return &r.cookie }
 func (r *mfaTestEnv) H() *http.Handler        { return &r.h }
+func (r *mfaTestEnv) Srv() **server           { return &r.srv }
 func (r *mfaTestEnv) Store() **state.MemStore { return &r.store }
 func (r mfaTestEnv) GenerateEnrolledAccount(p0 *testing.T) ([]string, string, *http.Cookie) {
 	return r.generateEnrolledAccount(p0)
@@ -1296,4 +1301,10 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+var ComposeDockerBuildContext = composeDockerBuildContext
+
+func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
+	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
 }

@@ -129,7 +129,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			continue
 		}
 		switch state.State(instance.State) {
-		case state.StateWaking, state.StateColdBooting, state.StateWarm:
+		case state.StateWaking, state.StateColdBooting, state.StateWarm, state.StateFrozen:
 			if err := e.destroyStaleRuntimeConfigInstance(ctx, instance); err != nil {
 				return CoordOutcome{}, err
 			}
@@ -189,7 +189,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 					staleServing = append(staleServing, instance)
 				case state.StateDraining:
 					staleDraining = append(staleDraining, instance)
-				case state.StateWaking, state.StateColdBooting, state.StateWarm:
+				case state.StateWaking, state.StateColdBooting, state.StateWarm, state.StateFrozen:
 					staleBooting = append(staleBooting, instance)
 				}
 			}
@@ -245,6 +245,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 				continue
 			}
 
+			// More instances than the app's slots allow (max_concurrency was
+			// lowered after scale-out): no candidate can be admitted, so retire
+			// surplus predecessors first, always keeping one serving. On
+			// production-us a restart after lowering max_concurrency from 3 to
+			// 1 retried forever on "max_concurrency is 2; 3 already live"
+			// (hunt #10, H10-39).
+			if len(fresh) == 0 && len(staleServing) > 1 && e.ledger.Concurrency(appID) >= maxConcurrency+1 {
+				if err := e.retireRuntimeConfigInstance(ctx, appID, deployment.ID, staleServing[0]); err != nil {
+					return CoordOutcome{}, err
+				}
+				continue
+			}
+
 			candidateCtx := withRequestedWakeID(WithScope(ctx, deployment.Scope), wakeID)
 			result, wakeErr := e.admitAndDispatchWithOptions(candidateCtx, appID, deployment.ID,
 				instanceModeForApp(app), TriggerRuntimeConfigRestart, false, true)
@@ -275,7 +288,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			if err := e.retireRuntimeConfigInstance(ctx, appID, instance.DeploymentID, instance); err != nil {
 				return CoordOutcome{}, err
 			}
-		case state.StateWaking, state.StateColdBooting, state.StateWarm:
+		case state.StateWaking, state.StateColdBooting, state.StateWarm, state.StateFrozen:
 			if err := e.destroyStaleRuntimeConfigInstance(ctx, instance); err != nil {
 				return CoordOutcome{}, err
 			}
@@ -342,7 +355,7 @@ func runtimeConfigInstanceStale(instance state.Instance, boundary time.Time) boo
 
 func runtimeConfigResident(instance state.Instance) bool {
 	switch state.State(instance.State) {
-	case state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateWarm, state.StateDraining:
+	case state.StateWaking, state.StateColdBooting, state.StateRunning, state.StateWarm, state.StateFrozen, state.StateDraining:
 		return true
 	default:
 		return false
@@ -360,6 +373,10 @@ func (e *Engine) destroyStaleRuntimeConfigInstance(ctx context.Context, instance
 		return fmt.Errorf("sched: runtime config restart: reload stale instance %s: %w", instance.ID, err)
 	}
 	switch state.State(fresh.State) {
+	case state.StateFrozen:
+		// ADR-1151: a frozen VM holds the old inputs; park it so it can
+		// never thaw with them. Its deployment's snapshot stays.
+		e.parkFrozenLocked(ctx, fresh, "config_changed")
 	case state.StateWaking, state.StateColdBooting, state.StateWarm:
 		if err := e.destroyForRuntimeConfigRestart(ctx, fresh); err != nil {
 			return fmt.Errorf("sched: runtime config restart: destroy stale instance %s: %w", fresh.ID, err)

@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/alerts"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -177,6 +178,14 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
+	if req.EdgeRuleID != "" && api.IsEdgeRuleAlertMetric(req.Metric) {
+		id, prob := s.edgeRules.ResolveActivityAlertRule(r.Context(), app.ID, req.EdgeRuleID)
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		req.EdgeRuleID = id
+	}
 	if prob := resolveAndCheckEgress(r.Context(), req.WebhookURL); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -205,6 +214,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		Threshold:                       req.Threshold,
 		WindowSpec:                      state.AlertWindowSpec(req.WindowSpec),
 		EventSubscriptionID:             req.EventSubscriptionID,
+		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
@@ -254,6 +264,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"threshold":                           row.Threshold,
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
+		"edge_rule_id":                        row.EdgeRuleID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
 		"cooldown_minutes":                    row.CooldownMinutes,
@@ -694,6 +705,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      string(r.WindowSpec),
 		EventSubscriptionID:             r.EventSubscriptionID,
+		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
@@ -781,6 +793,9 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if p := appevents.ValidateEventConsumerAlert(req.Metric, req.EventSubscriptionID, req.WindowSpec); p != nil {
 		return p
 	}
+	if p := edgerules.ValidateActivityAlert(req.Metric, req.EdgeRuleID, req.WindowSpec); p != nil {
+		return p
+	}
 	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
 		return p
 	}
@@ -844,6 +859,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if p := appevents.ValidateEventConsumerAlert(string(merged.Metric), merged.EventSubscriptionID, string(merged.WindowSpec)); p != nil {
 		return p
 	}
+	if p := edgerules.ValidateActivityAlert(string(merged.Metric), merged.EdgeRuleID, string(merged.WindowSpec)); p != nil {
+		return p
+	}
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
 		return api.ErrAlertRuleInvalid("post-deploy rollback requires an app-scoped rule")
 	}
@@ -891,16 +909,7 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 }
 
 func alertMetricActionRestriction(metric string) string {
-	if metric == string(state.AlertMetricMCPTaskPromotionHoldAgeSeconds) {
-		return "MCP promotion hold alerts support webhook action only"
-	}
-	if metric == string(state.AlertMetricMCPTasksOldestAgeSeconds) {
-		return "MCP task age alerts support webhook action only"
-	}
-	if metric == string(state.AlertMetricMCPTasksMetricsStale) {
-		return "MCP task metrics freshness alerts support webhook action only"
-	}
-	return "pre-auth target metrics support webhook action only"
+	return api.AlertMetricActionRestriction(metric)
 }
 
 // alertRuleRowForValidation folds an existing row + a partial update
@@ -970,6 +979,9 @@ func validateFailureSourceFamily(req api.CreateAlertRuleRequest) *api.Problem {
 func alertRuleFamily(m state.AlertMetric) string {
 	if api.IsEventConsumerAlertMetric(string(m)) {
 		return "event_consumer"
+	}
+	if api.IsEdgeRuleAlertMetric(string(m)) {
+		return "edge_rule"
 	}
 	if m == state.AlertMetricFailedInvocs {
 		return alertRuleMetricFailedInvocations

@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/debugger"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -134,7 +135,32 @@ func debugRegressionObservationToItem(row sqlc.DebugRegressionObservation) api.D
 		}
 	}
 	item.SuspectedDependency = parseSuspectedDependency(row.SuspectedDependency)
+	applyDebugRegressionSignal(&item, row.Kind, row.ErrorRatePct, row.ErrorRateBasePct, row.ErrorCount)
 	return item
+}
+
+// applyDebugRegressionSignal copies the regression kind and error-rate
+// signal onto the wire item. Rows written before error-rate detection read
+// as latency observations.
+func applyDebugRegressionSignal(item *api.DebugRegressionItem, kind string, rate, base pgtype.Numeric, count int32) {
+	item.Kind = kind
+	if item.Kind == "" {
+		item.Kind = debugger.RegressionKindLatency
+	}
+	item.ErrorRatePct = numericFloat(rate)
+	item.ErrorRateBasePct = numericFloat(base)
+	item.ErrorCount = int(count)
+}
+
+func numericFloat(value pgtype.Numeric) float64 {
+	if !value.Valid {
+		return 0
+	}
+	f, err := value.Float64Value()
+	if err != nil || !f.Valid {
+		return 0
+	}
+	return f.Float64
 }
 
 // notifyDebugRegressionChanged is the single event encoder for detector and
@@ -148,6 +174,10 @@ func (s *server) notifyDebugRegressionChanged(ctx context.Context, appID string,
 		"app_id":               appID,
 		"deployment_id":        item.DeploymentID,
 		"route":                item.Route,
+		"kind":                 item.Kind,
+		"error_rate_pct":       item.ErrorRatePct,
+		"error_rate_base_pct":  item.ErrorRateBasePct,
+		"error_count":          item.ErrorCount,
 		"p95_ms":               item.P95MS,
 		"p95_base_ms":          item.P95BaseMS,
 		"affected_count":       item.AffectedCount,

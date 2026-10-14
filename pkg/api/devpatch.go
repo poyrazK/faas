@@ -24,7 +24,31 @@ const (
 	DevWatchEnv = "FAAS_DEV_WATCH"
 	// DevWatchCommandMaxBytes bounds the development command.
 	DevWatchCommandMaxBytes = 512
+	// DevWatchHostEnv carries the developer app's public hostname into a
+	// watch-mode image. Development servers refuse unknown hosts or origins
+	// by default; Next.js reads it from allowedDevOrigins in next.config.
+	DevWatchHostEnv = "GREGALE_DEV_HOST"
+	// DevWatchViteAllowedHostsEnv is Vite's own environment override for
+	// server.allowedHosts (Vite 5.4.12+ and 6.0.9+ answer 403 to other Host
+	// headers). A watch-mode image sets it to the same hostname.
+	DevWatchViteAllowedHostsEnv = "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"
+	// DevWatchHostMaxBytes bounds the hostname (RFC 1035).
+	DevWatchHostMaxBytes = 253
 )
+
+// ValidDevWatchHost reports whether host is a lowercase hostname a
+// watch-mode image can carry in DevWatchHostEnv; "" is valid and means none.
+func ValidDevWatchHost(host string) bool {
+	if len(host) > DevWatchHostMaxBytes {
+		return false
+	}
+	for _, r := range host {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' && r != '-' {
+			return false
+		}
+	}
+	return true
+}
 
 // DevPatchStatusResponse states.
 const (

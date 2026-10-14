@@ -276,7 +276,11 @@ func runAttempts(
 			return
 		}
 		failed := target
-		signal := &staleTargetSignal{onStale: func() { onStale(failed) }}
+		signal := &staleTargetSignal{}
+		signal.onStale = func() {
+			failed.frozenRefusal = signal.frozen.Load()
+			onStale(failed)
+		}
 		//nolint:contextcheck // the stale signal deliberately inherits the inbound request context.
 		req = req.WithContext(withStaleTargetSignal(req.Context(), signal))
 

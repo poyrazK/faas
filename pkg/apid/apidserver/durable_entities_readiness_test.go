@@ -43,11 +43,9 @@ func TestDurableEntitySocketReadinessDoesNotAdmitOrClaimAcceptance(t *testing.T)
 		t.Fatal("missing quotas accepted", response.Body.String())
 	}
 	e.s.Durable().TenantQuotas = q
+	// An app outside the allowlist does not see the preview, readiness included.
 	delete(e.s.Durable().Apps, app.ID)
-	response = e.do(t, "GET", path, nil, nil)
-	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &disabled) != nil || disabled.ConfigurationReady {
-		t.Fatal("disabled app cannot inspect blockers", response.Body.String())
-	}
+	assertUnregisteredRoute(t, e.do(t, "GET", path, nil, nil))
 	request := httptest.NewRequest("GET", path, nil)
 	unauthenticated := httptest.NewRecorder()
 	e.h.ServeHTTP(unauthenticated, request)
