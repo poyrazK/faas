@@ -58481,3 +58481,50 @@ CREATE INDEX issue_tracker_callbacks_retention_idx ON public.issue_tracker_callb
 
 ALTER TABLE ONLY public.issue_tracker_callbacks
     ADD CONSTRAINT issue_tracker_callbacks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+--
+-- Name: issue_tracker_callback_diagnostics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_callback_diagnostics (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    connection_revision bigint NOT NULL,
+    invalid_signature bigint DEFAULT 0 NOT NULL,
+    wrong_scope bigint DEFAULT 0 NOT NULL,
+    stale_delivery bigint DEFAULT 0 NOT NULL,
+    invalid_payload bigint DEFAULT 0 NOT NULL,
+    delivery_conflict bigint DEFAULT 0 NOT NULL,
+    last_verified_at timestamp with time zone,
+    last_rejected_at timestamp with time zone,
+    CONSTRAINT issue_tracker_callback_diagnostics_connection_revision_check CHECK ((connection_revision > 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_delivery_conflict_check CHECK ((delivery_conflict >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_invalid_payload_check CHECK ((invalid_payload >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_invalid_signature_check CHECK ((invalid_signature >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_stale_delivery_check CHECK ((stale_delivery >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_wrong_scope_check CHECK ((wrong_scope >= 0))
+);
+
+
+--
+-- Name: issue_tracker_callback_diagnostics issue_tracker_callback_diagnostics_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
+    ADD CONSTRAINT issue_tracker_callback_diagnostics_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_callback_diagnostics issue_tracker_callback_diagnostics_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
+    ADD CONSTRAINT issue_tracker_callback_diagnostics_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_callback_diagnostics issue_tracker_callback_diagnostics_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
+    ADD CONSTRAINT issue_tracker_callback_diagnostics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.issue_tracker_linear_connections(app_id) ON DELETE CASCADE;

@@ -1288,8 +1288,37 @@ automatic sync. Periodic polling continues to recover missed callback hints.
 A processed hint was consumed; paused or outdated hints do not schedule a check.
 Processing does not mean synchronization succeeded.
 Check the automatic policy's last confirmed provider state and last check separately.
-Signature rejection counts and provider-side webhook registration checks are not
-available. For Linear, confirm the displayed callback path and connected team match
+Provider-side webhook registration is not queried. For Linear, confirm the displayed callback path and connected team match
 your team-scoped Issue webhook and its signing secret. For GitHub, enable Issues
 events for the installed GitHub App. An empty delivery history does not establish whether setup succeeded; send a relevant
 provider event to verify delivery.
+
+
+### Callback setup diagnostics
+
+Callback setup distinguishes local configuration from a verified Issue delivery
+received within the last 24 hours. Older evidence requires another delivery;
+future evidence indicates a clock discrepancy. A verified receipt confirms the
+callback path and signature checks worked, not that every event is delivered or
+that an automatic lifecycle update succeeded.
+
+For Linear, the owner dashboard counts invalid signatures, wrong workspace/team,
+expired unknown deliveries, malformed payloads and conflicting reused delivery IDs.
+These are attempt counts across the current app connection, including retries and
+unauthenticated requests; they do not establish that Linear sent a rejected request.
+Counters restart with a replacement connection. Oversized requests, missing callback
+configurations and ignored event types are excluded. Diagnostics are best-effort on
+rejection and are not an audit ledger.
+
+Match the signing secret, workspace and team with the configured Linear webhook,
+check Gregale's clock for stale deliveries, and inspect provider delivery logs for
+malformed or conflicting requests. Send a fresh Issue event after fixing setup.
+A fresh supported event can verify the connection even if its ticket is untracked
+or sync is paused; it does not resume the policy. Known expired retries do not renew
+setup evidence. Replacing or disconnecting a connection removes its old evidence
+from the current view.
+
+For GitHub, setup evidence uses verified receipts for the linked ticket and current
+owned installation/repository. Invalid signatures at the shared endpoint cannot
+safely be attributed to this app; inspect GitHub App delivery logs for rejections.
+Both providers still require their provider-side event subscriptions to be configured.

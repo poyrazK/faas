@@ -38,12 +38,13 @@ func (s *server) linearIssueTrackerCallback(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err != nil {
+		s.recordLinearCallbackDiagnostic(r, record, issuetracker.CallbackRejectionReason(err))
 		api.WriteProblem(w, api.NewProblem(401, "issue_tracker_callback_invalid", "Callback not verified", "signature or callback scope did not match"))
 		return
 	}
-	s.acceptLinearIssueTrackerCallback(w, r, event)
+	s.acceptLinearIssueTrackerCallback(w, r, event, record)
 }
-func (s *server) acceptLinearIssueTrackerCallback(w http.ResponseWriter, r *http.Request, event issuetracker.CallbackEvent) {
+func (s *server) acceptLinearIssueTrackerCallback(w http.ResponseWriter, r *http.Request, event issuetracker.CallbackEvent, record state.IssueTrackerLinearRecord) {
 	ctx := r.Context()
 	store, ok := s.store.(state.IssueTrackerCallbackStore)
 	if !ok {
@@ -52,19 +53,34 @@ func (s *server) acceptLinearIssueTrackerCallback(w http.ResponseWriter, r *http
 	}
 	known, err := store.KnownIssueTrackerCallback(ctx, event)
 	if err != nil {
+		if errors.Is(err, state.ErrInvalidArgument) {
+			s.recordLinearCallbackDiagnostic(r, record, "delivery_conflict")
+		}
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
 	if known {
+		if event.Fresh(time.Now()) && !s.recordLinearCallbackDiagnostic(r, record, "verified") {
+			api.WriteProblem(w, api.ErrCapacity("callback diagnostics unavailable"))
+			return
+		}
 		writeJSON(w, 200, map[string]string{"status": "duplicate"})
 		return
 	}
 	if !event.Fresh(time.Now()) {
+		s.recordLinearCallbackDiagnostic(r, record, "stale_delivery")
 		api.WriteProblem(w, api.NewProblem(401, "issue_tracker_callback_expired", "Callback expired", "sending timestamp is outside the supported window"))
+		return
+	}
+	if !s.recordLinearCallbackDiagnostic(r, record, "verified") {
+		api.WriteProblem(w, api.ErrCapacity("callback diagnostics unavailable"))
 		return
 	}
 	status, err := store.EnqueueIssueTrackerCallback(ctx, event)
 	if err != nil {
+		if errors.Is(err, state.ErrInvalidArgument) {
+			s.recordLinearCallbackDiagnostic(r, record, "delivery_conflict")
+		}
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
@@ -97,4 +113,17 @@ func (s *server) linearIssueTrackerCallbackCredential(w http.ResponseWriter, r *
 		return record, "", false
 	}
 	return record, secret, true
+}
+
+// Scope comes from the configured credential record, never from rejected payloads.
+func (s *server) recordLinearCallbackDiagnostic(r *http.Request, record state.IssueTrackerLinearRecord, reason string) bool {
+	store, ok := s.store.(state.IssueTrackerCallbackDiagnosticStore)
+	if !ok {
+		return false
+	}
+	if err := store.RecordIssueTrackerCallbackDiagnostic(r.Context(), record.AppID, record.AccountID, record.Connection.Revision, reason); err != nil {
+		s.log.Warn("tracker callback diagnostic could not be recorded", "app_id", record.AppID, "reason", reason)
+		return false
+	}
+	return true
 }

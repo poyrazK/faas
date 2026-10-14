@@ -71,20 +71,20 @@ func DecodeGitHubIssueCallback(body []byte, delivery string) (CallbackEvent, err
 // Timestamp freshness is checked by the receiver after known-retry lookup.
 func DecodeLinearIssueCallback(body []byte, signature, delivery, secret string, identity LinearIdentity, app string, revision int64) (CallbackEvent, error) {
 	if len(body) > api.IssueTrackerCallbackBodyMaxBytes || !ValidLinearWebhookSecret(secret) || revision <= 0 {
-		return CallbackEvent{}, ErrInvalidCallback
-	}
-	id, err := uuid.Parse(delivery)
-	if err != nil || id == uuid.Nil || id.String() != delivery || id.Version() != 4 {
-		return CallbackEvent{}, ErrInvalidCallback
+		return CallbackEvent{}, callbackRejection("invalid_payload")
 	}
 	got, err := hex.DecodeString(signature)
 	if err != nil || len(got) != sha256.Size {
-		return CallbackEvent{}, ErrInvalidCallback
+		return CallbackEvent{}, callbackRejection("invalid_signature")
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	if !hmac.Equal(got, mac.Sum(nil)) {
-		return CallbackEvent{}, ErrInvalidCallback
+		return CallbackEvent{}, callbackRejection("invalid_signature")
+	}
+	id, err := uuid.Parse(delivery)
+	if err != nil || id == uuid.Nil || id.String() != delivery || id.Version() != 4 {
+		return CallbackEvent{}, callbackRejection("invalid_payload")
 	}
 	var event struct {
 		Type           string `json:"type"`
@@ -96,8 +96,11 @@ func DecodeLinearIssueCallback(body []byte, signature, delivery, secret string, 
 			TeamID string `json:"teamId"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(body, &event) != nil || event.Timestamp <= 0 || event.OrganizationID != identity.WorkspaceID {
-		return CallbackEvent{}, ErrInvalidCallback
+	if json.Unmarshal(body, &event) != nil || event.Timestamp <= 0 {
+		return CallbackEvent{}, callbackRejection("invalid_payload")
+	}
+	if event.OrganizationID != identity.WorkspaceID {
+		return CallbackEvent{}, callbackRejection("wrong_scope")
 	}
 	if event.Type != "Issue" {
 		return CallbackEvent{}, ErrIgnoredCallback
@@ -106,8 +109,11 @@ func DecodeLinearIssueCallback(body []byte, signature, delivery, secret string, 
 		return CallbackEvent{}, ErrIgnoredCallback
 	}
 	ticket, e := uuid.Parse(event.Data.ID)
-	if e != nil || ticket == uuid.Nil || ticket.String() != event.Data.ID || event.Data.TeamID != identity.TeamID {
-		return CallbackEvent{}, ErrInvalidCallback
+	if e != nil || ticket == uuid.Nil || ticket.String() != event.Data.ID {
+		return CallbackEvent{}, callbackRejection("invalid_payload")
+	}
+	if event.Data.TeamID != identity.TeamID {
+		return CallbackEvent{}, callbackRejection("wrong_scope")
 	}
 	// Linear may refresh the sending timestamp when retrying the same delivery.
 	// Hash the canonical signed payload excluding only that transport timestamp.
@@ -115,12 +121,12 @@ func DecodeLinearIssueCallback(body []byte, signature, delivery, secret string, 
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.UseNumber()
 	if decoder.Decode(&payload) != nil {
-		return CallbackEvent{}, ErrInvalidCallback
+		return CallbackEvent{}, callbackRejection("invalid_payload")
 	}
 	delete(payload, "webhookTimestamp")
 	canonical, err := json.Marshal(payload)
 	if err != nil {
-		return CallbackEvent{}, ErrInvalidCallback
+		return CallbackEvent{}, callbackRejection("invalid_payload")
 	}
 	return CallbackEvent{Provider: "linear", ScopeKey: fmt.Sprintf("linear/%s/%d", app, revision), DeliveryID: delivery, AppID: app, ConnectionRevision: revision, WorkspaceID: identity.WorkspaceID, TeamID: identity.TeamID, TicketID: ticket.String(), PayloadHash: callbackHash(canonical), SentAt: time.UnixMilli(event.Timestamp)}, nil
 }

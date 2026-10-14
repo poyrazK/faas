@@ -103,7 +103,7 @@ Counts cover retained tracked deliveries, not all incoming HTTP requests. Duplic
 retries do not increase them; ignored and rejected requests are not retained. Last
 processed means the hint was consumed, not provider confirmation. Paused or outdated
 hints are consumed without scheduling.
-Signing rejection counters and live provider webhook registration checks remain
-unavailable; the dashboard must describe these limits rather than imply a successful
-setup or a zero rejection rate. The callback path, connected team, configured signing
+ADR-1222 adds scoped Linear rejection counters and recent signed delivery evidence.
+Live provider webhook registration checks remain unavailable; the dashboard must
+describe this limit rather than imply provider-side registration was inspected. The callback path, connected team, configured signing
 secret flag and fresh provider preview help owners check local setup.

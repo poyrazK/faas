@@ -51,7 +51,7 @@ func TestIssueTrackerSyncControlsRespectOwnershipAndShowPendingOutcome(t *testin
 			t.Fatal("pending recovery guidance missing")
 		}
 		if owner {
-			for _, want := range []string{"Refresh provider status and review sync", "Disable automatic sync", `name="expected_revision" value="7"`, `type="password" name="api_key"`, "Disconnect Linear", "3 retained", "1 pending", "Signature rejection counts are unavailable", "Provider webhook registration is not verified"} {
+			for _, want := range []string{"Refresh provider status and review sync", "Disable automatic sync", `name="expected_revision" value="7"`, `type="password" name="api_key"`, "Disconnect Linear", "3 retained", "1 pending", "recent verified delivery confirms receipt", "Failed GitHub signatures"} {
 				if !strings.Contains(rendered, want) {
 					t.Fatal("owner control missing", want)
 				}
@@ -137,5 +137,25 @@ func TestLinearPickerMatchesStoredIDsAndRequiresBothLifecycles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLinearCallbackDiagnosticsExplainScopeAndDoNotClaimRegistration(t *testing.T) {
+	tmpl, err := template.ParseFS(tmplFS, "templates/issues.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := IssueTrackerLinksView{CanManage: true, Items: []api.IssueTrackerLink{{ID: "link", Provider: "linear"}}, CallbackHealth: map[string]issuetracker.CallbackHealth{"link": {Provider: "linear", Setup: "Configured; awaiting verified delivery", Configured: true, InvalidSignature: 2, WrongScope: 1, StaleDelivery: 3, InvalidPayload: 4, DeliveryConflict: 5}}}
+	var out bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&out, "issue-tracker-links", view); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Configured; awaiting verified delivery", "invalid signature 2", "wrong scope 1", "stale delivery 3", "malformed payload 4", "reused delivery ID 5", "Counts include unauthenticated attempts and retries", "Check that the signing secret matches", "Check the webhook workspace and team", "Check Gregale", "not provider webhook registration"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatal("missing diagnostic guidance", want)
+		}
+	}
+	if strings.Contains(out.String(), "Failed GitHub signatures") {
+		t.Fatal("Linear diagnostics use wrong provider guidance")
 	}
 }

@@ -4039,6 +4039,19 @@ type IssueTrackerCallback struct {
 	ProcessedAt        pgtype.Timestamptz
 }
 
+type IssueTrackerCallbackDiagnostic struct {
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	ConnectionRevision int64
+	InvalidSignature   int64
+	WrongScope         int64
+	StaleDelivery      int64
+	InvalidPayload     int64
+	DeliveryConflict   int64
+	LastVerifiedAt     pgtype.Timestamptz
+	LastRejectedAt     pgtype.Timestamptz
+}
+
 type IssueTrackerLinearConnection struct {
 	AppID            pgtype.UUID
 	AccountID        pgtype.UUID

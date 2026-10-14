@@ -10486,12 +10486,13 @@ const (
 
 // Provider callbacks carry bounded refresh hints, never lifecycle authority.
 const (
-	IssueTrackerCallbackBodyMaxBytes     = 1 << 20
-	IssueTrackerCallbackDeliveryMaxBytes = 128
-	IssueTrackerCallbackSecretMinBytes   = 32
-	IssueTrackerCallbackTimestampSkew    = time.Minute
-	IssueTrackerCallbackBatch            = 100
-	IssueTrackerCallbackReceiptsMax      = 10000
-	IssueTrackerCallbackRetention        = 7 * 24 * time.Hour
-	IssueTrackerCallbackRequestTimeout   = 4 * time.Second
+	IssueTrackerCallbackBodyMaxBytes       = 1 << 20
+	IssueTrackerCallbackDeliveryMaxBytes   = 128
+	IssueTrackerCallbackSecretMinBytes     = 32
+	IssueTrackerCallbackTimestampSkew      = time.Minute
+	IssueTrackerCallbackVerificationMaxAge = 24 * time.Hour
+	IssueTrackerCallbackBatch              = 100
+	IssueTrackerCallbackReceiptsMax        = 10000
+	IssueTrackerCallbackRetention          = 7 * 24 * time.Hour
+	IssueTrackerCallbackRequestTimeout     = 4 * time.Second
 )

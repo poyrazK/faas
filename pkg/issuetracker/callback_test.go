@@ -58,9 +58,21 @@ func TestLinearCallbackVerifiesRawBodyScopeAndRetryIdentity(t *testing.T) {
 			if kind == "signature" {
 				sig = "bad"
 			}
-			if _, err := DecodeLinearIssueCallback(b, sig, d, key, scope, app, 7); !errors.Is(err, ErrInvalidCallback) {
+			_, err := DecodeLinearIssueCallback(b, sig, d, key, scope, app, 7)
+			if !errors.Is(err, ErrInvalidCallback) {
 				t.Fatal("invalid callback accepted", err)
 			}
+			want := "invalid_payload"
+			if kind == "signature" {
+				want = "invalid_signature"
+			}
+			if kind == "workspace" || kind == "team" {
+				want = "wrong_scope"
+			}
+			if CallbackRejectionReason(err) != want {
+				t.Fatal("wrong rejection classification", err, want)
+			}
+
 		})
 	}
 }

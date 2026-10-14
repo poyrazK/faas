@@ -1677,6 +1677,7 @@ type Querier interface {
 	IssueTrackerCallbackCleanup(ctx context.Context, db DBTX, arg IssueTrackerCallbackCleanupParams) error
 	IssueTrackerCallbackComplete(ctx context.Context, db DBTX, arg IssueTrackerCallbackCompleteParams) error
 	IssueTrackerCallbackCount(ctx context.Context, db DBTX, scopeKey string) (int64, error)
+	IssueTrackerCallbackDiagnosticRecord(ctx context.Context, db DBTX, arg IssueTrackerCallbackDiagnosticRecordParams) error
 	IssueTrackerCallbackFind(ctx context.Context, db DBTX, arg IssueTrackerCallbackFindParams) ([]IssueTrackerCallbackFindRow, error)
 	IssueTrackerCallbackHealth(ctx context.Context, db DBTX, arg IssueTrackerCallbackHealthParams) (IssueTrackerCallbackHealthRow, error)
 	IssueTrackerCallbackInsert(ctx context.Context, db DBTX, arg IssueTrackerCallbackInsertParams) error
@@ -1684,6 +1685,7 @@ type Querier interface {
 	IssueTrackerCallbackPolicies(ctx context.Context, db DBTX, arg IssueTrackerCallbackPoliciesParams) ([]IssueTrackerCallbackPoliciesRow, error)
 	IssueTrackerCallbackSchedule(ctx context.Context, db DBTX, linkID pgtype.UUID) error
 	IssueTrackerCallbackScopeLock(ctx context.Context, db DBTX, scopeKey string) error
+	IssueTrackerCallbackSetup(ctx context.Context, db DBTX, arg IssueTrackerCallbackSetupParams) (IssueTrackerCallbackSetupRow, error)
 	IssueTrackerLinearGet(ctx context.Context, db DBTX, arg IssueTrackerLinearGetParams) (IssueTrackerLinearConnection, error)
 	IssueTrackerLinearOwner(ctx context.Context, db DBTX, arg IssueTrackerLinearOwnerParams) (pgtype.UUID, error)
 	IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueTrackerLinearPutParams) (IssueTrackerLinearConnection, error)

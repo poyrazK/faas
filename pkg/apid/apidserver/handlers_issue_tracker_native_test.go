@@ -1005,6 +1005,18 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 		t.Fatal("initial policy not delayed", policy)
 	}
 	callbacks := apidserver.IssueNativeStore(e).(state.IssueTrackerCallbackStore)
+	healthStore := apidserver.IssueNativeStore(e).(state.IssueTrackerCallbackHealthStore)
+	readHealth := func() issuetracker.CallbackHealth {
+		t.Helper()
+		health, err := healthStore.GetIssueTrackerCallbackHealth(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return health
+	}
+	if h := readHealth(); !h.Configured || h.LastVerifiedAt != nil {
+		t.Fatal("configured connection already verified", h)
+	}
 	payload := map[string]any{"type": "Issue", "action": "update", "organizationId": connection.WorkspaceID, "webhookTimestamp": time.Now().UnixMilli(), "data": map[string]string{"id": provider.status.ID, "teamId": connection.TeamID, "updatedAt": "event-one", "state": "completed"}}
 	delivery := uuid.NewString()
 	send := func(id string, body map[string]any, valid bool) *httptest.ResponseRecorder {
@@ -1026,11 +1038,13 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 	if out := send(delivery, payload, false); out.Code != 401 {
 		t.Fatal("unsigned callback accepted", out.Code)
 	}
+	if h := readHealth(); h.InvalidSignature != 1 || h.LastVerifiedAt != nil || h.LastRejectedAt == nil {
+		t.Fatal("rejection changed setup proof", h)
+	}
 	first := send(delivery, payload, true)
 	if first.Code != 200 || !strings.Contains(first.Body.String(), "accepted") || strings.Contains(first.Body.String(), secret) {
 		t.Fatal(first.Code, first.Body.String())
 	}
-	healthStore := apidserver.IssueNativeStore(e).(state.IssueTrackerCallbackHealthStore)
 	checkHealth := func(retained, pending int64) {
 		t.Helper()
 		health, err := healthStore.GetIssueTrackerCallbackHealth(t.Context(), app.ID, app.AccountID, accepted.IssueID, link.ID)
@@ -1039,12 +1053,20 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 		}
 	}
 	checkHealth(1, 1)
+	verified := readHealth().LastVerifiedAt
+	if verified == nil || readHealth().Setup != "Verified delivery received within 24 hours" {
+		t.Fatal("valid delivery did not verify setup")
+	}
+
 	if _, err := healthStore.GetIssueTrackerCallbackHealth(t.Context(), app.ID, uuid.NewString(), accepted.IssueID, link.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("health crossed account scope", err)
 	}
 	payload["webhookTimestamp"] = time.Now().Add(-10 * time.Minute).UnixMilli()
 	if out := send(delivery, payload, true); out.Code != 200 || !strings.Contains(out.Body.String(), "duplicate") {
 		t.Fatal("known late retry failed", out.Code, out.Body.String())
+	}
+	if h := readHealth(); h.LastVerifiedAt == nil || !h.LastVerifiedAt.Equal(*verified) || h.StaleDelivery != 0 {
+		t.Fatal("known late retry changed setup proof", h)
 	}
 	payload["data"].(map[string]string)["updatedAt"] = "stale-new-event"
 	if out := send(uuid.NewString(), payload, true); out.Code != 401 {
@@ -1057,6 +1079,17 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 		t.Fatal("foreign team accepted", out.Code)
 	}
 	payload["data"].(map[string]string)["teamId"] = connection.TeamID
+	if out := send("invalid-delivery", payload, true); out.Code != 401 {
+		t.Fatal("malformed delivery accepted", out.Code)
+	}
+	payload["data"].(map[string]string)["updatedAt"] = "changed-payload"
+	if out := send(delivery, payload, true); out.Code < 400 {
+		t.Fatal("changed delivery accepted", out.Code)
+	}
+	payload["data"].(map[string]string)["updatedAt"] = "event-one"
+	if h := readHealth(); h.InvalidSignature != 1 || h.WrongScope != 1 || h.StaleDelivery != 1 || h.InvalidPayload != 1 || h.DeliveryConflict != 1 {
+		t.Fatal("rejection counters", h)
+	}
 	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
 	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
 	if policy.Outcome != "matched" || provider.writes != 0 {
@@ -1097,8 +1130,34 @@ func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(
 	if out := send(uuid.NewString(), payload, true); out.Code != 200 || !strings.Contains(out.Body.String(), "ignored") {
 		t.Fatal("callback resumed paused policy", out.Code, out.Body.String())
 	}
-	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 1}, nil), 200)
+	secret = "replacement_signing_secret_1234567890abcdef"
+	connection = apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 1, TeamID: connection.TeamID, APIKey: "lin_api_secret", WebhookSecret: secret}, nil), 200)
+	diagnostics := apidserver.IssueNativeStore(e).(state.IssueTrackerCallbackDiagnosticStore)
+	if err := diagnostics.RecordIssueTrackerCallbackDiagnostic(t.Context(), app.ID, app.AccountID, 1, "verified"); err != nil {
+		t.Fatal(err)
+	}
+	if err := diagnostics.RecordIssueTrackerCallbackDiagnostic(t.Context(), app.ID, uuid.NewString(), 2, "invalid_signature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := diagnostics.RecordIssueTrackerCallbackDiagnostic(t.Context(), app.ID, app.AccountID, 2, "untrusted-reason"); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatal("arbitrary diagnostic reason accepted", err)
+	}
+	if h := readHealth(); !h.Configured || h.LastVerifiedAt != nil || h.InvalidSignature != 0 || h.WrongScope != 0 || h.RetainedDeliveries != 0 {
+		t.Fatal("replacement reused old evidence", h)
+	}
+	payload["webhookTimestamp"] = time.Now().UnixMilli()
+	if out := send(uuid.NewString(), payload, true); out.Code != 200 || !strings.Contains(out.Body.String(), "ignored") {
+		t.Fatal("paused replacement callback", out.Code, out.Body.String())
+	}
+	if h := readHealth(); h.LastVerifiedAt == nil || h.InvalidSignature != 0 || h.PendingHints != 0 || provider.writes != 0 {
+		t.Fatal("untracked callback did not verify without writes", h)
+	}
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", base+"/issue-tracker-linear-connection", api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 2}, nil), 200)
 	checkHealth(0, 0)
+	if h := readHealth(); h.Configured || h.LastVerifiedAt != nil || h.InvalidSignature != 0 {
+		t.Fatal("disconnect retained setup evidence", h)
+	}
+
 	if out := send(uuid.NewString(), payload, true); out.Code != 404 {
 		t.Fatal("disconnected callbacks accepted", out.Code)
 	}
@@ -1145,10 +1204,24 @@ func TestNativeIssueGitHubCallbacksOnlyWakeOwnedActiveReferences(t *testing.T) {
 	if status, err := callbacks.EnqueueIssueTrackerCallback(t.Context(), event); err != nil || status != "duplicate" {
 		t.Fatal(status, err)
 	}
+	h, err := store.(state.IssueTrackerCallbackHealthStore).GetIssueTrackerCallbackHealth(t.Context(), app.ID, acct.ID, accepted.IssueID, link.ID)
+	if err != nil || !h.Configured || h.LastVerifiedAt == nil || h.Setup != "Verified delivery received within 24 hours" || h.RetainedDeliveries != 1 || h.InvalidSignature != 0 {
+		t.Fatal("GitHub setup evidence", h, err)
+	}
 	provider.status.State = "resolved"
 	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
 	policy := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
 	if policy.Outcome != "conflict" || provider.writes != 0 {
 		t.Fatal("manual GitHub edit overwritten", policy)
 	}
+	// Historical bindings may lack the owner field; health must fail closed
+	// without a NULL-to-bool scan failure or old receipt evidence.
+	if _, err := (*e.Pool()).Exec(t.Context(), "UPDATE apps SET github_install_account_id=NULL WHERE id=$1", app.ID); err != nil {
+		t.Fatal(err)
+	}
+	h, err = store.(state.IssueTrackerCallbackHealthStore).GetIssueTrackerCallbackHealth(t.Context(), app.ID, acct.ID, accepted.IssueID, link.ID)
+	if err != nil || h.Configured || h.LastVerifiedAt != nil || h.Setup != "Not configured" {
+		t.Fatal("partial GitHub binding reported configured", h, err)
+	}
+
 }
