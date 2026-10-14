@@ -39,6 +39,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	SpansWriter_WriteSpansSummary_FullMethodName = "/onebox.faas.apid.v1.SpansWriter/WriteSpansSummary"
 	SpansWriter_IngestGuestSpans_FullMethodName  = "/onebox.faas.apid.v1.SpansWriter/IngestGuestSpans"
+	SpansWriter_IngestGuestLogs_FullMethodName   = "/onebox.faas.apid.v1.SpansWriter/IngestGuestLogs"
 )
 
 // SpansWriterClient is the client API for SpansWriter service.
@@ -70,6 +71,13 @@ type SpansWriterClient interface {
 	// the public-ingest codec, and merges spans through its own flush loop.
 	// Outcomes ride on the response, not gRPC errors.
 	IngestGuestSpans(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestSpansResponse, error)
+	// IngestGuestLogs accepts one raw OTLP/HTTP logs export from the same
+	// in-guest bridge (ADR-213 runtime adapter). The request carries the same
+	// host-owned identity and the frame's payload codec with the logs signal
+	// bit cleared. apid checks the plan and per-account log export cap,
+	// decodes, redacts and bounds each record, and writes log_events rows with
+	// source runtime. Outcomes ride on the response, not gRPC errors.
+	IngestGuestLogs(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestLogsResponse, error)
 }
 
 type spansWriterClient struct {
@@ -94,6 +102,16 @@ func (c *spansWriterClient) IngestGuestSpans(ctx context.Context, in *IngestGues
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(IngestGuestSpansResponse)
 	err := c.cc.Invoke(ctx, SpansWriter_IngestGuestSpans_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *spansWriterClient) IngestGuestLogs(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestLogsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestGuestLogsResponse)
+	err := c.cc.Invoke(ctx, SpansWriter_IngestGuestLogs_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +147,13 @@ type SpansWriterServer interface {
 	// the public-ingest codec, and merges spans through its own flush loop.
 	// Outcomes ride on the response, not gRPC errors.
 	IngestGuestSpans(context.Context, *IngestGuestSpansRequest) (*IngestGuestSpansResponse, error)
+	// IngestGuestLogs accepts one raw OTLP/HTTP logs export from the same
+	// in-guest bridge (ADR-213 runtime adapter). The request carries the same
+	// host-owned identity and the frame's payload codec with the logs signal
+	// bit cleared. apid checks the plan and per-account log export cap,
+	// decodes, redacts and bounds each record, and writes log_events rows with
+	// source runtime. Outcomes ride on the response, not gRPC errors.
+	IngestGuestLogs(context.Context, *IngestGuestSpansRequest) (*IngestGuestLogsResponse, error)
 	mustEmbedUnimplementedSpansWriterServer()
 }
 
@@ -144,6 +169,9 @@ func (UnimplementedSpansWriterServer) WriteSpansSummary(context.Context, *WriteS
 }
 func (UnimplementedSpansWriterServer) IngestGuestSpans(context.Context, *IngestGuestSpansRequest) (*IngestGuestSpansResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IngestGuestSpans not implemented")
+}
+func (UnimplementedSpansWriterServer) IngestGuestLogs(context.Context, *IngestGuestSpansRequest) (*IngestGuestLogsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IngestGuestLogs not implemented")
 }
 func (UnimplementedSpansWriterServer) mustEmbedUnimplementedSpansWriterServer() {}
 func (UnimplementedSpansWriterServer) testEmbeddedByValue()                     {}
@@ -202,6 +230,24 @@ func _SpansWriter_IngestGuestSpans_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SpansWriter_IngestGuestLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestGuestSpansRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SpansWriterServer).IngestGuestLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SpansWriter_IngestGuestLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SpansWriterServer).IngestGuestLogs(ctx, req.(*IngestGuestSpansRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SpansWriter_ServiceDesc is the grpc.ServiceDesc for SpansWriter service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -216,6 +262,10 @@ var SpansWriter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IngestGuestSpans",
 			Handler:    _SpansWriter_IngestGuestSpans_Handler,
+		},
+		{
+			MethodName: "IngestGuestLogs",
+			Handler:    _SpansWriter_IngestGuestLogs_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

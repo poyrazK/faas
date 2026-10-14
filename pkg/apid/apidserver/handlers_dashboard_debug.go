@@ -1300,6 +1300,7 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 			Approximate:   stage.Approximate,
 		})
 	}
+	logs, logsTruncated := s.debugEvidenceLogs(ctx, acct.ID, app.ID, item)
 	evidence := api.DebugRequestEvidenceResponse{
 		Request:                    item,
 		Regression:                 apiRegression,
@@ -1309,6 +1310,8 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		DependencyLatencyTruncated: dependencyLatencyTruncated,
 		Spans:                      spans,
 		SpansTruncated:             truncated,
+		Logs:                       logs,
+		LogsTruncated:              logsTruncated,
 		Explanation:                explanation,
 	}
 	explanation = debugger.Synthesize(evidence)
@@ -1342,8 +1345,20 @@ func (s *server) populateDashboardDebugDetail(ctx context.Context, log *slog.Log
 		Findings:                   findingViews,
 		Recommendations:            recommendationViews,
 		GeneratedAt:                now.Format(time.RFC3339),
+		Logs:                       dashboardDebugLogViews(logs),
+		LogsTruncated:              logsTruncated,
 	}
 	return nil
+}
+
+func dashboardDebugLogViews(lines []api.DebugEvidenceLogLine) []dashboard.DebugLogLineView {
+	views := make([]dashboard.DebugLogLineView, 0, len(lines))
+	for _, line := range lines {
+		views = append(views, dashboard.DebugLogLineView{
+			OccurredAt: line.OccurredAt, Source: line.Source, Level: line.Level, Stream: line.Stream, Message: line.Message,
+		})
+	}
+	return views
 }
 
 func buildDebugCriticalPath(spans []api.DebugTelemetrySpan) *api.DebugRequestCriticalPath {

@@ -215,6 +215,21 @@ placeholders, `IN` lists and multi-row `VALUES` folded, and are bounded to
 unchanged. The suspected dependency gains `query`, the pattern that
 regressed, and the synthesis names it.
 
+**OTel logs (amendment, 2026-10-14).** The guest bridge also serves
+`POST /v1/logs`. A log export is framed like a trace export, with
+`TraceCodecLogsSignal` (0x20) set in the codec byte; a vmmd that predates
+logs rejects that unknown codec, which SDKs do not retry. vmmd routes log
+frames to `IngestGuestLogs` (same request message, logs bit cleared, same
+host-owned identity and tracing gate). guest-init points OTel log export at
+the bridge (`OTEL_LOGS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`,
+http/protobuf) unless the app sets its own logs exporter or endpoint, which
+also opts it out. Python's SDK configurator then attaches its logging handler
+(`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED`); the Node bootstrap
+registers a log record processor (`FAAS_TRACING_LOGS`), so the pino and
+bunyan instrumentations send records with the active trace context. Plain
+`console.log` and winston (which needs a separate transport package) are not
+forwarded. apid writes the records as ADR-213 runtime log events.
+
 ## Consequences
 
 - Opted-in managed-runtime apps get DB, cache and HTTP client spans on the

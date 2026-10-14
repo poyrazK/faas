@@ -25,9 +25,10 @@ type traceAppReader interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 }
 
-// traceBroker relays in-guest trace exports to apid (ADR-958). Like the
-// profile broker it only bounds frames and stamps host-owned identity: it
-// never decompresses or decodes OTLP, which happens in unprivileged apid.
+// traceBroker relays in-guest trace and log exports to apid (ADR-958,
+// ADR-213 runtime adapter). Like the profile broker it only bounds frames and
+// stamps host-owned identity: it never decompresses or decodes OTLP, which
+// happens in unprivileged apid. The codec byte's logs bit picks the RPC.
 type traceBroker struct {
 	identities traceIdentityResolver
 	apps       traceAppReader
@@ -90,7 +91,7 @@ func (b *traceBroker) handle(ctx context.Context, instance string, conn net.Conn
 	if _, err := io.ReadFull(conn, frame); err != nil {
 		return "read", err
 	}
-	codec := frame[0]
+	codec, logs := api.SplitTraceCodec(frame[0])
 	if _, _, ok := api.TraceCodecMediaType(codec); !ok {
 		ack = api.TraceAckRejected
 		return "protocol", fmt.Errorf("unknown trace frame codec")
@@ -108,13 +109,24 @@ func (b *traceBroker) handle(ctx context.Context, instance string, conn net.Conn
 		ack = api.TraceAckRejected
 		return "disabled", fmt.Errorf("tracing disabled for instance")
 	}
-	resp, err := b.client.IngestGuestSpans(requestCtx, &apidpb.IngestGuestSpansRequest{
+	req := &apidpb.IngestGuestSpansRequest{
 		AccountId: identity.AccountID, AppId: identity.AppID, DeploymentId: identity.DeploymentID,
 		InstanceId: instance, Codec: uint32(codec), Payload: frame[1:],
-	})
-	if err != nil {
-		return "forward", err
 	}
-	ack = api.TraceAckForIngestOutcome(resp.GetOutcome())
-	return resp.GetOutcome(), nil
+	var outcome string
+	if logs {
+		resp, err := b.client.IngestGuestLogs(requestCtx, req)
+		if err != nil {
+			return "forward", err
+		}
+		outcome = resp.GetOutcome()
+	} else {
+		resp, err := b.client.IngestGuestSpans(requestCtx, req)
+		if err != nil {
+			return "forward", err
+		}
+		outcome = resp.GetOutcome()
+	}
+	ack = api.TraceAckForIngestOutcome(outcome)
+	return outcome, nil
 }

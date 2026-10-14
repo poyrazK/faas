@@ -645,6 +645,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_TRACE_OBSERVER_TOKEN", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TRACE_RING_CAP", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_TRACING_ENABLED", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958)"},
+	{Name: "FAAS_TRACING_LOGS", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "stamped by guest-init when the local OTLP bridge is also the logs exporter; the Node bootstrap registers a log record processor (ADR-213 runtime adapter)"},
 	{Name: "FAAS_TRUSTED_INGRESS_CIDRS", Owners: []string{"gatewayd-public"}, Source: EnvSourceUnit, Note: "upstream TLS edge CIDRs allowed to provide canonical forwarding context"},
 	{Name: "FAAS_TWO_NODE_ADDR_", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},
 	{Name: "FAAS_TWO_NODE_NODE_", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "native two-node acceptance fixture; must never be set on a production daemon"},

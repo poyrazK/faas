@@ -141,6 +141,30 @@ class NodeBootstrapTests(unittest.TestCase):
                 app.stdout.close()
 
     @unittest.skipIf(shutil.which("node") is None, "node not installed")
+    def test_log_export_only_when_requested(self):
+        # ADR-213 runtime adapter: guest-init sets FAAS_TRACING_LOGS when the
+        # app has no logs exporter of its own; only then is a log record
+        # processor registered.
+        with tempfile.TemporaryDirectory() as directory:
+            shutil.copy(ROOT / "guest/tracing/node.cjs", Path(directory, "node.cjs"))
+            stubs = {
+                "@opentelemetry/sdk-node": "exports.NodeSDK = class { constructor(c) { process.stdout.write('processors=' + ((c.logRecordProcessors || []).length) + '\\n'); } start() {} shutdown() { return Promise.resolve(); } };",
+                "@opentelemetry/auto-instrumentations-node": "exports.getNodeAutoInstrumentations = () => [];",
+                "@opentelemetry/exporter-trace-otlp-proto": "exports.OTLPTraceExporter = class {};",
+                "@opentelemetry/sdk-logs": "exports.BatchLogRecordProcessor = class { constructor(e) { this.e = e; } };",
+                "@opentelemetry/exporter-logs-otlp-proto": "exports.OTLPLogExporter = class {};",
+            }
+            for name, source in stubs.items():
+                pkg = Path(directory, "node_modules", name)
+                pkg.mkdir(parents=True)
+                Path(pkg, "index.js").write_text(source)
+            for flag, want in (("1", "processors=1"), ("", "processors=0")):
+                env = dict(os.environ, FAAS_TRACING_ENABLED="1", FAAS_TRACING_LOGS=flag)
+                out = subprocess.run(["node", "--require", str(Path(directory, "node.cjs")), "-e", ""],
+                                     env=env, check=True, timeout=10, capture_output=True, text=True)
+                self.assertEqual(out.stdout.strip(), want)
+
+    @unittest.skipIf(shutil.which("node") is None, "node not installed")
     def test_disabled_is_inert(self):
         out = subprocess.run(["node", "--require", str(ROOT / "guest/tracing/node.cjs"), "-e",
                               'console.log(Object.keys(require.cache).some(k => k.includes("@opentelemetry")))'],

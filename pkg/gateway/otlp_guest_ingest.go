@@ -26,7 +26,7 @@ func (s *SpansAccumulator) AddOTLPTraceExport(accountID uuid.UUID, contentType, 
 	if parseErr != nil || (mediaType != "application/json" && mediaType != "application/x-protobuf") {
 		return 0, 0, fmt.Errorf("%w: unsupported content type", ErrOTLPExportInvalid)
 	}
-	raw, err := decodeOTLPContentEncoding(contentEncoding, body, maxDecodedBytes)
+	raw, err := DecodeOTLPContentEncoding(contentEncoding, body, maxDecodedBytes)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -48,7 +48,7 @@ func (s *SpansAccumulator) AddOTLPTraceExport(accountID uuid.UUID, contentType, 
 	return accepted, rejected, nil
 }
 
-func decodeOTLPContentEncoding(contentEncoding string, body []byte, maxDecodedBytes int) ([]byte, error) {
+func DecodeOTLPContentEncoding(contentEncoding string, body []byte, maxDecodedBytes int) ([]byte, error) {
 	var reader io.Reader = bytes.NewReader(body)
 	switch strings.ToLower(strings.TrimSpace(contentEncoding)) {
 	case "", "identity":
