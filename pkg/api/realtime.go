@@ -7,27 +7,6 @@ import (
 	"time"
 )
 
-// RealtimeLimits describes the managed realtime endpoint allowance for a plan.
-// It is kept separate from Limits so adding the opt-in realtime surface does
-// not change the long-lived Limits struct consumed by every daemon.
-type RealtimeLimits struct {
-	Plan                Plan
-	EndpointsPerApp     int
-	EndpointsPerAccount int
-}
-
-var realtimeLimits = map[Plan]RealtimeLimits{
-	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250},
-}
-
-func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
-	l, ok := realtimeLimits[p]
-	return l, ok
-}
-
 const (
 	RealtimeCallbackAuthTokenMaxBytes = 256
 	RealtimeAuthTokenMaxBytes         = 256

@@ -1400,6 +1400,28 @@ var FullRootfsAllowAutoDefault = map[Plan]bool{
 	PlanScale: true,
 }
 
+// RealtimeLimits describes the managed realtime allowance for a plan. It is
+// kept separate from Limits so the opt-in realtime surface does not change the
+// long-lived Limits struct consumed by every daemon. Usage metering and the
+// connection and message limits proposed in ADR-1238 belong here.
+type RealtimeLimits struct {
+	Plan                Plan
+	EndpointsPerApp     int
+	EndpointsPerAccount int
+}
+
+var realtimeLimits = map[Plan]RealtimeLimits{
+	PlanFree:  {Plan: PlanFree},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250},
+}
+
+func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
+	l, ok := realtimeLimits[p]
+	return l, ok
+}
+
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
 // global value (not per-plan) because the cost is per-bundle (one
 // export scans every per-account table) and the abuse case is
