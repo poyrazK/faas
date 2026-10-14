@@ -2742,6 +2742,12 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 }
 
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
+	// A job task instance carries no app ID. Looking one up sent '' as a
+	// uuid and logged "invalid input syntax for type uuid" in Postgres on
+	// every job run on production-us; no app has an empty ID (hunt #10).
+	if id == "" {
+		return App{}, ErrNotFound
+	}
 	sel := `select ` + appsSelectColumns + ` from apps where id = $1`
 	row := s.pool.QueryRow(ctx, sel, id)
 	return scanApp(row)
@@ -29378,6 +29384,12 @@ func (s *PgStore) RequestTelemetryCircuitBreakerSummary(ctx context.Context, app
 // per-route p95 baseline lookup.
 func (s *PgStore) RequestTelemetryBaselineP95ByRoute(ctx context.Context, arg sqlc.RequestTelemetryBaselineP95ByRouteParams) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, error) {
 	return s.appErrorsQueries().RequestTelemetryBaselineP95ByRoute(ctx, s.pool, arg)
+}
+
+// RequestTelemetryErrorsByRoute backs the regression detector's error-rate
+// signal (per-route requests and 5xx counts for one deployment and window).
+func (s *PgStore) RequestTelemetryErrorsByRoute(ctx context.Context, arg sqlc.RequestTelemetryErrorsByRouteParams) ([]sqlc.RequestTelemetryErrorsByRouteRow, error) {
+	return s.appErrorsQueries().RequestTelemetryErrorsByRoute(ctx, s.pool, arg)
 }
 
 // RequestTelemetryAnalyticsSummary backs the customer-facing aggregated

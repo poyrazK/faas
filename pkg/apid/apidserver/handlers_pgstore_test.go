@@ -351,11 +351,16 @@ func TestPGHandler_DebuggerRequestAndRegressionReadPaths(t *testing.T) {
 	if err := factor.Scan("1.50"); err != nil {
 		t.Fatalf("scan regression factor: %v", err)
 	}
+	zero := pgtype.Numeric{}
+	if err := zero.Scan("0"); err != nil {
+		t.Fatalf("scan zero rate: %v", err)
+	}
 	if err := e.store.UpsertRegressionObservation(context.Background(), sqlc.UpsertRegressionObservationParams{
 		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
 		DeploymentID: pgtype.UUID{Bytes: deploymentID, Valid: true},
 		Route:        "GET /debug", P95Ms: 300, P95BaseMs: 200, AffectedCount: 4,
 		RegressionFactor: factor,
+		Kind:             "latency", ErrorRatePct: zero, ErrorRateBasePct: zero,
 	}); err != nil {
 		t.Fatalf("UpsertRegressionObservation: %v", err)
 	}
@@ -416,11 +421,16 @@ func TestPGHandler_DebugRegressionWebhooksAreTransitionBased(t *testing.T) {
 	if err := factor.Scan("1.50"); err != nil {
 		t.Fatal(err)
 	}
+	zero := pgtype.Numeric{}
+	if err := zero.Scan("0"); err != nil {
+		t.Fatal(err)
+	}
 	observation := sqlc.UpsertRegressionObservationParams{
 		AppID:        pgtype.UUID{Bytes: uuid.MustParse(app.ID), Valid: true},
 		DeploymentID: pgtype.UUID{Bytes: deploymentID, Valid: true},
 		Route:        "POST /checkout", P95Ms: 183, P95BaseMs: 122, AffectedCount: 823,
 		RegressionFactor: factor,
+		Kind:             "latency", ErrorRatePct: zero, ErrorRateBasePct: zero,
 	}
 	upsert := func() {
 		t.Helper()

@@ -2235,6 +2235,10 @@ type DebugRegressionObservation struct {
 	DismissedUntil      pgtype.Timestamptz
 	ResolvedAt          pgtype.Timestamptz
 	SuspectedDependency []byte
+	Kind                string
+	ErrorRatePct        pgtype.Numeric
+	ErrorRateBasePct    pgtype.Numeric
+	ErrorCount          int32
 }
 
 type DeployToken struct {

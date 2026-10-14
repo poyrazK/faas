@@ -1833,9 +1833,11 @@ type Querier interface {
 	ListAccountCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsBySubjectParams) ([][]byte, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
-	// plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
-	// DESC, last_detected_at DESC matches the dashboard render order
-	// (worst regression at the top, then most-recently-reconfirmed).
+	// plan's DebugTelemetryRetentionDays cap. Observations that include the
+	// error signal come first (an errors-only row stores regression_factor
+	// 1.00, which would otherwise always sort it last), then regression_factor
+	// DESC, last_detected_at DESC: the dashboard render order (worst regression
+	// at the top, then most-recently-reconfirmed).
 	// Uses debug_regression_observations_app_idx (00436).
 	ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg ListActiveRegressionsByAppParams) ([]ListActiveRegressionsByAppRow, error)
 	ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcpListener, error)
@@ -3661,6 +3663,24 @@ type Querier interface {
 	// for requests dropped before persistence, so the API must not invent a
 	// capture percentage.
 	RequestTelemetryCoverage(ctx context.Context, db DBTX, arg RequestTelemetryCoverageParams) (RequestTelemetryCoverageRow, error)
+	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
+	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
+	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
+	// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
+	// exceeds p95_base_ms * 1.20). The detections persist here.
+	//
+	// A native sqlc RequestTelemetryRegression query was tried during the PR-A
+	// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
+	// reference" parser on (deployment_id) even after explicit ON clauses;
+	// the workaround is a LATERAL join that requires a more invasive query
+	// refactor. Go-side composition of the two PR-A queries above is the
+	// chosen workaround (cheap, no parser gymnastics).
+	// Per-route represented request and server-error (HTTP 5xx) counts for one
+	// deployment and window, weighted by the publisher's collapsed-row count.
+	// The regression detector compares the error share of the current and the
+	// previous deployment (ADR-127 amendment: error-rate regressions). Same
+	// index as RequestTelemetryBaselineP95ByRoute.
+	RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error)
 	// One immutable deployment only. Identity joins validate ownership, never
 	// infer a tenant from today's consumer link. Counts precede all output caps.
 	RequestTelemetryRouteCustomers(ctx context.Context, db DBTX, arg RequestTelemetryRouteCustomersParams) ([]RequestTelemetryRouteCustomersRow, error)
@@ -4123,18 +4143,6 @@ type Querier interface {
 	// full row as stored.
 	UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg UpsertOIDCTrustPolicyParams) (UpsertOIDCTrustPolicyRow, error)
 	UpsertQueueLeaseReceipt(ctx context.Context, db DBTX, arg UpsertQueueLeaseReceiptParams) error
-	// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
-	// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
-	// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
-	// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
-	// exceeds p95_base_ms * 1.20). The detections persist here.
-	//
-	// A native sqlc RequestTelemetryRegression query was tried during the PR-A
-	// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
-	// reference" parser on (deployment_id) even after explicit ON clauses;
-	// the workaround is a LATERAL join that requires a more invasive query
-	// refactor. Go-side composition of the two PR-A queries above is the
-	// chosen workaround (cheap, no parser gymnastics).
 	// Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 	// route) — the cron upserts on this triple so the table grows at most
 	// one row per (deployment, route) across all cron passes, not one row
@@ -4143,6 +4151,12 @@ type Querier interface {
 	// (or a dismissal expires). The webhook trigger uses that timestamp as
 	// the detection transition's idempotency key. last_detected_at is
 	// refreshed on every pass and backs the dashboard's since filter.
+	//
+	// A latency-only observation that gains the error signal reopens: a route
+	// that starts failing is a new incident even when its slowness was already
+	// acknowledged or dismissed, so state returns to active with a new
+	// first_detected_at (and therefore a new webhook transition). In ON CONFLICT
+	// DO UPDATE, debug_regression_observations.* is the row before this update.
 	UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error
 	UpsertTenantWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertTenantWorkflowScheduleCursorParams) (PlatformTenantWorkflowScheduleCursor, error)
 	UpsertWorkflowScheduleCursor(ctx context.Context, db DBTX, arg UpsertWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)

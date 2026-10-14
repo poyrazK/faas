@@ -6292,6 +6292,9 @@ BEGIN
     ELSIF NEW.state = 'active' AND OLD.state <> 'active' THEN
         event_name := 'debug.regression.detected';
         transition_id := NEW.first_detected_at;
+    ELSIF NEW.state = 'active' AND OLD.kind = 'latency' AND NEW.kind <> 'latency' THEN
+        event_name := 'debug.regression.detected';
+        transition_id := NEW.first_detected_at;
     ELSIF NEW.state = 'resolved' AND OLD.state <> 'resolved' THEN
         event_name := 'debug.regression.resolved';
         transition_id := NEW.resolved_at;
@@ -6303,10 +6306,14 @@ BEGIN
         'app_id', NEW.app_id,
         'deployment_id', NEW.deployment_id,
         'route', NEW.route,
+        'kind', NEW.kind,
         'p95_ms', NEW.p95_ms,
         'p95_base_ms', NEW.p95_base_ms,
         'affected_count', NEW.affected_count,
         'regression_factor', NEW.regression_factor,
+        'error_rate_pct', NEW.error_rate_pct,
+        'error_rate_base_pct', NEW.error_rate_base_pct,
+        'error_count', NEW.error_count,
         'first_detected_at', NEW.first_detected_at,
         'last_detected_at', NEW.last_detected_at,
         'state', NEW.state,
@@ -23901,7 +23908,15 @@ CREATE TABLE public.debug_regression_observations (
     dismissed_until timestamp with time zone,
     resolved_at timestamp with time zone,
     suspected_dependency jsonb,
+    kind text DEFAULT 'latency'::text NOT NULL,
+    error_rate_pct numeric(5,2) DEFAULT 0 NOT NULL,
+    error_rate_base_pct numeric(5,2) DEFAULT 0 NOT NULL,
+    error_count integer DEFAULT 0 NOT NULL,
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
+    CONSTRAINT debug_regression_observations_error_count_check CHECK ((error_count >= 0)),
+    CONSTRAINT debug_regression_observations_error_rate_base_pct_check CHECK (((error_rate_base_pct >= (0)::numeric) AND (error_rate_base_pct <= (100)::numeric))),
+    CONSTRAINT debug_regression_observations_error_rate_pct_check CHECK (((error_rate_pct >= (0)::numeric) AND (error_rate_pct <= (100)::numeric))),
+    CONSTRAINT debug_regression_observations_kind_check CHECK ((kind = ANY (ARRAY['latency'::text, 'errors'::text, 'latency_and_errors'::text]))),
     CONSTRAINT debug_regression_observations_p95_base_ms_check CHECK ((p95_base_ms >= 0)),
     CONSTRAINT debug_regression_observations_p95_ms_check CHECK ((p95_ms >= 0)),
     CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
@@ -54544,6 +54559,13 @@ CREATE TRIGGER dead_letter_events_environment_ownership BEFORE INSERT OR UPDATE 
 --
 
 CREATE TRIGGER debug_regression_observations_webhooks_insert AFTER INSERT ON public.debug_regression_observations FOR EACH ROW EXECUTE FUNCTION public.enqueue_debug_regression_webhooks();
+
+
+--
+-- Name: debug_regression_observations debug_regression_observations_webhooks_kind; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER debug_regression_observations_webhooks_kind AFTER UPDATE OF kind ON public.debug_regression_observations FOR EACH ROW WHEN (((old.kind = 'latency'::text) AND (new.kind <> 'latency'::text) AND (old.state = 'active'::text) AND (new.state = 'active'::text))) EXECUTE FUNCTION public.enqueue_debug_regression_webhooks();
 
 
 --

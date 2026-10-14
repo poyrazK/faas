@@ -816,6 +816,14 @@ type Engine struct {
 	// context.DeadlineExceeded surfaced — in 0.2s, and the spec numbers
 	// themselves are pinned directly by TestBootTimeout_SpecBudgets.
 	bootBudget func(state.State) time.Duration
+
+	// workerBoots counts consecutive failed worker instances per deployment
+	// so worker.singleton backs off instead of re-admitting at once
+	// (worker_boot_backoff.go). The zero value is ready to use.
+	workerBoots workerBootFailures
+	// workerRetryAfter schedules a delayed worker reconcile. nil uses
+	// time.AfterFunc; tests record the delay instead of waiting for it.
+	workerRetryAfter func(time.Duration, func())
 }
 
 // budgetFor returns the vmmd call budget for a row in state s: the
@@ -9635,13 +9643,23 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 // same observable transition contract as transitionWithKind.
 func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
 	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
-	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
-		ins.Mode == string(state.InstanceModeService) {
-		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
-	} else if to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker) {
-		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
-	}
+	e.reconcileAfterInstanceTransition(ctx, ins, to)
 	e.appendInstanceTransitionEvent(ctx, ins, from, to, kind, reason)
+}
+
+// reconcileAfterInstanceTransition restores service and worker allocations
+// after a committed edge. A failed worker is replaced with backoff
+// (worker_boot_backoff.go); a running one clears that backoff.
+func (e *Engine) reconcileAfterInstanceTransition(ctx context.Context, ins state.Instance, to state.State) {
+	switch {
+	case (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
+		ins.Mode == string(state.InstanceModeService):
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	case to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker):
+		e.scheduleWorkerReconcileAfterFailure(ctx, ins.DeploymentID)
+	case to == state.StateRunning && ins.Mode == string(state.InstanceModeWorker):
+		e.workerBoots.reset(ins.DeploymentID)
+	}
 }
 
 func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.Instance, from, to state.State, kind, reason string) {

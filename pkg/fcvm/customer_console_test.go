@@ -186,6 +186,9 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
 		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
+		// A job task's log ended with the exit delivery and the kernel halt.
+		"2026/10/14 09:23:13 INFO job-exit shipped exit_code=3 error_class=failed signal=0 attempt=1\n",
+		"[    2.497231] reboot: Power off not available: System halted instead\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
 		"hello-gregale listening on :3000\n",
 	} {

@@ -410,6 +410,7 @@ export type { DebugDependencyImpactEdge } from './DebugDependencyImpactEdge.js';
 export type { DebugDependencyImpactExemplar } from './DebugDependencyImpactExemplar.js';
 export type { DebugDependencyLatencyItem } from './DebugDependencyLatencyItem.js';
 export type { DebugDependencyLatencyResponse } from './DebugDependencyLatencyResponse.js';
+export type { DebugDependencyQueryItem } from './DebugDependencyQueryItem.js';
 export type { DebugEvidenceExplanation } from './DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './DebugEvidenceFinding.js';
 export type { DebugEvidenceRecommendation } from './DebugEvidenceRecommendation.js';

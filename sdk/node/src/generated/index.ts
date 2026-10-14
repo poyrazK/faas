@@ -415,6 +415,7 @@ export type { DebugDependencyImpactEdge } from './models/DebugDependencyImpactEd
 export type { DebugDependencyImpactExemplar } from './models/DebugDependencyImpactExemplar.js';
 export type { DebugDependencyLatencyItem } from './models/DebugDependencyLatencyItem.js';
 export type { DebugDependencyLatencyResponse } from './models/DebugDependencyLatencyResponse.js';
+export type { DebugDependencyQueryItem } from './models/DebugDependencyQueryItem.js';
 export type { DebugEvidenceExplanation } from './models/DebugEvidenceExplanation.js';
 export type { DebugEvidenceFinding } from './models/DebugEvidenceFinding.js';
 export type { DebugEvidenceRecommendation } from './models/DebugEvidenceRecommendation.js';

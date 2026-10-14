@@ -83600,7 +83600,7 @@ components:
       type: object
       required: [request_id, received_at, route, http_status, error_class, sample_message]
       properties:
-        request_id: { type: string, pattern: '^[a-f0-9]{32}$' }
+        request_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Public x-faas-request-id of the failed request; GET /v1/apps/{slug}/debug/requests/{request_id}/evidence opens its debugger evidence while the request is retained." }
         received_at: { type: string, format: date-time }
         route: { type: string }
         http_status: { type: integer, format: int32 }
@@ -90473,6 +90473,30 @@ components:
         error_rate_delta_pct: { type: number }
         failure_regression: { type: boolean, description: "True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed calls, and the current error rate is at least 5 percentage points and 2x above baseline." }
         top_error_type: { type: string, maxLength: 96, description: "Most frequent span failure class, from the current side when it has failures." }
+        queries:
+          type: array
+          maxItems: 5
+          description: "Database dependencies only: the dependency broken down by normalized query pattern (literals, placeholders, IN lists and VALUES rows folded), regressions first."
+          items: { $ref: '#/components/schemas/DebugDependencyQueryItem' }
+        queries_truncated: { type: boolean, description: "True when more query patterns were seen than are returned." }
+
+    DebugDependencyQueryItem:
+      type: object
+      description: "One normalized query pattern within a database dependency, with the same latency and failure comparison as its dependency."
+      required: [pattern, calls, error_calls, p95_ms, regression, failure_regression]
+      properties:
+        pattern: { type: string, maxLength: 256, description: "Redacted, normalized statement; never contains literal values." }
+        calls: { type: integer, format: int64, minimum: 1 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, format: int64, minimum: 0 }
+        baseline_p95_ms: { type: integer, format: int64, minimum: 0 }
+        current_p95_ms: { type: integer, format: int64, minimum: 0 }
+        regression_factor: { type: number, minimum: 0 }
+        regression: { type: boolean }
+        baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        current_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
+        failure_regression: { type: boolean }
+        top_error_type: { type: string, maxLength: 96 }
 
     DebugDependencyImpactEdge:
       type: object
@@ -90665,7 +90689,7 @@ components:
       properties:
         status: { type: string, enum: [regression_detected, unobserved, regression_unavailable] }
         headline: { type: string }
-        diagnosis: { type: string, enum: [dependency_failure, request_failure, dependency_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
+        diagnosis: { type: string, enum: [dependency_failure, request_failure, dependency_regression, error_regression, performance_regression, cold_start, slow_path, insufficient_evidence, no_issue_observed] }
         confidence: { type: string, enum: [high, medium, low] }
         primary_span:
           oneOf:
@@ -90805,10 +90829,14 @@ components:
       properties:
         deployment_id: { type: string, format: uuid }
         route: { type: string }
+        kind: { type: string, enum: [latency, errors, latency_and_errors], description: "Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least 5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both." }
         p95_ms: { type: integer, minimum: 0 }
         p95_base_ms: { type: integer, minimum: 0 }
-        affected_count: { type: integer, minimum: 0 }
-        regression_factor: { type: string, description: "Decimal string with up to 2 places, NUMERIC(5,2)." }
+        affected_count: { type: integer, minimum: 0, description: "Requests slower than the latency threshold; for an errors-only observation, the failed requests." }
+        regression_factor: { type: string, description: "Decimal string with up to 2 places, NUMERIC(5,2). Latency inflation; 1.00 for an errors-only observation whose p95 did not rise." }
+        error_rate_pct: { type: number, minimum: 0, maximum: 100, description: "Share of HTTP 5xx responses on the regressed deployment's route." }
+        error_rate_base_pct: { type: number, minimum: 0, maximum: 100, description: "Share of HTTP 5xx responses on the previous deployment's route." }
+        error_count: { type: integer, minimum: 0, description: "HTTP 5xx responses on the regressed deployment's route in the detection window." }
         first_detected_at: { type: string, format: date-time }
         last_detected_at: { type: string, format: date-time }
         state: { type: string, enum: [active, acknowledged, dismissed, resolved] }
@@ -90819,7 +90847,7 @@ components:
 
     DebugSuspectedDependency:
       type: object
-      description: "The classified dependency most likely behind this route regression (ADR-958): the one whose p95 regressed most between the previous and the regressed deployment, else one that started failing more often. Bounded and redacted; also sent in debug.regression.* webhooks."
+      description: "The classified dependency most likely behind this route regression (ADR-958): for a latency regression the one whose p95 regressed most between the previous and the regressed deployment, else one that started failing more often; an errors-only regression checks failing dependencies first. Bounded and redacted; also sent in debug.regression.* webhooks."
       required: [type, name, p95_base_ms, p95_ms, regression_factor]
       properties:
         type: { type: string, enum: [managed_binding, outbound_integration, guest_transport, platform_internal, app_dependency] }
@@ -90832,6 +90860,7 @@ components:
         baseline_error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_rate_pct: { type: number, minimum: 0, maximum: 100 }
         error_type: { type: string, maxLength: 96 }
+        query: { type: string, maxLength: 256, description: "Normalized pattern of the database query that regressed within the dependency, when one did." }
 
     DebugRegressionActionRequest:
       type: object

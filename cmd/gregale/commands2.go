@@ -3096,6 +3096,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if secretErr != nil {
 			return printErr("Could not read --secrets-file", secretErr)
 		}
+		// The file itself must stay out of the source archive. `gregale
+		// start` excluded it, but `deploy --secrets-file` packed a .env-style
+		// file kept in the source tree verbatim (hunt #10, H10-41).
+		if abs, absErr := filepath.Abs(*secretsFile); absErr == nil {
+			execution.extraSourceExcludes = append(execution.extraSourceExcludes, abs)
+		}
 		if *templateName != "" {
 			if err := validateTemplateSecrets(*templateName, deploySecrets); err != nil {
 				return printErr("Invalid --secrets-file", err)
@@ -7848,6 +7854,29 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 	return 1
 }
 
+// startupProbeDeadline matches the server detail of a readiness probe that
+// was refused until the startup deadline ran out, e.g. "readiness probe GET
+// /healthz on :8080 got ECONNREFUSED (refused_count=1717, deadline=20s, ...)".
+var startupProbeDeadline = regexp.MustCompile(`on :(\d+) got ECONNREFUSED \(refused_count=\d+, deadline=(\d+s)`)
+
+// notListeningWithinDeadline rewrites the app_not_listening explanation when
+// the probe was refused for the whole startup deadline. An app that only
+// starts listening after 40 s was told to fix its bind address; the cause was
+// a 20 s --startup-deadline-s (hunt #10, H10-31).
+func notListeningWithinDeadline(p *api.Problem) {
+	if p.Code != api.CodeAppNotListening {
+		return
+	}
+	m := startupProbeDeadline.FindStringSubmatch(p.Detail)
+	if m == nil {
+		return
+	}
+	port, deadline := m[1], m[2]
+	p.Hint = fmt.Sprintf("nothing listened on :%s within the %s startup deadline", port, deadline)
+	p.Why = fmt.Sprintf("every readiness probe to :%s was refused until the %s startup deadline ran out: the app is either slow to start or never binds that port", port, deadline)
+	p.Fix = fmt.Sprintf("• if the app is slow to start, raise the deadline (`gregale deploy --startup-deadline-s N`; now %s) or listen before doing warm-up work\n%s", deadline, p.Fix)
+}
+
 // startupCrashExcerpt returns up to eight lines of a startup crash's workload
 // output, starting at its last error-looking line ("Error: …", nginx
 // "[emerg]", a Python traceback, a Go panic), or the last eight lines when
@@ -7929,6 +7958,7 @@ func mapFailureProblem(p *api.Problem) string {
 	if p.Hint == "" {
 		return ""
 	}
+	notListeningWithinDeadline(p)
 	var b strings.Builder
 	b.WriteString(p.Hint)
 	if why := strings.TrimSpace(p.Why); why != "" {

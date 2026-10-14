@@ -840,11 +840,12 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // backend. The grype runner is NOT called in that case; the
 // caller stamps scan_status='failed' with the error string.
 func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, app state.App, dep state.Deployment) (string, func(), error) {
+	layerID := scanLayerDeploymentID(app.Slug, dep)
 	// Local backend short-circuit. The legacy appsRootPath stays
 	// because SetDeploymentRootfs (handler.go:1334+1380+1697)
 	// stamps it onto the deployment row as a diagnostic column.
 	if _, isLocal := be.(*storage.LocalStorageBackend); isLocal {
-		p := h.appsRootPath(app.Slug, dep.ID)
+		p := h.appsRootPath(app.Slug, layerID)
 		if p == "" {
 			return "", func() {}, errors.New("slug/path-traversal guard rejected")
 		}
@@ -855,7 +856,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	appsKey := sched.AppLayerKey(app.Slug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -903,6 +904,25 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	}
 	cleanup := func() { _ = os.RemoveAll(stageDir) }
 	return stageDir, cleanup, nil
+}
+
+// scanLayerDeploymentID names the deployment whose layer holds this
+// deployment's rootfs. A promoted deployment reuses its source's artifact
+// (rootfs_key apps/<slug>/<source-id>.ext4); keying the scan by the new ID
+// read a missing object, so every promotion skipped its scan, and an
+// enforcing security policy would refuse it (hunt #10). Anything other than
+// this app's own layer key falls back to the deployment's ID.
+func scanLayerDeploymentID(slug string, dep state.Deployment) string {
+	prefix := "apps/" + slug + "/"
+	key := dep.RootfsKey
+	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, ".ext4") {
+		return dep.ID
+	}
+	id := strings.TrimSuffix(strings.TrimPrefix(key, prefix), ".ext4")
+	if !isDeploymentIDSafe(id) {
+		return dep.ID
+	}
+	return id
 }
 
 // Marshal contract: *ScanResult + Error field are plain Go
