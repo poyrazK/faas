@@ -35,7 +35,10 @@ loop and Python's asyncio can wait on many requests in one process.
    function's deployment is built, reserving a new function's app first
    with `--create-only`; `min_instances` is applied after the deploy, with
    the idle timeout. Env values are upserted and keys the manifest does not
-   list are kept. `secrets_from_env` names secrets whose values are read
+   list are kept, unless the function sets `prune_env: true`: then `env:`
+   is its whole default-scope env and the deploy removes every other key.
+   Pruning is opt-in because env rows carry no owner, and environment sync
+   and `gregale env set` write the same rows. `secrets_from_env` names secrets whose values are read
    from the deployer's environment and sealed on every deploy; a name unset
    there keeps the app's existing secret, and a secret the app has never had
    fails that function before it deploys. No secret value is in the

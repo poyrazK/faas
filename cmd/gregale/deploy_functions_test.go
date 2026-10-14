@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -105,6 +106,18 @@ func (f *fakeFunctionSetClient) PutAppsSlugEnvKey(_ context.Context, slug, key, 
 	}
 	f.env[slug][key] = value
 	f.eventLog = append(f.eventLog, "env:"+slug+":"+key)
+	return nil
+}
+func (f *fakeFunctionSetClient) GetAppsSlugEnv(_ context.Context, slug string) (api.AppEnvListResponse, error) {
+	var out api.AppEnvListResponse
+	for _, key := range slices.Sorted(maps.Keys(f.env[slug])) {
+		out.Env = append(out.Env, api.AppEnvResponse{Key: key})
+	}
+	return out, nil
+}
+func (f *fakeFunctionSetClient) DeleteAppsSlugEnvKey(_ context.Context, slug, key string) error {
+	delete(f.env[slug], key)
+	f.eventLog = append(f.eventLog, "unset:"+slug+":"+key)
 	return nil
 }
 func (f *fakeFunctionSetClient) ListSecrets(_ context.Context, slug string) (api.AppSecretListResponse, error) {
@@ -555,6 +568,42 @@ func TestFunctionSetAppliesSettingsBeforeDeploy(t *testing.T) {
 	}
 	if slices.Contains(client.eventLog, "deploy") || !strings.Contains(out.String(), "export DATABASE_URL") {
 		t.Fatalf("deployed without its secret: %q\n%s", client.eventLog, out.String())
+	}
+}
+
+// prune_env makes env: a function's whole env; without it, keys the
+// manifest drops stay.
+func TestFunctionSetPruneEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name, prune string
+		want        []string
+	}{
+		{"keeps dropped keys", "", []string{"HAND_SET", "LOG_LEVEL", "OLD"}},
+		{"prunes dropped keys", "    prune_env: true\n", []string{"LOG_LEVEL"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := "functions:\n  - name: users\n    root: f\n    runtime: node24\n    env:\n      LOG_LEVEL: debug\n" + tc.prune
+			dir := writeFunctionProject(t, manifest, "f")
+			m, _, _ := functionSetManifest(dir)
+			client := newFakeFunctionSetClient()
+			client.apps["shop-users"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-users", Type: "function"}
+			client.env["shop-users"] = map[string]string{"OLD": "1", "HAND_SET": "2", "LOG_LEVEL": "info"}
+			var out bytes.Buffer
+			d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+				deployOne: func([]string) int { return 0 }}
+			if code := d.run(context.Background(), client); code != 0 {
+				t.Fatalf("exit = %d\n%s", code, out.String())
+			}
+			if got := slices.Sorted(maps.Keys(client.env["shop-users"])); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("env keys = %v, want %v\n%s", got, tc.want, out.String())
+			}
+			if client.env["shop-users"]["LOG_LEVEL"] != "debug" {
+				t.Fatalf("LOG_LEVEL = %q", client.env["shop-users"]["LOG_LEVEL"])
+			}
+			if tc.prune != "" && !strings.Contains(out.String(), "removed env OLD from shop-users") {
+				t.Fatalf("pruning not reported:\n%s", out.String())
+			}
+		})
 	}
 }
 

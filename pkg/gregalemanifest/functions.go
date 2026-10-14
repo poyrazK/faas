@@ -37,6 +37,9 @@ type FunctionSpec struct {
 	MinInstances    *int              `yaml:"min_instances,omitempty"`
 	Concurrency     int               `yaml:"concurrency,omitempty"`
 	Env             map[string]string `yaml:"env,omitempty"`
+	// PruneEnv makes Env the function's whole default-scope env: a deploy
+	// removes every other key. Off, keys the manifest drops stay on the app.
+	PruneEnv bool `yaml:"prune_env,omitempty"`
 	// SecretsFromEnv names secrets whose values the deploy reads from the
 	// deployer's environment and seals; the values never appear in the
 	// manifest.
@@ -52,7 +55,7 @@ type FunctionSpec struct {
 // be on its app before the deployment is built: RAM and concurrency shape
 // the build, and env and secrets reach the first wake.
 func (fn FunctionSpec) HasPreDeploySettings() bool {
-	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || len(fn.SecretsFromEnv) > 0
+	return fn.RAMMB != 0 || fn.RequestTimeoutS != 0 || fn.Concurrency != 0 || len(fn.Env) > 0 || fn.PruneEnv || len(fn.SecretsFromEnv) > 0
 }
 
 // FunctionBucketEvent routes object-storage notifications for one bucket to

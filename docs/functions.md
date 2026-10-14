@@ -147,7 +147,10 @@ functions:
 
 - An omitted key leaves the app's current setting alone.
 - **`env`** sets plain values. Keys the manifest does not list are kept;
-  remove one with `gregale env unset`.
+  remove one with `gregale env unset`, or set `prune_env: true` to make
+  `env:` the function's whole env: each deploy then removes every other
+  key and prints which. Secrets and environment-scoped values are never
+  removed this way.
 - **`secrets_from_env`** names secrets whose values are read from your
   environment when you deploy and sealed; the values never go in the file.
   A name you have not exported keeps the secret the app already has. A

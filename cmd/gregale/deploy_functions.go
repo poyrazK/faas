@@ -44,6 +44,8 @@ type functionSetClient interface {
 	CreateInboundWebhookEndpoint(ctx context.Context, slug string, req api.CreateInboundWebhookEndpointRequest) (api.InboundWebhookEndpointResponse, error)
 	UpdateInboundWebhookEndpoint(ctx context.Context, slug, id string, req api.UpdateInboundWebhookEndpointRequest) (api.InboundWebhookEndpointResponse, error)
 	PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error
+	GetAppsSlugEnv(ctx context.Context, slug string) (api.AppEnvListResponse, error)
+	DeleteAppsSlugEnvKey(ctx context.Context, slug, key string) error
 	ListSecrets(ctx context.Context, slug string) (api.AppSecretListResponse, error)
 	SetSecret(ctx context.Context, slug, key, value string) error
 	ListDomains(ctx context.Context) ([]api.CustomDomainResponse, error)
@@ -365,7 +367,31 @@ func (d functionSetDeploy) applySettings(ctx context.Context, client functionSet
 			return fmt.Errorf("set env %s: %w", key, err)
 		}
 	}
+	if fn.spec.PruneEnv {
+		if err := pruneFunctionEnv(ctx, client, d.out, fn.slug, fn.spec.Env); err != nil {
+			return err
+		}
+	}
 	return sealFunctionSecrets(ctx, client, fn.slug, fn.spec.SecretsFromEnv, d.lookupEnv())
+}
+
+// pruneFunctionEnv removes the default-scope env keys a prune_env function
+// does not declare. Secrets and scoped env are separate and never touched.
+func pruneFunctionEnv(ctx context.Context, client functionSetClient, out io.Writer, slug string, keep map[string]string) error {
+	current, err := client.GetAppsSlugEnv(ctx, slug)
+	if err != nil {
+		return fmt.Errorf("list env: %w", err)
+	}
+	for _, row := range current.Env {
+		if _, declared := keep[row.Key]; declared {
+			continue
+		}
+		if err := client.DeleteAppsSlugEnvKey(ctx, slug, row.Key); err != nil {
+			return fmt.Errorf("remove env %s: %w", row.Key, err)
+		}
+		_, _ = fmt.Fprintf(out, "removed env %s from %s (prune_env)\n", row.Key, slug)
+	}
+	return nil
 }
 
 // functionSettingsUpdate is the app PATCH that brings an app to a function's
