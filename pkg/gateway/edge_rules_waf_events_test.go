@@ -1,5 +1,7 @@
 package gateway
 
+// adr: 831 — amendment 5: kind=waf detections become sampled security events.
+
 import (
 	"context"
 	"net/http"
