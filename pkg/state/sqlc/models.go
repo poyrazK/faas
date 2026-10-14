@@ -1934,6 +1934,11 @@ type DatabaseVm struct {
 	CreatedAt            pgtype.Timestamptz
 	MoveNode             pgtype.Text
 	MoveLeaseUntil       pgtype.Timestamptz
+	Replicated           bool
+	StandbyNode          pgtype.Text
+	StandbyRunning       bool
+	StandbySynced        bool
+	PromotePending       bool
 }
 
 type DeadLetterEvent struct {

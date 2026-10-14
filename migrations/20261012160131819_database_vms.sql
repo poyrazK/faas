@@ -75,12 +75,29 @@ CREATE TABLE IF NOT EXISTS database_vms (
     -- replica running the move holds move_lease_until and renews it.
     move_node text REFERENCES database_nodes (id),
     move_lease_until timestamptz,
+    -- Production class: a replicated database keeps a hot standby with
+    -- its own volume on standby_node. standby_running: the standby's VM
+    -- runs there. standby_synced: the standby holds every acknowledged
+    -- commit, so it may be promoted; schedd clears it before a primary
+    -- may commit without waiting for its standby. promote_pending: the
+    -- volume on node_id is a standby promoted while parked (a failover);
+    -- its next boot promotes it onto a new timeline.
+    replicated boolean NOT NULL DEFAULT false,
+    standby_node text REFERENCES database_nodes (id),
+    standby_running boolean NOT NULL DEFAULT false,
+    standby_synced boolean NOT NULL DEFAULT false,
+    promote_pending boolean NOT NULL DEFAULT false,
     CONSTRAINT database_vms_restore_lineage
         CHECK ((restore_source IS NULL) = (restore_target IS NULL)
             AND restore_source IS DISTINCT FROM database_id),
     CONSTRAINT database_vms_move
         CHECK ((state = 'moving') = (move_node IS NOT NULL)
-            AND (move_node IS NULL OR (move_node <> node_id AND move_lease_until IS NOT NULL)))
+            AND (move_node IS NULL OR (move_node <> node_id AND move_lease_until IS NOT NULL))),
+    CONSTRAINT database_vms_standby
+        CHECK ((standby_node IS NULL OR (replicated AND standby_node <> node_id))
+            AND (NOT standby_running OR standby_node IS NOT NULL)
+            AND (NOT standby_synced OR standby_node IS NOT NULL)
+            AND (move_node IS NULL OR standby_node IS NULL OR move_node <> standby_node))
 );
 
 CREATE INDEX IF NOT EXISTS database_vms_node_state_idx

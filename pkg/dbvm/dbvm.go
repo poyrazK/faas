@@ -60,6 +60,8 @@ type Spec struct {
 	// Standby boots the volume as a hot standby of the database's primary
 	// (replication.go), seeding an empty one first.
 	Standby bool
+	// Promote, with Standby, promotes the standby as soon as it replays.
+	Promote bool
 }
 
 // Validate rejects a spec that would not boot a database VM.
@@ -81,6 +83,8 @@ func (s Spec) Validate() error {
 		return errors.New("dbvm: a spare cannot boot a restore")
 	case s.Standby && (s.Spare || !s.RestoreTarget.IsZero()):
 		return errors.New("dbvm: a standby is neither a spare nor a restore")
+	case s.Promote && !s.Standby:
+		return errors.New("dbvm: only a standby is promoted at boot")
 	}
 	return nil
 }
@@ -111,6 +115,9 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 	}
 	if s.Standby {
 		bootArgs += " " + dbguest.StandbyArg
+	}
+	if s.Promote {
+		bootArgs += " " + dbguest.PromoteArg
 	}
 	return fcvm.VMConfig{
 		BootSource: fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},

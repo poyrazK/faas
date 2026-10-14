@@ -153,7 +153,7 @@ func metalScheduler(t *testing.T, workdir, base string) (*Scheduler, *MemStore, 
 	}
 	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
 	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
-		JailBase: filepath.Join(workdir, "schedjail"), VolumeRoot: filepath.Join(workdir, "schedvolumes"),
+		JailBase: filepath.Join(workdir, "sjail"), VolumeRoot: filepath.Join(workdir, "schedvolumes"),
 		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &topLeaser{},
 	})

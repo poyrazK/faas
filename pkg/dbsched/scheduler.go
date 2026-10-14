@@ -49,6 +49,13 @@ type VMM interface {
 	// node's copy of its archive to the bucket.
 	ReleaseVolume(ctx context.Context, node Node, id string) error
 	Start(ctx context.Context, node Node, vm VM) error
+	// StartStandby boots a replicated database's standby on node,
+	// streaming from its primary on primary (standby.go).
+	StartStandby(ctx context.Context, node, primary Node, vm VM) error
+	// Replication sets a running primary's replication mode (empty mode
+	// only reports) and returns its view of its standby; standbyNode is
+	// the node allowed to stream from it, required with async and sync.
+	Replication(ctx context.Context, node Node, id string, mode dbguest.ReplicationMode, standbyNode string) (dbguest.ReplicationStatus, error)
 	Stop(ctx context.Context, node Node, id string) error
 	Control(ctx context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error)
 }
@@ -88,6 +95,8 @@ type ProvisionRequest struct {
 	AlwaysOn bool
 	// RestoreWindowSeconds is how far back the database may be restored.
 	RestoreWindowSeconds int64
+	// Replicated keeps a hot standby on a second node (production class).
+	Replicated bool
 }
 
 // Validate rejects a request that cannot become a database VM.
@@ -158,6 +167,22 @@ type Config struct {
 	// EvacuateDraining moves databases off draining nodes (needs
 	// SharedArchive).
 	EvacuateDraining bool
+	// StandbyCheckInterval is how often the standby monitor checks
+	// replicated databases (default 2 s). A standby that stops keeping up
+	// holds its primary's commits until the next check.
+	StandbyCheckInterval time.Duration
+	// StandbySeedTimeout bounds a standby's boot, including copying its
+	// primary onto a new volume (default 30 min).
+	StandbySeedTimeout time.Duration
+	// StandbySyncTimeout bounds a booted standby becoming synchronous
+	// (default 2 min).
+	StandbySyncTimeout time.Duration
+	// StandbyRetry spaces one database's attach attempts (default 30 s).
+	StandbyRetry time.Duration
+	// StandbyStaleClaim: a running standby that never became synchronous
+	// and is not being attached by this process is given up after this
+	// long (default 15 min); another replica may still be seeding it.
+	StandbyStaleClaim time.Duration
 }
 
 // Scheduler is schedd's database scheduler. Operations on one database are
@@ -178,6 +203,13 @@ type Scheduler struct {
 	// freed wakes this process's queued wakes when a node frees a boot
 	// slot or RAM; other replicas' are found by polling.
 	freed nodeEvents
+	// Standbys (standby.go): the databases this process is attaching a
+	// standby to, when each was last tried, and since when a running
+	// standby has looked abandoned.
+	attaching     sync.Map // database id -> struct{}
+	attachTried   sync.Map // database id -> time.Time
+	unsyncedSince sync.Map // database id -> time.Time
+	standbyWG     sync.WaitGroup
 }
 
 // nodeEvents is a per-node broadcast: wait returns a channel the next
@@ -245,6 +277,21 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	if cfg.MoveLease <= 0 {
 		cfg.MoveLease = 2 * time.Minute
 	}
+	if cfg.StandbyCheckInterval <= 0 {
+		cfg.StandbyCheckInterval = 2 * time.Second
+	}
+	if cfg.StandbySeedTimeout <= 0 {
+		cfg.StandbySeedTimeout = 30 * time.Minute
+	}
+	if cfg.StandbySyncTimeout <= 0 {
+		cfg.StandbySyncTimeout = 2 * time.Minute
+	}
+	if cfg.StandbyRetry <= 0 {
+		cfg.StandbyRetry = 30 * time.Second
+	}
+	if cfg.StandbyStaleClaim <= 0 {
+		cfg.StandbyStaleClaim = 15 * time.Minute
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -291,7 +338,7 @@ func (s *Scheduler) Provision(ctx context.Context, req ProvisionRequest) (VM, er
 	unlock := s.lock(req.DatabaseID)
 	defer unlock()
 	vm, err := s.store.Place(ctx, VM{DatabaseID: req.DatabaseID, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
-		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds})
+		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds, Replicated: req.Replicated})
 	if err != nil || vm.State != StateProvisioning {
 		return vm, err
 	}
@@ -502,8 +549,17 @@ func (s *Scheduler) wakeLocked(ctx context.Context, id string) (VM, error) {
 		_ = s.store.Transition(context.WithoutCancel(ctx), id, []State{StateWaking}, StateParked, TransitionOptions{LastError: errCodeBoot})
 		return vm, fmt.Errorf("dbsched: wake %s: %w", id, err)
 	}
+	if vm.PromotePending {
+		// The boot promoted a standby that took over while parked.
+		if err := s.store.FinishPromotion(ctx, id); err != nil {
+			s.log.Warn("dbsched: record a finished promotion", "database_id", id, "err", err)
+		}
+	}
 	if err := s.store.Transition(ctx, id, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
 		return vm, err
+	}
+	if vm.Replicated {
+		s.kickStandby(ctx, id)
 	}
 	return s.Get(ctx, id)
 }
@@ -550,6 +606,9 @@ func (s *Scheduler) parkLocked(ctx context.Context, id string) error {
 	if err == nil {
 		err = s.vmm.Stop(ctx, node, id)
 	}
+	// The standby stops after its primary, so a clean stop of both leaves
+	// it holding every commit.
+	s.stopStandby(context.WithoutCancel(ctx), vm, err == nil)
 	if err != nil {
 		_ = s.store.Transition(context.WithoutCancel(ctx), id, []State{StateParking}, StateFailed, TransitionOptions{LastError: errCodeStop})
 		return fmt.Errorf("dbsched: park %s: %w", id, err)
@@ -615,6 +674,7 @@ func (s *Scheduler) Delete(ctx context.Context, id string) error {
 	if err := s.store.Transition(ctx, id, all, StateDeleting, TransitionOptions{}); err != nil {
 		return err
 	}
+	s.deleteStandby(ctx, vm)
 	node, err := s.node(ctx, vm.NodeID)
 	switch {
 	case errors.Is(err, ErrNodeUnavailable) || (err == nil && node.Lifecycle == NodeUnavailable):
@@ -759,7 +819,7 @@ func (s *Scheduler) removeOrphan(ctx context.Context, node Node, v NodeVolume) (
 	}
 	defer unlock()
 	vm, err := s.store.Get(ctx, v.DatabaseID)
-	moved := err == nil && vm.NodeID != node.ID && vm.MoveNode != node.ID
+	moved := err == nil && vm.NodeID != node.ID && vm.MoveNode != node.ID && vm.StandbyNode != node.ID
 	if err != nil && !errors.Is(err, ErrNotFound) || err == nil && !moved {
 		return false, err
 	}
@@ -837,31 +897,51 @@ func (s *Scheduler) KeepWarm(ctx context.Context) (int, error) {
 	return woke, nil
 }
 
-// SettleLostNodes parks the records of databases that were active on a node
-// the operator has marked unavailable: their VMs went with the node, and an
-// active record would keep billing compute (an always-on one forever). Its
-// next wake fails until the node returns. It reports how many it parked.
+// SettleLostNodes settles the databases of a node the operator has marked
+// unavailable. A replicated database whose standby is synchronized fails
+// over to it (standby.go). Any other active one is parked: its VM went with
+// the node, and an active record would keep billing compute (an always-on
+// one forever); its next wake fails until the node returns. It reports how
+// many it settled.
 func (s *Scheduler) SettleLostNodes(ctx context.Context) (int, error) {
 	nodes, err := s.store.Nodes(ctx)
 	if err != nil {
 		return 0, err
 	}
-	lost, known := map[string]bool{}, map[string]bool{}
+	lost, known := map[string]bool{}, map[string]Node{}
 	for _, n := range nodes {
-		known[n.ID] = true
+		known[n.ID] = n
 		lost[n.ID] = n.Lifecycle == NodeUnavailable
 	}
-	vms, err := s.store.List(ctx, activeStates...)
+	vms, err := s.store.List(ctx, append(slices.Clone(activeStates), StateParked, StateFailed)...)
 	if err != nil {
 		return 0, err
 	}
 	settled := 0
 	for _, vm := range vms {
-		if known[vm.NodeID] && !lost[vm.NodeID] {
+		if _, ok := known[vm.NodeID]; ok && !lost[vm.NodeID] {
+			continue
+		}
+		if vm.Replicated && canFailover(vm) {
+			lostNode, ok := known[vm.NodeID]
+			if !ok {
+				lostNode = Node{ID: vm.NodeID}
+			}
+			if err := s.failover(ctx, vm.DatabaseID, lostNode); err != nil {
+				s.log.Warn("dbsched: fail over a lost node's database", "database_id", vm.DatabaseID, "err", err)
+				continue
+			}
+			settled++
+			continue
+		}
+		if !isActive(vm.State) {
 			continue
 		}
 		unlock := s.lock(vm.DatabaseID)
 		err := s.store.Transition(ctx, vm.DatabaseID, activeStates, StateParked, TransitionOptions{LastError: errCodeNodeLost})
+		if err == nil {
+			s.stopStandby(ctx, vm, false)
+		}
 		unlock()
 		if err != nil {
 			s.log.Warn("dbsched: park a lost node's database", "database_id", vm.DatabaseID, "err", err)
@@ -891,6 +971,7 @@ func (s *Scheduler) vmLost(ctx context.Context, vm VM) bool {
 	if err := s.store.Transition(ctx, vm.DatabaseID, []State{StateRunning}, StateParked, TransitionOptions{LastError: errCodeVMLost}); err != nil {
 		return false
 	}
+	s.stopStandby(ctx, vm, false)
 	s.log.Warn("dbsched: running database had no VM; rebooting it", "database_id", vm.DatabaseID, "node_id", vm.NodeID)
 	return true
 }
@@ -917,6 +998,7 @@ func (s *Scheduler) Recover(ctx context.Context) error {
 			err = s.vmm.Stop(ctx, node, vm.DatabaseID)
 		}
 		if err == nil {
+			s.stopStandby(ctx, vm, false)
 			err = s.store.Transition(ctx, vm.DatabaseID, []State{StateWaking, StateParking}, StateParked, TransitionOptions{})
 		}
 		unlock()

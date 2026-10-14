@@ -11417,6 +11417,11 @@ type StartDatabaseRequest struct {
 	// with a restore.
 	PrimaryNode   string `protobuf:"bytes,11,opt,name=primary_node,json=primaryNode,proto3" json:"primary_node,omitempty"`
 	PrimaryTarget string `protobuf:"bytes,12,opt,name=primary_target,json=primaryTarget,proto3" json:"primary_target,omitempty"`
+	// A failover while parked (ADR-1027 production class): the volume is a
+	// standby that took over from a lost primary; this boot promotes it
+	// onto a new timeline as soon as it replays. Never with a primary or a
+	// restore.
+	Promote       bool `protobuf:"varint,13,opt,name=promote,proto3" json:"promote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -11533,6 +11538,13 @@ func (x *StartDatabaseRequest) GetPrimaryTarget() string {
 		return x.PrimaryTarget
 	}
 	return ""
+}
+
+func (x *StartDatabaseRequest) GetPromote() bool {
+	if x != nil {
+		return x.Promote
+	}
+	return false
 }
 
 type StartDatabaseResponse struct {
@@ -12846,7 +12858,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0eDatabaseVolume\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x18\n" +
-	"\arunning\x18\x02 \x01(\bR\arunning\"\xa6\x04\n" +
+	"\arunning\x18\x02 \x01(\bR\arunning\"\xc0\x04\n" +
 	"\x14StartDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12%\n" +
@@ -12863,7 +12875,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x11restore_until_end\x18\n" +
 	" \x01(\bR\x0frestoreUntilEnd\x12!\n" +
 	"\fprimary_node\x18\v \x01(\tR\vprimaryNode\x12%\n" +
-	"\x0eprimary_target\x18\f \x01(\tR\rprimaryTarget\"-\n" +
+	"\x0eprimary_target\x18\f \x01(\tR\rprimaryTarget\x12\x18\n" +
+	"\apromote\x18\r \x01(\bR\apromote\"-\n" +
 	"\x15StartDatabaseResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\"6\n" +
 	"\x13StopDatabaseRequest\x12\x1f\n" +

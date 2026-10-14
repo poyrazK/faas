@@ -263,6 +263,10 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 	if (req.GetPrimaryNode() == "") != (req.GetPrimaryTarget() == "") || (req.GetPrimaryNode() != "" && boot.RestoreSource != "") {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a standby names its primary's node and target and is not a restore")
 	}
+	if req.GetPromote() && (req.GetPrimaryNode() != "" || boot.RestoreSource != "") {
+		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a promotion boot has no primary and is not a restore")
+	}
+	boot.Promote = req.GetPromote()
 	return boot, nil
 }
 

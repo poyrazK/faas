@@ -103,6 +103,18 @@ type VM struct {
 	// lease of the schedd replica moving it.
 	MoveNode       string
 	MoveLeaseUntil time.Time
+	// Replicated databases keep a hot standby with its own volume on
+	// StandbyNode (ADR-1027 production class; standby.go). StandbyRunning:
+	// the standby's VM runs there. StandbySynced: the standby holds every
+	// acknowledged commit and may be promoted; it is cleared before a
+	// primary may commit without waiting for its standby. PromotePending:
+	// the volume on NodeID is a standby promoted while parked; its next
+	// boot promotes it onto a new timeline.
+	Replicated     bool
+	StandbyNode    string
+	StandbyRunning bool
+	StandbySynced  bool
+	PromotePending bool
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.
 	RestoreUntilEnd bool
@@ -194,6 +206,35 @@ type Store interface {
 	AbortMove(ctx context.Context, id string, held time.Time, lastError string) error
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
+
+	// Standbys (standby.go). Place gives a replicated database a standby
+	// node besides its own, or fails with ErrNoCapacity.
+	//
+	// ClaimStandby marks a running replicated database's standby VM
+	// running if the standby node is not unavailable and its RAM ceiling
+	// admits it (else ErrNodeUnavailable or ErrNoCapacity). One already
+	// running, or a database not running, is ErrConflict.
+	ClaimStandby(ctx context.Context, id string) (VM, error)
+	// ReleaseStandby marks the standby VM stopped. It stays synchronized
+	// only if keepSynced: a clean stop after its primary's.
+	ReleaseStandby(ctx context.Context, id string, keepSynced bool) error
+	// MarkStandbySynced records whether the standby holds every
+	// acknowledged commit. Setting it needs the database and its standby
+	// running (else ErrConflict); clearing always succeeds.
+	MarkStandbySynced(ctx context.Context, id string, synced bool) error
+	// ReplaceStandby puts a replicated database's stopped standby on the
+	// active node offering its major, other than its own and the current
+	// standby's, with the most free volume capacity (else ErrNoCapacity),
+	// not synchronized.
+	ReplaceStandby(ctx context.Context, id string) (VM, error)
+	// Failover makes a synchronized standby's node the database's node:
+	// running if the standby VM ran (it was promoted), else parked with
+	// its promotion pending. A standby not synchronized, or a database
+	// waking, moving or deleting, is ErrConflict.
+	Failover(ctx context.Context, id string) (VM, error)
+	// FinishPromotion clears a pending promotion once the promoted volume
+	// booted.
+	FinishPromotion(ctx context.Context, id string) error
 }
 
 // Shape is a database VM's size and volume.
@@ -308,11 +349,12 @@ func bootSlots(node Node) int {
 }
 
 // moveTarget picks a move's destination among the other nodes: target if
-// set, else the active node with the most free volume capacity.
+// set, else the active node with the most free volume capacity. A
+// replicated database never moves onto its standby's node.
 func moveTarget(nodes []Node, usage map[string]nodeUsage, vm VM, target string) (Node, error) {
 	others := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
-		if n.ID != vm.NodeID {
+		if n.ID != vm.NodeID && n.ID != vm.StandbyNode {
 			others = append(others, n)
 		}
 	}

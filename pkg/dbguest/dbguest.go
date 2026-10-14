@@ -57,6 +57,10 @@ const (
 	// primary, streaming through the host relay. An empty volume is first
 	// seeded with a base backup of the primary over the same relay.
 	StandbyArg = "gregale.standby=1"
+	// PromoteArg, with StandbyArg, promotes the standby as soon as it
+	// replays: a standby that took over while parked (a failover). It
+	// boots without a primary.
+	PromoteArg = "gregale.promote=1"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -293,6 +297,10 @@ func Spare(cmdline string) bool { return hasField(cmdline, SpareArg) }
 
 // Standby reports whether the kernel command line boots a standby.
 func Standby(cmdline string) bool { return hasField(cmdline, StandbyArg) }
+
+// Promote reports whether the kernel command line promotes a standby at
+// boot.
+func Promote(cmdline string) bool { return hasField(cmdline, PromoteArg) }
 
 func hasField(cmdline, want string) bool {
 	for _, field := range strings.Fields(cmdline) {

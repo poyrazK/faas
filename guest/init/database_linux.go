@@ -71,10 +71,12 @@ type databaseGuest struct {
 	targetDropped   bool
 	recoveredTo     time.Time
 	// standby boots the volume as a hot standby of the primary until
-	// promoted (ADR-1027 production class).
-	standby bool
-	uid     int
-	gid     int
+	// promoted (ADR-1027 production class); promoteOnBoot promotes it as
+	// soon as it replays (a failover while parked).
+	standby       bool
+	promoteOnBoot bool
+	uid           int
+	gid           int
 	// bridgeUID and bridgeGID are the replication bridge's OS user; zero
 	// when the base has none, and then no standby is admitted.
 	bridgeUID int
@@ -98,6 +100,7 @@ type databaseBoot struct {
 	restoreUntilEnd bool
 	spare           bool
 	standby         bool
+	promote         bool
 }
 
 func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
@@ -105,7 +108,7 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 		log = slog.Default()
 	}
 	g := &databaseGuest{log: log, major: boot.major, archive: boot.archive, restoreTarget: boot.restoreTarget, restoreUntilEnd: boot.restoreUntilEnd,
-		standby: boot.standby, exited: make(chan struct{}), done: make(chan struct{})}
+		standby: boot.standby, promoteOnBoot: boot.promote, exited: make(chan struct{}), done: make(chan struct{})}
 	if boot.spare {
 		// The volume drive is a placeholder until OpAdopt.
 		if g.prepareRuntime() {
@@ -589,6 +592,11 @@ func (g *databaseGuest) awaitReady(exited chan struct{}) {
 			}
 			g.mu.Unlock()
 			guestStage("database-standby")
+			if g.promoteOnBoot {
+				if resp := g.promote(); resp.Error != "" {
+					g.fail(dbguest.ErrCodePromoteFailed, "promote at boot", nil)
+				}
+			}
 			return
 		}
 		if postmasterReady(data) {

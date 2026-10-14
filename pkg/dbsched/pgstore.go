@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,6 +80,8 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 		StateChangedAt: r.StateChangedAt.Time, CreatedAt: r.CreatedAt.Time,
 		RestoreWindowSeconds: r.RestoreWindowSeconds, RestoreTarget: r.RestoreTarget.Time, RestoreRecoveredTo: r.RestoreRecoveredTo.Time,
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
+		Replicated: r.Replicated, StandbyNode: r.StandbyNode.String, StandbyRunning: r.StandbyRunning, StandbySynced: r.StandbySynced,
+		PromotePending: r.PromotePending,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
@@ -150,21 +153,34 @@ func (s *PgStore) Place(ctx context.Context, vm VM) (VM, error) {
 		if !ok {
 			return VM{}, ErrNoCapacity
 		}
-		// Re-check under the node lock: another replica may have placed a
-		// volume there since the read above.
-		if _, err := s.q.LockDatabaseNode(ctx, tx, node.ID); err != nil {
-			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", node.ID, err)
+		placed := []Node{node}
+		if vm.Replicated {
+			standby, ok := pickStandby(nodes, usage, vm, node.ID)
+			if !ok {
+				return VM{}, ErrNoCapacity
+			}
+			placed = append(placed, standby)
+		}
+		// Re-check under the node locks, taken in id order: another
+		// replica may have placed a volume there since the read above.
+		if err := s.lockNodes(ctx, tx, placed...); err != nil {
+			return VM{}, err
 		}
 		if usage, err = s.usage(ctx, tx); err != nil {
 			return VM{}, err
 		}
-		if node.VolumeCapacityBytes-usage[node.ID].volumeBytes < vm.VolumeBytes {
-			return VM{}, ErrNoCapacity
+		for _, n := range placed {
+			if n.VolumeCapacityBytes-usage[n.ID].volumeBytes < vm.VolumeBytes {
+				return VM{}, ErrNoCapacity
+			}
 		}
 		params := sqlc.InsertDatabaseVMParams{
 			DatabaseID: key, NodeID: node.ID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount),
 			MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes, AlwaysOn: vm.AlwaysOn,
-			RestoreWindowSeconds: vm.RestoreWindowSeconds,
+			RestoreWindowSeconds: vm.RestoreWindowSeconds, Replicated: vm.Replicated,
+		}
+		if len(placed) == 2 {
+			params.StandbyNode = pgtype.Text{String: placed[1].ID, Valid: true}
 		}
 		if vm.RestoreSource != "" {
 			if params.RestoreSource, err = pgUUID(vm.RestoreSource); err != nil {
@@ -211,6 +227,13 @@ func (s *PgStore) AdmitWake(ctx context.Context, id string) (VM, error) {
 		}
 		if err := s.transition(ctx, tx, id, []State{StateParked}, StateWaking, TransitionOptions{LastError: vm.LastError}); err != nil {
 			return VM{}, err
+		}
+		// The primary boots asynchronous: its standby no longer holds every
+		// commit once it may commit without it.
+		if vm.StandbySynced {
+			if _, err := s.q.MarkDatabaseStandbySynced(ctx, tx, sqlc.MarkDatabaseStandbySyncedParams{Synced: false, DatabaseID: mustUUID(vm.DatabaseID)}); err != nil {
+				return VM{}, fmt.Errorf("dbsched: unsync standby of %s: %w", id, err)
+			}
 		}
 		return s.get(ctx, tx, id)
 	})
@@ -633,4 +656,163 @@ func ints(in []int32) []int {
 		out[i] = int(v)
 	}
 	return out
+}
+
+// lockNodes locks node rows in id order, so concurrent placements cannot
+// deadlock.
+func (s *PgStore) lockNodes(ctx context.Context, tx pgx.Tx, nodes ...Node) error {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		if _, err := s.q.LockDatabaseNode(ctx, tx, id); err != nil {
+			return fmt.Errorf("dbsched: lock node %s: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// mustUUID converts an id that came from a row.
+func mustUUID(id string) pgtype.UUID {
+	key, _ := pgUUID(id)
+	return key
+}
+
+// changed reports an update that matched no row: ErrNotFound for a missing
+// database, else ErrConflict.
+func (s *PgStore) changed(ctx context.Context, db sqlc.DBTX, id string, n int64, err error) error {
+	if err != nil {
+		return fmt.Errorf("dbsched: update %s: %w", id, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.get(ctx, db, id); err != nil {
+		return err
+	}
+	return ErrConflict
+}
+
+func (s *PgStore) ClaimStandby(ctx context.Context, id string) (VM, error) {
+	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if vm.State != StateRunning || vm.StandbyNode == "" || vm.StandbyRunning {
+			return VM{}, ErrConflict
+		}
+		row, err := s.q.LockDatabaseNode(ctx, tx, vm.StandbyNode)
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.StandbyNode, err)
+		}
+		usage, err := s.usage(ctx, tx)
+		if err != nil {
+			return VM{}, err
+		}
+		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), Lifecycle: row.Lifecycle}
+		if err := claimStandbyOn(node, usage[node.ID], vm.MemMiB); err != nil {
+			return VM{}, err
+		}
+		n, err := s.q.ClaimDatabaseStandby(ctx, tx, mustUUID(vm.DatabaseID))
+		if err := s.changed(ctx, tx, id, n, err); err != nil {
+			return VM{}, err
+		}
+		return s.get(ctx, tx, id)
+	})
+}
+
+func (s *PgStore) ReleaseStandby(ctx context.Context, id string, keepSynced bool) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.ReleaseDatabaseStandby(ctx, s.pool, sqlc.ReleaseDatabaseStandbyParams{KeepSynced: keepSynced, DatabaseID: key})
+	return s.changed(ctx, s.pool, id, n, err)
+}
+
+func (s *PgStore) MarkStandbySynced(ctx context.Context, id string, synced bool) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.MarkDatabaseStandbySynced(ctx, s.pool, sqlc.MarkDatabaseStandbySyncedParams{Synced: synced, DatabaseID: key})
+	return s.changed(ctx, s.pool, id, n, err)
+}
+
+func (s *PgStore) ReplaceStandby(ctx context.Context, id string) (VM, error) {
+	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if !vm.Replicated || vm.StandbyRunning || vm.State == StateMoving || vm.State == StateDeleting {
+			return VM{}, ErrConflict
+		}
+		nodes, err := s.Nodes(ctx)
+		if err != nil {
+			return VM{}, err
+		}
+		usage, err := s.usage(ctx, tx)
+		if err != nil {
+			return VM{}, err
+		}
+		standby, ok := pickStandby(nodes, usage, vm, vm.NodeID, vm.StandbyNode)
+		if !ok {
+			return VM{}, ErrNoCapacity
+		}
+		if err := s.lockNodes(ctx, tx, standby); err != nil {
+			return VM{}, err
+		}
+		if usage, err = s.usage(ctx, tx); err != nil {
+			return VM{}, err
+		}
+		if standby.VolumeCapacityBytes-usage[standby.ID].volumeBytes < vm.VolumeBytes {
+			return VM{}, ErrNoCapacity
+		}
+		n, err := s.q.ReplaceDatabaseStandby(ctx, tx, sqlc.ReplaceDatabaseStandbyParams{StandbyNode: pgtype.Text{String: standby.ID, Valid: true}, DatabaseID: mustUUID(vm.DatabaseID)})
+		if err := s.changed(ctx, tx, id, n, err); err != nil {
+			return VM{}, err
+		}
+		return s.get(ctx, tx, id)
+	})
+}
+
+func (s *PgStore) Failover(ctx context.Context, id string) (VM, error) {
+	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if !canFailover(vm) {
+			return VM{}, ErrConflict
+		}
+		n, err := s.q.FailoverDatabaseVM(ctx, tx, mustUUID(vm.DatabaseID))
+		if err := s.changed(ctx, tx, id, n, err); err != nil {
+			return VM{}, err
+		}
+		after, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		key, now := mustUUID(id), time.Now()
+		switch {
+		case isActive(after.State) && !isActive(vm.State):
+			err = s.open(ctx, tx, key, MeterCompute, computeRate(after), now)
+		case !isActive(after.State) && isActive(vm.State):
+			err = s.close(ctx, tx, key, MeterCompute, now)
+		}
+		return after, err
+	})
+}
+
+func (s *PgStore) FinishPromotion(ctx context.Context, id string) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.FinishDatabasePromotion(ctx, s.pool, key)
+	return s.changed(ctx, s.pool, id, n, err)
 }

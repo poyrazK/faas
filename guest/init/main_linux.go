@@ -110,14 +110,15 @@ func boot() error {
 				return fmt.Errorf("database restore mode: %w", targetErr)
 			}
 			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
-				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline))}
+				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
+				promote: dbguest.Promote(string(cmdline))}
 			if boot.spare && (restoring || boot.standby) {
 				_ = poweroffDatabase()
 				return errors.New("database mode: a spare boots neither a restore nor a standby")
 			}
-			if boot.standby && restoring {
+			if (boot.standby && restoring) || (boot.promote && !boot.standby) {
 				_ = poweroffDatabase()
-				return errors.New("database mode: a standby cannot boot a restore")
+				return errors.New("database mode: a standby cannot boot a restore, and only a standby promotes at boot")
 			}
 			return runDatabaseGuest(slog.Default(), boot)
 		}

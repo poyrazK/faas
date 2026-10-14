@@ -53,10 +53,24 @@ type fakeVMM struct {
 	// maxBooting count the boots in flight.
 	startDelay          time.Duration
 	booting, maxBooting int
+	// Standbys: primaryOn is where each database's VM was started,
+	// standbyOn where its standby runs, standbyVol where its standby
+	// volume is; replMode is its primary's replication, unsynced keeps a
+	// standby from becoming synchronous, promoted is where it was
+	// promoted. standbyErr fails standby boots.
+	primaryOn  map[string]string
+	standbyOn  map[string]string
+	standbyVol map[string]string
+	replMode   map[string]dbguest.ReplicationMode
+	unsynced   map[string]bool
+	promoted   map[string]string
+	standbyErr error
 }
 
 func newFakeVMM() *fakeVMM {
-	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}}
+	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{},
+		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
+		unsynced: map[string]bool{}, promoted: map[string]string{}}
 }
 
 func (f *fakeVMM) record(call string) {
@@ -70,6 +84,8 @@ func (f *fakeVMM) CreateVolume(_ context.Context, node Node, id string, _ int64)
 	if _, ok := f.volumes[id]; !ok {
 		f.volumes[id] = false
 		f.volNode[id] = node.ID
+	} else if f.volNode[id] != node.ID {
+		f.standbyVol[id] = node.ID
 	}
 	return nil
 }
@@ -83,7 +99,7 @@ func (f *fakeVMM) DeleteVolume(_ context.Context, node Node, id string) error {
 	return nil
 }
 
-func (f *fakeVMM) Start(_ context.Context, _ Node, vm VM) error {
+func (f *fakeVMM) Start(_ context.Context, node Node, vm VM) error {
 	if f.startDelay > 0 {
 		f.mu.Lock()
 		f.booting++
@@ -102,6 +118,7 @@ func (f *fakeVMM) Start(_ context.Context, _ Node, vm VM) error {
 		return errors.New("no volume")
 	}
 	f.running[vm.DatabaseID] = true
+	f.primaryOn[vm.DatabaseID] = node.ID
 	if vm.RestoreSource != "" && !vm.Bootstrapped {
 		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
 		f.untilEnd = append(f.untilEnd, vm.RestoreUntilEnd)
@@ -128,7 +145,7 @@ func (f *fakeVMM) PruneArchive(_ context.Context, node Node, id string, windowSe
 func (f *fakeVMM) GrowVolume(_ context.Context, node Node, id string, size int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.running[id] {
+	if f.running[id] && f.volNode[id] == node.ID || f.standbyOn[id] == node.ID {
 		return errors.New("grow a running volume")
 	}
 	f.onNode = append(f.onNode, fmt.Sprintf("grow:%d@%s", size, node.ID))
@@ -157,6 +174,9 @@ func (f *fakeVMM) ListVolumes(_ context.Context, node Node) ([]NodeVolume, error
 		if f.volNode[id] == node.ID {
 			out = append(out, NodeVolume{DatabaseID: id, Running: f.running[id]})
 		}
+		if f.standbyVol[id] == node.ID {
+			out = append(out, NodeVolume{DatabaseID: id, Running: f.standbyOn[id] == node.ID})
+		}
 	}
 	return out, nil
 }
@@ -172,16 +192,26 @@ func (f *fakeVMM) Stop(_ context.Context, node Node, id string) error {
 	defer f.mu.Unlock()
 	f.record("stop")
 	f.onNode = append(f.onNode, "stop@"+node.ID)
+	if f.standbyOn[id] == node.ID {
+		delete(f.standbyOn, id)
+		return nil
+	}
+	if on, ok := f.primaryOn[id]; ok && on != node.ID {
+		return nil
+	}
 	delete(f.running, id)
 	delete(f.restoring, id)
 	return nil
 }
 
-func (f *fakeVMM) Control(_ context.Context, _ Node, id string, req dbguest.Request) (dbguest.Response, error) {
+func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.Request) (dbguest.Response, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.controlErr != nil {
 		return dbguest.Response{}, f.controlErr
+	}
+	if f.standbyOn[id] == node.ID && f.primaryOn[id] != node.ID {
+		return f.standbyControl(node, id, req), nil
 	}
 	if !f.running[id] {
 		return dbguest.Response{}, ErrVMNotRunning
@@ -451,6 +481,9 @@ func (f *fakeVMM) DiscardVolume(_ context.Context, node Node, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.onNode = append(f.onNode, "discard@"+node.ID)
+	if f.standbyVol[id] == node.ID {
+		delete(f.standbyVol, id)
+	}
 	if f.copied[id] == node.ID {
 		delete(f.copied, id)
 	}
@@ -467,4 +500,67 @@ func (f *fakeVMM) ReleaseVolume(_ context.Context, node Node, id string) error {
 		delete(f.copied, id)
 	}
 	return nil
+}
+
+func (f *fakeVMM) StartStandby(_ context.Context, node, primary Node, vm VM) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("start_standby")
+	f.onNode = append(f.onNode, "start_standby@"+node.ID+"<"+primary.ID)
+	if f.standbyErr != nil {
+		return f.standbyErr
+	}
+	if f.standbyOn[vm.DatabaseID] != "" {
+		return errors.New("standby already running")
+	}
+	f.standbyOn[vm.DatabaseID] = node.ID
+	return nil
+}
+
+func (f *fakeVMM) Replication(_ context.Context, node Node, id string, mode dbguest.ReplicationMode, standbyNode string) (dbguest.ReplicationStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.running[id] || f.primaryOn[id] != node.ID {
+		return dbguest.ReplicationStatus{}, ErrVMNotRunning
+	}
+	if mode != "" {
+		if (mode == dbguest.ReplicationOff) != (standbyNode == "") {
+			return dbguest.ReplicationStatus{}, errors.New("standby node goes with async and sync")
+		}
+		f.replMode[id] = mode
+		f.onNode = append(f.onNode, "repl:"+string(mode)+"@"+node.ID)
+	}
+	status := dbguest.ReplicationStatus{Mode: f.replMode[id], Streaming: f.standbyOn[id] != ""}
+	if status.Mode == "" {
+		status.Mode = dbguest.ReplicationOff
+	}
+	status.Synchronous = status.Mode == dbguest.ReplicationSync && status.Streaming && !f.unsynced[id]
+	return status, nil
+}
+
+// standbyControl answers a standby's guest; f.mu is held.
+func (f *fakeVMM) standbyControl(node Node, id string, req dbguest.Request) dbguest.Response {
+	switch req.Op {
+	case dbguest.OpPromote:
+		// The standby becomes the database's VM on its node.
+		f.record("promote")
+		f.promoted[id] = node.ID
+		f.primaryOn[id], f.running[id] = node.ID, true
+		delete(f.standbyOn, id)
+		delete(f.replMode, id)
+		return dbguest.Response{State: dbguest.StateReady}
+	case dbguest.OpStatus:
+		if f.promoted[id] == node.ID {
+			return dbguest.Response{State: dbguest.StateReady}
+		}
+		return dbguest.Response{State: dbguest.StateStandby}
+	}
+	return dbguest.Response{State: dbguest.StateStandby, Error: dbguest.ErrCodeNotReady}
+}
+
+// replicationOf reports the fake primary's mode and standby node.
+func (f *fakeVMM) replicationOf(id string) (dbguest.ReplicationMode, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.replMode[id], f.standbyOn[id]
 }

@@ -44,7 +44,7 @@ func TestMetalSpareAdoption(t *testing.T) {
 	shape := SpareShape{Major: 17, VcpuCount: 1, MemSizeMiB: 384}
 	leases := &fakeLeaser{}
 	rt, err := NewRuntime(RuntimeConfig{
-		JailBase: filepath.Join(workdir, "sparejail"), VolumeRoot: filepath.Join(workdir, "sparevolumes"),
+		JailBase: filepath.Join(workdir, "spjail"), VolumeRoot: filepath.Join(workdir, "sparevolumes"),
 		KernelPath: envOr("FAAS_DBVM_KERNEL", "/srv/fc/kernel/1.7.0"), Bases: map[int]string{17: base}, ParentCgroup: parent,
 		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: envOr("FAAS_FIRECRACKER", "firecracker"), Leases: leases,
 		Spares: map[SpareShape]int{shape: 1},

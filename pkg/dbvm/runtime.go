@@ -134,6 +134,9 @@ type BootRequest struct {
 	// guest opens is relayed to the stream Primary dials, on the node
 	// running the database's primary (replication.go).
 	Primary ReplicationDialer
+	// Promote boots a standby volume without a primary and promotes it as
+	// soon as it replays: a failover while parked.
+	Promote bool
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.
@@ -355,6 +358,9 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if req.Primary != nil && req.RestoreSource != "" {
 		return errors.New("dbvm: a standby is not a restore")
 	}
+	if req.Promote && (req.Primary != nil || req.RestoreSource != "") {
+		return errors.New("dbvm: a promotion boot has no primary and is not a restore")
+	}
 	if req.RestoreSource != "" {
 		if err := validID(req.RestoreSource); err != nil {
 			return err
@@ -368,7 +374,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if _, err := os.Stat(volume); err != nil {
 		return ErrVolumeNotFound
 	}
-	if req.RestoreTarget.IsZero() && req.Primary == nil && r.startFromSpare(ctx, req) {
+	if req.RestoreTarget.IsZero() && req.Primary == nil && !req.Promote && r.startFromSpare(ctx, req) {
 		return nil
 	}
 	vm, err := r.reserve(req.ID)
@@ -443,7 +449,8 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
 		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
-		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd, Standby: req.Primary != nil,
+		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd, Standby: req.Primary != nil || req.Promote,
+		Promote: req.Promote,
 	})
 }
 

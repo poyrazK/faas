@@ -33,7 +33,7 @@ type metalNode struct {
 	archiveDir string
 }
 
-func newMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases *topLeaser, bucket dbarchive.Remote) *metalNode {
+func newMetalNode(t *testing.T, workdir string, bases map[int]string, name string, capacity int64, leases dbvm.Leaser, bucket dbarchive.Remote) *metalNode {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -80,7 +80,12 @@ func newMetalNode(t *testing.T, workdir string, bases map[int]string, name strin
 		t.Fatal(err)
 	}
 	gsrv := grpc.NewServer()
-	vmmdpb.RegisterVmmdServer(gsrv, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt))
+	// Standbys here reach their primaries' nodes over the same unix
+	// sockets, without TLS.
+	peers := func(_ context.Context, target, _ string) (*grpc.ClientConn, error) {
+		return grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+	vmmdpb.RegisterVmmdServer(gsrv, vmmdgrpc.New(nil, nil, "test", nil).WithDatabases(rt).WithDatabasePeers(peers))
 	go func() { _ = gsrv.Serve(lis) }()
 	t.Cleanup(gsrv.Stop)
 	return &metalNode{rt: rt, archive: archive, archiveDir: archiveDir, node: Node{ID: name, TargetURL: "unix://" + sock, AdmissionCeilingMB: 2048, VolumeCapacityBytes: capacity, Lifecycle: NodeActive}}

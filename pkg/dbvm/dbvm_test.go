@@ -83,7 +83,8 @@ func TestBuildConfigRejectsInvalidSpecs(t *testing.T) {
 		"restore without archive": func(s *Spec) {
 			s.RestoreTarget = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 		},
-		"standby spare": func(s *Spec) { s.Standby, s.Spare = true, true },
+		"standby spare":       func(s *Spec) { s.Standby, s.Spare = true, true },
+		"promote not standby": func(s *Spec) { s.Promote = true },
 		"standby restore": func(s *Spec) {
 			s.Standby, s.Archive = true, true
 			s.RestoreTarget = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
@@ -318,5 +319,18 @@ func TestBuildConfigStandbyBoot(t *testing.T) {
 	s.Standby = false
 	if cfg, _ := BuildConfig(s); dbguest.Standby(cfg.BootSource.BootArgs) {
 		t.Fatalf("primary boot carries the standby argument: %q", cfg.BootSource.BootArgs)
+	}
+}
+
+// A promotion boot is a standby boot that promotes at once.
+func TestBuildConfigPromotionBoot(t *testing.T) {
+	s := validSpec()
+	s.Archive, s.Standby, s.Promote = true, true, true
+	cfg, err := BuildConfig(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := cfg.BootSource.BootArgs; !dbguest.Standby(args) || !dbguest.Promote(args) {
+		t.Fatalf("promotion boot args %q", args)
 	}
 }

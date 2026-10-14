@@ -1,0 +1,207 @@
+// adr: 1027 — production class: both stores place a replicated database's
+// standby on a second node, account for it there, and only let a
+// synchronized standby take over.
+package dbsched
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+// runningReplicated places a replicated database and brings it to running.
+func runningReplicated(t *testing.T, s Store, mem int) VM {
+	t.Helper()
+	ctx := context.Background()
+	vm := newVM(1<<30, mem)
+	vm.Replicated = true
+	placed, err := s.Place(ctx, vm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Transition(ctx, placed.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AdmitWake(ctx, placed.DatabaseID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Transition(ctx, placed.DatabaseID, []State{StateWaking}, StateRunning, TransitionOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(ctx, placed.DatabaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestStoreStandbyPlacementAndAccounting(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 3 << 30, Lifecycle: NodeActive})
+			lonely := newVM(1<<30, 384)
+			lonely.Replicated = true
+			if _, err := s.Place(ctx, lonely); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("a replicated database on one node = %v, want ErrNoCapacity", err)
+			}
+			seedNodes(t, s,
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 4 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-c", TargetURL: "unix:///c", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 99 << 30, Lifecycle: NodeDraining},
+			)
+			vm := newVM(2<<30, 384)
+			vm.Replicated = true
+			placed, err := s.Place(ctx, vm)
+			if err != nil || placed.NodeID != "db-b" || placed.StandbyNode != "db-a" || !placed.Replicated || placed.StandbyRunning || placed.StandbySynced {
+				t.Fatalf("placed %+v, %v; want primary on db-b and its standby on db-a", placed, err)
+			}
+			// The standby's volume counts on db-a: 1 GiB free there, 2 GiB on
+			// db-b. Without it db-a would look emptier.
+			if next, err := s.Place(ctx, newVM(2<<30, 384)); err != nil || next.NodeID != "db-b" {
+				t.Fatalf("next placement = %+v, %v; want db-b", next, err)
+			}
+			if _, err := s.Place(ctx, newVM(2<<30, 384)); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("placement over a standby's volume = %v, want ErrNoCapacity", err)
+			}
+			if _, err := s.BeginMove(ctx, placed.DatabaseID, "db-a", time.Minute); err == nil {
+				t.Fatal("a database moved onto its own standby's node")
+			}
+		})
+	}
+}
+
+func TestStoreStandbyClaimAndSync(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			// db-a fits one 384 MiB standby (392 MB billable), not two.
+			seedNodes(t, s,
+				Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 700, VolumeCapacityBytes: 50 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 99 << 30, Lifecycle: NodeActive},
+			)
+			first := runningReplicated(t, s, 384)
+			second := runningReplicated(t, s, 384)
+			if first.NodeID != "db-b" || second.StandbyNode != "db-a" {
+				t.Fatalf("placements %+v / %+v", first, second)
+			}
+			if err := s.MarkStandbySynced(ctx, first.DatabaseID, true); !errors.Is(err, ErrConflict) {
+				t.Fatalf("synced without a running standby = %v, want ErrConflict", err)
+			}
+			claimed, err := s.ClaimStandby(ctx, first.DatabaseID)
+			if err != nil || !claimed.StandbyRunning {
+				t.Fatalf("claim = %+v, %v", claimed, err)
+			}
+			if _, err := s.ClaimStandby(ctx, first.DatabaseID); !errors.Is(err, ErrConflict) {
+				t.Fatalf("second claim = %v, want ErrConflict", err)
+			}
+			if _, err := s.ClaimStandby(ctx, second.DatabaseID); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("claim over the standby node's ceiling = %v, want ErrNoCapacity", err)
+			}
+			if err := s.MarkStandbySynced(ctx, first.DatabaseID, true); err != nil {
+				t.Fatal(err)
+			}
+			// Parking stops the standby cleanly after its primary: still synced.
+			if err := s.Transition(ctx, first.DatabaseID, []State{StateRunning}, StateParking, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ReleaseStandby(ctx, first.DatabaseID, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, first.DatabaseID, []State{StateParking}, StateParked, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, first.DatabaseID); !got.StandbySynced || got.StandbyRunning {
+				t.Fatalf("after a clean park: %+v; want synced, stopped", got)
+			}
+			// The freed standby RAM admits the other standby.
+			if _, err := s.ClaimStandby(ctx, second.DatabaseID); err != nil {
+				t.Fatalf("claim after the first standby stopped: %v", err)
+			}
+			// Waking makes the primary asynchronous: no longer synced.
+			if _, err := s.AdmitWake(ctx, first.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, first.DatabaseID); got.StandbySynced {
+				t.Fatal("a waking database kept its standby synced")
+			}
+			if err := s.ReleaseStandby(ctx, second.DatabaseID, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.MarkStandbySynced(ctx, second.DatabaseID, false); err != nil {
+				t.Fatalf("clearing always works: %v", err)
+			}
+		})
+	}
+}
+
+func TestStoreFailoverOnlyFromASyncedStandby(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s,
+				Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 50 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-b", TargetURL: "unix:///b", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 99 << 30, Lifecycle: NodeActive},
+				Node{ID: "db-c", TargetURL: "unix:///c", AdmissionCeilingMB: 4096, VolumeCapacityBytes: 10 << 30, Lifecycle: NodeActive},
+			)
+			running := runningReplicated(t, s, 384)
+			if _, err := s.Failover(ctx, running.DatabaseID); !errors.Is(err, ErrConflict) {
+				t.Fatalf("failover to an unsynced standby = %v, want ErrConflict", err)
+			}
+			if _, err := s.ClaimStandby(ctx, running.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.MarkStandbySynced(ctx, running.DatabaseID, true); err != nil {
+				t.Fatal(err)
+			}
+			after, err := s.Failover(ctx, running.DatabaseID)
+			if err != nil || after.NodeID != running.StandbyNode || after.StandbyNode != "" || after.State != StateRunning ||
+				after.PromotePending || after.StandbySynced || after.LastError != errCodeFailedOver {
+				t.Fatalf("failover of a running database = %+v, %v; want running on its standby's node", after, err)
+			}
+
+			parked := runningReplicated(t, s, 384)
+			if _, err := s.ClaimStandby(ctx, parked.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.MarkStandbySynced(ctx, parked.DatabaseID, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, parked.DatabaseID, []State{StateRunning}, StateParking, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ReleaseStandby(ctx, parked.DatabaseID, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Transition(ctx, parked.DatabaseID, []State{StateParking}, StateParked, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			after, err = s.Failover(ctx, parked.DatabaseID)
+			if err != nil || after.NodeID != parked.StandbyNode || after.State != StateParked || !after.PromotePending {
+				t.Fatalf("failover of a parked database = %+v, %v; want parked there with its promotion pending", after, err)
+			}
+			if err := s.FinishPromotion(ctx, parked.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, parked.DatabaseID); got.PromotePending {
+				t.Fatal("promotion still pending")
+			}
+			// The failed-over database gets a new standby elsewhere.
+			replaced, err := s.ReplaceStandby(ctx, parked.DatabaseID)
+			if err != nil || replaced.StandbyNode == "" || replaced.StandbyNode == replaced.NodeID || replaced.StandbySynced {
+				t.Fatalf("replace = %+v, %v", replaced, err)
+			}
+			again, err := s.ReplaceStandby(ctx, parked.DatabaseID)
+			if err != nil || again.StandbyNode == replaced.StandbyNode || again.StandbyNode == again.NodeID {
+				t.Fatalf("second replace = %+v, %v; want a third node", again, err)
+			}
+			plain, err := s.Place(ctx, newVM(1<<30, 384))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ReplaceStandby(ctx, plain.DatabaseID); !errors.Is(err, ErrConflict) {
+				t.Fatalf("replace on an unreplicated database = %v, want ErrConflict", err)
+			}
+		})
+	}
+}

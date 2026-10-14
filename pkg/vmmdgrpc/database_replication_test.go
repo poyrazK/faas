@@ -179,6 +179,9 @@ func TestStandbyBootStreamsThroughThePrimarysNode(t *testing.T) {
 		"node without target": {DatabaseId: replicaDB, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 512, PrimaryNode: "db-1"},
 		"standby restore": {DatabaseId: replicaDB, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 512, PrimaryNode: "db-1", PrimaryTarget: "tcp://x:1",
 			RestoreSource: "0f8fad5b-d9cb-469f-a165-70867728950e", RestoreTarget: timestamppb.Now()},
+		"promote with a primary": {DatabaseId: replicaDB, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 512, PrimaryNode: "db-1", PrimaryTarget: "tcp://x:1", Promote: true},
+		"promote a restore": {DatabaseId: replicaDB, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 512, Promote: true,
+			RestoreSource: "0f8fad5b-d9cb-469f-a165-70867728950e", RestoreTarget: timestamppb.Now()},
 	} {
 		if _, err := standby.StartDatabase(ctx, req); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("%s = %v, want InvalidArgument", name, err)
@@ -291,5 +294,18 @@ func TestStandbyStreamsOverMutualTLSOnlyAsItsNode(t *testing.T) {
 		t.Fatal("a detached standby's node still streamed")
 	} else {
 		t.Logf("detached standby: %v", err)
+	}
+}
+
+// A failover while parked boots the standby volume with no primary and
+// promotes it.
+func TestPromotionBootReachesTheRuntime(t *testing.T) {
+	rt := &fakeDatabaseRuntime{}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	if _, err := s.StartDatabase(unixCaller(), &vmmdpb.StartDatabaseRequest{DatabaseId: replicaDB, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 512, Promote: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.started.Promote || rt.started.Primary != nil {
+		t.Fatalf("boot request %+v; want a promotion without a primary", rt.started)
 	}
 }

@@ -3245,6 +3245,21 @@ func (q *Queries) ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX
 	return i, err
 }
 
+const claimDatabaseStandby = `-- name: ClaimDatabaseStandby :execrows
+UPDATE database_vms SET standby_running = true
+WHERE database_id = $1 AND state = 'running' AND standby_node IS NOT NULL AND NOT standby_running
+`
+
+// Marks a running replicated database's standby VM running; the caller
+// checked the standby node's room under its lock.
+func (q *Queries) ClaimDatabaseStandby(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, claimDatabaseStandby, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimDatabaseVMRestore = `-- name: ClaimDatabaseVMRestore :one
 UPDATE database_vms
 SET restore_lease_until = now() + make_interval(secs => $1::double precision)
@@ -9408,10 +9423,12 @@ func (q *Queries) DatabaseHasUsage(ctx context.Context, db DBTX, databaseID pgty
 const databaseNodeUsage = `-- name: DatabaseNodeUsage :many
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE v.node_id = n.id AND v.state IN ('waking', 'running', 'parking')), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))::bigint AS active_vms,
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))
+        OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))
+        OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
     count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
-FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id
+FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
 GROUP BY n.id ORDER BY n.id
 `
 
@@ -9424,7 +9441,9 @@ type DatabaseNodeUsageRow struct {
 }
 
 // A moving database's volume counts on its node and on the node it is
-// moving to; its memory only where it can run.
+// moving to; its memory only where it can run. A replicated database's
+// standby volume counts on its standby node, and its memory there while
+// the standby runs.
 func (q *Queries) DatabaseNodeUsage(ctx context.Context, db DBTX) ([]DatabaseNodeUsageRow, error) {
 	rows, err := db.Query(ctx, databaseNodeUsage)
 	if err != nil {
@@ -14602,6 +14621,25 @@ func (q *Queries) FailedCheckedRollbackTarget(ctx context.Context, db DBTX, targ
 	return exists, err
 }
 
+const failoverDatabaseVM = `-- name: FailoverDatabaseVM :execrows
+UPDATE database_vms SET node_id = standby_node, standby_node = NULL, standby_running = false, standby_synced = false,
+    promote_pending = NOT standby_running,
+    state = CASE WHEN standby_running THEN 'running' ELSE 'parked' END,
+    last_error = 'failed_over', state_changed_at = now()
+WHERE database_id = $1 AND standby_synced
+    AND state IN ('parked', 'running', 'parking', 'failed')
+`
+
+// A synchronized standby's node becomes the database's: running if its
+// standby VM ran (now promoted), else parked with its promotion pending.
+func (q *Queries) FailoverDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, failoverDatabaseVM, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const featureFlagCustomerOwned = `-- name: FeatureFlagCustomerOwned :one
 SELECT EXISTS(SELECT 1 FROM platform_tenants
  WHERE account_id = $1::uuid AND id = $2::uuid) AS owned
@@ -14973,6 +15011,18 @@ func (q *Queries) FinishClonePostgresWriteFenceAbandonment(ctx context.Context, 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const finishDatabasePromotion = `-- name: FinishDatabasePromotion :execrows
+UPDATE database_vms SET promote_pending = false WHERE database_id = $1
+`
+
+func (q *Queries) FinishDatabasePromotion(ctx context.Context, db DBTX, databaseID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, finishDatabasePromotion, databaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const finishDatabaseVMMove = `-- name: FinishDatabaseVMMove :execrows
@@ -17558,7 +17608,7 @@ const getDatabaseVM = `-- name: GetDatabaseVM :one
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending
 FROM database_vms WHERE database_id = $1
 `
 
@@ -17588,6 +17638,11 @@ func (q *Queries) GetDatabaseVM(ctx context.Context, db DBTX, databaseID pgtype.
 		&i.CreatedAt,
 		&i.MoveNode,
 		&i.MoveLeaseUntil,
+		&i.Replicated,
+		&i.StandbyNode,
+		&i.StandbyRunning,
+		&i.StandbySynced,
+		&i.PromotePending,
 	)
 	return i, err
 }
@@ -21044,10 +21099,10 @@ func (q *Queries) InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg Inse
 
 const insertDatabaseVM = `-- name: InsertDatabaseVM :execrows
 INSERT INTO database_vms (database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, always_on,
-    restore_window_seconds, restore_source, restore_target, state)
+    restore_window_seconds, restore_source, restore_target, replicated, standby_node, state)
 VALUES ($1, $2, $3, $4,
     $5, $6, $7, $8,
-    $9, $10, 'provisioning')
+    $9, $10, $11, $12, 'provisioning')
 ON CONFLICT (database_id) DO NOTHING
 `
 
@@ -21062,6 +21117,8 @@ type InsertDatabaseVMParams struct {
 	RestoreWindowSeconds int64
 	RestoreSource        pgtype.UUID
 	RestoreTarget        pgtype.Timestamptz
+	Replicated           bool
+	StandbyNode          pgtype.Text
 }
 
 func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatabaseVMParams) (int64, error) {
@@ -21076,6 +21133,8 @@ func (q *Queries) InsertDatabaseVM(ctx context.Context, db DBTX, arg InsertDatab
 		arg.RestoreWindowSeconds,
 		arg.RestoreSource,
 		arg.RestoreTarget,
+		arg.Replicated,
+		arg.StandbyNode,
 	)
 	if err != nil {
 		return 0, err
@@ -30578,7 +30637,7 @@ const listDatabaseVMsByState = `-- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending
 FROM database_vms WHERE state = ANY($1::text[]) ORDER BY database_id
 `
 
@@ -30614,6 +30673,11 @@ func (q *Queries) ListDatabaseVMsByState(ctx context.Context, db DBTX, states []
 			&i.CreatedAt,
 			&i.MoveNode,
 			&i.MoveLeaseUntil,
+			&i.Replicated,
+			&i.StandbyNode,
+			&i.StandbyRunning,
+			&i.StandbySynced,
+			&i.PromotePending,
 		); err != nil {
 			return nil, err
 		}
@@ -41897,6 +41961,27 @@ type MarkClaimedTriggerRecordSucceededParams struct {
 
 func (q *Queries) MarkClaimedTriggerRecordSucceeded(ctx context.Context, db DBTX, arg MarkClaimedTriggerRecordSucceededParams) (int64, error) {
 	result, err := db.Exec(ctx, markClaimedTriggerRecordSucceeded, arg.ID, arg.ClaimGeneration)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markDatabaseStandbySynced = `-- name: MarkDatabaseStandbySynced :execrows
+UPDATE database_vms SET standby_synced = $1::boolean
+WHERE database_id = $2
+    AND (NOT $1::boolean OR (state = 'running' AND standby_running))
+`
+
+type MarkDatabaseStandbySyncedParams struct {
+	Synced     bool
+	DatabaseID pgtype.UUID
+}
+
+// Synchronized only while the database and its standby run; clearing is
+// always allowed.
+func (q *Queries) MarkDatabaseStandbySynced(ctx context.Context, db DBTX, arg MarkDatabaseStandbySyncedParams) (int64, error) {
+	result, err := db.Exec(ctx, markDatabaseStandbySynced, arg.Synced, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}
@@ -63425,6 +63510,26 @@ func (q *Queries) RegisterLayerArtifactRetention(ctx context.Context, db DBTX, s
 	return err
 }
 
+const releaseDatabaseStandby = `-- name: ReleaseDatabaseStandby :execrows
+UPDATE database_vms SET standby_running = false, standby_synced = standby_synced AND $1::boolean
+WHERE database_id = $2
+`
+
+type ReleaseDatabaseStandbyParams struct {
+	KeepSynced bool
+	DatabaseID pgtype.UUID
+}
+
+// Marks the standby VM stopped; it stays synchronized only if keep_synced
+// (a clean stop after its primary's).
+func (q *Queries) ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg ReleaseDatabaseStandbyParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseDatabaseStandby, arg.KeepSynced, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const releaseEdgeRuleMutationLock = `-- name: ReleaseEdgeRuleMutationLock :one
 SELECT pg_advisory_unlock(hashtextextended($1::text, 0))::boolean AS unlocked
 `
@@ -63921,6 +64026,25 @@ type ReopenSkippedWorkflowStepsForRetryParams struct {
 
 func (q *Queries) ReopenSkippedWorkflowStepsForRetry(ctx context.Context, db DBTX, arg ReopenSkippedWorkflowStepsForRetryParams) (int64, error) {
 	result, err := db.Exec(ctx, reopenSkippedWorkflowStepsForRetry, arg.RunID, arg.StepNames)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const replaceDatabaseStandby = `-- name: ReplaceDatabaseStandby :execrows
+UPDATE database_vms SET standby_node = $1, standby_running = false, standby_synced = false
+WHERE database_id = $2 AND replicated AND NOT standby_running
+    AND state IN ('provisioning', 'parked', 'waking', 'running', 'parking', 'failed')
+`
+
+type ReplaceDatabaseStandbyParams struct {
+	StandbyNode pgtype.Text
+	DatabaseID  pgtype.UUID
+}
+
+func (q *Queries) ReplaceDatabaseStandby(ctx context.Context, db DBTX, arg ReplaceDatabaseStandbyParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceDatabaseStandby, arg.StandbyNode, arg.DatabaseID)
 	if err != nil {
 		return 0, err
 	}

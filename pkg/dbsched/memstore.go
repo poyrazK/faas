@@ -86,6 +86,14 @@ func (m *MemStore) usageLocked() map[string]nodeUsage {
 			u.waking++
 		}
 		usage[vm.NodeID] = u
+		if vm.StandbyNode != "" {
+			s := usage[vm.StandbyNode]
+			s.volumeBytes += vm.VolumeBytes
+			if vm.StandbyRunning {
+				s.activeMB += billableMB(vm.MemMiB)
+			}
+			usage[vm.StandbyNode] = s
+		}
 	}
 	return usage
 }
@@ -100,9 +108,18 @@ func (m *MemStore) Place(_ context.Context, vm VM) (VM, error) {
 	for _, n := range m.nodes {
 		nodes = append(nodes, n)
 	}
-	node, ok := pickNode(nodes, m.usageLocked(), vm.VolumeBytes, vm.NodeID, vm.Major)
+	usage := m.usageLocked()
+	node, ok := pickNode(nodes, usage, vm.VolumeBytes, vm.NodeID, vm.Major)
 	if !ok {
 		return VM{}, ErrNoCapacity
+	}
+	vm.StandbyNode, vm.StandbyRunning, vm.StandbySynced, vm.PromotePending = "", false, false, false
+	if vm.Replicated {
+		standby, ok := pickStandby(nodes, usage, vm, node.ID)
+		if !ok {
+			return VM{}, ErrNoCapacity
+		}
+		vm.StandbyNode = standby.ID
 	}
 	now := m.now()
 	vm.NodeID, vm.State, vm.Bootstrapped, vm.LastError = node.ID, StateProvisioning, false, ""
@@ -132,6 +149,9 @@ func (m *MemStore) AdmitWake(_ context.Context, id string) (VM, error) {
 	if err := admitWakeOn(node, m.usageLocked()[node.ID], vm.MemMiB); err != nil {
 		return VM{}, err
 	}
+	// The primary boots asynchronous: its standby no longer holds every
+	// commit once it may commit without it.
+	vm.StandbySynced = false
 	vm.State, vm.StateChangedAt = StateWaking, m.now()
 	m.vms[id] = vm
 	m.openLocked(id, MeterCompute, computeRate(vm), vm.StateChangedAt)
@@ -432,6 +452,118 @@ func (m *MemStore) AbortMove(_ context.Context, id string, held time.Time, lastE
 	}
 	vm.MoveNode, vm.MoveLeaseUntil = "", time.Time{}
 	vm.State, vm.StateChangedAt, vm.LastError = StateParked, m.now(), lastError
+	m.vms[id] = vm
+	return nil
+}
+
+func (m *MemStore) ClaimStandby(_ context.Context, id string) (VM, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return VM{}, ErrNotFound
+	}
+	if vm.State != StateRunning || vm.StandbyNode == "" || vm.StandbyRunning {
+		return VM{}, ErrConflict
+	}
+	node, ok := m.nodes[vm.StandbyNode]
+	if !ok {
+		return VM{}, ErrNodeUnavailable
+	}
+	if err := claimStandbyOn(node, m.usageLocked()[node.ID], vm.MemMiB); err != nil {
+		return VM{}, err
+	}
+	vm.StandbyRunning = true
+	m.vms[id] = vm
+	return vm, nil
+}
+
+func (m *MemStore) ReleaseStandby(_ context.Context, id string, keepSynced bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	vm.StandbyRunning, vm.StandbySynced = false, vm.StandbySynced && keepSynced
+	m.vms[id] = vm
+	return nil
+}
+
+func (m *MemStore) MarkStandbySynced(_ context.Context, id string, synced bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if synced && (vm.State != StateRunning || !vm.StandbyRunning) {
+		return ErrConflict
+	}
+	vm.StandbySynced = synced
+	m.vms[id] = vm
+	return nil
+}
+
+func (m *MemStore) ReplaceStandby(_ context.Context, id string) (VM, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return VM{}, ErrNotFound
+	}
+	if !vm.Replicated || vm.StandbyRunning || vm.State == StateMoving || vm.State == StateDeleting {
+		return VM{}, ErrConflict
+	}
+	nodes := make([]Node, 0, len(m.nodes))
+	for _, n := range m.nodes {
+		nodes = append(nodes, n)
+	}
+	standby, ok := pickStandby(nodes, m.usageLocked(), vm, vm.NodeID, vm.StandbyNode)
+	if !ok {
+		return VM{}, ErrNoCapacity
+	}
+	vm.StandbyNode, vm.StandbySynced = standby.ID, false
+	m.vms[id] = vm
+	return vm, nil
+}
+
+func (m *MemStore) Failover(_ context.Context, id string) (VM, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return VM{}, ErrNotFound
+	}
+	if !canFailover(vm) {
+		return VM{}, ErrConflict
+	}
+	now := m.now()
+	wasActive := isActive(vm.State)
+	vm.NodeID, vm.StandbyNode, vm.StandbySynced, vm.PromotePending = vm.StandbyNode, "", false, !vm.StandbyRunning
+	vm.State = StateParked
+	if vm.StandbyRunning {
+		vm.State = StateRunning
+	}
+	vm.StandbyRunning, vm.LastError, vm.StateChangedAt = false, errCodeFailedOver, now
+	m.vms[id] = vm
+	switch {
+	case isActive(vm.State) && !wasActive:
+		m.openLocked(id, MeterCompute, computeRate(vm), now)
+	case !isActive(vm.State) && wasActive:
+		m.closeLocked(id, MeterCompute, now)
+	}
+	return vm, nil
+}
+
+func (m *MemStore) FinishPromotion(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return ErrNotFound
+	}
+	vm.PromotePending = false
 	m.vms[id] = vm
 	return nil
 }

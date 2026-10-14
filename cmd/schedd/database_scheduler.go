@@ -154,6 +154,9 @@ func enableDatabaseScheduler(ctx context.Context, cfg *DatabaseSchedulerConfig, 
 	loopCtx, stop := context.WithCancel(ctx)
 	go sched.RunIdleLoop(loopCtx, sweep)
 	go sched.RunBackupLoop(loopCtx, 10*time.Minute)
+	// Replicated databases' standbys (production class): a standby that
+	// stops keeping up holds its primary's commits until the next check.
+	go sched.RunStandbyLoop(loopCtx)
 	handler.WithDatabases(sched)
 	log.Info("schedd: database scheduler enabled", "nodes", len(cfg.Nodes), "idle_timeout", cfg.IdleTimeout, "sweep_interval", sweep)
 	return func() {

@@ -2719,6 +2719,11 @@ message StartDatabaseRequest {
   // with a restore.
   string primary_node = 11;
   string primary_target = 12;
+  // A failover while parked (ADR-1027 production class): the volume is a
+  // standby that took over from a lost primary; this boot promotes it
+  // onto a new timeline as soon as it replays. Never with a primary or a
+  // restore.
+  bool promote = 13;
 }
 
 message StartDatabaseResponse {

@@ -82,7 +82,7 @@ func TestMetalProxyWakesParkedDatabase(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
 	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
-		JailBase: filepath.Join(workdir, "proxyjail"), VolumeRoot: filepath.Join(workdir, "proxyvolumes"),
+		JailBase: filepath.Join(workdir, "pjail"), VolumeRoot: filepath.Join(workdir, "proxyvolumes"),
 		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &metalLeaser{},
 	})

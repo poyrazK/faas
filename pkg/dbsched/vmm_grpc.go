@@ -178,8 +178,43 @@ func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 		req.RestoreSource, req.RestoreTarget = vm.RestoreSource, timestamppb.New(vm.RestoreTarget)
 		req.RestoreUntilEnd = vm.RestoreUntilEnd
 	}
+	req.Promote = vm.PromotePending
 	_, err = c.StartDatabase(ctx, req)
 	return tolerate(err, codes.FailedPrecondition)
+}
+
+// StartStandby boots the database's standby on node. Unlike Start it
+// tolerates nothing: a standby left running is stopped first.
+func (g *GRPCVMM) StartStandby(ctx context.Context, node, primary Node, vm VM) error {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return err
+	}
+	_, err = c.StartDatabase(ctx, &vmmdpb.StartDatabaseRequest{
+		DatabaseId: vm.DatabaseID, PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemSizeMib: int32(vm.MemMiB),
+		RestoreWindowSeconds: vm.RestoreWindowSeconds, PrimaryNode: primary.ID, PrimaryTarget: primary.TargetURL,
+	})
+	return err
+}
+
+// Replication sets and reports a running primary's replication.
+func (g *GRPCVMM) Replication(ctx context.Context, node Node, id string, mode dbguest.ReplicationMode, standbyNode string) (dbguest.ReplicationStatus, error) {
+	c, err := g.client(ctx, node)
+	if err != nil {
+		return dbguest.ReplicationStatus{}, err
+	}
+	resp, err := c.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: id, Op: string(dbguest.OpReplication), Replication: string(mode), StandbyNode: standbyNode})
+	if status.Code(err) == codes.FailedPrecondition {
+		return dbguest.ReplicationStatus{}, fmt.Errorf("%w: %w", ErrVMNotRunning, err)
+	}
+	if err != nil {
+		return dbguest.ReplicationStatus{}, err
+	}
+	if resp.GetErrorCode() != "" {
+		return dbguest.ReplicationStatus{}, fmt.Errorf("guest error %s", resp.GetErrorCode())
+	}
+	r := resp.GetReplication()
+	return dbguest.ReplicationStatus{Mode: dbguest.ReplicationMode(r.GetMode()), Streaming: r.GetStreaming(), Synchronous: r.GetSynchronous(), LagBytes: r.GetLagBytes()}, nil
 }
 
 // Stop parks the VM; a VM that is not running counts as stopped.
