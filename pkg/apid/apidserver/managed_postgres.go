@@ -42,6 +42,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	usageAdmission := managedpostgres.NewOperatorTestUsageAdmission(registry, store, getenv, time.Now)
 	baseProvisioningGate := managedpostgres.NewProvisioningGate(registry, getenv, time.Now)
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
@@ -106,7 +107,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 				}
 				return admitErr
 			}
-			admitErr := registry.UsagePolicy().AdmitWithCeilings(ctx, store, accountID, time.Now().UTC(), managedPostgresUsageCeilings(limits))
+			admitErr := usageAdmission(ctx, accountID, managedPostgresUsageCeilings(limits))
 			if metrics != nil {
 				metrics.ObserveAdmission(admitErr)
 			}

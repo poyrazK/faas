@@ -14,13 +14,14 @@ const OperatorTestPathEnv = "FAAS_MANAGED_POSTGRES_OPERATOR_TEST_PATH"
 // test. It is not provider qualification evidence and cannot be consumed as
 // a QualificationArtifact. The deployment owner controls this private file.
 type OperatorTestApproval struct {
-	Version            int       `json:"version"`
-	Purpose            string    `json:"purpose"`
-	BackendID          string    `json:"backend_id"`
-	BackendFingerprint string    `json:"backend_fingerprint"`
-	CanaryAccounts     []string  `json:"canary_accounts"`
-	StartedAt          time.Time `json:"started_at"`
-	ExpiresAt          time.Time `json:"expires_at"`
+	Version                      int       `json:"version"`
+	Purpose                      string    `json:"purpose"`
+	BackendID                    string    `json:"backend_id"`
+	BackendFingerprint           string    `json:"backend_fingerprint"`
+	CanaryAccounts               []string  `json:"canary_accounts"`
+	StartedAt                    time.Time `json:"started_at"`
+	ExpiresAt                    time.Time `json:"expires_at"`
+	AllowPendingFinalCorrections bool      `json:"allow_pending_final_corrections,omitempty"`
 }
 
 func loadOperatorTestApproval(path string) (*OperatorTestApproval, error) {

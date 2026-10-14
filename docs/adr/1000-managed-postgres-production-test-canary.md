@@ -88,3 +88,14 @@ window. This grace requires known identity, confirmed shutdown after creation,
 and nonfuture lifecycle timestamps. At the window boundary, missing coverage
 blocks admission again. Closed history and the final correction requirements
 remain mandatory; repeated tests must account for provider settlement delays.
+
+An operator test approval may explicitly set `allow_pending_final_corrections`
+to continue a bounded test when the only accounting blocker is final correction
+settlement. This applies only to the exact approved production accounts, backend
+and two-hour lifetime. Retired resources must have confirmed shutdown, complete
+contiguous coverage and fresh, nonfuture observations. Unknown identity, missing
+coverage, stale active usage and all observed usage/cost ceilings remain blocking.
+The ledger, final correction deadline, diagnostics and collector are unchanged;
+this exception never asserts settlement or qualification and expires with the
+operator test approval. Ordinary staging and qualified production admission keep
+the existing strict settlement policy.

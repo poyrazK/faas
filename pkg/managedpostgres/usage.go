@@ -472,6 +472,10 @@ func (p UsagePolicy) Admit(ctx context.Context, store UsageStore, accountID stri
 // resources remain idempotent in Service.Create; only new reservations are
 // blocked when observations are stale or a ceiling has been reached.
 func (p UsagePolicy) AdmitWithCeilings(ctx context.Context, store UsageStore, accountID string, now time.Time, ceilings UsageCeilings) error {
+	return p.admitWithCeilings(ctx, store, accountID, now, ceilings, false)
+}
+
+func (p UsagePolicy) admitWithCeilings(ctx context.Context, store UsageStore, accountID string, now time.Time, ceilings UsageCeilings, allowPendingCorrections bool) error {
 	if !p.Enabled {
 		return nil
 	}
@@ -483,7 +487,7 @@ func (p UsagePolicy) AdmitWithCeilings(ctx context.Context, store UsageStore, ac
 	if err != nil {
 		return ErrUnavailable
 	}
-	if snapshot.Stale(p, now.UTC()) {
+	if snapshot.staleForAdmission(p, now.UTC(), allowPendingCorrections) {
 		return ErrUsageStale
 	}
 	if snapshot.Exceeds(p) {

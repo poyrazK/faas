@@ -597,6 +597,10 @@ func (p UsagePolicy) LineItems(snapshot UsageSnapshot) ([]UsageLineItem, error) 
 }
 
 func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
+	return s.staleForAdmission(policy, now, false)
+}
+
+func (s UsageSnapshot) staleForAdmission(policy UsagePolicy, now time.Time, allowPendingCorrections bool) bool {
 	if !policy.Enabled {
 		return false
 	}
@@ -604,7 +608,8 @@ func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 		return true
 	}
 	for _, progress := range s.Databases {
-		if progress.blockingIssues(policy, now) != 0 {
+		issues := progress.blockingIssues(policy, now)
+		if issues != 0 && !(allowPendingCorrections && issues == usageFinalCorrectionPending && progress.freshRetiredCoverage(policy, now)) {
 			return true
 		}
 	}
