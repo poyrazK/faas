@@ -70,11 +70,12 @@ func (s *PgStore) RecordRolloutHold(ctx context.Context, p RolloutHoldParams) (b
 		     limit 1
 		 )
 		 insert into deployment_audit (deployment_id, account_id, kind, actor, at, data)
-		 select d.id, $3, 'deploy.rollout_held', $4, $5, $6::jsonb
+		 select d.id, $3, 'deploy.rollout_held', $4, $5::timestamptz, $6::jsonb
 		   from d
 		  where not exists (
 		    select 1 from latest
-		     where latest.rule = $7 and latest.at > $5 - make_interval(secs => $8)
+		     where latest.rule = $7::text
+		       and latest.at > $5::timestamptz - make_interval(secs => $8::double precision)
 		  )
 		 returning id`,
 		p.DeploymentID, p.ExpectedStep, p.AccountID, p.Actor, p.At, data, p.Rule,

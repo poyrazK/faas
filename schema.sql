@@ -2898,7 +2898,8 @@ BEGIN
             'rollout_state', 'complete',
             'traffic_percent', NEW.traffic_percent,
             'completed_at', COALESCE(NEW.rollout_completed_at, now())
-        );
+        ) || jsonb_strip_nulls(jsonb_build_object('decision',
+            CASE WHEN NEW.rollout_decision->>'kind' = 'advance' THEN NEW.rollout_decision END));
     ELSIF NEW.rollout_state = 'aborted' AND OLD.status = 'live'
           AND NEW.status IN ('live', 'superseded') THEN
         event_name := 'rollout.aborted';
@@ -2909,7 +2910,8 @@ BEGIN
             'traffic_percent', NEW.traffic_percent,
             'reason', COALESCE(NULLIF(NEW.rollout_aborted_reason, ''), 'rollout aborted'),
             'aborted_at', COALESCE(NEW.rollout_aborted_at, now())
-        );
+        ) || jsonb_strip_nulls(jsonb_build_object('decision',
+            CASE WHEN NEW.rollout_decision->>'kind' = 'abort' THEN NEW.rollout_decision END));
     ELSE
         RETURN NEW;
     END IF;
@@ -3492,6 +3494,7 @@ CREATE TABLE public.deployments (
     runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
     environment_workload_held boolean DEFAULT false NOT NULL,
     rollback_prepared_at timestamp with time zone,
+    rollout_decision jsonb,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3516,6 +3519,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_reason_len_chk CHECK (((reason IS NULL) OR (length(reason) <= 280))),
     CONSTRAINT deployments_release_command_chk CHECK ((((cardinality(release_command) = 0) AND (NOT release_command_shell)) OR (((cardinality(release_command) >= 1) AND (cardinality(release_command) <= 64)) AND (array_position(release_command, NULL::text) IS NULL) AND ((octet_length(btrim(release_command[1])) >= 1) AND (octet_length(btrim(release_command[1])) <= 4096)) AND ((octet_length(array_to_string(release_command, ''::text)) >= 1) AND (octet_length(array_to_string(release_command, ''::text)) <= 16384)) AND ((NOT release_command_shell) OR (cardinality(release_command) = 1))))),
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
+    CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
     CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
@@ -18801,7 +18805,7 @@ CREATE TABLE public.deployment_audit (
     at timestamp with time zone DEFAULT now() NOT NULL,
     data jsonb,
     alert_rule_id uuid,
-    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text])))
+    CONSTRAINT deployment_audit_kind_chk CHECK ((kind = ANY (ARRAY['deploy.created'::text, 'deploy.source_ref'::text, 'deploy.local_tarball'::text, 'deploy.traffic_changed'::text, 'deploy.health_probe_failed'::text, 'deploy.health_recovered'::text, 'deploy.rolled_back'::text, 'deploy.removed'::text, 'deploy.rollout_started'::text, 'deploy.rollout_completed'::text, 'deploy.rollout_aborted'::text, 'deploy.canary_step_advanced'::text, 'deploy.alert_rule_fired'::text, 'deploy.scan_regressed'::text, 'deploy.mcp_task_held'::text, 'deploy.mcp_task_retry_requested'::text, 'deploy.mcp_task_retry_started'::text, 'deploy.mcp_task_retry_completed'::text, 'deploy.mcp_task_recovered'::text, 'deploy.mcp_task_hold_cancelled'::text, 'deploy.worker_drain_started'::text, 'deploy.worker_drain_completed'::text, 'deploy.rollout_held'::text])))
 );
 
 

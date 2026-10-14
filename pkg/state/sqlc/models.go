@@ -2053,6 +2053,7 @@ type Deployment struct {
 	RuntimeUpgradeRoutingToken pgtype.UUID
 	EnvironmentWorkloadHeld    bool
 	RollbackPreparedAt         pgtype.Timestamptz
+	RolloutDecision            []byte
 }
 
 type DeploymentAlias struct {
