@@ -559,6 +559,12 @@ service Vmmd {
   // names the database; every later frame carries raw protocol bytes. The
   // lifecycle RPCs above accept only schedd; this one only pgproxyd.
   rpc DatabaseSession(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
+  // DatabaseReplication carries one replication stream from a standby's
+  // node to its running primary's guest (ADR-1027 production class). The
+  // first client frame names the database; every later frame carries raw
+  // protocol bytes. Only the database node schedd named as the database's
+  // standby (DatabaseControlRequest.standby_node) may call it.
+  rpc DatabaseReplication(stream DatabaseSessionFrame) returns (stream DatabaseSessionFrame);
 }
 
 // AppSpec flattens what the caller knows about an app. vmmd stores none of
@@ -2707,6 +2713,12 @@ message StartDatabaseRequest {
   // restore_until_end lets a restore whose archive ends before its target
   // recover to the end of the archive (the source's node is lost).
   bool restore_until_end = 10;
+  // A standby boot (ADR-1027 production class): the volume becomes a hot
+  // standby of the database's primary, which runs on database node
+  // primary_node, whose vmmd is at primary_target. Both or neither; never
+  // with a restore.
+  string primary_node = 11;
+  string primary_target = 12;
 }
 
 message StartDatabaseResponse {
@@ -2731,6 +2743,11 @@ message DatabaseControlRequest {
   string sql = 3;
   // flush_wal only: the instant the archive must cover.
   google.protobuf.Timestamp after = 4;
+  // replication only: the mode to set (off, async, sync); empty reports.
+  string replication = 5;
+  // replication only: the database node allowed to stream from this
+  // primary. Required with async and sync; off forgets it.
+  string standby_node = 6;
 }
 
 message DatabaseControlResponse {
@@ -2744,6 +2761,17 @@ message DatabaseControlResponse {
   string backup = 5;
   // A restored database's last replayed commit.
   google.protobuf.Timestamp recovered_to = 6;
+  // replication only: the primary's view of its standby.
+  DatabaseReplicationStatus replication = 7;
+}
+
+message DatabaseReplicationStatus {
+  // off, async or sync.
+  string mode = 1;
+  bool streaming = 2;
+  // Commits wait for the standby, which has flushed every one so far.
+  bool synchronous = 3;
+  int64 lag_bytes = 4;
 }
 
 message DatabaseSessionFrame {

@@ -37,18 +37,26 @@ func TestDatabaseNodeServesOnlyDatabaseRPCs(t *testing.T) {
 }
 
 func TestDatabaseNodeAdmitsOnlySchedulerAndProxy(t *testing.T) {
-	v := databaseNodeVerifier()
-	for _, cn := range []string{"schedd.faas", "pgproxyd.faas"} {
+	v := databaseNodeVerifier(admitPeers{"db-2.faas": true})
+	for _, cn := range []string{"schedd.faas", "pgproxyd.faas", "db-2.faas"} {
 		if err := v.LookupCN(cn); err != nil {
 			t.Errorf("%s refused: %v", cn, err)
 		}
 	}
-	for _, cn := range []string{"gatewayd.faas", "builderd.faas", "imaged.faas", "fsn-2.faas"} {
+	for _, cn := range []string{"gatewayd.faas", "builderd.faas", "imaged.faas", "fsn-2.faas", "db-3.faas"} {
 		if err := v.LookupCN(cn); err == nil {
 			t.Errorf("%s admitted to a database node", cn)
 		}
 	}
+	if err := databaseNodeVerifier(nil).LookupCN("db-2.faas"); err == nil {
+		t.Error("a node without peers admitted a database node")
+	}
 }
+
+// admitPeers stands in for the vmmd server's current standby nodes.
+type admitPeers map[string]bool
+
+func (a admitPeers) AdmitsDatabasePeer(cn string) bool { return a[cn] }
 
 func TestRunDatabaseNodeRequiresDatabaseVMs(t *testing.T) {
 	if err := runDatabaseNode(context.Background(), &Config{}, nil, nil, runDeps{}); err == nil {

@@ -24,6 +24,10 @@ database_vmmd_postgres_images:
 # Their memory is outside schedd's accounting: lower this node's
 # admission_ceiling_mb by count x (mem_mib + 8) for every entry.
 database_vmmd_spares: []
+# Run production-class standbys (ADR-1027): the node dials other database
+# nodes' vmmd with its vmmd/database-peer-client leaf. Turn on once the
+# node's PKI bundle carries that leaf (bundles issued before it lack it).
+database_vmmd_standbys: false
 # Host memory kept out of faas-db.slice for vmmd, pgproxyd and the OS. The
 # slice's MemoryMax fences every database VM together; schedd's
 # admission_ceiling_mb for this node should stay below it.

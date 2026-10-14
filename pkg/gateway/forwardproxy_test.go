@@ -477,6 +477,10 @@ func (f *fakeVmmdClient) DatabaseSession(context.Context, ...grpc.CallOption) (g
 	panic("DatabaseSession: not stubbed")
 }
 
+func (f *fakeVmmdClient) DatabaseReplication(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	panic("DatabaseReplication: not stubbed")
+}
+
 // All other RPCs panic — the forwarder only calls ForwardHTTPStream.
 func (f *fakeVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed")

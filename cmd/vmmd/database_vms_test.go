@@ -82,6 +82,7 @@ func TestDatabaseVmmdTemplateLoads(t *testing.T) {
 		"{{ fc_release | regex_replace('^v', '') }}", "1.7.0",
 		"{{ database_vmmd_volume_root }}", "/srv/db/volumes",
 		"{% if dbbackupd_enabled | default(false) | bool %}\n", "",
+		"{% if database_vmmd_standbys | bool %}\n", "",
 		"{% endif %}\n", "",
 		"{{ dbbackupd_socket_path | default('/run/faas-dbbackupd/dbbackupd.sock') }}", "/run/faas-dbbackupd/dbbackupd.sock",
 		"{% for major, image in database_vmmd_postgres_images.items() %}\n", "",
@@ -107,7 +108,8 @@ func TestDatabaseVmmdTemplateLoads(t *testing.T) {
 	}
 	if cfg.Role != "database" || cfg.ListenAddr != "tcp://100.64.7.1:50051" || cfg.TLSCertPath != "/etc/faas/tls/vmmd/server.crt" || cfg.DatabaseVMs == nil ||
 		cfg.DatabaseVMs.KernelPath != "/srv/fc/kernel/1.7.0" || cfg.DatabaseVMs.Images["17"] != testPinnedImage ||
-		cfg.DatabaseVMs.ArchiveSocket != "/run/faas-dbbackupd/dbbackupd.sock" || len(cfg.DatabaseVMs.Spares) != 1 || cfg.DatabaseVMs.Spares[0].Count != 2 {
+		cfg.DatabaseVMs.ArchiveSocket != "/run/faas-dbbackupd/dbbackupd.sock" || len(cfg.DatabaseVMs.Spares) != 1 || cfg.DatabaseVMs.Spares[0].Count != 2 ||
+		cfg.DatabaseVMs.PeerTLSCertPath != "/etc/faas/tls/vmmd/database-peer-client.crt" || cfg.DatabaseVMs.PeerTLSKeyPath != "/etc/faas/tls/vmmd/database-peer-client.key" {
 		t.Fatalf("loaded %+v / %+v", cfg, cfg.DatabaseVMs)
 	}
 	if _, _, err := cfg.DatabaseVMs.runtimeConfig(fcvm.NewAllocator()); err != nil {

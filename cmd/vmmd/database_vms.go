@@ -56,6 +56,12 @@ type DatabaseVMConfig struct {
 	// ArchiveQuotaFactor caps each database's archive on the node at that
 	// many times its volume size (default 10; negative is no cap).
 	ArchiveQuotaFactor int `toml:"archive_quota_factor"`
+	// PeerTLSCertPath and PeerTLSKeyPath are the node's own identity
+	// (<id>.faas) for dialing other database nodes, which a standby here
+	// needs to stream from its primary there (ADR-1027 production class).
+	// Without them the node runs no standbys.
+	PeerTLSCertPath string `toml:"peer_tls_cert_path"`
+	PeerTLSKeyPath  string `toml:"peer_tls_key_path"`
 }
 
 // DatabaseSpareConfig is one spare pool.

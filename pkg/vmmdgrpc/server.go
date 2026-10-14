@@ -330,6 +330,9 @@ type Server struct {
 	// databases runs database VMs on database nodes (ADR-1027). nil keeps
 	// the database RPCs UNIMPLEMENTED.
 	databases DatabaseRuntime
+	// databasePeers carries standbys' replication streams between
+	// database nodes (database_replication.go).
+	databasePeers databasePeers
 }
 
 // New wires the server. ops may be nil (noop metrics), log may be nil

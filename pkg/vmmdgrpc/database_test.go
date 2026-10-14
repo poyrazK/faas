@@ -119,6 +119,12 @@ func (f *fakeDatabaseRuntime) Dial(context.Context, string) (net.Conn, error) {
 	return client, nil
 }
 
+// DialReplication echoes like Dial and records the call.
+func (f *fakeDatabaseRuntime) DialReplication(ctx context.Context, id string) (net.Conn, error) {
+	f.calls = append(f.calls, "replication "+id)
+	return f.Dial(ctx, id)
+}
+
 // unixCaller models a caller on vmmd's unix socket (no TLS).
 func unixCaller() context.Context {
 	return peer.NewContext(context.Background(), &peer.Peer{})

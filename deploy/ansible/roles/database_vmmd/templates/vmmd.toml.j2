@@ -14,6 +14,12 @@ volume_root = "{{ database_vmmd_volume_root }}"
 # Every database VM archives its WAL through dbbackupd (ADR-1027).
 archive_socket = "{{ dbbackupd_socket_path | default('/run/faas-dbbackupd/dbbackupd.sock') }}"
 {% endif %}
+{% if database_vmmd_standbys | bool %}
+# Standbys here stream from their primaries on other database nodes as
+# this node (ADR-1027 production class).
+peer_tls_cert_path = "/etc/faas/tls/vmmd/database-peer-client.crt"
+peer_tls_key_path = "/etc/faas/tls/vmmd/database-peer-client.key"
+{% endif %}
 
 [database_vms.images]
 {% for major, image in database_vmmd_postgres_images.items() %}

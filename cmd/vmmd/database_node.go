@@ -36,6 +36,7 @@ var databaseMethods = map[string]bool{
 	vmmdpb.Vmmd_StopDatabase_FullMethodName:         true,
 	vmmdpb.Vmmd_DatabaseControl_FullMethodName:      true,
 	vmmdpb.Vmmd_DatabaseSession_FullMethodName:      true,
+	vmmdpb.Vmmd_DatabaseReplication_FullMethodName:  true,
 }
 
 func databaseOnlyUnary(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -52,13 +53,46 @@ func databaseOnlyStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerIn
 	return handler(srv, ss)
 }
 
-// databaseNodeVerifier admits the two callers of a database node: schedd's
-// database scheduler and pgproxyd. The RPCs check which of them each call
+// databaseNodeVerifier admits the callers of a database node: schedd's
+// database scheduler, pgproxyd, and the nodes of standbys of databases
+// here, which peers reports. The RPCs check which of them each call
 // accepts.
-func databaseNodeVerifier() wire.NodeVerifier {
+func databaseNodeVerifier(peers databasePeerAdmitter) wire.NodeVerifier {
 	v := wire.NewInmemNodeVerifier()
 	v.Set([]string{"schedd.faas", "pgproxyd.faas"})
-	return v
+	return databaseCallerVerifier{fixed: v, peers: peers}
+}
+
+// databasePeerAdmitter reports whether a certificate identity is a
+// current standby's node (*vmmdgrpc.Server).
+type databasePeerAdmitter interface {
+	AdmitsDatabasePeer(cn string) bool
+}
+
+type databaseCallerVerifier struct {
+	fixed *wire.InmemNodeVerifier
+	peers databasePeerAdmitter
+}
+
+func (v databaseCallerVerifier) LookupCN(cn string) error {
+	if err := v.fixed.LookupCN(cn); err == nil || v.peers == nil || !v.peers.AdmitsDatabasePeer(cn) {
+		return err
+	}
+	return nil
+}
+
+// databasePeerDialer reaches another database node's vmmd as this node;
+// nil when the node has no peer identity.
+func databasePeerDialer(cfg *Config) (vmmdgrpc.DatabasePeerDialer, error) {
+	c := cfg.DatabaseVMs
+	if c.PeerTLSCertPath == "" && c.PeerTLSKeyPath == "" {
+		return nil, nil
+	}
+	dial, err := vmmdgrpc.NewDatabasePeerDialer(c.PeerTLSCertPath, c.PeerTLSKeyPath, cfg.TLSCAPath)
+	if err != nil {
+		return nil, fmt.Errorf("vmmd: database peer TLS: %w", err)
+	}
+	return dial, nil
 }
 
 // runDatabaseNode is vmmd on a database node (ADR-1027). It runs database
@@ -85,7 +119,15 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 		go keepDatabaseSpares(ctx, rt, log)
 	}
 
-	serverTLS, err := cfg.LoadServerTLSWithVerifier(databaseNodeVerifier())
+	server := vmmdgrpc.New(nil, ops, "", log).WithDatabases(rt)
+	peerDial, err := databasePeerDialer(cfg)
+	if err != nil {
+		return err
+	}
+	if peerDial != nil {
+		server.WithDatabasePeers(peerDial)
+	}
+	serverTLS, err := cfg.LoadServerTLSWithVerifier(databaseNodeVerifier(server))
 	if err != nil {
 		return fmt.Errorf("vmmd: load server TLS: %w", err)
 	}
@@ -95,7 +137,7 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 		grpc.ChainUnaryInterceptor(databaseOnlyUnary),
 		grpc.ChainStreamInterceptor(databaseOnlyStream),
 	)...)
-	vmmdgrpc.New(nil, ops, "", log).WithDatabases(rt).Register(gsrv)
+	server.Register(gsrv)
 	listen := deps.listen
 	if listen == nil {
 		listen = wire.ListenAs

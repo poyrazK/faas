@@ -21,7 +21,7 @@ import (
 // the relay is the binding, and it only ever joins a database to itself.
 
 // ReplicationDialer opens a replication stream to the database's primary.
-type ReplicationDialer func(ctx context.Context) (net.Conn, error)
+type ReplicationDialer func(ctx context.Context) (io.ReadWriteCloser, error)
 
 const (
 	// replicationDialTimeout bounds reaching the primary; the guest's

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -121,7 +122,7 @@ func TestMetalStandbyReplicationAndFailover(t *testing.T) {
 
 	// The standby seeds itself from the primary over the relay.
 	standbyBoot := boot
-	standbyBoot.Primary = func(ctx context.Context) (net.Conn, error) { return primary.DialReplication(ctx, id) }
+	standbyBoot.Primary = func(ctx context.Context) (io.ReadWriteCloser, error) { return primary.DialReplication(ctx, id) }
 	seedStarted := time.Now()
 	if err := standby.Start(ctx, standbyBoot); err != nil {
 		t.Fatalf("start standby: %v", err)

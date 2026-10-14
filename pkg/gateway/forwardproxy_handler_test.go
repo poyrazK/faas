@@ -177,6 +177,10 @@ func (s *stubVmmdClient) DatabaseSession(context.Context, ...grpc.CallOption) (g
 	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
 }
 
+func (s *stubVmmdClient) DatabaseReplication(context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[vmmdpb.DatabaseSessionFrame, vmmdpb.DatabaseSessionFrame], error) {
+	return nil, status.Error(codes.Unimplemented, "database RPCs are not used by gateway tests")
+}
+
 func (s *stubVmmdClient) CreateFromSnapshot(context.Context, *vmmdpb.CreateFromSnapshotRequest, ...grpc.CallOption) (*vmmdpb.WakeResponse, error) {
 	panic("CreateFromSnapshot: not stubbed in handler integration test")
 }

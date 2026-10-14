@@ -260,6 +260,10 @@ func Roles() []Role {
 		// schedd and opens DatabaseSession streams on vmmd.
 		{CommonName: "pgproxyd.faas", Kind: KindClient, Directory: "pgproxyd", Filename: "schedd-client", AltNames: ProductionSANs("pgproxyd.faas")},
 		{CommonName: "pgproxyd.faas", Kind: KindClient, Directory: "pgproxyd", Filename: "vmmd-client", AltNames: ProductionSANs("pgproxyd.faas")},
+		// ADR-1027 production class: a database node's vmmd dials another
+		// database node's vmmd for its standbys' replication streams, as
+		// the node itself (the vmmd directory carries the node identity).
+		{CommonName: "vmmd.faas", Kind: KindClient, Directory: "vmmd", Filename: "database-peer-client", AltNames: ProductionSANs("vmmd.faas")},
 	}
 
 	all := make([]Role, 0, len(serverRoles)+len(clientRoles))

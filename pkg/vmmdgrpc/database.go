@@ -50,6 +50,9 @@ type DatabaseRuntime interface {
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
 	// Dial opens a stream to the VM's PostgreSQL data port only.
 	Dial(ctx context.Context, id string) (net.Conn, error)
+	// DialReplication opens a standby's replication stream to a running
+	// primary's guest (ADR-1027 production class).
+	DialReplication(ctx context.Context, id string) (net.Conn, error)
 }
 
 // Platform client identities allowed on the database RPCs.
@@ -215,6 +218,11 @@ func (s *Server) StartDatabase(ctx context.Context, req *vmmdpb.StartDatabaseReq
 	if err != nil {
 		return nil, err
 	}
+	if req.GetPrimaryNode() != "" {
+		if boot.Primary, err = s.databasePeers.dialer(req.GetDatabaseId(), req.GetPrimaryNode(), req.GetPrimaryTarget()); err != nil {
+			return nil, err
+		}
+	}
 	if err := rt.Start(ctx, boot); err != nil {
 		return nil, s.databaseStatus("start", err)
 	}
@@ -252,6 +260,9 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 	if (boot.RestoreSource == "") != boot.RestoreTarget.IsZero() || (boot.RestoreUntilEnd && boot.RestoreSource == "") {
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a restore names its source and target")
 	}
+	if (req.GetPrimaryNode() == "") != (req.GetPrimaryTarget() == "") || (req.GetPrimaryNode() != "" && boot.RestoreSource != "") {
+		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a standby names its primary's node and target and is not a restore")
+	}
 	return boot, nil
 }
 
@@ -276,6 +287,9 @@ func (s *Server) StopDatabase(ctx context.Context, req *vmmdpb.StopDatabaseReque
 	if err != nil {
 		return nil, err
 	}
+	// A stopped primary has no standby to admit; the next start attaches
+	// one again.
+	s.databasePeers.forget(req.GetDatabaseId())
 	if err := rt.Stop(ctx, req.GetDatabaseId()); err != nil {
 		return nil, s.databaseStatus("stop", err)
 	}
@@ -290,7 +304,7 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if err != nil {
 		return nil, err
 	}
-	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql()}
+	control := dbguest.Request{Op: dbguest.Op(req.GetOp()), SQL: req.GetSql(), Replication: dbguest.ReplicationMode(req.GetReplication())}
 	if req.GetAfter() != nil {
 		control.After = req.GetAfter().AsTime()
 	}
@@ -299,6 +313,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if err := control.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid database control request")
+	}
+	if err := s.databasePeers.noteStandby(req.GetDatabaseId(), control, req.GetStandbyNode()); err != nil {
+		return nil, err
 	}
 	resp, err := rt.Control(ctx, req.GetDatabaseId(), control)
 	if err != nil {
@@ -309,6 +326,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if !resp.RecoveredTo.IsZero() {
 		out.RecoveredTo = timestamppb.New(resp.RecoveredTo)
+	}
+	if r := resp.Replication; r != nil {
+		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}
 	}
 	return out, nil
 }
@@ -362,9 +382,23 @@ func (s *Server) DatabaseSession(stream vmmdpb.Vmmd_DatabaseSessionServer) error
 		return s.databaseStatus("session", err)
 	}
 	defer func() { _ = conn.Close() }()
-	if data := first.GetData(); len(data) > 0 {
-		if _, err := conn.Write(data); err != nil {
-			return nil
+	spliceFrames(stream, conn, first.GetData())
+	return nil
+}
+
+// frameStream is either side of a DatabaseSession or DatabaseReplication
+// stream.
+type frameStream interface {
+	Send(*vmmdpb.DatabaseSessionFrame) error
+	Recv() (*vmmdpb.DatabaseSessionFrame, error)
+}
+
+// spliceFrames relays between a frame stream and a VM connection, after
+// writing first, until either side ends.
+func spliceFrames(stream frameStream, conn net.Conn, first []byte) {
+	if len(first) > 0 {
+		if _, err := conn.Write(first); err != nil {
+			return
 		}
 	}
 	done := make(chan struct{}, 2)
@@ -396,5 +430,4 @@ func (s *Server) DatabaseSession(stream vmmdpb.Vmmd_DatabaseSessionServer) error
 		}
 	}()
 	<-done
-	return nil
 }

@@ -87,6 +87,7 @@ const (
 	Vmmd_StopDatabase_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopDatabase"
 	Vmmd_DatabaseControl_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseControl"
 	Vmmd_DatabaseSession_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/DatabaseSession"
+	Vmmd_DatabaseReplication_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/DatabaseReplication"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -582,6 +583,12 @@ type VmmdClient interface {
 	// names the database; every later frame carries raw protocol bytes. The
 	// lifecycle RPCs above accept only schedd; this one only pgproxyd.
 	DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error)
+	// DatabaseReplication carries one replication stream from a standby's
+	// node to its running primary's guest (ADR-1027 production class). The
+	// first client frame names the database; every later frame carries raw
+	// protocol bytes. Only the database node schedd named as the database's
+	// standby (DatabaseControlRequest.standby_node) may call it.
+	DatabaseReplication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error)
 }
 
 type vmmdClient struct {
@@ -1299,6 +1306,19 @@ func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOptio
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_DatabaseSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame]
 
+func (c *vmmdClient) DatabaseReplication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DatabaseSessionFrame, DatabaseSessionFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_DatabaseReplicationClient = grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame]
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -1792,6 +1812,12 @@ type VmmdServer interface {
 	// names the database; every later frame carries raw protocol bytes. The
 	// lifecycle RPCs above accept only schedd; this one only pgproxyd.
 	DatabaseSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error
+	// DatabaseReplication carries one replication stream from a standby's
+	// node to its running primary's guest (ADR-1027 production class). The
+	// first client frame names the database; every later frame carries raw
+	// protocol bytes. Only the database node schedd named as the database's
+	// standby (DatabaseControlRequest.standby_node) may call it.
+	DatabaseReplication(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -1996,6 +2022,9 @@ func (UnimplementedVmmdServer) DatabaseControl(context.Context, *DatabaseControl
 }
 func (UnimplementedVmmdServer) DatabaseSession(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error {
 	return status.Error(codes.Unimplemented, "method DatabaseSession not implemented")
+}
+func (UnimplementedVmmdServer) DatabaseReplication(grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]) error {
+	return status.Error(codes.Unimplemented, "method DatabaseReplication not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -3083,6 +3112,13 @@ func _Vmmd_DatabaseSession_Handler(srv interface{}, stream grpc.ServerStream) er
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_DatabaseSessionServer = grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]
 
+func _Vmmd_DatabaseReplication_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).DatabaseReplication(&grpc.GenericServerStream[DatabaseSessionFrame, DatabaseSessionFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_DatabaseReplicationServer = grpc.BidiStreamingServer[DatabaseSessionFrame, DatabaseSessionFrame]
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3366,6 +3402,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "DatabaseSession",
 			Handler:       _Vmmd_DatabaseSession_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "DatabaseReplication",
+			Handler:       _Vmmd_DatabaseReplication_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
