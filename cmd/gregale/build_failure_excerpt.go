@@ -72,7 +72,7 @@ func buildLogNoise(line string) bool {
 // command after a build-stage deploy failure. A log read failure prints only
 // the command.
 func printBuildFailureExcerpt(ctx context.Context, c *Client, w io.Writer, slug string, d api.DeploymentResponse) {
-	if !buildStageFailure(d) || slug == "" || d.ID == "" {
+	if jsonOutput || !buildStageFailure(d) || slug == "" || d.ID == "" {
 		return
 	}
 	if c != nil {
