@@ -71,15 +71,17 @@ func TestFrozenTierMetal(t *testing.T) {
 	if err := json.Unmarshal(raw, &dep); err != nil {
 		t.Fatalf("decode deployment: %v", err)
 	}
-	if _, err := e2etest.WaitForDeploymentLive(context.Background(), t, pool, dep.ID, 90*time.Second); err != nil {
+	// Imaging takes about a minute on the shared 2-vCPU test node.
+	if _, err := e2etest.WaitForDeploymentLive(context.Background(), t, pool, dep.ID, 5*time.Minute); err != nil {
 		t.Fatalf("deployment did not go live: %v", err)
 	}
 	// Only function apps are frozen. A function deploy needs a function
 	// runner image built in a builder VM; this test deploys the prebuilt
 	// hello image as an app and then marks the app a function, which is all
-	// the frozen tier reads.
+	// the frozen tier reads. The runtime stays empty: a runtime would make
+	// wakes boot that runner's base drive instead of the deployed image's.
 	if _, err := pool.Exec(context.Background(),
-		`update apps set type = 'function', runtime = 'binary' where id = $1`, appID); err != nil {
+		`update apps set type = 'function' where id = $1`, appID); err != nil {
 		t.Fatalf("mark app a function: %v", err)
 	}
 	setAppIdleTimeout(t, h, key, "frozen", api.IdleTimeoutFloorSeconds)
@@ -100,7 +102,7 @@ func TestFrozenTierMetal(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("no instance was frozen within 4 minutes")
 		}
-		getFrozenApp(t, client, url, host)
+		getFrozenApp(t, client, url, host, key)
 		ins, err := e2etest.WaitForInstanceState(context.Background(), t, pool, appID, state.StateFrozen, 45*time.Second)
 		if err != nil {
 			t.Logf("not frozen yet (states %s); serving again", instanceStates(ins))
@@ -113,7 +115,7 @@ func TestFrozenTierMetal(t *testing.T) {
 
 	// The next request thaws the same VM.
 	started := time.Now()
-	wake := getFrozenApp(t, client, url, host)
+	wake := getFrozenApp(t, client, url, host, key)
 	thawed := time.Since(started)
 	ins, err := e2etest.WaitForInstanceState(context.Background(), t, pool, appID, state.StateRunning, 10*time.Second)
 	if err != nil {
@@ -157,13 +159,15 @@ func TestFrozenTierMetal(t *testing.T) {
 
 // getFrozenApp sends one request through the gateway and returns the
 // x-faas-wake tier it reports.
-func getFrozenApp(t *testing.T, client *http.Client, url, host string) string {
+func getFrozenApp(t *testing.T, client *http.Client, url, host, key string) string {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Host = host
+	// Pro apps default to bearer auth for public requests.
+	req.Header.Set("Authorization", "Bearer "+key)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	resp, err := client.Do(req.WithContext(ctx))
