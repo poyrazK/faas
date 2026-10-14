@@ -1267,7 +1267,7 @@ func collectSecretAudit(ctx context.Context, client *api.Client, age time.Durati
 			secretAge := now.Sub(updated)
 			report.StaleSecrets = append(report.StaleSecrets, secretAuditFinding{
 				AppSlug: secret.AppSlug, Scope: scopeOrDefault(secret.Scope), Key: secret.Key,
-				Class: secretClassLabel(secret.SecretClass), UpdatedAt: secret.UpdatedAt, Age: secretAge.String(),
+				Class: secretClassLabel(secret.SecretClass), UpdatedAt: secret.UpdatedAt, Age: secretAge.Round(time.Second).String(),
 			})
 		}
 		if page.NextBefore == "" {
