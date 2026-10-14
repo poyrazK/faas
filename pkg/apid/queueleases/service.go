@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
 )
@@ -218,10 +219,8 @@ func (s Service) Nack(w http.ResponseWriter, r *http.Request, acct state.Account
 		if req.DelaySeconds < 0 || req.DelaySeconds > api.QueueBindingRetryMaxSeconds {
 			return state.QueueLeaseOutcome{}, state.ErrInvalidArgument
 		}
-		lastError := req.Error
-		if len(lastError) > errorMaxBytes {
-			lastError = lastError[:errorMaxBytes]
-		}
+		// Postgres rejects invalid UTF-8, so the cut must not split a rune.
+		lastError := safetext.Truncate(req.Error, errorMaxBytes)
 		return store.NackQueueLeases(r.Context(), acct.ID, app.ID, r.PathValue("queue"), req.Receipts,
 			time.Duration(req.DelaySeconds)*time.Second, lastError)
 	})
