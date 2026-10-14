@@ -81,6 +81,17 @@ func HelloQueueWorkerImage(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack"})
 }
 
+// HelloGitOpsRequestImage adds bounded slow requests for native cutover tests.
+func HelloGitOpsRequestImage(repo, body string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, body, false, 8080, []string{"/hello-server", "-gitops-resilience"})
+}
+
+// HelloGitOpsWorkerImage can hold a specifically marked customer delivery.
+// Qualification smoke payloads remain immediate and never enter that hold.
+func HelloGitOpsWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience"})
+}
+
 // ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
 // full-rootfs OCI images and never launch a source builder. imaged still stages
 // and validates its builder base before subscribing, so this image carries the
@@ -591,6 +602,7 @@ type FakeRegistry struct {
 	authUser string
 	authPass string
 	tokens   map[string]struct{} // issued bearer tokens; opaque random strings
+	holds    map[string]*registryRepositoryHold
 }
 
 // NewFakeRegistry returns a running registry bound to 127.0.0.1. The caller
@@ -727,12 +739,21 @@ func (f *FakeRegistry) Host() string {
 // AddImage installs an image under repo (e.g. "library/hello"). Returns the
 // digest-pinned reference the e2e test passes to apid.
 func (f *FakeRegistry) AddImage(repo string, img fakeImage) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.images[repo] = img
 	return fmt.Sprintf("%s/%s@%s", f.Host(), repo, img.manifestDigest)
 }
 
 // Close shuts down the httptest server.
-func (f *FakeRegistry) Close() { f.srv.Close() }
+func (f *FakeRegistry) Close() {
+	f.mu.Lock()
+	for _, hold := range f.holds {
+		hold.release()
+	}
+	f.mu.Unlock()
+	f.srv.Close()
+}
 
 // route dispatches /v2/<repo>/manifests/<ref> and /v2/<repo>/blobs/<digest>.
 // No auth — the harness is local-only.
@@ -760,10 +781,21 @@ func (f *FakeRegistry) route(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	f.mu.Lock()
 	img, ok := f.images[repo]
+	hold := f.holds[repo]
+	f.mu.Unlock()
 	if !ok {
 		http.Error(w, "unknown repo", http.StatusNotFound)
 		return
+	}
+	if hold != nil {
+		hold.enteredOnce.Do(func() { close(hold.entered) })
+		select {
+		case <-hold.done:
+		case <-r.Context().Done():
+			return
+		}
 	}
 	switch kind {
 	case "manifests":
