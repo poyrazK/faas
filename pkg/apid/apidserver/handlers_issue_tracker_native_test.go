@@ -632,8 +632,17 @@ type nativeLinearLifecycleFake struct {
 	unsupported   bool
 	uncertain     bool
 	workflowErr   bool
+	workflows     []issuetracker.LinearWorkflowState
+	workflowReads int
 }
 
+func (p *nativeLinearLifecycleFake) ListLinearWorkflowStates(_ context.Context, token, team string) ([]issuetracker.LinearWorkflowState, error) {
+	p.workflowReads++
+	if token != "lin_api_secret" || team != p.status.TeamID {
+		return nil, errors.New("wrong workflow scope")
+	}
+	return p.workflows, nil
+}
 func (p *nativeLinearLifecycleFake) VerifyLinearWorkflowState(_ context.Context, token, team, id, wanted string) error {
 	if token != "lin_api_secret" || team != p.status.TeamID || p.workflowErr {
 		return errors.New("workflow unavailable")
@@ -653,6 +662,9 @@ func (p *nativeLinearLifecycleFake) ReadStatus(_ context.Context, _ string, toke
 func (p *nativeLinearLifecycleFake) SetStatus(_ context.Context, expected issuetracker.Status, token, wanted, selected string) (issuetracker.Status, error) {
 	if token != "lin_api_secret" {
 		return issuetracker.Status{}, errors.New("wrong credential")
+	}
+	if p.workflowErr {
+		return issuetracker.Status{}, errors.New("selected workflow unavailable")
 	}
 	if expected != p.status {
 		return issuetracker.Status{}, issuetracker.ErrStatusChanged
@@ -827,14 +839,16 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	t.Cleanup(func() { *apidserver.SetSecretRecipient = oldRecipient; *apidserver.MfaIdentities = oldIDs })
 	apidserver.IssueNativeSetLinearVerifier(e, &nativeLinearFake{})
 	team := uuid.NewString()
-	provider := &nativeLinearLifecycleFake{status: issuetracker.Status{Provider: "linear", URL: link.URL, ID: uuid.NewString(), TeamID: team, StateID: uuid.NewString(), State: "resolved"}}
+	open, resolved := uuid.NewString(), uuid.NewString()
+	provider := &nativeLinearLifecycleFake{status: issuetracker.Status{Provider: "linear", URL: link.URL, ID: uuid.NewString(), TeamID: team, StateID: resolved, State: "resolved"}}
+	provider.workflows = []issuetracker.LinearWorkflowState{{ID: open, TeamID: team, Name: "In progress", Type: "started", State: "open"}, {ID: resolved, TeamID: team, Name: "Done", Type: "completed", State: "resolved"}}
 	apidserver.IssueNativeSetClients(e, nil, provider)
 	page := "/dashboard/apps/" + app.Slug + "/issues?issue=" + accepted.IssueID
 	get := httptest.NewRequest("GET", page, nil)
 	e.AddAdminSession(t, get)
 	response := httptest.NewRecorder()
 	(*e.H()).ServeHTTP(response, get)
-	if response.Code != 200 || provider.reads != 0 || !strings.Contains(response.Body.String(), "Review tracker sync") {
+	if response.Code != 200 || provider.reads != 0 || provider.workflowReads != 0 || !strings.Contains(response.Body.String(), "Review tracker sync") {
 		t.Fatal("page load fetched provider or omitted controls", response.Code, response.Body.String())
 	}
 	var csrf *http.Cookie
@@ -886,16 +900,34 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 		}
 		return html.UnescapeString(match[1])
 	}
-	open := uuid.NewString()
-	resolved := uuid.NewString()
+	if !strings.Contains(preview.Body.String(), `<select name="linear_state_id"`) || !strings.Contains(preview.Body.String(), "In progress (started)") {
+		t.Fatal("named alignment picker missing")
+	}
 	push := url.Values{"action": {"push"}, "provider": {"linear"}, "link_id": {link.ID}, "source_state": {"open"}, "expected_revision": {"0"}, "expected": {expected(preview)}, "linear_state_id": {open}}
+	provider.workflowErr = true
+	if out := post("/tracker-sync", push, true); out.Code != 502 || provider.writes != 0 {
+		t.Fatal("stale selected workflow mutated provider", out.Code)
+	}
+	provider.workflowErr = false
 	if out := post("/tracker-sync", push, true); out.Code != 303 || provider.writes != 1 || provider.status.StateID != open {
 		t.Fatal("manual alignment failed", out.Code, out.Body.String())
 	}
 	preview = post("/tracker-sync", previewForm(), true)
 	enable := url.Values{"action": {"enable"}, "provider": {"linear"}, "link_id": {link.ID}, "source_state": {"open"}, "expected_revision": {"0"}, "expected": {expected(preview)}, "linear_open_state_id": {open}, "linear_resolved_state_id": {resolved}}
+	if !strings.Contains(preview.Body.String(), `<select name="linear_open_state_id"`) || !strings.Contains(preview.Body.String(), "Done (completed)") {
+		t.Fatal("named delegation pickers missing")
+	}
+	provider.workflowErr = true
+	if out := post("/tracker-sync", enable, true); out.Code != 502 || provider.writes != 1 {
+		t.Fatal("stale mapping enabled", out.Code)
+	}
+	provider.workflowErr = false
 	if out := post("/tracker-sync", enable, true); out.Code != 303 || provider.writes != 1 {
 		t.Fatal("delegation failed", out.Code, out.Body.String())
+	}
+	saved := post("/tracker-sync", previewForm(), true)
+	if saved.Code != 200 || !strings.Contains(saved.Body.String(), "Configured open workflow: <strong>In progress</strong>") || !strings.Contains(saved.Body.String(), "<strong>Done</strong>") {
+		t.Fatal("stored workflow names missing", saved.Code, saved.Body.String())
 	}
 	if out := post("/tracker-sync", enable, true); out.Code != 409 {
 		t.Fatal("stale policy form accepted", out.Code)

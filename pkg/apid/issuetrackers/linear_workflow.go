@@ -52,3 +52,39 @@ func (s LinearService) VerifyWorkflowMapping(ctx context.Context, mapping Linear
 	}
 	return observed, nil
 }
+
+// ReadWithWorkflows pins the connection and group across catalog discovery and
+// the native issue snapshot. Page loads must not call this provider operation.
+func (s LinearService) ReadWithWorkflows(ctx context.Context) (api.NativeLinearIssueTrackerStatus, []issuetracker.LinearWorkflowState, error) {
+	lister, ok := s.Provider.(issuetracker.LinearWorkflowLister)
+	if !ok {
+		return api.NativeLinearIssueTrackerStatus{}, nil, unavailable()
+	}
+	p, err := s.prepare(ctx)
+	if err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, err
+	}
+	token, err := s.credentials(ctx, p)
+	if err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, err
+	}
+	catalog, err := lister.ListLinearWorkflowStates(ctx, token, p.Connection.Linear.Scope.Identity.TeamID)
+	if err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, mappedError(err)
+	}
+	catalog, err = issuetracker.NormalizeLinearWorkflowStates(catalog, p.Connection.Linear.Scope.Identity.TeamID)
+	if err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, unavailable()
+	}
+	if err := s.fresh(ctx, p); err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, err
+	}
+	snapshot, err := s.Read(ctx)
+	if err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, err
+	}
+	if err := s.fresh(ctx, p); err != nil {
+		return api.NativeLinearIssueTrackerStatus{}, nil, err
+	}
+	return snapshot, catalog, nil
+}

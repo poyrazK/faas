@@ -1190,14 +1190,13 @@ review and explicit re-enable.
 
 Choose **Review tracker sync** to fetch a native provider preview. If the
 lifecycles match, explicitly enable or re-enable future Gregale-to-provider
-pushes. For Linear, enter distinct open and completed workflow UUIDs from the
-connected team; Gregale verifies both. There is currently no named workflow
-picker. A changed connection, provider snapshot, group or policy requires a new
+pushes. For Linear, choose named open and completed workflows from the connected
+team; Gregale verifies both again before enabling. The review also shows current
+names for stored destinations and asks for a replacement if one is unavailable. A changed connection, provider snapshot, group or policy requires a new
 review.
 
 If lifecycles differ, disable automatic sync first, review again and use **Push
-Gregale … to linked ticket** to align the provider. Linear alignment requires an
-explicit workflow UUID for the desired state. For inbound resolution, use explicit
+Gregale … to linked ticket** to align the provider. Linear alignment uses a named workflow selector for the desired state. For inbound resolution, use explicit
 CLI sync with a fixing deployment. Inspect unconfirmed writes before manually
 aligning or re-enabling: disabling cannot recall a dispatched provider mutation.
 
@@ -1205,3 +1204,12 @@ aligning or re-enabling: disabling cannot recall a dispatched provider mutation.
 access is revoked or disconnected. Successful changes return to the issue page;
 failed or stale forms report the existing API problem so you can reload and
 review again. See [ADR-1219](adr/1219-dashboard-tracker-sync-controls.md).
+
+
+Linear workflow discovery runs only during owner-requested review, never on a
+normal page load or disable. Archived, canceled and unfamiliar states are omitted.
+If an open or completed destination is missing, automatic enable stays unavailable.
+The catalog is bounded to 200 scanned states across four pages of 50; failed or
+incomplete discovery returns no partial picker. Names are bounded to 256 bytes
+and pagination cursors to 512 bytes. CLI sync and delegation still accept explicit
+workflow UUIDs. See [ADR-1220](adr/1220-named-linear-workflow-picker.md).

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"html/template"
 	"strings"
 	"testing"
@@ -67,7 +68,11 @@ func TestIssueTrackerPreviewEscapesSnapshotAndRequiresAlignment(t *testing.T) {
 	view := IssueTrackerSyncPreview{AppSlug: "payments", IssueID: "group", LinkID: "link", Provider: "linear", CSRF: "csrf", SourceState: "open", Aligned: true, ExpectedJSON: `{"value":"<script>attack</script>"}`}
 	for _, aligned := range []bool{true, false} {
 		view.Aligned = aligned
+		view.CanEnable = aligned
 		view.CanPush = !aligned
+		view.OpenWorkflows = []issuetracker.LinearWorkflowState{{ID: "open", Name: "Doing <script>attack</script>", Type: "started", State: "open"}}
+		view.ResolvedWorkflows = []issuetracker.LinearWorkflowState{{ID: "done", Name: "Done", Type: "completed", State: "resolved"}}
+		view.PushWorkflows = view.OpenWorkflows
 		var out bytes.Buffer
 		if err := tmpl.ExecuteTemplate(&out, "issue_tracker_sync.html", Page{Data: view}); err != nil {
 			t.Fatal(err)
@@ -85,5 +90,51 @@ func TestIssueTrackerPreviewEscapesSnapshotAndRequiresAlignment(t *testing.T) {
 		} else if strings.Contains(rendered, `name="action" value="enable"`) || !strings.Contains(rendered, `name="action" value="push"`) {
 			t.Fatal("unaligned preview delegates automatic sync")
 		}
+	}
+}
+
+func TestLinearPickerMatchesStoredIDsAndRequiresBothLifecycles(t *testing.T) {
+	tmpl, err := template.ParseFS(tmplFS, "templates/issue_tracker_sync.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"active", "missing resolved", "renamed", "missing selected"} {
+		t.Run(kind, func(t *testing.T) {
+			catalog := []issuetracker.LinearWorkflowState{{ID: "open", Name: "Doing", State: "open", Type: "started"}, {ID: "done", Name: "Done", State: "resolved", Type: "completed"}}
+			view := IssueTrackerSyncPreview{Provider: "linear", Aligned: true, Policy: api.IssueTrackerAutoSync{LinearOpenStateID: "open", LinearResolvedStateID: "done"}}
+			if kind == "missing resolved" {
+				catalog = catalog[:1]
+			}
+			if kind == "renamed" {
+				catalog[0].Name = "Building"
+			}
+			if kind == "missing selected" {
+				view.Policy.LinearOpenStateID = "removed"
+			}
+			view.SetLinearWorkflowChoices(catalog)
+			var out bytes.Buffer
+			if err := tmpl.ExecuteTemplate(&out, "issue_tracker_sync.html", Page{Data: view}); err != nil {
+				t.Fatal(err)
+			}
+			rendered := out.String()
+			switch kind {
+			case "missing resolved":
+				if view.CanEnable || strings.Contains(rendered, `name="action" value="enable"`) {
+					t.Fatal("incomplete catalog delegates sync")
+				}
+			case "active":
+				if view.OpenWorkflowName != "Doing" || view.ResolvedWorkflowName != "Done" || !strings.Contains(rendered, `value="open" selected`) {
+					t.Fatal("stored mapping selection missing")
+				}
+			case "renamed":
+				if view.OpenWorkflowName != "Building" || strings.Contains(rendered, "Doing") {
+					t.Fatal("stale provider name shown")
+				}
+			case "missing selected":
+				if !strings.Contains(rendered, "unavailable; choose an active replacement") || strings.Contains(rendered, `value="removed"`) {
+					t.Fatal("unavailable workflow offered")
+				}
+			}
+		})
 	}
 }

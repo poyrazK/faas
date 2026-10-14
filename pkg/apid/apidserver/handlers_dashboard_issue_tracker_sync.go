@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -175,12 +176,14 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	r = r.WithContext(ctx)
 	var snapshot any
+	var catalog []issuetracker.LinearWorkflowState
 	if view.Provider == "linear" {
 		service, ok := s.nativeLinearStatusService(w, r, acct)
 		if !ok {
 			return
 		}
-		out, e := service.Read(ctx)
+		out, choices, e := service.ReadWithWorkflows(ctx)
+		catalog = choices
 		err = e
 		snapshot = out
 		view.Status = out.Status
@@ -200,9 +203,7 @@ func (s *server) dashboardTrackerSyncPreview(w http.ResponseWriter, r *http.Requ
 	if !s.finishDashboardTrackerPreview(w, r, app, &view, snapshot) {
 		return
 	}
-	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Review tracker sync", Body: "issue_tracker_sync", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
-		renderProblem(w, s.log, err)
-	}
+	s.renderDashboardTrackerPreview(w, r, acct, view, catalog)
 }
 func (s *server) finishDashboardTrackerPreview(w http.ResponseWriter, r *http.Request, app state.App, view *dashboard.IssueTrackerSyncPreview, snapshot any) bool {
 	store, ok := s.store.(state.IssueStore)
@@ -273,4 +274,14 @@ func (s *server) dashboardTrackerPushAllowed(w http.ResponseWriter, r *http.Requ
 		return false
 	}
 	return true
+}
+
+func (s *server) renderDashboardTrackerPreview(w http.ResponseWriter, r *http.Request, acct state.Account, view dashboard.IssueTrackerSyncPreview, catalog []issuetracker.LinearWorkflowState) {
+	view.CanEnable = view.Aligned
+	if view.Provider == "linear" {
+		view.SetLinearWorkflowChoices(catalog)
+	}
+	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Review tracker sync", Body: "issue_tracker_sync", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
+		renderProblem(w, s.log, err)
+	}
 }

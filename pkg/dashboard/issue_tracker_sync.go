@@ -1,6 +1,9 @@
 package dashboard
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
+)
 
 // IssueTrackerSyncPreview is an owner-requested provider observation. ExpectedJSON
 // contains only the credential-free native snapshot and is escaped by templates.
@@ -10,6 +13,9 @@ type IssueTrackerSyncPreview struct {
 	Policy                                                              api.IssueTrackerAutoSync
 	Aligned                                                             bool
 	CanPush                                                             bool
+	CanEnable                                                           bool
+	OpenWorkflows, ResolvedWorkflows, PushWorkflows                     []issuetracker.LinearWorkflowState
+	OpenWorkflowName, ResolvedWorkflowName                              string
 }
 
 func IssueTrackerSyncReason(reason string) string {
@@ -41,4 +47,27 @@ func IssueTrackerSyncReason(reason string) string {
 	default:
 		return "Sync needs attention. Review both issues before continuing."
 	}
+}
+
+// SetLinearWorkflowChoices maps a freshly verified catalog to the stored IDs.
+// Names describe the current provider state; they never authorize a mutation.
+func (v *IssueTrackerSyncPreview) SetLinearWorkflowChoices(catalog []issuetracker.LinearWorkflowState) {
+	for _, state := range catalog {
+		if state.State == "open" {
+			v.OpenWorkflows = append(v.OpenWorkflows, state)
+		} else if state.State == "resolved" {
+			v.ResolvedWorkflows = append(v.ResolvedWorkflows, state)
+		}
+		if state.State == v.SourceState {
+			v.PushWorkflows = append(v.PushWorkflows, state)
+		}
+		if state.ID == v.Policy.LinearOpenStateID && state.State == "open" {
+			v.OpenWorkflowName = state.Name
+		}
+		if state.ID == v.Policy.LinearResolvedStateID && state.State == "resolved" {
+			v.ResolvedWorkflowName = state.Name
+		}
+	}
+	v.CanEnable = v.Aligned && len(v.OpenWorkflows) > 0 && len(v.ResolvedWorkflows) > 0
+	v.CanPush = v.CanPush && len(v.PushWorkflows) > 0
 }

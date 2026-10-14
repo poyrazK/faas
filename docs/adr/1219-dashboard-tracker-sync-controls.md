@@ -50,3 +50,8 @@ use authenticated sessions and mocked Linear operations to cover CSRF rejection,
 metadata-only page loads, connect/disconnect, stale connection and policy forms,
 manual alignment, stale native previews, refusal to push while delegated,
 offline disable and cross-app reference refusal.
+
+
+Named discovery and selectors are subsequently implemented in
+[ADR-1220](1220-named-linear-workflow-picker.md). The connection, authorization,
+policy and native-snapshot guards described here remain in use.

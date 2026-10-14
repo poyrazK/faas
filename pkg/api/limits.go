@@ -10469,6 +10469,14 @@ const (
 	IssueTrackerRequestTimeoutSeconds = 15
 )
 
+// Linear workflow discovery never returns a partial catalog at these bounds.
+const (
+	IssueTrackerLinearWorkflowMax            = 200
+	IssueTrackerLinearWorkflowPageSize       = 50
+	IssueTrackerLinearWorkflowNameMaxBytes   = 256
+	IssueTrackerLinearWorkflowCursorMaxBytes = 512
+)
+
 // Automatic native tracker reconciliation is bounded independently of issue ingestion.
 const (
 	IssueTrackerAutoSyncBatch         = 5
