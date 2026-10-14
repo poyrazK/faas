@@ -105,6 +105,17 @@ Set your own value from 10 seconds up to twice the plan default:
 gregale app my-fn --idle 300   # keep this function warm for 5 minutes
 ```
 
+### Frozen instances
+
+On nodes where the frozen tier is enabled, a function that reaches its idle
+timeout may be frozen instead of parked: its VM stays in memory, paused, and
+the next request resumes it in a few milliseconds instead of restoring a
+snapshot. Requests still answer `x-faas-wake: restored`. A frozen instance
+holds no concurrency and is not billed; the dashboard shows it as
+`◌ sleeping`. It parks after 10 minutes, or sooner when the node needs the
+memory or you deploy again. Only functions with a snapshot are frozen, so
+the first idle period after a deploy still parks.
+
 ## Opting out: keep N instances warm (Pro, Scale)
 
 On the Pro and Scale plans you can pin a number of instances

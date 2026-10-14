@@ -7,6 +7,7 @@ package apidserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,6 +79,8 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		log.Warn("dashboard edge rules: list rules", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
 	} else {
 		data.Rules = projectDashboardEdgeRules(rules)
+		data.Recipes = dashboardEdgeRuleRecipes(rules, acct.Plan)
+		data.Hosts = s.dashboardEdgeRuleHostCoverage(ctx, log, app, rules)
 		s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules)
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
 		for _, rule := range rules {
@@ -268,6 +271,7 @@ func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageIt
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
+			AppWide: api.IsEdgeRuleAppHosts(row.MatchHost),
 		}
 		items = append(items, item)
 	}
@@ -316,7 +320,7 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
-	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log":
+	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"
@@ -468,14 +472,10 @@ func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	host := app.Slug
-	if parsed, parseErr := url.Parse(appURLForDomain(app.Slug, s.domain)); parseErr == nil && parsed.Hostname() != "" {
-		host = parsed.Hostname()
-	}
 	enabled := true
 	priority := 1000
 	req := api.CreateEdgeRuleRequest{
-		MatchHost: host, MatchPath: "/*", Priority: &priority, Enabled: &enabled,
+		MatchHost: api.EdgeRuleAppHosts, MatchPath: "/*", Priority: &priority, Enabled: &enabled,
 		Kind: string(state.EdgeRuleKindHeaders), Action: securityHeadersActionJSON(),
 	}
 	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.edgeRules.CreateEdgeRule)
@@ -554,4 +554,107 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	resp := httptest.NewRecorder()
 	handler(resp, req, acct)
 	return resp
+}
+
+// dashboardApplyEdgeRuleRecipe adds one protection recipe's rule (ADR-986)
+// through the JSON create handler, so validation, plan gates and quotas are
+// the API's. The rule starts in log mode unless the form asks to enforce.
+func (s *server) dashboardApplyEdgeRuleRecipe(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	if !s.verifyDashboardEdgeRulesCSRF(w, r, acct.ID) {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblem(w, api.ErrValidation("could not parse recipe form"))
+		return
+	}
+	slug := r.PathValue("slug")
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != acct.ID {
+		http.NotFound(w, r)
+		return
+	}
+	recipe, ok := api.EdgeRuleRecipeByID(r.PostFormValue("recipe"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	values := map[string]string{}
+	for _, p := range recipe.Params {
+		if v := strings.TrimSpace(r.PostFormValue(p.Name)); v != "" {
+			values[p.Name] = v
+		}
+	}
+	enforce := r.PostFormValue("enforce") != ""
+	req, prob := api.BuildEdgeRuleRecipe(recipe.ID, api.EdgeRuleAppHosts, values, enforce)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	resp := s.forwardDashboardEdgeRuleJSON(r, acct, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/edge-rules", "", req, s.edgeRules.CreateEdgeRule)
+	if !dashboardMutationSucceeded(w, resp) {
+		return
+	}
+	action := "recipe_log"
+	if enforce {
+		action = "recipe_enforce"
+	}
+	http.Redirect(w, r, "/dashboard/apps/"+url.PathEscape(slug)+"/edge-rules?action="+action, http.StatusSeeOther)
+}
+
+// dashboardEdgeRuleRecipes projects the recipe catalog for the page: which
+// recipes already have a rule, and which need a higher plan.
+func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard.EdgeRuleRecipeView {
+	limits, _ := api.LimitsFor(plan)
+	out := make([]dashboard.EdgeRuleRecipeView, 0, len(api.EdgeRuleRecipes))
+	for _, recipe := range api.EdgeRuleRecipes {
+		view := dashboard.EdgeRuleRecipeView{ID: recipe.ID, Title: recipe.Title, Summary: recipe.Summary, LogNote: recipe.LogNote}
+		for _, p := range recipe.Params {
+			view.Params = append(view.Params, dashboard.EdgeRuleRecipeParamView{Name: p.Name, Label: p.Label, Help: p.Help, Default: p.Default, Placeholder: p.Placeholder, Required: p.Required})
+		}
+		description := api.EdgeRuleRecipeDescription(recipe.ID)
+		for _, rule := range rules {
+			if rule.Description == description {
+				view.Added = true
+				break
+			}
+		}
+		if recipe.Kind == string(state.EdgeRuleKindIP) && !limits.EdgeRulesIPAllowed {
+			view.Blocked = "Available on the Hobby plan and above, which include IP edge rules."
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+// dashboardEdgeRuleHostCoverage counts, for each hostname the app serves
+// (its platform host and verified custom domains), the enabled rules that
+// apply to it: host-specific, pattern ("*", "*.example.com") and app-wide
+// ("@app", ADR-1191) rules alike.
+func (s *server) dashboardEdgeRuleHostCoverage(ctx context.Context, log *slog.Logger, app state.App, rules []state.EdgeRule) []dashboard.EdgeRuleHostCoverage {
+	hosts := []dashboard.EdgeRuleHostCoverage{}
+	if parsed, err := url.Parse(appURLForDomain(app.Slug, s.domain)); err == nil && parsed.Hostname() != "" {
+		hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: parsed.Hostname()})
+	}
+	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list custom domains", "app_id", app.ID, "err", err)
+	}
+	for _, d := range domains {
+		if !d.VerifiedAt.IsZero() {
+			hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: strings.ToLower(d.Domain), Custom: true})
+		}
+	}
+	for i := range hosts {
+		for _, rule := range rules {
+			if rule.Enabled && api.EdgeRuleHostMatches(rule.MatchHost, hosts[i].Host) {
+				hosts[i].Rules++
+			}
+		}
+	}
+	return hosts
 }

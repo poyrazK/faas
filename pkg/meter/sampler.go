@@ -576,7 +576,8 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			if exactResidency {
 				seconds = residentSeconds[ins.ID]
 			}
-			billableResident := state.State(ins.State).CountsForRAM()
+			// FROZEN is resident but unbilled (ADR-1151).
+			billableResident := state.State(ins.State).Billable()
 			if exactResidency {
 				billableResident = seconds > 0
 			}

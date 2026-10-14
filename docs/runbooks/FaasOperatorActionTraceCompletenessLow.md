@@ -20,8 +20,8 @@ contract clauses C1-C4 (every `operator.action.<verb>` audit row
 carries a non-NULL `events.trace_id`).
 PR: #1111 + follow-on `feat/obs-dashboards-alerts` (this file's
 source).
-Severity: page on Page and FirstTickStalled alerts; warn on Warn alert;
-info on LoopStalled.
+Severity: warn on the Page, FirstTickStalled and Warn alerts (ADR-1236
+demoted the two pages); info on LoopStalled.
 
 ## Symptom
 
@@ -52,7 +52,7 @@ Regression test: `pkg/promqlrules/testdata/obs_trace_completeness.test.yml`
 testdata dir under `-tags=integration`; CI installs promtool
 explicitly per `.github/workflows/ci.yml:248-260`).
 
-- **Page**: `obs:operator_action_trace_completeness_ratio < 0.50`
+- **LowPage** (warn since ADR-1236): `obs:operator_action_trace_completeness_ratio < 0.50`
   sustained 10m. At least one verb-oriented kind has fewer than half
   of its 5m-window audit rows carrying a non-NULL `events.trace_id`.
   Cross-daemon correlation is broken — the trace_id is the key that
@@ -68,7 +68,7 @@ explicitly per `.github/workflows/ci.yml:248-260`).
   5m after at least one successful tick. The producer timestamp is
   written only after a successful query, so scrape activity cannot mask
   a frozen gauge. Routes to the `faas-silent` receiver.
-- **Page** (`FirstTickStalled`): the first-success counter remains zero
+- **FirstTickStalled** (warn since ADR-1236): the first-success counter remains zero
   for 10m. The platform has no trustworthy completeness signal yet;
   check startup and database connectivity immediately.
 

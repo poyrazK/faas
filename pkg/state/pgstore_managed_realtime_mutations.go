@@ -44,6 +44,18 @@ func (s *PgStore) MutateManagedRealtimeMessage(ctx context.Context, ep, stream s
 	if err != nil {
 		return ManagedRealtimeChannelMessage{}, err
 	}
+	{
+		current.EndpointID, current.Channel = ep, channel
+		messages := []ManagedRealtimeChannelMessage{current}
+		loadExpirations := loadRealtimeExpirations
+		if inbox {
+			loadExpirations = loadRealtimeInboxExpirations
+		}
+		if err := loadExpirations(ctx, tx, ep, channel, messages); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
+		current = messages[0]
+	}
 	if current.Version != version {
 		return ManagedRealtimeChannelMessage{}, ErrConflict
 	}
@@ -77,7 +89,7 @@ func (s *PgStore) MutateManagedRealtimeMessage(ctx context.Context, ep, stream s
 	if data == nil {
 		data = []byte{}
 	}
-	updated := ManagedRealtimeChannelMessage{Metadata: current.Metadata, EndpointID: ep, Channel: channel, TargetMessageID: id, Version: version + 1, MessageEvent: event, Deleted: remove, Data: data, Binary: binary, Sequence: next, CreatedAt: now}
+	updated := ManagedRealtimeChannelMessage{TTLSeconds: current.TTLSeconds, ExpiresAt: current.ExpiresAt, Metadata: current.Metadata, EndpointID: ep, Channel: channel, TargetMessageID: id, Version: version + 1, MessageEvent: event, Deleted: remove, Data: data, Binary: binary, Sequence: next, CreatedAt: now}
 	_, err = tx.Exec(ctx, fmt.Sprintf(`update %s set data=$4,is_binary=$5,version=$6,deleted=$7,message_event=$8 where endpoint_id=$1 and channel=$2 and target_message_id=$3`, table), ep, channel, id, data, binary, updated.Version, remove, event)
 	if err != nil {
 		return ManagedRealtimeChannelMessage{}, err
@@ -85,6 +97,15 @@ func (s *PgStore) MutateManagedRealtimeMessage(ctx context.Context, ep, stream s
 	_, err = tx.Exec(ctx, fmt.Sprintf(`insert into %s(endpoint_id,channel,sequence,data,is_binary,created_at,target_message_id,version,message_event,deleted,metadata) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, table), ep, channel, next, data, binary, now, id, updated.Version, event, remove, metadataJSON(current.Metadata))
 	if err != nil {
 		return ManagedRealtimeChannelMessage{}, err
+	}
+	{
+		saveExpiration := saveRealtimeExpiration
+		if inbox {
+			saveExpiration = saveRealtimeInboxExpiration
+		}
+		if err := saveExpiration(ctx, tx, &updated); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
+		}
 	}
 	if remove && inbox {
 

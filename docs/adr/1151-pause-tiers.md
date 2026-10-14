@@ -2,7 +2,9 @@
 
 - Status: Proposed. Rollout starts with function apps only (owner
   decision, 2026-10-13); services follow once functions have run well in
-  production.
+  production. Steps 1 and 2 are built, each behind switches that are off by
+  default: vmmd `quiet_pause`, schedd `quiet_pause_admission` and schedd
+  `frozen_tier` (2026-10-13). Both canaries are pending.
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -104,15 +106,22 @@ Two tiers built on the same Firecracker pause, with different owners.
 ### 2. Frozen: a new instance state, owned by schedd, not billed
 
 - At the idle timeout the reaper freezes an eligible instance instead of
-  parking it. If the deployment has a usable snapshot (ADR-159), the edge
-  is RUNNING → FROZEN. If not, vmmd snapshots the VM and keeps it paused
-  (`PauseAndSnapshot` with `keep_paused`), SNAPSHOTTING → FROZEN, so a later
-  park still has a snapshot to wake from.
+  parking it, when the deployment already has a usable snapshot (ADR-159):
+  RUNNING → FROZEN. Without one the reaper parks as today, which writes the
+  snapshot, and the instance is frozen at a later idle timeout. (Amended
+  2026-10-13: the draft also froze after a keep-paused `PauseAndSnapshot`,
+  SNAPSHOTTING → FROZEN. vmmd refuses keep-alive snapshots under native
+  process recovery, and the first idle period after a deploy is the only
+  one without a snapshot, so the extra RPC bought little.)
 - State machine: `frozen` joins the `instances.state` CHECK. Edges: RUNNING
-  and SNAPSHOTTING → FROZEN; FROZEN → RUNNING (thaw); FROZEN → PARKED (TTL,
-  memory pressure, superseded deployment, changed config fence, failed
-  thaw); FROZEN → STOPPED, FAILED, EVICTING_ACCOUNT_DELETING.
-  `CountsForConcurrency` is false and `CountsForRAM` is true.
+  → FROZEN; FROZEN → RUNNING (thaw); FROZEN → PARKED (TTL, memory pressure,
+  superseded deployment, changed config fence, failed thaw, node or vmmd
+  restart); FROZEN → STOPPED, FAILED, EVICTING_ACCOUNT_DELETING.
+  `CountsForConcurrency` is false and `CountsForRAM` is true. `State.Billable`
+  is `CountsForRAM` less FROZEN. In SQL and Go state lists, FROZEN goes
+  wherever WARM goes (resident listings, layer-artifact and secret-runtime
+  rosters, publication proofs), except billing, the `ram_mb + 8` node-usage
+  sums and the CPU sets.
 - Billing: `frozen` stays out of the billable set in the
   `instance_billing_intervals` trigger (ADR-906 decision 4).
 - Admission: a frozen reservation (`KindFrozen`) holds the instance's
@@ -128,7 +137,7 @@ Two tiers built on the same Firecracker pause, with different owners.
   vmmd `Thaw` (resume and restart probes), `PublishOwnedInstanceRuntime`
   (FROZEN → RUNNING compare-and-set), route publication. No resume hook
   (ADR-906 decision 5).
-- Bounds: `FrozenTTL` (1 h), then park. Under memory pressure (ADR-909
+- Bounds: `FrozenTTL` (10 min), then park. Under memory pressure (ADR-909
   eviction) frozen instances go first, least recently used, before any
   running one. `FrozenMaxPerNode` caps Firecracker processes and jail uids.
   A host restart loses frozen VMs; recovery marks their rows parked, since
@@ -174,7 +183,7 @@ write the services' lifecycle setting when services are added.
 |---|---|
 | `QuietPauseAfter` | 2 s |
 | `QuietPauseMaxVCPUOvercommitPercent` | 300 |
-| `FrozenTTL` | 1 h |
+| `FrozenTTL` | 10 min |
 | `FrozenMaxPerNode` | 1,000 |
 | frozen charge floor | `MeasuredChargeFloorMB` (64 MB, existing) |
 
@@ -182,9 +191,13 @@ write the services' lifecycle setting when services are added.
 
 `vmmd_quiet_pause_total{outcome}`, `vmmd_quiet_resume_seconds`,
 `vmmd_quiet_paused_instances`, `vmmd_freeze_seconds`, `vmmd_thaw_seconds`,
-`node_frozen_resident_bytes`, `sched_frozen_instances`,
-`sched_frozen_evictions_total{reason}`, `sched_active_vcpu{node}`, and
-`gateway_wake_latency_seconds{method="thaw"}`.
+`node_frozen_instances`, `node_frozen_resident_bytes`,
+`schedd_frozen_instances`, `schedd_frozen_total{outcome}`,
+`schedd_frozen_parks_total{reason}` and `schedd_frozen_thaw_total{outcome}`.
+(Amended 2026-10-13: schedd metrics are prefixed `schedd_`, as every schedd
+series is. A thaw answers the gateway as a restore, as a warm-pool resume
+does; `gateway_wake_latency_seconds` stays unlabeled because ADR-092 pins it
+as a §12 contract, and thaw latency is `vmmd_thaw_seconds`.)
 
 ## Rollout
 
@@ -194,7 +207,7 @@ One PR each. PRs that touch the VM lifecycle run `test-metal` and
 Step 1, quiet pause for function apps:
 
 1. This ADR.
-2. vmmd quiet pause behind `quiet_pause.enabled` in `vmmd.toml` (off by
+2. vmmd quiet pause behind `quiet_pause` in `vmmd.toml` (off by
    default): pause controller, resume in `beginActivity`, probe skipping,
    stats fields. Metal test: 1,000 pause/resume cycles under forwarded load,
    an open stream is never paused, a paused VM snapshots and destroys
@@ -206,22 +219,33 @@ Step 1, quiet pause for function apps:
    latency, errors and CPU pressure against the other nodes; then on for
    every node.
 
-Step 2, frozen for function apps, once step 1 has run well in production:
+Step 2, frozen for function apps. Built behind schedd's `frozen_tier`
+switch, off by default (owner decision, 2026-10-13: build before the step 1
+canary; turn it on only after step 1 has run well in production):
 
-6. `frozen` state: migration (CHECK, billing trigger, indexes),
-   `machine.go` edges, store conformance tests.
-7. vmmd `Freeze`/`Thaw` RPCs from the ADR-906 prototype, and
-   `PauseAndSnapshot` with `keep_paused`.
+6. `frozen` state: migration (CHECK, indexes; the billing trigger already
+   leaves it out), `machine.go` edges, `State.Billable`, store conformance
+   tests.
+7. vmmd `FreezeInstance`/`ThawInstance` RPCs from the ADR-906 prototype,
+   with a frozen flag vmmd enforces: forwards to a frozen VM fail fast,
+   quiet pause and snapshots skip it, reclaim only on request.
 8. schedd: freeze instead of park at the idle timeout, TTL, eviction order,
-   thaw promotion, recovery after a host restart.
-9. Metrics, dashboards and debugger states; billing tests (frozen unbilled,
-   quiet-paused billed); canary as in step 1.
+   thaw promotion, recovery after a node or vmmd restart, metrics.
+9. Docs and billing tests (frozen unbilled, quiet-paused billed); canary as
+   in step 1.
 
 Step 3, services: the declared lifecycle (`request`, `idle`, `always`)
 through apid, the CLI and docs, then the same canary.
 
 ## Consequences
 
+- Rolling back. Turning `frozen_tier` off stops new freezes; frozen
+  instances still thaw for requests and park after `FrozenTTL`. Roll schedd
+  back to a release without the `frozen` state only after
+  `schedd_frozen_instances` reads 0: an older schedd neither thaws nor parks
+  a frozen row. The migration's down step parks any frozen rows left.
+- Turning the tier on needs vmmd with `FreezeInstance` first. An older vmmd
+  answers Unimplemented and the instance parks as before.
 - In the simulation, a request that finds no running VM waits 3.4 ms on
   average instead of 340 ms, vCPU-bound nodes hold 2.85× the apps, and
   billing and revenue do not change.
@@ -236,8 +260,9 @@ through apid, the CLI and docs, then the same canary.
 
 ## Open questions
 
-1. Frozen TTL: 1 h or 10 min? The simulation gives the same capacity, and
-   10.9 against 11.0 ms mean thaw-or-restore latency. Decided before step 2.
+1. Frozen TTL: decided 10 min (2026-10-13). The simulation gives the same
+   capacity as 1 h and 11.0 against 10.9 ms mean thaw-or-restore latency,
+   while holding fewer resident VMs.
 2. Is a soft CPU guarantee for quiet resumes acceptable, or should resumes
    wait for a vCPU token? The step 1 canary measures how far active vCPU
    exceeds the budget in practice.

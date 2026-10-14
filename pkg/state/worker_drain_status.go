@@ -3,7 +3,10 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // DeploymentWorkerDrainStatus counts instance shutdowns, not application task
@@ -84,6 +87,10 @@ func (s *PgStore) DeploymentWorkerDrainStatus(ctx context.Context, id string) (*
 }
 
 func (m *MemStore) DeploymentWorkerDrainStatus(ctx context.Context, id string) (*DeploymentWorkerDrainStatus, error) {
+	want, err := uuid.Parse(id)
+	if err != nil {
+		return nil, fmt.Errorf("state: worker drain deployment ID: %w", err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -92,7 +99,7 @@ func (m *MemStore) DeploymentWorkerDrainStatus(ctx context.Context, id string) (
 	var records []json.RawMessage
 	for i := len(m.deploymentAudit) - 1; i >= 0; i-- {
 		a := m.deploymentAudit[i]
-		if a.DeploymentID.String() == id && (a.Kind == DeployWorkerDrainStarted || a.Kind == DeployWorkerDrainCompleted) {
+		if a.DeploymentID == want && (a.Kind == DeployWorkerDrainStarted || a.Kind == DeployWorkerDrainCompleted) {
 			records = append(records, a.Data)
 		}
 	}

@@ -112,7 +112,10 @@ import (
 // Metrics is the gatewayd-internal Prometheus bundle. Construct once per Handler via
 // NewMetrics and pass into NewHandlerWith.
 type Metrics struct {
-	registry *prometheus.Registry
+	mcpRequests *prometheus.CounterVec
+	mcpDuration *prometheus.HistogramVec
+	mcpActive   *prometheus.GaugeVec
+	registry    *prometheus.Registry
 
 	requests                    *prometheus.CounterVec
 	platformErrors              *prometheus.CounterVec
@@ -729,6 +732,12 @@ type Metrics struct {
 	// serviceWakeAhead (ADR-977) counts speculative wake-ahead decisions by
 	// outcome. used/unused close the loop on whether a prediction helped.
 	serviceWakeAhead *prometheus.CounterVec
+	// Per-edge wake-ahead evidence (ADR-1152), labelled by caller and target
+	// app UUID. Bounded by the learner: top edges of callers with enough
+	// wakes, and outcomes only for edges that were actually woken ahead.
+	serviceWakeAheadEdgeShare   *prometheus.GaugeVec
+	serviceWakeAheadCallerWakes *prometheus.GaugeVec
+	serviceWakeAheadEdgeTotal   *prometheus.CounterVec
 	// routePriorityQueue (ADR-978) counts warm-capacity queue entries by route
 	// priority class and outcome.
 	routePriorityQueue *prometheus.CounterVec
@@ -831,6 +840,23 @@ const (
 	tierInit = "init"
 	tierCold = "cold"
 )
+
+// wakeLatencyBuckets is the shared envelope of gateway_wake_latency_seconds,
+// its _by_node twin and gateway_wake_phase_duration_seconds. The finite
+// buckets reach past the wake gate's 30 s TTL so a stalled wake reads as its
+// real duration: with 10 s on top, every slower wake landed in +Inf and
+// histogram_quantile reported 10 s. The added buckets sit above 10 s, so
+// quantiles below 10 s are unchanged and the §12 calibration still holds.
+func wakeLatencyBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0, 20.0, 30.0, 60.0}
+}
+
+// platformWakeLatencyBuckets keeps the fine resolution around the 0.35 s
+// public-beta gate and extends the tail to the same 60 s ceiling, so a
+// regression past 3 s reads as its real duration rather than 3 s.
+func platformWakeLatencyBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0, 30.0, 60.0}
+}
 
 func NewMetrics() *Metrics {
 	reg := prometheus.NewRegistry()
@@ -1208,16 +1234,12 @@ func NewMetrics() *Metrics {
 			Name: "gateway_wake_latency_seconds",
 			Help: "End-to-end latency from request received to first upstream byte after a cold wake.",
 			// Buckets target the §12 SLO: p50 ≤ 0.35 s, p95 ≤ 0.8 s, page > 1.5 s.
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Buckets: wakeLatencyBuckets(),
 		}),
 		platformWakeLatency: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name: "gateway_platform_wake_latency_seconds",
-			Help: "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
-			Buckets: []float64{
-				0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.325, 0.35, 0.4, 0.5, 0.8, 1.0, 1.5, 3.0,
-			},
+			Name:    "gateway_platform_wake_latency_seconds",
+			Help:    "Platform-only wake latency from gateway capacity-admission start to first upstream byte. Excludes pre-admission routing/auth, CDN, Internet, and client latency. Public-beta SSD gate: p95 < 0.35 seconds.",
+			Buckets: platformWakeLatencyBuckets(),
 		}),
 		// PR #4 / ADR-092 §3.5. Same bucket layout as wakeLatency
 		// — same distribution, same SLO targets — just labelled
@@ -1226,11 +1248,9 @@ func NewMetrics() *Metrics {
 		// without re-running the §12 fleet p95 calibration; the
 		// new histogram is opt-in and not part of any SLO.
 		wakeLatencyByNode: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name: "gateway_wake_latency_seconds_by_node",
-			Help: "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Name:    "gateway_wake_latency_seconds_by_node",
+			Help:    "Per-node wake latency (operator-side only; the unlabeled gateway_wake_latency_seconds remains the §12 fleet p95 source). ADR-092 §3.5. node_id is the compute_nodes.id UUID; the obs handler resolves id to name via ListComputeNodes.",
+			Buckets: wakeLatencyBuckets(),
 		}, []string{"node_id"}),
 		// Spec §12 row "wake queue wait p95". Observed by WakeGate.Wait
 		// on every caller that joins a single-flight coalescing wake. The
@@ -1269,9 +1289,7 @@ func NewMetrics() *Metrics {
 			// Same bucket envelope as wakeLatency so the dashboards
 			// can compare phase histograms to the aggregate without
 			// re-bucketing.
-			Buckets: []float64{
-				0.05, 0.1, 0.2, 0.3, 0.35, 0.5, 0.8, 1.0, 1.5, 3.0, 5.0, 10.0,
-			},
+			Buckets: wakeLatencyBuckets(),
 		}, []string{"phase"}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_queue_depth",
@@ -1605,11 +1623,29 @@ func NewMetrics() *Metrics {
 				Help: "Opt-in service wake-ahead decisions (ADR-977) by outcome: started, used (the caller called the target while the wake-ahead was fresh), unused, skipped_residency, failed.",
 			}, []string{"outcome"},
 		),
+		serviceWakeAheadEdgeShare: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "gateway_service_wake_ahead_edge_share",
+				Help: "Learned wake-ahead evidence per caller and target app UUID (ADR-1152): kind=call is the share of caller cold wakes followed by a call to the target, kind=cold the share of those calls that found it parked or pre-woken.",
+			}, []string{"caller_app", "target_app", "kind"},
+		),
+		serviceWakeAheadCallerWakes: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "gateway_service_wake_ahead_caller_wakes",
+				Help: "Cold wakes of a caller app the wake-ahead learner holds evidence for (decayed; ADR-1152).",
+			}, []string{"caller_app"},
+		),
+		serviceWakeAheadEdgeTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "gateway_service_wake_ahead_edge_total",
+				Help: "Wake-ahead outcomes per caller and target app UUID (ADR-1152): started, used, unused, skipped_residency, failed.",
+			}, []string{"caller_app", "target_app", "outcome"},
+		),
 		routePriorityQueue: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "gateway_route_priority_queue_total",
 				Help: "Warm-capacity queue entries by route priority class (critical, normal, bulk) and outcome: queued, displacing (entered by taking a lower-class waiter's place), displaced (lost its place to a higher class), rejected (queue full).",
-			}, []string{"class", "outcome"},
+			}, []string{"app", "class", "outcome"},
 		),
 		serviceWakeLatency: prometheus.NewHistogram(
 			prometheus.HistogramOpts{
@@ -1679,7 +1715,7 @@ func NewMetrics() *Metrics {
 	for _, outcome := range ServiceCallOutcomes {
 		m.serviceCallTotal.WithLabelValues(string(outcome))
 	}
-	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus} {
+	for _, kind := range []string{chaos.KindLatency, chaos.KindHTTPStatus, chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody, chaos.KindHTTPResponseLost} {
 		m.serviceChaosInjected.WithLabelValues(kind)
 	}
 	// The sentinel keeps the metric family visible even when no workload has
@@ -1982,7 +2018,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration)
 	reg.MustRegister(m.serviceWakeAhead)
-	reg.MustRegister(m.routePriorityQueue)
+	reg.MustRegister(m.routePriorityQueue, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -2017,6 +2053,7 @@ func NewMetrics() *Metrics {
 		Name: "gateway_route_lookup_stale_served_total",
 		Help: "Requests routed from the last-known-good route tier because the authoritative route lookup errored (ADR-190). Bounded by FAAS_GATEWAY_ROUTE_STALE_TTL; a sustained rate means Postgres is unreachable from this gateway.",
 	})
+	m.initMCPMetrics(reg)
 	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
 	return m
 }
@@ -3596,13 +3633,13 @@ func (m *Metrics) IncServiceCall(outcome ServiceCallOutcome) {
 }
 
 // ObserveServiceChaosInjection records one injected scenario fault. Only the
-// two validated rule kinds are admitted as labels.
+// validated HTTP fault kinds are admitted as labels.
 func (m *Metrics) ObserveServiceChaosInjection(kind string) {
 	if m == nil {
 		return
 	}
 	switch kind {
-	case chaos.KindLatency, chaos.KindHTTPStatus:
+	case chaos.KindLatency, chaos.KindHTTPStatus, chaos.KindHTTPMalformedJSON, chaos.KindHTTPTruncatedBody, chaos.KindHTTPResponseLost:
 		m.serviceChaosInjected.WithLabelValues(kind).Inc()
 	default:
 		return
@@ -3668,12 +3705,67 @@ func (m *Metrics) IncServiceWakeAhead(outcome string) {
 	m.serviceWakeAhead.WithLabelValues(outcome).Inc()
 }
 
-// IncRoutePriorityQueue counts one warm-capacity queue outcome (ADR-978).
-func (m *Metrics) IncRoutePriorityQueue(class, outcome string) {
+// IncRoutePriorityQueue counts one warm-capacity queue outcome for an app
+// (ADR-978, ADR-1152).
+func (m *Metrics) IncRoutePriorityQueue(appID, class, outcome string) {
 	if m == nil || m.routePriorityQueue == nil {
 		return
 	}
-	m.routePriorityQueue.WithLabelValues(class, outcome).Inc()
+	m.routePriorityQueue.WithLabelValues(appID, class, outcome).Inc()
+}
+
+func wakeAheadAppIDs(ids ...string) bool {
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// WakeAheadOutcome counts one wake-ahead outcome fleet-wide and per edge.
+func (m *Metrics) WakeAheadOutcome(caller, target, outcome string) {
+	if m == nil {
+		return
+	}
+	m.IncServiceWakeAhead(outcome)
+	if m.serviceWakeAheadEdgeTotal != nil && wakeAheadAppIDs(caller, target) {
+		m.serviceWakeAheadEdgeTotal.WithLabelValues(caller, target, outcome).Inc()
+	}
+}
+
+// WakeAheadEdge publishes one learned edge.
+func (m *Metrics) WakeAheadEdge(caller, target string, callShare, coldShare float64) {
+	if m == nil || m.serviceWakeAheadEdgeShare == nil || !wakeAheadAppIDs(caller, target) {
+		return
+	}
+	m.serviceWakeAheadEdgeShare.WithLabelValues(caller, target, "call").Set(callShare)
+	m.serviceWakeAheadEdgeShare.WithLabelValues(caller, target, "cold").Set(coldShare)
+}
+
+// WakeAheadEdgeGone withdraws an edge that left the caller's top edges.
+func (m *Metrics) WakeAheadEdgeGone(caller, target string) {
+	if m == nil || m.serviceWakeAheadEdgeShare == nil {
+		return
+	}
+	m.serviceWakeAheadEdgeShare.DeleteLabelValues(caller, target, "call")
+	m.serviceWakeAheadEdgeShare.DeleteLabelValues(caller, target, "cold")
+}
+
+// WakeAheadCallerWakes publishes a caller's observed wake count.
+func (m *Metrics) WakeAheadCallerWakes(caller string, wakes float64) {
+	if m == nil || m.serviceWakeAheadCallerWakes == nil || !wakeAheadAppIDs(caller) {
+		return
+	}
+	m.serviceWakeAheadCallerWakes.WithLabelValues(caller).Set(wakes)
+}
+
+// WakeAheadCallerGone withdraws an evicted caller.
+func (m *Metrics) WakeAheadCallerGone(caller string) {
+	if m == nil || m.serviceWakeAheadCallerWakes == nil {
+		return
+	}
+	m.serviceWakeAheadCallerWakes.DeleteLabelValues(caller)
 }
 
 func (m *Metrics) ObserveServiceWakeLatency(d time.Duration) {

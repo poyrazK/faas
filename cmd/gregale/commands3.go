@@ -66,6 +66,12 @@ func cmdSecrets(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "requirements":
+		return cmdSecretRequirements(args[1:])
+	case "defaults":
+		return cmdSecretDefaults(args[1:])
+	case "check":
+		return secretsCheck(args[1:])
 	case subList:
 		return secretsList(args[1:])
 	case "set":

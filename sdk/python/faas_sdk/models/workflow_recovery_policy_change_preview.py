@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.workflow_recovery_initial_policy_change_preview import WorkflowRecoveryInitialPolicyChangePreview
     from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
     from ..models.workflow_recovery_policy_change_candidate import WorkflowRecoveryPolicyChangeCandidate
     from ..models.workflow_recovery_policy_change_entry import WorkflowRecoveryPolicyChangeEntry
@@ -34,9 +35,11 @@ class WorkflowRecoveryPolicyChangePreview:
     """Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
     resets its automatic failure pause and suppresses older pending automatic actions."""
     proposed: WorkflowRecoveryPolicy
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure
-    only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation
-    and execution budgets are separate. Cancellation remains manual."""
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual."""
     observed_at: datetime.datetime
     next_version: int
     pending_suppressed: int
@@ -52,6 +55,15 @@ class WorkflowRecoveryPolicyChangePreview:
     jobs_truncated: bool
     candidates: list[WorkflowRecoveryPolicyChangeCandidate]
     candidates_truncated: bool
+    initial_failures: WorkflowRecoveryInitialPolicyChangePreview | Unset = UNSET
+    """Bounded read-only sample of retained generation-zero failures, present for preview policies with
+    initial_failure and automatic_initial proposals. Matching workflow and failure-status filters sort first, then
+    ascending failure ID; at most five are inspected. Coverage is always partial and counts describe only this
+    sample. Candidate preparation and submission simulate processing the sample in order, after sampled parent-job
+    preparations; later candidates can hit simulated cooldown or slot pressure. Quota and unresolved fields report
+    the current snapshot before simulation. Applying the proposal clears the current pause but retains charges and
+    unresolved work. Actual workers rescan and repeat admission checks. No policy, review, cursor, evidence, job or
+    notification is written or pruned."""
     execution_cooldown_until: datetime.datetime | Unset = UNSET
     preparation_cooldown_until: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -97,6 +109,10 @@ class WorkflowRecoveryPolicyChangePreview:
 
         candidates_truncated = self.candidates_truncated
 
+        initial_failures: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.initial_failures, Unset):
+            initial_failures = self.initial_failures.to_dict()
+
         execution_cooldown_until: str | Unset = UNSET
         if not isinstance(self.execution_cooldown_until, Unset):
             execution_cooldown_until = self.execution_cooldown_until.isoformat()
@@ -128,6 +144,8 @@ class WorkflowRecoveryPolicyChangePreview:
                 "candidates_truncated": candidates_truncated,
             }
         )
+        if initial_failures is not UNSET:
+            field_dict["initial_failures"] = initial_failures
         if execution_cooldown_until is not UNSET:
             field_dict["execution_cooldown_until"] = execution_cooldown_until
         if preparation_cooldown_until is not UNSET:
@@ -137,6 +155,7 @@ class WorkflowRecoveryPolicyChangePreview:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.workflow_recovery_initial_policy_change_preview import WorkflowRecoveryInitialPolicyChangePreview
         from ..models.workflow_recovery_policy import WorkflowRecoveryPolicy
         from ..models.workflow_recovery_policy_change_candidate import WorkflowRecoveryPolicyChangeCandidate
         from ..models.workflow_recovery_policy_change_entry import WorkflowRecoveryPolicyChangeEntry
@@ -187,6 +206,13 @@ class WorkflowRecoveryPolicyChangePreview:
 
         candidates_truncated = d.pop("candidates_truncated")
 
+        _initial_failures = d.pop("initial_failures", UNSET)
+        initial_failures: WorkflowRecoveryInitialPolicyChangePreview | Unset
+        if isinstance(_initial_failures, Unset):
+            initial_failures = UNSET
+        else:
+            initial_failures = WorkflowRecoveryInitialPolicyChangePreview.from_dict(_initial_failures)
+
         _execution_cooldown_until = d.pop("execution_cooldown_until", UNSET)
         execution_cooldown_until: datetime.datetime | Unset
         if isinstance(_execution_cooldown_until, Unset):
@@ -219,6 +245,7 @@ class WorkflowRecoveryPolicyChangePreview:
             jobs_truncated=jobs_truncated,
             candidates=candidates,
             candidates_truncated=candidates_truncated,
+            initial_failures=initial_failures,
             execution_cooldown_until=execution_cooldown_until,
             preparation_cooldown_until=preparation_cooldown_until,
         )

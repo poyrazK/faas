@@ -24,50 +24,99 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
-	"AcceptEntityOutboxDelivery":        true,
-	"AccountPasswordByAccountID":        true,
-	"ActiveProjectReleaseSet":           true,
-	"AppBySlug":                         true,
-	"ClaimPreviewTeardown":              true,
-	"CloneProjectEnvironment":           true,
-	"CountWakeBootStarted24h":           true,
-	"CreateAppTask":                     true,
-	"CreateCheckedRollback":             true,
-	"CreateProjectEnvironmentPromotion": true,
-	"CreateTCPListener":                 true,
-	"DeadLetterEventByID":               true,
-	"EnqueueInvocation":                 true,
-	"GetAppErrorSample":                 true,
-	"GetFeatureFlags":                   true,
-	"GetObjectBucketObjectLock":         true,
-	"GetRouteHealthReport":              true,
-	"IssueObjectMultipartURLCredential": true,
-	"LatestParkedDeploymentForApp":      true,
-	"ListAppErrorGroups":                true,
-	"ListAppErrorRequests":              true,
-	"ListBindingRefreshInventory":       true,
-	"ListBindingVerificationTasks":      true,
-	"ListInstancesForAccount":           true,
-	"ListObjectStorageBindingsForApp":   true,
-	"ListOutboundAppBindings":           true,
-	"ListQueueBindingConsumersForApp":   true,
-	"ListQueueBindingsForApp":           true,
-	"ListTCPListenerTLSObservations":    true,
-	"LiveDeploymentForScope":            true,
-	"PromoteDeploymentWithBindings":     true,
-	"ReadBindingApplicationAdoption":    true,
-	"ReadBindingPromotionRevision":      true,
-	"ReadBindingRuntimeInventory":       true,
-	"ReadServiceBindingRevision":        true,
-	"RecordUploadCommitOutcome":         true,
-	"RecoverCanaryRouteHealth":          true,
-	"RequestTelemetryRouteCustomers":    true,
-	"RouteAdviceConsumers":              true,
-	"RouteAdviceRouteStats":             true,
-	"RouteAdviceThrottleExcess":         true,
-	"SafeReleaseWorkerLeaseHealth":      true,
-	"SetAccountPassword":                true,
-	"UpdateAccountProviderCustomerID":   true,
+	"ProcessNextWorkflowInitialManualCompletion":              true,
+	"AcceptEntityOutboxDelivery":                              true,
+	"AccountPasswordByAccountID":                              true,
+	"ActiveComputeNodes":                                      true,
+	"ActivePrewarmFloor":                                      true,
+	"ActiveProjectReleaseSet":                                 true,
+	"AdmitPublishedEventRecipient":                            true,
+	"AdmitScheduledWorkflow":                                  true,
+	"AppByID":                                                 true,
+	"AppBySlug":                                               true,
+	"AppRuntimeConfigChangedAt":                               true,
+	"AppRuntimeConfigChangedAtInScope":                        true,
+	"ClaimPreviewTeardown":                                    true,
+	"CloneProjectEnvironment":                                 true,
+	"ComputeNodeUsedMB":                                       true,
+	"ComputeNodeUsedMBByNode":                                 true,
+	"CountWakeBootStarted24h":                                 true,
+	"CreateAppTask":                                           true,
+	"CreateCheckedRollback":                                   true,
+	"CreateInstance":                                          true,
+	"CreateProjectEnvironmentPromotion":                       true,
+	"CreateTCPListener":                                       true,
+	"DeadLetterEventByID":                                     true,
+	"DeploymentByID":                                          true,
+	"DeploymentSnapshotBackoffActive":                         true,
+	"EdgeRuleHitStatsForApp":                                  true,
+	"EnqueueInvocation":                                       true,
+	"FailRunningInstanceIfOwnedByNode":                        true,
+	"FinalizeManagedPostgresBindingRotationsForApp":           true,
+	"FinalizeObjectS3CredentialRotationsForApp":               true,
+	"GetAppErrorSample":                                       true,
+	"GetFeatureFlags":                                         true,
+	"GetObjectBucketObjectLock":                               true,
+	"GetRouteHealthReport":                                    true,
+	"HasSnapshotHistory":                                      true,
+	"InstanceByID":                                            true,
+	"IssueObjectMultipartURLCredential":                       true,
+	"LatestParkedDeploymentForApp":                            true,
+	"ListAppErrorGroups":                                      true,
+	"ListAppErrorRequests":                                    true,
+	"ListBindingRefreshInventory":                             true,
+	"ListBindingVerificationTasks":                            true,
+	"ListEnvironmentQualificationExecutionsForRecovery":       true,
+	"ListEnvironmentWorkloadQualificationsForDispatch":        true,
+	"ListInstancesForAccount":                                 true,
+	"ListObjectStorageBindingsForApp":                         true,
+	"ListOutboundAppBindings":                                 true,
+	"ListQueueBindingConsumersForApp":                         true,
+	"ListQueueBindingsForApp":                                 true,
+	"ListTCPListenerTLSObservations":                          true,
+	"ListWorkflowScheduleCandidates":                          true,
+	"LiveDeploymentForScope":                                  true,
+	"ManagedPostgresAdmissionFenced":                          true,
+	"MigrateInstanceOwner":                                    true,
+	"MigrateInstanceOwnerWithRuntimeConfig":                   true,
+	"ObserveNextWorkflowFailureEligibility":                   true,
+	"ProcessNextEventRecoveryExecutionNotification":           true,
+	"ProcessNextWorkflowRecoveryAutomaticBlockedNotification": true,
+	"ProcessNextWorkflowRecoveryAutomaticPolicy":              true,
+	"ProcessNextWorkflowRecoveryExecutionAttention":           true,
+	"ProcessNextWorkflowRecoveryHealthAlert":                  true,
+	"ProcessNextWorkflowRecoveryPolicy":                       true,
+	"ProcessNextWorkflowRecoveryReviewCompletion":             true,
+	"ProcessNextWorkflowRecoveryReviewNotification":           true,
+	"PromoteDeploymentWithBindings":                           true,
+	"PruneWorkflowRecoveryHistory":                            true,
+	"PublishOwnedInstanceRuntime":                             true,
+	"QueueBindingByID":                                        true,
+	"QueueStateForBinding":                                    true,
+	"ReadBindingApplicationAdoption":                          true,
+	"ReadBindingPromotionRevision":                            true,
+	"ReadBindingRuntimeInventory":                             true,
+	"ReadServiceBindingRevision":                              true,
+	"RecordEnvironmentQualificationSnapshot":                  true,
+	"RecordPublishedEventRecipientProgress":                   true,
+	"RecordUploadCommitOutcome":                               true,
+	"RecoverCanaryRouteHealth":                                true,
+	"RenewInvocationLease":                                    true,
+	"RenewOperationExecution":                                 true,
+	"RequestTelemetryRouteCustomers":                          true,
+	"ResolveEnvironmentQualificationService":                  true,
+	"ResolveInstanceMigrationCommit":                          true,
+	"RouteAdviceConsumers":                                    true,
+	"RouteAdviceRouteStats":                                   true,
+	"RouteAdviceThrottleExcess":                               true,
+	"RuntimeAppValuesForDeployment":                           true,
+	"RuntimeScalingStateForDeployment":                        true,
+	"SafeReleaseWorkerLeaseHealth":                            true,
+	"SetAccountPassword":                                      true,
+	"SetInstanceStartupCPUBoostUntil":                         true,
+	"StampOperationExecutionAttempt":                          true,
+	"UpdateAccountProviderCustomerID":                         true,
+	"WarmPoolReconciliationAppIDs":                            true,
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {
@@ -88,6 +137,24 @@ func (s *Mem) AccountPasswordByAccountID(p0 context.Context, p1 string) (string,
 	return s.MemStore.AccountPasswordByAccountID(p0, p1)
 }
 
+func (s *Mem) ActiveComputeNodes(p0 context.Context) ([]state.ComputeNode, error) {
+	if o, ok := s.over.(interface {
+		ActiveComputeNodes(context.Context) ([]state.ComputeNode, error)
+	}); ok {
+		return o.ActiveComputeNodes(p0)
+	}
+	return s.MemStore.ActiveComputeNodes(p0)
+}
+
+func (s *Mem) ActivePrewarmFloor(p0 context.Context, p1 string, p2 time.Time) (int, error) {
+	if o, ok := s.over.(interface {
+		ActivePrewarmFloor(context.Context, string, time.Time) (int, error)
+	}); ok {
+		return o.ActivePrewarmFloor(p0, p1, p2)
+	}
+	return s.MemStore.ActivePrewarmFloor(p0, p1, p2)
+}
+
 func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, p3 string) (state.ProjectReleaseSet, error) {
 	if o, ok := s.over.(interface {
 		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
@@ -97,6 +164,33 @@ func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, 
 	return s.MemStore.ActiveProjectReleaseSet(p0, p1, p2, p3)
 }
 
+func (s *Mem) AdmitPublishedEventRecipient(p0 context.Context, p1 state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
+	if o, ok := s.over.(interface {
+		AdmitPublishedEventRecipient(context.Context, state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error)
+	}); ok {
+		return o.AdmitPublishedEventRecipient(p0, p1)
+	}
+	return s.MemStore.AdmitPublishedEventRecipient(p0, p1)
+}
+
+func (s *Mem) AdmitScheduledWorkflow(p0 context.Context, p1 string, p2 string, p3 string, p4 time.Time) (state.WorkflowScheduleCursor, bool, error) {
+	if o, ok := s.over.(interface {
+		AdmitScheduledWorkflow(context.Context, string, string, string, time.Time) (state.WorkflowScheduleCursor, bool, error)
+	}); ok {
+		return o.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.AdmitScheduledWorkflow(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
+	if o, ok := s.over.(interface {
+		AppByID(context.Context, string) (state.App, error)
+	}); ok {
+		return o.AppByID(p0, p1)
+	}
+	return s.MemStore.AppByID(p0, p1)
+}
+
 func (s *Mem) AppBySlug(p0 context.Context, p1 string) (state.App, error) {
 	if o, ok := s.over.(interface {
 		AppBySlug(context.Context, string) (state.App, error)
@@ -104,6 +198,24 @@ func (s *Mem) AppBySlug(p0 context.Context, p1 string) (state.App, error) {
 		return o.AppBySlug(p0, p1)
 	}
 	return s.MemStore.AppBySlug(p0, p1)
+}
+
+func (s *Mem) AppRuntimeConfigChangedAt(p0 context.Context, p1 string) (time.Time, bool, error) {
+	if o, ok := s.over.(interface {
+		AppRuntimeConfigChangedAt(context.Context, string) (time.Time, bool, error)
+	}); ok {
+		return o.AppRuntimeConfigChangedAt(p0, p1)
+	}
+	return s.MemStore.AppRuntimeConfigChangedAt(p0, p1)
+}
+
+func (s *Mem) AppRuntimeConfigChangedAtInScope(p0 context.Context, p1 string, p2 string) (time.Time, bool, error) {
+	if o, ok := s.over.(interface {
+		AppRuntimeConfigChangedAtInScope(context.Context, string, string) (time.Time, bool, error)
+	}); ok {
+		return o.AppRuntimeConfigChangedAtInScope(p0, p1, p2)
+	}
+	return s.MemStore.AppRuntimeConfigChangedAtInScope(p0, p1, p2)
 }
 
 func (s *Mem) ClaimPreviewTeardown(p0 context.Context, p1 state.App, p2 time.Time) (state.App, error) {
@@ -122,6 +234,24 @@ func (s *Mem) CloneProjectEnvironment(p0 context.Context, p1 state.ProjectEnviro
 		return o.CloneProjectEnvironment(p0, p1, p2)
 	}
 	return s.MemStore.CloneProjectEnvironment(p0, p1, p2)
+}
+
+func (s *Mem) ComputeNodeUsedMB(p0 context.Context, p1 string) (int64, error) {
+	if o, ok := s.over.(interface {
+		ComputeNodeUsedMB(context.Context, string) (int64, error)
+	}); ok {
+		return o.ComputeNodeUsedMB(p0, p1)
+	}
+	return s.MemStore.ComputeNodeUsedMB(p0, p1)
+}
+
+func (s *Mem) ComputeNodeUsedMBByNode(p0 context.Context, p1 []string) (map[string]int64, error) {
+	if o, ok := s.over.(interface {
+		ComputeNodeUsedMBByNode(context.Context, []string) (map[string]int64, error)
+	}); ok {
+		return o.ComputeNodeUsedMBByNode(p0, p1)
+	}
+	return s.MemStore.ComputeNodeUsedMBByNode(p0, p1)
 }
 
 func (s *Mem) CountWakeBootStarted24h(p0 context.Context, p1 string) (int64, error) {
@@ -151,6 +281,15 @@ func (s *Mem) CreateCheckedRollback(p0 context.Context, p1 string, p2 string, p3
 	return s.MemStore.CreateCheckedRollback(p0, p1, p2, p3, p4, p5)
 }
 
+func (s *Mem) CreateInstance(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string, p6 string) (state.Instance, error) {
+	if o, ok := s.over.(interface {
+		CreateInstance(context.Context, string, string, string, int, string, string) (state.Instance, error)
+	}); ok {
+		return o.CreateInstance(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.MemStore.CreateInstance(p0, p1, p2, p3, p4, p5, p6)
+}
+
 func (s *Mem) CreateProjectEnvironmentPromotion(p0 context.Context, p1 state.ProjectEnvironmentPromotion, p2 []state.ProjectEnvironmentPromotionWorkload) (state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload, error) {
 	if o, ok := s.over.(interface {
 		CreateProjectEnvironmentPromotion(context.Context, state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload) (state.ProjectEnvironmentPromotion, []state.ProjectEnvironmentPromotionWorkload, error)
@@ -178,6 +317,33 @@ func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (sta
 	return s.MemStore.DeadLetterEventByID(p0, p1, p2)
 }
 
+func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.DeploymentByID(p0, p1)
+	}
+	return s.MemStore.DeploymentByID(p0, p1)
+}
+
+func (s *Mem) DeploymentSnapshotBackoffActive(p0 context.Context, p1 string) (state.Deployment, bool, error) {
+	if o, ok := s.over.(interface {
+		DeploymentSnapshotBackoffActive(context.Context, string) (state.Deployment, bool, error)
+	}); ok {
+		return o.DeploymentSnapshotBackoffActive(p0, p1)
+	}
+	return s.MemStore.DeploymentSnapshotBackoffActive(p0, p1)
+}
+
+func (s *Mem) EdgeRuleHitStatsForApp(p0 context.Context, p1 string, p2 time.Time) ([]state.EdgeRuleHitStats, error) {
+	if o, ok := s.over.(interface {
+		EdgeRuleHitStatsForApp(context.Context, string, time.Time) ([]state.EdgeRuleHitStats, error)
+	}); ok {
+		return o.EdgeRuleHitStatsForApp(p0, p1, p2)
+	}
+	return s.MemStore.EdgeRuleHitStatsForApp(p0, p1, p2)
+}
+
 func (s *Mem) EnqueueInvocation(p0 context.Context, p1 state.Invocation) (state.Invocation, error) {
 	if o, ok := s.over.(interface {
 		EnqueueInvocation(context.Context, state.Invocation) (state.Invocation, error)
@@ -185,6 +351,33 @@ func (s *Mem) EnqueueInvocation(p0 context.Context, p1 state.Invocation) (state.
 		return o.EnqueueInvocation(p0, p1)
 	}
 	return s.MemStore.EnqueueInvocation(p0, p1)
+}
+
+func (s *Mem) FailRunningInstanceIfOwnedByNode(p0 context.Context, p1 string, p2 string, p3 time.Time) error {
+	if o, ok := s.over.(interface {
+		FailRunningInstanceIfOwnedByNode(context.Context, string, string, time.Time) error
+	}); ok {
+		return o.FailRunningInstanceIfOwnedByNode(p0, p1, p2, p3)
+	}
+	return s.MemStore.FailRunningInstanceIfOwnedByNode(p0, p1, p2, p3)
+}
+
+func (s *Mem) FinalizeManagedPostgresBindingRotationsForApp(p0 context.Context, p1 string, p2 string) error {
+	if o, ok := s.over.(interface {
+		FinalizeManagedPostgresBindingRotationsForApp(context.Context, string, string) error
+	}); ok {
+		return o.FinalizeManagedPostgresBindingRotationsForApp(p0, p1, p2)
+	}
+	return s.MemStore.FinalizeManagedPostgresBindingRotationsForApp(p0, p1, p2)
+}
+
+func (s *Mem) FinalizeObjectS3CredentialRotationsForApp(p0 context.Context, p1 string, p2 string) error {
+	if o, ok := s.over.(interface {
+		FinalizeObjectS3CredentialRotationsForApp(context.Context, string, string) error
+	}); ok {
+		return o.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
+	}
+	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
 }
 
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {
@@ -221,6 +414,24 @@ func (s *Mem) GetRouteHealthReport(p0 context.Context, p1 string, p2 string, p3 
 		return o.GetRouteHealthReport(p0, p1, p2, p3)
 	}
 	return s.MemStore.GetRouteHealthReport(p0, p1, p2, p3)
+}
+
+func (s *Mem) HasSnapshotHistory(p0 context.Context, p1 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		HasSnapshotHistory(context.Context, string) (bool, error)
+	}); ok {
+		return o.HasSnapshotHistory(p0, p1)
+	}
+	return s.MemStore.HasSnapshotHistory(p0, p1)
+}
+
+func (s *Mem) InstanceByID(p0 context.Context, p1 string) (state.Instance, error) {
+	if o, ok := s.over.(interface {
+		InstanceByID(context.Context, string) (state.Instance, error)
+	}); ok {
+		return o.InstanceByID(p0, p1)
+	}
+	return s.MemStore.InstanceByID(p0, p1)
 }
 
 func (s *Mem) IssueObjectMultipartURLCredential(p0 context.Context, p1 state.ObjectS3Credential, p2 state.ObjectMultipartUpload, p3 api.ObjectStoragePolicy) (state.ObjectS3Credential, error) {
@@ -277,6 +488,24 @@ func (s *Mem) ListBindingVerificationTasks(p0 context.Context, p1 string, p2 str
 	return s.MemStore.ListBindingVerificationTasks(p0, p1, p2, p3, p4...)
 }
 
+func (s *Mem) ListEnvironmentQualificationExecutionsForRecovery(p0 context.Context, p1 string, p2 string, p3 int) ([]state.EnvironmentQualificationExecutionStatus, error) {
+	if o, ok := s.over.(interface {
+		ListEnvironmentQualificationExecutionsForRecovery(context.Context, string, string, int) ([]state.EnvironmentQualificationExecutionStatus, error)
+	}); ok {
+		return o.ListEnvironmentQualificationExecutionsForRecovery(p0, p1, p2, p3)
+	}
+	return s.MemStore.ListEnvironmentQualificationExecutionsForRecovery(p0, p1, p2, p3)
+}
+
+func (s *Mem) ListEnvironmentWorkloadQualificationsForDispatch(p0 context.Context, p1 string, p2 string, p3 int) ([]string, error) {
+	if o, ok := s.over.(interface {
+		ListEnvironmentWorkloadQualificationsForDispatch(context.Context, string, string, int) ([]string, error)
+	}); ok {
+		return o.ListEnvironmentWorkloadQualificationsForDispatch(p0, p1, p2, p3)
+	}
+	return s.MemStore.ListEnvironmentWorkloadQualificationsForDispatch(p0, p1, p2, p3)
+}
+
 func (s *Mem) ListInstancesForAccount(p0 context.Context, p1 string) ([]state.Instance, error) {
 	if o, ok := s.over.(interface {
 		ListInstancesForAccount(context.Context, string) ([]state.Instance, error)
@@ -331,6 +560,15 @@ func (s *Mem) ListTCPListenerTLSObservations(p0 context.Context, p1 string) ([]s
 	return s.MemStore.ListTCPListenerTLSObservations(p0, p1)
 }
 
+func (s *Mem) ListWorkflowScheduleCandidates(p0 context.Context, p1 string, p2 string, p3 int) ([]state.WorkflowScheduleCandidate, error) {
+	if o, ok := s.over.(interface {
+		ListWorkflowScheduleCandidates(context.Context, string, string, int) ([]state.WorkflowScheduleCandidate, error)
+	}); ok {
+		return o.ListWorkflowScheduleCandidates(p0, p1, p2, p3)
+	}
+	return s.MemStore.ListWorkflowScheduleCandidates(p0, p1, p2, p3)
+}
+
 func (s *Mem) LiveDeploymentForScope(p0 context.Context, p1 string, p2 string) (state.Deployment, error) {
 	if o, ok := s.over.(interface {
 		LiveDeploymentForScope(context.Context, string, string) (state.Deployment, error)
@@ -340,6 +578,123 @@ func (s *Mem) LiveDeploymentForScope(p0 context.Context, p1 string, p2 string) (
 	return s.MemStore.LiveDeploymentForScope(p0, p1, p2)
 }
 
+func (s *Mem) ManagedPostgresAdmissionFenced(p0 context.Context, p1 string) (bool, error) {
+	if o, ok := s.over.(interface {
+		ManagedPostgresAdmissionFenced(context.Context, string) (bool, error)
+	}); ok {
+		return o.ManagedPostgresAdmissionFenced(p0, p1)
+	}
+	return s.MemStore.ManagedPostgresAdmissionFenced(p0, p1)
+}
+
+func (s *Mem) MigrateInstanceOwner(p0 context.Context, p1 string, p2 string, p3 string, p4 string) error {
+	if o, ok := s.over.(interface {
+		MigrateInstanceOwner(context.Context, string, string, string, string) error
+	}); ok {
+		return o.MigrateInstanceOwner(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.MigrateInstanceOwner(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) MigrateInstanceOwnerWithRuntimeConfig(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 state.RuntimeConfigMigration) error {
+	if o, ok := s.over.(interface {
+		MigrateInstanceOwnerWithRuntimeConfig(context.Context, string, string, string, string, state.RuntimeConfigMigration) error
+	}); ok {
+		return o.MigrateInstanceOwnerWithRuntimeConfig(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.MigrateInstanceOwnerWithRuntimeConfig(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ObserveNextWorkflowFailureEligibility(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ObserveNextWorkflowFailureEligibility(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ObserveNextWorkflowFailureEligibility(p0, p1)
+	}
+	return s.MemStore.ObserveNextWorkflowFailureEligibility(p0, p1)
+}
+
+func (s *Mem) ProcessNextEventRecoveryExecutionNotification(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextEventRecoveryExecutionNotification(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextEventRecoveryExecutionNotification(p0, p1)
+	}
+	return s.MemStore.ProcessNextEventRecoveryExecutionNotification(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryAutomaticBlockedNotification(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryAutomaticBlockedNotification(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryAutomaticBlockedNotification(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryAutomaticBlockedNotification(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryAutomaticPolicy(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryAutomaticPolicy(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryAutomaticPolicy(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryAutomaticPolicy(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowInitialManualCompletion(ctx context.Context, now time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowInitialManualCompletion(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowInitialManualCompletion(ctx, now)
+	}
+	return s.MemStore.ProcessNextWorkflowInitialManualCompletion(ctx, now)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryExecutionAttention(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryExecutionAttention(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryExecutionAttention(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryExecutionAttention(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryHealthAlert(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryHealthAlert(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryHealthAlert(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryHealthAlert(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryPolicy(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryPolicy(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryPolicy(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryPolicy(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryReviewCompletion(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryReviewCompletion(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryReviewCompletion(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryReviewCompletion(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowRecoveryReviewNotification(p0 context.Context, p1 time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowRecoveryReviewNotification(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowRecoveryReviewNotification(p0, p1)
+	}
+	return s.MemStore.ProcessNextWorkflowRecoveryReviewNotification(p0, p1)
+}
+
 func (s *Mem) PromoteDeploymentWithBindings(p0 context.Context, p1 string, p2 state.BindingPromotionFence, p3 string) (state.BindingPromotionResult, error) {
 	if o, ok := s.over.(interface {
 		PromoteDeploymentWithBindings(context.Context, string, state.BindingPromotionFence, string) (state.BindingPromotionResult, error)
@@ -347,6 +702,42 @@ func (s *Mem) PromoteDeploymentWithBindings(p0 context.Context, p1 string, p2 st
 		return o.PromoteDeploymentWithBindings(p0, p1, p2, p3)
 	}
 	return s.MemStore.PromoteDeploymentWithBindings(p0, p1, p2, p3)
+}
+
+func (s *Mem) PruneWorkflowRecoveryHistory(p0 context.Context, p1 time.Time) (int64, error) {
+	if o, ok := s.over.(interface {
+		PruneWorkflowRecoveryHistory(context.Context, time.Time) (int64, error)
+	}); ok {
+		return o.PruneWorkflowRecoveryHistory(p0, p1)
+	}
+	return s.MemStore.PruneWorkflowRecoveryHistory(p0, p1)
+}
+
+func (s *Mem) PublishOwnedInstanceRuntime(p0 context.Context, p1 state.RuntimeInstancePublication) (state.Instance, error) {
+	if o, ok := s.over.(interface {
+		PublishOwnedInstanceRuntime(context.Context, state.RuntimeInstancePublication) (state.Instance, error)
+	}); ok {
+		return o.PublishOwnedInstanceRuntime(p0, p1)
+	}
+	return s.MemStore.PublishOwnedInstanceRuntime(p0, p1)
+}
+
+func (s *Mem) QueueBindingByID(p0 context.Context, p1 string, p2 string, p3 string) (state.QueueBinding, error) {
+	if o, ok := s.over.(interface {
+		QueueBindingByID(context.Context, string, string, string) (state.QueueBinding, error)
+	}); ok {
+		return o.QueueBindingByID(p0, p1, p2, p3)
+	}
+	return s.MemStore.QueueBindingByID(p0, p1, p2, p3)
+}
+
+func (s *Mem) QueueStateForBinding(p0 context.Context, p1 string, p2 string) (state.QueueStats, error) {
+	if o, ok := s.over.(interface {
+		QueueStateForBinding(context.Context, string, string) (state.QueueStats, error)
+	}); ok {
+		return o.QueueStateForBinding(p0, p1, p2)
+	}
+	return s.MemStore.QueueStateForBinding(p0, p1, p2)
 }
 
 func (s *Mem) ReadBindingApplicationAdoption(p0 context.Context, p1 string, p2 string, p3 []state.BindingAdoptionSelector) ([]state.BindingApplicationAdoptionRow, error) {
@@ -385,6 +776,24 @@ func (s *Mem) ReadServiceBindingRevision(p0 context.Context, p1 string, p2 strin
 	return s.MemStore.ReadServiceBindingRevision(p0, p1, p2)
 }
 
+func (s *Mem) RecordEnvironmentQualificationSnapshot(p0 context.Context, p1 state.EnvironmentWorkloadQualificationRequest, p2 state.EnvironmentQualificationExecution, p3 state.EnvironmentQualificationSnapshot) (state.EnvironmentQualificationSnapshotReceipt, error) {
+	if o, ok := s.over.(interface {
+		RecordEnvironmentQualificationSnapshot(context.Context, state.EnvironmentWorkloadQualificationRequest, state.EnvironmentQualificationExecution, state.EnvironmentQualificationSnapshot) (state.EnvironmentQualificationSnapshotReceipt, error)
+	}); ok {
+		return o.RecordEnvironmentQualificationSnapshot(p0, p1, p2, p3)
+	}
+	return s.MemStore.RecordEnvironmentQualificationSnapshot(p0, p1, p2, p3)
+}
+
+func (s *Mem) RecordPublishedEventRecipientProgress(p0 context.Context, p1 int64, p2 string, p3 string, p4 state.PublishedEventRecipientProgress) error {
+	if o, ok := s.over.(interface {
+		RecordPublishedEventRecipientProgress(context.Context, int64, string, string, state.PublishedEventRecipientProgress) error
+	}); ok {
+		return o.RecordPublishedEventRecipientProgress(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.RecordPublishedEventRecipientProgress(p0, p1, p2, p3, p4)
+}
+
 func (s *Mem) RecordUploadCommitOutcome(p0 context.Context, p1 sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error) {
 	if o, ok := s.over.(interface {
 		RecordUploadCommitOutcome(context.Context, sqlc.RecordUploadCommitOutcomeParams) (sqlc.UploadCommitOutcome, error)
@@ -403,6 +812,24 @@ func (s *Mem) RecoverCanaryRouteHealth(p0 context.Context, p1 string, p2 string,
 	return s.MemStore.RecoverCanaryRouteHealth(p0, p1, p2, p3, p4)
 }
 
+func (s *Mem) RenewInvocationLease(p0 context.Context, p1 string, p2 int, p3 int) (bool, error) {
+	if o, ok := s.over.(interface {
+		RenewInvocationLease(context.Context, string, int, int) (bool, error)
+	}); ok {
+		return o.RenewInvocationLease(p0, p1, p2, p3)
+	}
+	return s.MemStore.RenewInvocationLease(p0, p1, p2, p3)
+}
+
+func (s *Mem) RenewOperationExecution(p0 context.Context, p1 string, p2 int, p3 int) (bool, error) {
+	if o, ok := s.over.(interface {
+		RenewOperationExecution(context.Context, string, int, int) (bool, error)
+	}); ok {
+		return o.RenewOperationExecution(p0, p1, p2, p3)
+	}
+	return s.MemStore.RenewOperationExecution(p0, p1, p2, p3)
+}
+
 func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error) {
 	if o, ok := s.over.(interface {
 		RequestTelemetryRouteCustomers(context.Context, sqlc.RequestTelemetryRouteCustomersParams) ([]sqlc.RequestTelemetryRouteCustomersRow, error)
@@ -410,6 +837,24 @@ func (s *Mem) RequestTelemetryRouteCustomers(p0 context.Context, p1 sqlc.Request
 		return o.RequestTelemetryRouteCustomers(p0, p1)
 	}
 	return s.MemStore.RequestTelemetryRouteCustomers(p0, p1)
+}
+
+func (s *Mem) ResolveEnvironmentQualificationService(p0 context.Context, p1 state.EnvironmentQualificationServiceRequest) (state.EnvironmentQualificationServiceRoute, error) {
+	if o, ok := s.over.(interface {
+		ResolveEnvironmentQualificationService(context.Context, state.EnvironmentQualificationServiceRequest) (state.EnvironmentQualificationServiceRoute, error)
+	}); ok {
+		return o.ResolveEnvironmentQualificationService(p0, p1)
+	}
+	return s.MemStore.ResolveEnvironmentQualificationService(p0, p1)
+}
+
+func (s *Mem) ResolveInstanceMigrationCommit(p0 context.Context, p1 state.MigrationCommitAttempt) (state.MigrationCommitResolution, error) {
+	if o, ok := s.over.(interface {
+		ResolveInstanceMigrationCommit(context.Context, state.MigrationCommitAttempt) (state.MigrationCommitResolution, error)
+	}); ok {
+		return o.ResolveInstanceMigrationCommit(p0, p1)
+	}
+	return s.MemStore.ResolveInstanceMigrationCommit(p0, p1)
 }
 
 func (s *Mem) RouteAdviceConsumers(p0 context.Context, p1 sqlc.RouteAdviceConsumersParams) ([]sqlc.RouteAdviceConsumersRow, error) {
@@ -439,6 +884,24 @@ func (s *Mem) RouteAdviceThrottleExcess(p0 context.Context, p1 sqlc.RouteAdviceT
 	return s.MemStore.RouteAdviceThrottleExcess(p0, p1)
 }
 
+func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
+	if o, ok := s.over.(interface {
+		RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error)
+	}); ok {
+		return o.RuntimeAppValuesForDeployment(p0, p1, p2, p3)
+	}
+	return s.MemStore.RuntimeAppValuesForDeployment(p0, p1, p2, p3)
+}
+
+func (s *Mem) RuntimeScalingStateForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeScalingState, error) {
+	if o, ok := s.over.(interface {
+		RuntimeScalingStateForDeployment(context.Context, string, string, string) (state.RuntimeScalingState, error)
+	}); ok {
+		return o.RuntimeScalingStateForDeployment(p0, p1, p2, p3)
+	}
+	return s.MemStore.RuntimeScalingStateForDeployment(p0, p1, p2, p3)
+}
+
 func (s *Mem) SafeReleaseWorkerLeaseHealth(p0 context.Context) (state.SafeReleaseWorkerLeaseHealth, error) {
 	if o, ok := s.over.(interface {
 		SafeReleaseWorkerLeaseHealth(context.Context) (state.SafeReleaseWorkerLeaseHealth, error)
@@ -457,6 +920,24 @@ func (s *Mem) SetAccountPassword(p0 context.Context, p1 string, p2 string) error
 	return s.MemStore.SetAccountPassword(p0, p1, p2)
 }
 
+func (s *Mem) SetInstanceStartupCPUBoostUntil(p0 context.Context, p1 string, p2 *time.Time) error {
+	if o, ok := s.over.(interface {
+		SetInstanceStartupCPUBoostUntil(context.Context, string, *time.Time) error
+	}); ok {
+		return o.SetInstanceStartupCPUBoostUntil(p0, p1, p2)
+	}
+	return s.MemStore.SetInstanceStartupCPUBoostUntil(p0, p1, p2)
+}
+
+func (s *Mem) StampOperationExecutionAttempt(p0 context.Context, p1 string, p2 string, p3 int) error {
+	if o, ok := s.over.(interface {
+		StampOperationExecutionAttempt(context.Context, string, string, int) error
+	}); ok {
+		return o.StampOperationExecutionAttempt(p0, p1, p2, p3)
+	}
+	return s.MemStore.StampOperationExecutionAttempt(p0, p1, p2, p3)
+}
+
 func (s *Mem) UpdateAccountProviderCustomerID(p0 context.Context, p1 string, p2 string) error {
 	if o, ok := s.over.(interface {
 		UpdateAccountProviderCustomerID(context.Context, string, string) error
@@ -464,6 +945,15 @@ func (s *Mem) UpdateAccountProviderCustomerID(p0 context.Context, p1 string, p2 
 		return o.UpdateAccountProviderCustomerID(p0, p1, p2)
 	}
 	return s.MemStore.UpdateAccountProviderCustomerID(p0, p1, p2)
+}
+
+func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]string, error) {
+	if o, ok := s.over.(interface {
+		WarmPoolReconciliationAppIDs(context.Context, string) ([]string, error)
+	}); ok {
+		return o.WarmPoolReconciliationAppIDs(p0, p1)
+	}
+	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
 }
 
 // pgDispatched lists the methods Pg forwards to its override.
@@ -1802,22 +2292,53 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"MCPPolicyConvergenceSnapshot":                  true,
+	"LatestAccountEdgeRulePolicyPosition":           true,
+	"LatestEdgeRuleChangeID":                        true,
+	"GetAppScalingPolicyStatus":                     true,
+	"ListServingAppCPUPolicyNodeStates":             true,
+	"ListServingAppEgressPolicyNodeStates":          true,
+	"ListServingGatewayControlPlaneStates":          true,
+	"LatestAppCPUPolicyRevision":                    true,
+	"LatestAppEgressPolicyRevision":                 true,
+	"LatestAppResponseCachePurgeID":                 true,
+	"LatestAccountCorsPresetChangeID":               true,
+	"LatestAppEdgeRuleChangeID":                     true,
+	"LatestAppRequestPolicyRevision":                true,
+	"LatestAppControlPlaneChangeID":                 true,
 	"AccountByID":                                   true,
+	"AppByID":                                       true,
 	"AppendEvent":                                   true,
 	"AppendEventWithTrace":                          true,
 	"AppendUploadBytes":                             true,
+	"ClaimInvocation":                               true,
+	"ClaimInvocationWithCap":                        true,
 	"ConsumerKeyByAppAndPrefix":                     true,
+	"DeploymentByID":                                true,
+	"EnqueueInvocation":                             true,
 	"GetAPIConsumerByID":                            true,
 	"GetAccountOverageCapCents":                     true,
 	"GetUploadSession":                              true,
 	"InsertOperatorIntent":                          true,
+	"InstanceByID":                                  true,
+	"JobTaskClaimBatch":                             true,
+	"JobTaskMarkClaimed":                            true,
+	"ListAppSecretsInScope":                         true,
 	"ListApps":                                      true,
 	"ListDeploymentsForApp":                         true,
+	"ListInstancesForAccount":                       true,
+	"ListMirrorRules":                               true,
+	"ListOrphanedAppsPage":                          true,
 	"ListPublicStatusEvents":                        true,
 	"ListRequestTelemetryByPlatformTenant":          true,
+	"MarkSnapshotStale":                             true,
 	"Ping":                                          true,
+	"QueueStateInScope":                             true,
 	"ReapExpiredUploadSessions":                     true,
+	"RecordAppSecretDelivery":                       true,
+	"RuntimeAppValuesForDeployment":                 true,
 	"TouchConsumerKeyLastUsed":                      true,
+	"UpdateInstanceStateToTerminal":                 true,
 	"UpdateProjectEnvironmentPromotionVerification": true,
 	"UsageByAccount":                                true,
 	"UsageSLOForAccount":                            true,
@@ -1830,6 +2351,15 @@ func (s *Store) AccountByID(p0 context.Context, p1 string) (state.Account, error
 		return o.AccountByID(p0, p1)
 	}
 	return s.Store.AccountByID(p0, p1)
+}
+
+func (s *Store) AppByID(p0 context.Context, p1 string) (state.App, error) {
+	if o, ok := s.over.(interface {
+		AppByID(context.Context, string) (state.App, error)
+	}); ok {
+		return o.AppByID(p0, p1)
+	}
+	return s.Store.AppByID(p0, p1)
 }
 
 func (s *Store) AppendEvent(p0 context.Context, p1 string, p2 string, p3 *string, p4 []byte) error {
@@ -1859,6 +2389,24 @@ func (s *Store) AppendUploadBytes(p0 context.Context, p1 sqlc.AppendUploadBytesP
 	return s.Store.AppendUploadBytes(p0, p1)
 }
 
+func (s *Store) ClaimInvocation(p0 context.Context, p1 string, p2 string, p3 int) (state.Invocation, error) {
+	if o, ok := s.over.(interface {
+		ClaimInvocation(context.Context, string, string, int) (state.Invocation, error)
+	}); ok {
+		return o.ClaimInvocation(p0, p1, p2, p3)
+	}
+	return s.Store.ClaimInvocation(p0, p1, p2, p3)
+}
+
+func (s *Store) ClaimInvocationWithCap(p0 context.Context, p1 string, p2 string, p3 int, p4 int) (state.Invocation, error) {
+	if o, ok := s.over.(interface {
+		ClaimInvocationWithCap(context.Context, string, string, int, int) (state.Invocation, error)
+	}); ok {
+		return o.ClaimInvocationWithCap(p0, p1, p2, p3, p4)
+	}
+	return s.Store.ClaimInvocationWithCap(p0, p1, p2, p3, p4)
+}
+
 func (s *Store) ConsumerKeyByAppAndPrefix(p0 context.Context, p1 string, p2 string, p3 string) (state.ConsumerKey, error) {
 	if o, ok := s.over.(interface {
 		ConsumerKeyByAppAndPrefix(context.Context, string, string, string) (state.ConsumerKey, error)
@@ -1866,6 +2414,24 @@ func (s *Store) ConsumerKeyByAppAndPrefix(p0 context.Context, p1 string, p2 stri
 		return o.ConsumerKeyByAppAndPrefix(p0, p1, p2, p3)
 	}
 	return s.Store.ConsumerKeyByAppAndPrefix(p0, p1, p2, p3)
+}
+
+func (s *Store) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		DeploymentByID(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.DeploymentByID(p0, p1)
+	}
+	return s.Store.DeploymentByID(p0, p1)
+}
+
+func (s *Store) EnqueueInvocation(p0 context.Context, p1 state.Invocation) (state.Invocation, error) {
+	if o, ok := s.over.(interface {
+		EnqueueInvocation(context.Context, state.Invocation) (state.Invocation, error)
+	}); ok {
+		return o.EnqueueInvocation(p0, p1)
+	}
+	return s.Store.EnqueueInvocation(p0, p1)
 }
 
 func (s *Store) GetAPIConsumerByID(p0 context.Context, p1 string, p2 string) (state.APIConsumer, error) {
@@ -1904,6 +2470,42 @@ func (s *Store) InsertOperatorIntent(p0 context.Context, p1 state.OperatorIntent
 	return s.Store.InsertOperatorIntent(p0, p1, p2, p3, p4, p5, p6, p7)
 }
 
+func (s *Store) InstanceByID(p0 context.Context, p1 string) (state.Instance, error) {
+	if o, ok := s.over.(interface {
+		InstanceByID(context.Context, string) (state.Instance, error)
+	}); ok {
+		return o.InstanceByID(p0, p1)
+	}
+	return s.Store.InstanceByID(p0, p1)
+}
+
+func (s *Store) JobTaskClaimBatch(p0 context.Context, p1 int) ([]state.JobTask, error) {
+	if o, ok := s.over.(interface {
+		JobTaskClaimBatch(context.Context, int) ([]state.JobTask, error)
+	}); ok {
+		return o.JobTaskClaimBatch(p0, p1)
+	}
+	return s.Store.JobTaskClaimBatch(p0, p1)
+}
+
+func (s *Store) JobTaskMarkClaimed(p0 context.Context, p1 string, p2 int, p3 string, p4 string, p5 time.Time, p6 string) error {
+	if o, ok := s.over.(interface {
+		JobTaskMarkClaimed(context.Context, string, int, string, string, time.Time, string) error
+	}); ok {
+		return o.JobTaskMarkClaimed(p0, p1, p2, p3, p4, p5, p6)
+	}
+	return s.Store.JobTaskMarkClaimed(p0, p1, p2, p3, p4, p5, p6)
+}
+
+func (s *Store) ListAppSecretsInScope(p0 context.Context, p1 string, p2 string, p3 string) ([]state.AppSecret, error) {
+	if o, ok := s.over.(interface {
+		ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error)
+	}); ok {
+		return o.ListAppSecretsInScope(p0, p1, p2, p3)
+	}
+	return s.Store.ListAppSecretsInScope(p0, p1, p2, p3)
+}
+
 func (s *Store) ListApps(p0 context.Context, p1 string) ([]state.App, error) {
 	if o, ok := s.over.(interface {
 		ListApps(context.Context, string) ([]state.App, error)
@@ -1920,6 +2522,33 @@ func (s *Store) ListDeploymentsForApp(p0 context.Context, p1 string, p2 int, p3 
 		return o.ListDeploymentsForApp(p0, p1, p2, p3)
 	}
 	return s.Store.ListDeploymentsForApp(p0, p1, p2, p3)
+}
+
+func (s *Store) ListInstancesForAccount(p0 context.Context, p1 string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListInstancesForAccount(context.Context, string) ([]state.Instance, error)
+	}); ok {
+		return o.ListInstancesForAccount(p0, p1)
+	}
+	return s.Store.ListInstancesForAccount(p0, p1)
+}
+
+func (s *Store) ListMirrorRules(p0 context.Context, p1 string) ([]state.MirrorRule, error) {
+	if o, ok := s.over.(interface {
+		ListMirrorRules(context.Context, string) ([]state.MirrorRule, error)
+	}); ok {
+		return o.ListMirrorRules(p0, p1)
+	}
+	return s.Store.ListMirrorRules(p0, p1)
+}
+
+func (s *Store) ListOrphanedAppsPage(p0 context.Context, p1 int, p2 int, p3 string, p4 string) ([]state.OrphanedAppCandidate, error) {
+	if o, ok := s.over.(interface {
+		ListOrphanedAppsPage(context.Context, int, int, string, string) ([]state.OrphanedAppCandidate, error)
+	}); ok {
+		return o.ListOrphanedAppsPage(p0, p1, p2, p3, p4)
+	}
+	return s.Store.ListOrphanedAppsPage(p0, p1, p2, p3, p4)
 }
 
 func (s *Store) ListPublicStatusEvents(p0 context.Context, p1 state.StatusEventListOptions) ([]state.StatusIncident, error) {
@@ -1940,11 +2569,29 @@ func (s *Store) ListRequestTelemetryByPlatformTenant(p0 context.Context, p1 sqlc
 	return s.Store.ListRequestTelemetryByPlatformTenant(p0, p1)
 }
 
+func (s *Store) MarkSnapshotStale(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		MarkSnapshotStale(context.Context, string) error
+	}); ok {
+		return o.MarkSnapshotStale(p0, p1)
+	}
+	return s.Store.MarkSnapshotStale(p0, p1)
+}
+
 func (s *Store) Ping(p0 context.Context) error {
 	if o, ok := s.over.(interface{ Ping(context.Context) error }); ok {
 		return o.Ping(p0)
 	}
 	return s.Store.Ping(p0)
+}
+
+func (s *Store) QueueStateInScope(p0 context.Context, p1 string, p2 string) (state.QueueStats, error) {
+	if o, ok := s.over.(interface {
+		QueueStateInScope(context.Context, string, string) (state.QueueStats, error)
+	}); ok {
+		return o.QueueStateInScope(p0, p1, p2)
+	}
+	return s.Store.QueueStateInScope(p0, p1, p2)
 }
 
 func (s *Store) ReapExpiredUploadSessions(p0 context.Context) ([]sqlc.ReapExpiredUploadSessionsRow, error) {
@@ -1956,6 +2603,24 @@ func (s *Store) ReapExpiredUploadSessions(p0 context.Context) ([]sqlc.ReapExpire
 	return s.Store.ReapExpiredUploadSessions(p0)
 }
 
+func (s *Store) RecordAppSecretDelivery(p0 context.Context, p1 state.AppSecretDeliveryResult) (int, error) {
+	if o, ok := s.over.(interface {
+		RecordAppSecretDelivery(context.Context, state.AppSecretDeliveryResult) (int, error)
+	}); ok {
+		return o.RecordAppSecretDelivery(p0, p1)
+	}
+	return s.Store.RecordAppSecretDelivery(p0, p1)
+}
+
+func (s *Store) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
+	if o, ok := s.over.(interface {
+		RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error)
+	}); ok {
+		return o.RuntimeAppValuesForDeployment(p0, p1, p2, p3)
+	}
+	return s.Store.RuntimeAppValuesForDeployment(p0, p1, p2, p3)
+}
+
 func (s *Store) TouchConsumerKeyLastUsed(p0 context.Context, p1 string) error {
 	if o, ok := s.over.(interface {
 		TouchConsumerKeyLastUsed(context.Context, string) error
@@ -1963,6 +2628,15 @@ func (s *Store) TouchConsumerKeyLastUsed(p0 context.Context, p1 string) error {
 		return o.TouchConsumerKeyLastUsed(p0, p1)
 	}
 	return s.Store.TouchConsumerKeyLastUsed(p0, p1)
+}
+
+func (s *Store) UpdateInstanceStateToTerminal(p0 context.Context, p1 string, p2 string, p3 time.Time) error {
+	if o, ok := s.over.(interface {
+		UpdateInstanceStateToTerminal(context.Context, string, string, time.Time) error
+	}); ok {
+		return o.UpdateInstanceStateToTerminal(p0, p1, p2, p3)
+	}
+	return s.Store.UpdateInstanceStateToTerminal(p0, p1, p2, p3)
 }
 
 func (s *Store) UpdateProjectEnvironmentPromotionVerification(p0 context.Context, p1 string, p2 string, p3 string, p4 string, p5 *time.Time, p6 *time.Time) (state.ProjectEnvironmentPromotion, error) {
@@ -1990,4 +2664,188 @@ func (s *Store) UsageSLOForAccount(p0 context.Context, p1 string, p2 time.Time, 
 		return o.UsageSLOForAccount(p0, p1, p2, p3)
 	}
 	return s.Store.UsageSLOForAccount(p0, p1, p2, p3)
+}
+
+// Runtime policy capabilities used by external apid tests.
+func (s *Store) LatestAppControlPlaneChangeID(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppControlPlaneChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppControlPlaneChangeID(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppControlPlaneChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppControlPlaneChangeID(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppRequestPolicyRevision(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppRequestPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppRequestPolicyRevision(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppEdgeRuleChangeID(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppEdgeRuleChangeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppEdgeRuleChangeID(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAccountCorsPresetChangeID(ctx context.Context, accountID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAccountCorsPresetChangeID(ctx context.Context, accountID string) (int64, error)
+	}); ok {
+		return override.LatestAccountCorsPresetChangeID(ctx, accountID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAccountCorsPresetChangeID(ctx context.Context, accountID string) (int64, error)
+	}); ok {
+		return source.LatestAccountCorsPresetChangeID(ctx, accountID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppResponseCachePurgeID(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppResponseCachePurgeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppResponseCachePurgeID(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppResponseCachePurgeID(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppResponseCachePurgeID(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppEgressPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppEgressPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppEgressPolicyRevision(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppEgressPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppEgressPolicyRevision(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAppCPUPolicyRevision(ctx context.Context, appID string) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestAppCPUPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return override.LatestAppCPUPolicyRevision(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAppCPUPolicyRevision(ctx context.Context, appID string) (int64, error)
+	}); ok {
+		return source.LatestAppCPUPolicyRevision(ctx, appID)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error) {
+	if override, ok := s.over.(interface {
+		ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error)
+	}); ok {
+		return override.ListServingGatewayControlPlaneStates(ctx)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingGatewayControlPlaneStates(ctx context.Context) ([]state.ServingGatewayControlPlaneState, error)
+	}); ok {
+		return source.ListServingGatewayControlPlaneStates(ctx)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) ListServingAppEgressPolicyNodeStates(ctx context.Context, appID string) ([]state.AppEgressPolicyNodeState, error) {
+	if override, ok := s.over.(interface {
+		ListServingAppEgressPolicyNodeStates(ctx context.Context, appID string) ([]state.AppEgressPolicyNodeState, error)
+	}); ok {
+		return override.ListServingAppEgressPolicyNodeStates(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingAppEgressPolicyNodeStates(ctx context.Context, appID string) ([]state.AppEgressPolicyNodeState, error)
+	}); ok {
+		return source.ListServingAppEgressPolicyNodeStates(ctx, appID)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) ListServingAppCPUPolicyNodeStates(ctx context.Context, appID string) ([]state.AppCPUPolicyNodeState, error) {
+	if override, ok := s.over.(interface {
+		ListServingAppCPUPolicyNodeStates(ctx context.Context, appID string) ([]state.AppCPUPolicyNodeState, error)
+	}); ok {
+		return override.ListServingAppCPUPolicyNodeStates(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		ListServingAppCPUPolicyNodeStates(ctx context.Context, appID string) ([]state.AppCPUPolicyNodeState, error)
+	}); ok {
+		return source.ListServingAppCPUPolicyNodeStates(ctx, appID)
+	}
+	return nil, state.ErrNotFound
+}
+func (s *Store) GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error) {
+	if override, ok := s.over.(interface {
+		GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error)
+	}); ok {
+		return override.GetAppScalingPolicyStatus(ctx, appID)
+	}
+	if source, ok := s.Store.(interface {
+		GetAppScalingPolicyStatus(ctx context.Context, appID string) (state.AppScalingPolicyStatus, error)
+	}); ok {
+		return source.GetAppScalingPolicyStatus(ctx, appID)
+	}
+	return state.AppScalingPolicyStatus{}, state.ErrNotFound
+}
+func (s *Store) LatestEdgeRuleChangeID(ctx context.Context) (int64, error) {
+	if override, ok := s.over.(interface {
+		LatestEdgeRuleChangeID(ctx context.Context) (int64, error)
+	}); ok {
+		return override.LatestEdgeRuleChangeID(ctx)
+	}
+	if source, ok := s.Store.(interface {
+		LatestEdgeRuleChangeID(ctx context.Context) (int64, error)
+	}); ok {
+		return source.LatestEdgeRuleChangeID(ctx)
+	}
+	return 0, state.ErrNotFound
+}
+func (s *Store) LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (state.EdgeRulePolicyPosition, error) {
+	if override, ok := s.over.(interface {
+		LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (state.EdgeRulePolicyPosition, error)
+	}); ok {
+		return override.LatestAccountEdgeRulePolicyPosition(ctx, accountID)
+	}
+	if source, ok := s.Store.(interface {
+		LatestAccountEdgeRulePolicyPosition(ctx context.Context, accountID string) (state.EdgeRulePolicyPosition, error)
+	}); ok {
+		return source.LatestAccountEdgeRulePolicyPosition(ctx, accountID)
+	}
+	return state.EdgeRulePolicyPosition{}, state.ErrNotFound
+}
+func (s *Store) MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error) {
+	if override, ok := s.over.(interface {
+		MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error)
+	}); ok {
+		return override.MCPPolicyConvergenceSnapshot(ctx, accountID, appID)
+	}
+	if source, ok := s.Store.(interface {
+		MCPPolicyConvergenceSnapshot(ctx context.Context, accountID, appID string) (api.MCPPolicyConvergenceSnapshot, error)
+	}); ok {
+		return source.MCPPolicyConvergenceSnapshot(ctx, accountID, appID)
+	}
+	return api.MCPPolicyConvergenceSnapshot{}, state.ErrNotFound
 }

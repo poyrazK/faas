@@ -13,8 +13,8 @@ type WorkflowRecoveryPolicyChangeStore interface {
 
 func recoveryPolicyChangePreview(queue api.WorkflowRecoveryAutomaticQueue, proposed api.WorkflowRecoveryPolicy, lastExecution *time.Time, budget recoveryPolicyBudget) api.WorkflowRecoveryPolicyChangePreview {
 	out := api.WorkflowRecoveryPolicyChangePreview{Current: queue.Policy, Proposed: recoveryPolicyClone(proposed), ObservedAt: queue.ObservedAt, NextVersion: queue.Policy.Version + 1, PendingSuppressed: queue.Pending, OutstandingRetained: queue.Outstanding, Entries: []api.WorkflowRecoveryPolicyChangeEntry{}, EntriesTruncated: queue.Truncated, HourlyExecutions: queue.HourlyExecutions, HourlyPreparedActions: budget.Hourly, Candidates: []api.WorkflowRecoveryPolicyChangeCandidate{}}
-	out.AutomaticExecutionEnabled = proposed.Enabled && proposed.Mode == "automatic_retry"
-	if proposed.Mode == "automatic_retry" {
+	out.AutomaticExecutionEnabled = proposed.Enabled && api.WorkflowRecoveryPolicyAutomaticMode(proposed.Mode)
+	if api.WorkflowRecoveryPolicyAutomaticMode(proposed.Mode) {
 		out.RemainingExecutionBudget = max(0, proposed.HourlyExecutionBudget-queue.HourlyExecutions)
 	}
 	out.RemainingPreparationBudget = max(0, proposed.HourlyActionBudget-budget.Hourly)

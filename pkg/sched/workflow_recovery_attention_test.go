@@ -5,12 +5,13 @@ import (
 	"context"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"testing"
 	"time"
 )
 
 type recoveryAttentionTestStore struct {
-	*state.MemStore
+	MemStore                        *state.MemStore
 	attentionCalls, completionCalls int
 	fail                            bool
 }
@@ -29,7 +30,7 @@ func (s *recoveryAttentionTestStore) ProcessNextEventRecoveryExecutionNotificati
 func TestWorkflowRecoveryAttentionScheduler(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		s := &recoveryAttentionTestStore{MemStore: state.NewMemStore(), fail: fail}
-		l := &Loop{engine: &Engine{store: s}}
+		l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
 		l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
 		want := 3
 		if fail {

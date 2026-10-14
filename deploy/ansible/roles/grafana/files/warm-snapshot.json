@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Warm-snapshot tier ops surface (issue #470 / PR C / ADR-074). Four panels: warm-capture errors per reason, guest-init duration percentiles by app, wake-tier mix, and snapshot-population-by-tier counter. Each panel exists because one of the three audit kinds (promoted/stale/disabled) plus the wake-path tier selection drives a Grafana observable — operators tail the dashboard to see fleet-wide behaviour without grepping audit-events. Bucket set on the guest-init histogram is spec §6.3 verbatim (the 0.3/0.35 pair brackets the 350 ms warm-wake budget).",
+  "description": "Warm-snapshot tier ops surface (issue #470 / PR C / ADR-074). Four panels: warm-capture errors per reason, guest-init duration percentiles by app, wake-tier mix, and snapshots published per tier. Each panel exists because one of the three audit kinds (promoted/stale/disabled) plus the wake-path tier selection drives a Grafana observable — operators tail the dashboard to see fleet-wide behaviour without grepping audit-events. Bucket set on the guest-init histogram is spec §6.3 verbatim (the 0.3/0.35 pair brackets the 350 ms warm-wake budget).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -264,7 +264,8 @@
     },
     {
       "type": "stat",
-      "title": "Snapshot population by tier",
+      "title": "Snapshots published by tier (24h)",
+      "description": "Newly durable snapshot rows imaged published per tier over 24h (imaged_snapshot_publication_total, outcome=published). Replaces a population panel over vmmd_snapshots_total, which no daemon exports.",
       "id": 4,
       "gridPos": {
         "h": 8,
@@ -278,12 +279,12 @@
       },
       "targets": [
         {
-          "expr": "count(vmmd_snapshots_total{tier=\"warm\"} == 1 or vmmd_snapshots_total{tier=\"warm\"})",
+          "expr": "sum(increase(imaged_snapshot_publication_total{tier=\"warm\",outcome=\"published\"}[24h]))",
           "legendFormat": "warm rows",
           "refId": "A"
         },
         {
-          "expr": "count(vmmd_snapshots_total{tier=\"init\"} == 1 or vmmd_snapshots_total{tier=\"init\"})",
+          "expr": "sum(increase(imaged_snapshot_publication_total{tier=\"init\",outcome=\"published\"}[24h]))",
           "legendFormat": "init rows",
           "refId": "B"
         }

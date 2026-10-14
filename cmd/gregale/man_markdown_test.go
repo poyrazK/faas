@@ -38,7 +38,7 @@ func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 	var buf bytes.Buffer
 	renderMarkdownReference(&buf, customerCliCommands())
 	out := buf.String()
-	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces"} {
+	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "entities"} {
 		if strings.Contains(out, "## "+command+"\n") {
 			t.Errorf("public Markdown reference exposes advanced command %q", command)
 		}

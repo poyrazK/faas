@@ -18,6 +18,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		"workflow_initial_recovery_reviews":       CloneSchemaOperational,
 		"profile_deployment_policies":             CloneSchemaConfiguration,
 		"profile_investigations":                  CloneSchemaOperational,
 		"profile_deployment_checks":               CloneSchemaOperational,
@@ -161,6 +162,8 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"dev_bridge_sessions":             CloneSchemaOperational,
 		"execution_artifact_grants":       CloneSchemaOperational,
 		"execution_outbound_integrations": CloneSchemaOperational,
+		"mcp_catalog_monitors":            CloneSchemaOperational,
+		"mcp_oauth_retirements":           CloneSchemaOperational,
 		"service_recovery":                CloneSchemaOperational,
 		"service_capacity_policy":         CloneSchemaPlatform,
 		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,

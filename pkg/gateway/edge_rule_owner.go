@@ -1,6 +1,9 @@
 package gateway
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type edgeRuleOwnerKey struct{}
 
@@ -11,6 +14,43 @@ func WithEdgeRuleOwner(ctx context.Context, accountID string) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, edgeRuleOwnerKey{}, accountID)
+}
+
+type edgeRuleAppKey struct{}
+
+// WithEdgeRuleApp records the app a request resolved to, so app-wide
+// edge rules (match_host "@app", ADR-1191) of that app apply to the host.
+func WithEdgeRuleApp(ctx context.Context, appID string) context.Context {
+	if appID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, edgeRuleAppKey{}, appID)
+}
+
+// EdgeRuleApp returns the app recorded by WithEdgeRuleApp, or "".
+func EdgeRuleApp(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	app, _ := ctx.Value(edgeRuleAppKey{}).(string)
+	return app
+}
+
+// EdgeRuleCacheKey is the edge-rule cache key for host as served by appID.
+// A host's compiled rules include its app's app-wide rules, so the key
+// carries the app: a host moved to another app never reuses the old app's
+// set. With no app the key is the host itself.
+func EdgeRuleCacheKey(host, appID string) string {
+	if appID == "" {
+		return host
+	}
+	return host + "\x00" + appID
+}
+
+// EdgeRuleCacheKeyHost returns the host part of an EdgeRuleCacheKey.
+func EdgeRuleCacheKeyHost(key string) string {
+	host, _, _ := strings.Cut(key, "\x00")
+	return host
 }
 
 // EdgeRuleOwner returns the account recorded by WithEdgeRuleOwner, or "".

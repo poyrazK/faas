@@ -155,6 +155,28 @@ func page(rows []string, limit int) []string {
 EOF
 expect accept "rule2 ignores slice pagination" "$d"
 
+# --- RULE 2: empty resets never split a rune, regardless of the value type. ---
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/reset.go" <<'EOF'
+package thing
+
+func reset(line []byte, message string) {
+    line = line[:0]
+    message = message[:00]
+}
+EOF
+expect accept "rule2 accepts empty buffer and string resets" "$d"
+
+d="$(mktemp -d)"
+make_tree "$d" "pkg/thing/trim.go" <<'EOF'
+package thing
+
+func trim(message string) string {
+    message = message[:01]
+    return message
+}
+EOF
+expect reject "rule2 still flags a nonzero cap with leading zeros" "$d"
 # --- RULE 2: emptying a buffer for reuse is not truncation. -----------------
 d="$(mktemp -d)"
 make_tree "$d" "pkg/thing/h.go" <<'EOF'

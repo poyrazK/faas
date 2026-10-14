@@ -59,6 +59,21 @@ func CapabilitiesForPlan(plan Plan) (CapabilitiesResponse, error) {
 	return result, nil
 }
 
+// CapabilityEntitled reports whether a plan is entitled to a capability in
+// the registry. An internal capability lists no plans and entitles none.
+func CapabilityEntitled(id string, plan Plan) (bool, error) {
+	catalog, err := productcap.Load()
+	if err != nil {
+		return false, err
+	}
+	for _, capability := range catalog.Capabilities {
+		if capability.ID == id {
+			return planEntitled(capability.Plans, plan), nil
+		}
+	}
+	return false, nil
+}
+
 func planEntitled(plans []string, plan Plan) bool {
 	for _, entitled := range plans {
 		if entitled == string(plan) {

@@ -169,16 +169,25 @@ func TestAIGatewayReleaseGateIsClosedByDefault(t *testing.T) {
 		apidserver.AssertProblem(t, e.Do(t, method, "/v1/outbound/integrations/"+uuid.NewString()+path, api.PutOutboundAIPolicyRequest{}, nil),
 			http.StatusForbidden, "outbound_ai_gateway_unavailable")
 	}
-	(*e.S()).ConfigureAIGateway(apidserver.Config{}, func(name string) string {
+	if err := (*e.S()).ConfigureAIGateway(apidserver.Config{}, func(name string) string {
 		if name == "FAAS_AI_GATEWAY_ENABLED" {
 			return "1"
 		}
 		return ""
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if list := e.Do(t, http.MethodGet, "/v1/outbound/ai-routes", nil, nil); list.Code != http.StatusOK {
 		t.Fatalf("routes after enabling = %d %s", list.Code, list.Body.String())
 	}
-	(*e.S()).ConfigureAIGateway(apidserver.Config{AIGatewayEnabled: true}, func(string) string { return "0" })
+	if err := (*e.S()).ConfigureAIGateway(apidserver.Config{AIGatewayEnabled: true}, func(name string) string {
+		if name == "FAAS_AI_GATEWAY_ENABLED" {
+			return "0"
+		}
+		return ""
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if *(*e.S()).AiGatewayEnabled() {
 		t.Fatal("FAAS_AI_GATEWAY_ENABLED=0 did not override the TOML setting")
 	}

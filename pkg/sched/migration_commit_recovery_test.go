@@ -10,11 +10,12 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type migrationRecoveryFaultStore struct {
-	*state.MemStore
+	MemStore          *state.MemStore
 	commit            bool
 	recoveryErr       error
 	cancelAfterCommit context.CancelFunc
@@ -86,20 +87,20 @@ func TestRuntimeConfigMigrationCommitRecoveryPreservesServingDestination(t *test
 				store.recoveryErr = errors.New("database unavailable during recovery")
 			}
 			acct, app, dep := seedApp(t, store.MemStore, api.PlanHobby, 256, 3)
-			if err := store.UpsertAppEnvInScope(t.Context(), acct.ID, app.ID, dep.Scope, "MODE", "approved"); err != nil {
+			if err := store.MemStore.UpsertAppEnvInScope(t.Context(), acct.ID, app.ID, dep.Scope, "MODE", "approved"); err != nil {
 				t.Fatal(err)
 			}
 			vmm := &migrationRecoveryVMM{&migrationReceiptVMM{fakeVMM: &fakeVMM{}, method: vmmdpb.WakeMethod_WAKE_COLD_BOOT}}
-			engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			engine := newEngine(t, statetest.NewMem(store), vmm, &fakeNotifier{}, "1.10.0")
 			woken, err := engine.Wake(t.Context(), app.ID, "", "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			original, err := store.InstanceByID(t.Context(), woken.InstanceID)
+			original, err := store.MemStore.InstanceByID(t.Context(), woken.InstanceID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			destination, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: "migration-recovery-" + uuid.NewString(), Active: true,
+			destination, err := store.MemStore.CreateComputeNode(t.Context(), state.ComputeNode{Name: "migration-recovery-" + uuid.NewString(), Active: true,
 				TargetURL: "tcp://127.0.0.1:50052", AdmissionCeilingMB: 4096, MemMB: 8192, VPCPUs: 4, VCPUBudget: 160, MaxConcurrency: 5})
 			if err != nil {
 				t.Fatal(err)
@@ -110,7 +111,7 @@ func TestRuntimeConfigMigrationCommitRecoveryPreservesServingDestination(t *test
 				store.cancelAfterCommit = cancel
 			}
 			ledger := NewNodeLedger()
-			harness := NewMigrationHarness(t.Context(), store, vmm, wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, ledger, nil)
+			harness := NewMigrationHarness(t.Context(), statetest.NewMem(store), vmm, wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, ledger, nil)
 			err = harness.MigrateOne(ctx, original.ID, original.NodeID)
 			if (err == nil) != tc.wantSuccess || errors.Is(err, state.ErrMigrationCommitUnresolved) != tc.wantUnresolved {
 				t.Fatalf("handoff result: %v, want success=%v unresolved=%v", err, tc.wantSuccess, tc.wantUnresolved)
@@ -118,7 +119,7 @@ func TestRuntimeConfigMigrationCommitRecoveryPreservesServingDestination(t *test
 			if vmm.destroys != tc.wantDestroy || vmm.cancels != tc.wantCancel || vmm.acks != tc.wantAck {
 				t.Fatalf("unsafe recovery actions: destroys=%d cancels=%d acks=%d", vmm.destroys, vmm.cancels, vmm.acks)
 			}
-			current, err := store.InstanceByID(t.Context(), original.ID)
+			current, err := store.MemStore.InstanceByID(t.Context(), original.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +127,7 @@ func TestRuntimeConfigMigrationCommitRecoveryPreservesServingDestination(t *test
 				if current.NodeID != destination.ID || current.State != string(state.StateRunning) || current.WakeID == original.WakeID {
 					t.Fatalf("recovery reverted committed ownership: %+v", current)
 				}
-				inputs, exists, err := store.InstanceRuntimeConfigReceipt(t.Context(), current.ID)
+				inputs, exists, err := store.MemStore.InstanceRuntimeConfigReceipt(t.Context(), current.ID)
 				if err != nil || !exists || inputs.Variables["MODE"] != "approved" {
 					t.Fatalf("recovery discarded committed runtime inputs: %+v %v %v", inputs, exists, err)
 				}
@@ -149,7 +150,7 @@ func TestRuntimeConfigMigrationLegacyOwnershipCommitRecovery(t *testing.T) {
 	instanceID := seedInstanceForMigration(t, store.MemStore, "dying")
 	vmm := &fakeVMM{}
 	ledger := NewNodeLedger()
-	harness := NewMigrationHarness(t.Context(), store, vmm, wire.NewOpsMetrics("schedd"), testLog(), "new-owner", stubSpecBuilder, ledger, nil)
+	harness := NewMigrationHarness(t.Context(), statetest.NewMem(store), vmm, wire.NewOpsMetrics("schedd"), testLog(), "new-owner", stubSpecBuilder, ledger, nil)
 	if err := harness.MigrateOne(t.Context(), instanceID, "dying"); err != nil {
 		t.Fatal(err)
 	}

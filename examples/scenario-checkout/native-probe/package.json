@@ -1,0 +1,8 @@
+{
+  "name": "gregale-native-recovery-probe",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": "22"},
+  "scripts": {"start": "node start.js"}
+}

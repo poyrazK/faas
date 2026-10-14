@@ -162,7 +162,7 @@ func TestRestoreReseedNodePreload(t *testing.T) {
 	}
 }
 
-// ADR-981: a restore marks Node's randomUUID and randomInt caches stale
+// ADR-1110: a restore marks Node's randomUUID and randomInt caches stale
 // instead of draining them in the barrier, and the first call that reads a
 // cache drains it, through either crypto.randomUUID or webcrypto's, which
 // share one batch. The wrappers keep the originals' names and arity.

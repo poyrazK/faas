@@ -3,16 +3,15 @@ package managedrealtime
 import (
 	"encoding/base64"
 	"errors"
-	"net/http"
-	"strconv"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/state"
+	"net/http"
+	"strconv"
 )
 
 func realtimeScheduleResponse(row state.ManagedRealtimeSchedule) api.ManagedRealtimeScheduleResponse {
-	return api.ManagedRealtimeScheduleResponse{ScheduleID: row.ID, Group: row.Group, Conditions: row.Conditions, OnConditionFailure: row.OnConditionFailure, SkippedOccurrences: row.SkippedOccurrences, SkipReason: row.SkipReason, IntervalSeconds: row.IntervalSeconds, MaxOccurrences: row.MaxOccurrences, EndAt: row.EndAt, InitialDeliverAt: row.InitialDeliverAt, Occurrence: row.Occurrence, CompletedOccurrences: row.CompletedOccurrences, MaxAttempts: row.MaxAttempts, BackoffSeconds: row.BackoffSeconds, Attempts: row.Attempts, CycleAttempts: row.CycleAttempts, NextAttemptAt: row.NextAttemptAt, LastAttemptAt: row.LastAttemptAt, Channel: row.Channel, DataBase64: base64.StdEncoding.EncodeToString(row.Data), Binary: row.Binary, Metadata: row.Metadata, DeliverAt: row.DeliverAt, Version: row.Version, Status: row.Status, Sequence: row.Sequence, LastError: row.LastError, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return api.ManagedRealtimeScheduleResponse{TTLSeconds: row.TTLSeconds, ScheduleID: row.ID, Group: row.Group, Conditions: row.Conditions, OnConditionFailure: row.OnConditionFailure, SkippedOccurrences: row.SkippedOccurrences, SkipReason: row.SkipReason, IntervalSeconds: row.IntervalSeconds, MaxOccurrences: row.MaxOccurrences, EndAt: row.EndAt, InitialDeliverAt: row.InitialDeliverAt, Occurrence: row.Occurrence, CompletedOccurrences: row.CompletedOccurrences, MaxAttempts: row.MaxAttempts, BackoffSeconds: row.BackoffSeconds, Attempts: row.Attempts, CycleAttempts: row.CycleAttempts, NextAttemptAt: row.NextAttemptAt, LastAttemptAt: row.LastAttemptAt, Channel: row.Channel, DataBase64: base64.StdEncoding.EncodeToString(row.Data), Binary: row.Binary, Metadata: row.Metadata, DeliverAt: row.DeliverAt, Version: row.Version, Status: row.Status, Sequence: row.Sequence, LastError: row.LastError, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 func (s *Service) ManagedRealtimeSchedules(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.HistoryPreviewEnabled {
@@ -100,7 +99,7 @@ func (s *Service) ManagedRealtimeSchedules(w http.ResponseWriter, r *http.Reques
 			api.WriteProblem(w, api.ErrRealtimeInvalid("invalid scheduled payload or endpoint size limit"))
 			return
 		}
-		row, err = store.PutManagedRealtimeSchedule(r.Context(), state.ManagedRealtimeSchedule{EndpointID: ep.ID, Channel: ch, Group: req.Group, ID: r.PathValue("schedule_id"), Data: data, Binary: req.Binary, Metadata: req.Metadata, DeliverAt: req.DeliverAt, MaxAttempts: req.MaxAttempts, BackoffSeconds: req.BackoffSeconds, IntervalSeconds: req.IntervalSeconds, MaxOccurrences: req.MaxOccurrences, EndAt: req.EndAt, Conditions: req.Conditions, OnConditionFailure: req.OnConditionFailure})
+		row, err = store.PutManagedRealtimeSchedule(r.Context(), state.ManagedRealtimeSchedule{TTLSeconds: req.TTLSeconds, EndpointID: ep.ID, Channel: ch, Group: req.Group, ID: r.PathValue("schedule_id"), Data: data, Binary: req.Binary, Metadata: req.Metadata, DeliverAt: req.DeliverAt, MaxAttempts: req.MaxAttempts, BackoffSeconds: req.BackoffSeconds, IntervalSeconds: req.IntervalSeconds, MaxOccurrences: req.MaxOccurrences, EndAt: req.EndAt, Conditions: req.Conditions, OnConditionFailure: req.OnConditionFailure})
 	case http.MethodPost:
 		if action := r.PathValue("recurrence_action"); action != "" {
 			var req api.ManagedRealtimeSchedulePauseRequest

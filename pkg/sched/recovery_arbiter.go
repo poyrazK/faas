@@ -182,6 +182,17 @@ func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance
 		// node) and resumes normal decision-making.
 		return DecisionNone
 	}
+	if instanceState == string(state.StateFrozen) {
+		// ADR-1151: a frozen VM is disposable and cannot be live-migrated
+		// (vmmd refuses to snapshot it). The recreate dispatch parks it;
+		// the deployment's snapshot stays.
+		switch node.Lifecycle {
+		case state.NodeLifecycleDraining, state.NodeLifecycleForceDraining,
+			state.NodeLifecycleRecovering, state.NodeLifecycleUnavailable:
+			return DecisionRecreate
+		}
+		return DecisionNone
+	}
 	if strings.HasPrefix(instanceState, "evicting") {
 		// Eviction sweep (rebalancer is mid-flight removing it)
 		// owns this row — recreating here would re-allocate the
