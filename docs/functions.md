@@ -125,6 +125,30 @@ After each function deploys, Gregale applies its manifest settings:
   provider. Later deploys update the delivery path. Endpoints that are no
   longer listed are reported but never deleted, because deleting one would
   break the URL the provider calls.
+- **`queue_bindings`**: queues whose messages are pushed to the function,
+  with the same fields as an app's `queue_bindings:` (`name`, `queue_name`,
+  `max_concurrency`, `enabled`, `retry_policy`). A function consumes by
+  push, so `mode` defaults to `push` and `workload_class` to `http`. The
+  function's bindings match the list by name: one you remove is deleted,
+  and `queue_bindings: []` removes them all. Without the key, bindings
+  made by hand are left alone.
+- **`event_triggers`**: event subscriptions that deliver to the function,
+  with the same fields as a top-level `event_triggers:` entry except `app:`.
+  They are added and updated on each deploy but, as for any app, never
+  removed by one.
+
+```yaml
+functions:
+  - name: invoices
+    root: functions/invoices
+    queue_bindings:
+      - name: jobs
+        queue_name: invoice-jobs
+        max_concurrency: 4
+    event_triggers:
+      - source: billing.*
+        type: invoice.paid
+```
 
 ### Per-function settings
 

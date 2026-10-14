@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -29,11 +30,14 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"gopkg.in/yaml.v3"
 )
 
 // functionSetClient is the API surface the post-deploy reconcile needs.
 type functionSetClient interface {
 	manifestCronClient
+	manifestQueueBindingClient
+	PostTriggersBatchCreate(ctx context.Context, req api.CreateTriggerBatchRequest) (map[string]any, error)
 	GetApp(ctx context.Context, slug string) (api.AppResponse, error)
 	UpdateApp(ctx context.Context, slug string, req api.UpdateAppRequest) (api.AppResponse, error)
 	ListApps(ctx context.Context) ([]api.AppResponse, error)
@@ -329,7 +333,50 @@ func (d functionSetDeploy) reconcile(ctx context.Context, client functionSetClie
 	if err := reconcileFunctionWebhooks(ctx, client, d.out, fn.slug, fn.spec.Webhooks, d.lookupEnv()); err != nil {
 		return fmt.Errorf("webhooks: %w", err)
 	}
+	if fn.spec.QueueBindings != nil {
+		if err := reconcileQueueBindings(ctx, client, fn.slug, fn.spec.QueueBindings, "push", "http"); err != nil {
+			return fmt.Errorf("queue bindings: %w", err)
+		}
+	}
+	if err := applyFunctionEventTriggers(ctx, client, fn.slug, app.ID, fn.spec.EventTriggers); err != nil {
+		return fmt.Errorf("event triggers: %w", err)
+	}
 	return nil
+}
+
+// applyFunctionEventTriggers subscribes a function to its declared events
+// through the trigger batch endpoint, which applies them the way a deploy
+// applies a manifest's event_triggers (ADR-1190).
+func applyFunctionEventTriggers(ctx context.Context, client functionSetClient, slug, appID string, triggers []gregalemanifest.EventTrigger) error {
+	if len(triggers) == 0 {
+		return nil
+	}
+	scoped := make([]gregalemanifest.EventTrigger, len(triggers))
+	for i, trigger := range triggers {
+		trigger.App = slug
+		scoped[i] = trigger
+	}
+	doc, err := yaml.Marshal(struct {
+		EventTriggers []gregalemanifest.EventTrigger `yaml:"event_triggers"`
+	}{scoped})
+	if err != nil {
+		return fmt.Errorf("encode: %w", err)
+	}
+	out, err := client.PostTriggersBatchCreate(ctx, api.CreateTriggerBatchRequest{AppID: appID, ManifestYAML: string(doc)})
+	if err != nil {
+		return err
+	}
+	failures, _ := out["errors"].([]any)
+	if len(failures) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		if row, ok := failure.(map[string]any); ok {
+			messages = append(messages, fmt.Sprint(row["message"]))
+		}
+	}
+	return errors.New(strings.Join(messages, "; "))
 }
 
 func (d functionSetDeploy) lookupEnv() func(string) string {

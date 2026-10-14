@@ -1255,6 +1255,9 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		}
 		out = append(out, triggerResponse(created))
 	}
+	if failed := s.applyBatchEventTriggers(r.Context(), acct, app, m.EventTriggers); failed != nil {
+		errs = append(errs, *failed)
+	}
 	writeJSON(w, http.StatusOK, batchCreateResponse{Created: out, Errors: errs})
 }
 

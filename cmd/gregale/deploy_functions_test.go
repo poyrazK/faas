@@ -38,6 +38,10 @@ type fakeFunctionSetClient struct {
 	rules    map[string][]api.EdgeRuleResponse
 	ruleLog  []string
 	eventLog []string
+	// ADR-1190 queue bindings and event triggers.
+	bindings map[string][]api.QueueBindingResponse
+	batches  []api.CreateTriggerBatchRequest
+	batchErr string
 }
 
 func newFakeFunctionSetClient() *fakeFunctionSetClient {
@@ -52,7 +56,41 @@ func newFakeFunctionSetClient() *fakeFunctionSetClient {
 		env:           map[string]map[string]string{},
 		secrets:       map[string]map[string]string{},
 		rules:         map[string][]api.EdgeRuleResponse{},
+		bindings:      map[string][]api.QueueBindingResponse{},
 	}
+}
+
+func (f *fakeFunctionSetClient) ListQueueBindings(_ context.Context, slug string) ([]api.QueueBindingResponse, error) {
+	return f.bindings[slug], nil
+}
+func (f *fakeFunctionSetClient) CreateQueueBinding(_ context.Context, slug string, req api.CreateQueueBindingRequest) (api.QueueBindingResponse, error) {
+	row := api.QueueBindingResponse{ID: f.id(), Name: req.Name, QueueName: req.QueueName, Mode: req.Mode, WorkloadClass: req.WorkloadClass, MaxConcurrency: req.MaxConcurrency, Enabled: *req.Enabled}
+	f.bindings[slug] = append(f.bindings[slug], row)
+	f.eventLog = append(f.eventLog, "bind:"+slug+":"+req.Name)
+	return row, nil
+}
+func (f *fakeFunctionSetClient) UpdateQueueBinding(_ context.Context, slug, id string, req api.UpdateQueueBindingRequest) (api.QueueBindingResponse, error) {
+	for i, row := range f.bindings[slug] {
+		if row.ID == id {
+			row.QueueName, row.MaxConcurrency = *req.QueueName, *req.MaxConcurrency
+			f.bindings[slug][i] = row
+			f.eventLog = append(f.eventLog, "rebind:"+slug+":"+row.Name)
+			return row, nil
+		}
+	}
+	return api.QueueBindingResponse{}, errors.New("no binding")
+}
+func (f *fakeFunctionSetClient) DeleteQueueBinding(_ context.Context, slug, id string) error {
+	f.bindings[slug] = slices.DeleteFunc(f.bindings[slug], func(row api.QueueBindingResponse) bool { return row.ID == id })
+	f.eventLog = append(f.eventLog, "unbind:"+slug)
+	return nil
+}
+func (f *fakeFunctionSetClient) PostTriggersBatchCreate(_ context.Context, req api.CreateTriggerBatchRequest) (map[string]any, error) {
+	f.batches = append(f.batches, req)
+	if f.batchErr != "" {
+		return map[string]any{"created": []any{}, "errors": []any{map[string]any{"message": f.batchErr}}}, nil
+	}
+	return map[string]any{"created": []any{}}, nil
 }
 
 func (f *fakeFunctionSetClient) id() string {
@@ -568,6 +606,93 @@ func TestFunctionSetAppliesSettingsBeforeDeploy(t *testing.T) {
 	}
 	if slices.Contains(client.eventLog, "deploy") || !strings.Contains(out.String(), "export DATABASE_URL") {
 		t.Fatalf("deployed without its secret: %q\n%s", client.eventLog, out.String())
+	}
+}
+
+// ADR-1190: a function's queue bindings push to it by default and match the
+// manifest; its event triggers reach the trigger batch endpoint scoped to
+// its app. An omitted queue_bindings leaves bindings alone.
+func TestFunctionSetQueueBindingsAndEventTriggers(t *testing.T) {
+	manifest := `functions:
+  - name: worker
+    root: f
+    runtime: node24
+    queue_bindings:
+      - name: jobs
+        queue_name: jobs
+        max_concurrency: 4
+    event_triggers:
+      - source: billing.*
+        type: invoice.paid
+`
+	dir := writeFunctionProject(t, manifest, "f")
+	m, _, err := functionSetManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeFunctionSetClient()
+	client.apps["shop-worker"] = api.AppResponse{ID: testFunctionAppID, Slug: "shop-worker", Type: "function"}
+	client.bindings["shop-worker"] = []api.QueueBindingResponse{{ID: "old", Name: "stale", QueueName: "stale", Mode: "push", WorkloadClass: "http", Enabled: true, MaxConcurrency: 1}}
+	var out bytes.Buffer
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+		deployOne: func([]string) int { return 0 }}
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("exit = %d\n%s", code, out.String())
+	}
+	got := client.bindings["shop-worker"]
+	if len(got) != 1 || got[0].Name != "jobs" || got[0].Mode != "push" || got[0].WorkloadClass != "http" || got[0].MaxConcurrency != 4 {
+		t.Fatalf("bindings = %+v, want only push/http jobs with max_concurrency 4", got)
+	}
+	if len(client.batches) != 1 || client.batches[0].AppID != testFunctionAppID {
+		t.Fatalf("batches = %+v", client.batches)
+	}
+	sent, err := gregalemanifest.ParseBytes([]byte(client.batches[0].ManifestYAML))
+	if err != nil {
+		t.Fatalf("batch manifest %q: %v", client.batches[0].ManifestYAML, err)
+	}
+	if len(sent.EventTriggers) != 1 || sent.EventTriggers[0].App != "shop-worker" || sent.EventTriggers[0].Source != "billing.*" || sent.EventTriggers[0].Type != "invoice.paid" {
+		t.Fatalf("batch event triggers = %+v", sent.EventTriggers)
+	}
+
+	// --no-triggers skips both.
+	client.batches = nil
+	client.bindings["shop-worker"] = nil
+	d.noTriggers = true
+	if code := d.run(context.Background(), client); code != 0 {
+		t.Fatalf("no-triggers exit = %d\n%s", code, out.String())
+	}
+	if len(client.batches) != 0 || len(client.bindings["shop-worker"]) != 0 {
+		t.Fatalf("--no-triggers applied bindings %+v or batches %+v", client.bindings, client.batches)
+	}
+
+	// A rejected event trigger fails the function's configuration.
+	d.noTriggers = false
+	client.batchErr = "event_triggers: event work policy must exist on the target app"
+	if code := d.run(context.Background(), client); code != 1 || !strings.Contains(out.String(), "work policy must exist") {
+		t.Fatalf("batch error exit = %d\n%s", code, out.String())
+	}
+
+	// Without queue_bindings the app's bindings are left alone; an empty
+	// list removes them.
+	for _, tc := range []struct {
+		name, section string
+		want          int
+	}{
+		{"omitted", "", 1},
+		{"empty", "    queue_bindings: []\n", 0},
+	} {
+		dir := writeFunctionProject(t, "functions:\n  - name: worker\n    root: f\n    runtime: node24\n"+tc.section, "f")
+		m, _, _ := functionSetManifest(dir)
+		client.batchErr = ""
+		client.bindings["shop-worker"] = []api.QueueBindingResponse{{ID: "kept", Name: "manual", QueueName: "manual", Mode: "push", WorkloadClass: "http", Enabled: true, MaxConcurrency: 1}}
+		d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, out: &out,
+			deployOne: func([]string) int { return 0 }}
+		if code := d.run(context.Background(), client); code != 0 {
+			t.Fatalf("%s: exit = %d\n%s", tc.name, code, out.String())
+		}
+		if len(client.bindings["shop-worker"]) != tc.want {
+			t.Fatalf("%s: bindings = %+v, want %d", tc.name, client.bindings["shop-worker"], tc.want)
+		}
 	}
 }
 

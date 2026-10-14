@@ -49,6 +49,12 @@ type FunctionSpec struct {
 	// every path no route claims.
 	Routes []string `yaml:"routes,omitempty"`
 	Entry  bool     `yaml:"entry,omitempty"`
+	// QueueBindings push queue messages to the function and EventTriggers
+	// subscribe it to events (ADR-1190). An omitted queue_bindings leaves
+	// the app's bindings alone and an empty list removes them; event
+	// triggers are added and updated, never removed, as on any deploy.
+	QueueBindings []QueueBinding `yaml:"queue_bindings,omitempty"`
+	EventTriggers []EventTrigger `yaml:"event_triggers,omitempty"`
 }
 
 // HasPreDeploySettings reports whether the function sets anything that must
@@ -159,6 +165,9 @@ func (m *Manifest) validateFunctions(plan api.Plan) error {
 			return fmt.Errorf("%s.idle_timeout_s %d must be between %d and %d on this plan", field, fn.IdleTimeoutS, api.IdleTimeoutFloorSeconds, ceiling)
 		}
 		if err := validateFunctionSettings(field, fn, limits); err != nil {
+			return err
+		}
+		if err := validateFunctionDeliveries(field, fn); err != nil {
 			return err
 		}
 		for j, route := range fn.Routes {
@@ -288,6 +297,40 @@ func validateFunctionSettings(field string, fn FunctionSpec, limits api.Limits) 
 		}
 		if _, templated := api.EdgeRuleTemplatedPath(route); templated {
 			return fmt.Errorf("%s.routes[%d] %q: routes are globs such as /users/*, not {param} templates", field, j, route)
+		}
+	}
+	return nil
+}
+
+// validateFunctionDeliveries checks a function's queue bindings and event
+// triggers. A function consumes queues by push, and its event triggers
+// deliver to it, so neither names another mode or app.
+func validateFunctionDeliveries(field string, fn FunctionSpec) error {
+	names := map[string]bool{}
+	for j, binding := range fn.QueueBindings {
+		bindingField := fmt.Sprintf("%s.queue_bindings[%d]", field, j)
+		if binding.Mode == "pull" {
+			return fmt.Errorf("%s: a function consumes queues by push; remove mode: pull", bindingField)
+		}
+		pushed := binding
+		pushed.Mode = "push"
+		if pushed.WorkloadClass == "" {
+			pushed.WorkloadClass = "http"
+		}
+		if err := pushed.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", bindingField, err)
+		}
+		if names[binding.Name] {
+			return fmt.Errorf("%s: duplicate queue binding name %q", bindingField, binding.Name)
+		}
+		names[binding.Name] = true
+	}
+	for j, trigger := range fn.EventTriggers {
+		if trigger.App != "" {
+			return fmt.Errorf("%s.event_triggers[%d].app: a function's event triggers deliver to that function; remove app:", field, j)
+		}
+		if err := trigger.Validate(j); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
 		}
 	}
 	return nil

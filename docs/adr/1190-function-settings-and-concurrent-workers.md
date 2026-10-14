@@ -103,6 +103,18 @@ loop and Python's asyncio can wait on many requests in one process.
    The setting is accepted on every function runtime: a handler that does
    not advertise slots keeps one request per process.
 
+7. **Queue and event delivery per function.** A `functions:` entry may list
+   `queue_bindings` and `event_triggers`; cron triggers stay in the
+   top-level `triggers:` with `app:` naming the function. Function deploys
+   pass `--no-triggers`, so after each function deploys the CLI applies
+   them: queue bindings through the queue binding API, matched by name with
+   push/http defaults (an omitted key leaves the app's bindings alone, an
+   empty list removes them), and event triggers through
+   `POST /v1/triggers:batch_create`, which now applies a manifest's
+   `event_triggers` for the target app with the same code a source deploy
+   uses and rolls back on failure. Event subscriptions are only added or
+   updated, never deleted, as on any deploy.
+
 ## Consequences
 
 - An I/O-bound function serves up to its plan's per-VM bound from one

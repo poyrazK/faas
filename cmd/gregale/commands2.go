@@ -2112,6 +2112,13 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	if err := m.Validate(); err != nil {
 		return err
 	}
+	return reconcileQueueBindings(ctx, client, slug, m.QueueBindings, "pull", "worker")
+}
+
+// reconcileQueueBindings makes an app's default-environment queue bindings
+// match bindings, by name. An omitted mode or workload class takes the
+// caller's default: pull/worker for an app, push/http for a function.
+func reconcileQueueBindings(ctx context.Context, client manifestQueueBindingClient, slug string, bindings []gregalemanifest.QueueBinding, defaultMode, defaultClass string) error {
 	existing, err := client.ListQueueBindings(ctx, slug)
 	if err != nil {
 		return fmt.Errorf("list existing queue bindings: %w", err)
@@ -2123,8 +2130,8 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 		}
 		existingByName[row.Name] = row
 	}
-	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
-	for _, binding := range m.QueueBindings {
+	desired := make(map[string]gregalemanifest.QueueBinding, len(bindings))
+	for _, binding := range bindings {
 		desired[binding.Name] = binding
 	}
 	for _, row := range existing {
@@ -2137,14 +2144,14 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 			}
 		}
 	}
-	for _, binding := range m.QueueBindings {
+	for _, binding := range bindings {
 		mode := binding.Mode
 		if mode == "" {
-			mode = "pull"
+			mode = defaultMode
 		}
 		class := binding.WorkloadClass
 		if class == "" {
-			class = "worker"
+			class = defaultClass
 		}
 		maxConcurrency := binding.MaxConcurrency
 		if maxConcurrency == 0 {

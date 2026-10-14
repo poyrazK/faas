@@ -99,6 +99,11 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"routes without entry", "functions:\n  - name: a\n    root: f\n    routes: [/a/*]\n", api.PlanPro, "set entry: true"},
 		{"two entries", "functions:\n  - name: a\n    root: f1\n    entry: true\n  - name: b\n    root: f2\n    entry: true\n", api.PlanPro, "only one function can be the entry"},
 		{"entry with routes", "functions:\n  - name: a\n    root: f\n    entry: true\n    routes: [/a/*]\n", api.PlanPro, "remove its routes"},
+		{"pull queue binding", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: jobs\n        mode: pull\n", api.PlanPro, "consumes queues by push"},
+		{"duplicate queue binding", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: jobs\n      - name: jobs\n        queue_name: other\n", api.PlanPro, "duplicate queue binding name"},
+		{"bad queue name", "functions:\n  - name: a\n    root: f\n    queue_bindings:\n      - name: jobs\n        queue_name: Jobs\n", api.PlanPro, "queue_name must match"},
+		{"event trigger names an app", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - app: other\n        source: billing.*\n        type: invoice.paid\n", api.PlanPro, "remove app:"},
+		{"event trigger without source", "functions:\n  - name: a\n    root: f\n    event_triggers:\n      - type: invoice.paid\n", api.PlanPro, "functions[0]: triggers.event[0].source"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
