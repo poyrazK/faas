@@ -5,4 +5,4 @@
 /**
  * Discriminator for the underlying event source.
  */
-export type TriggerKind = 'cron' | 'kafka' | 'nats' | 'redis_streams' | 'sqs_compat' | 'queue';
+export type TriggerKind = 'cron' | 'kafka' | 'nats' | 'redis_streams' | 'sqs_compat' | 'queue' | 'realtime';

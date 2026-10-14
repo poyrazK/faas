@@ -30,6 +30,7 @@ var triggerKindNames = []string{
 	string(api.TriggerKindRedisStreams),
 	string(api.TriggerKindSQSCompat),
 	string(api.TriggerKindQueue),
+	string(api.TriggerKindRealtime),
 }
 
 var triggerBrokerKindNames = []string{
@@ -38,14 +39,15 @@ var triggerBrokerKindNames = []string{
 	string(api.TriggerKindRedisStreams),
 	string(api.TriggerKindSQSCompat),
 	string(api.TriggerKindQueue),
+	string(api.TriggerKindRealtime),
 }
 
 var triggerRecordStateNames = []string{
-	"pending", "claimed", "succeeded", "retry", "dead_letter",
+	"pending", "claimed", "succeeded", "retry", "dead_letter", "superseded",
 }
 
-const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue"
-const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue"
+const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue|realtime"
+const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue|realtime"
 
 func triggerFlagSet(name, usage string) *flag.FlagSet {
 	fs := newFlagSet(name, flag.ContinueOnError)

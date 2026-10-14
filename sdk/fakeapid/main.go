@@ -57,7 +57,7 @@ func accountLimits() map[string]any {
 		"app_layer_max_mb":                512,
 		"ephemeral_disk_max_mb":           512,
 		"triggers_allowed":                true,
-		"trigger_kinds":                   []string{"sqs_compat", "queue"},
+		"trigger_kinds":                   []string{"sqs_compat", "queue", "realtime"},
 		"trigger_limit_per_app":           2,
 		"trigger_limit_per_account":       10,
 		"trigger_batch_size_max":          50,

@@ -1,12 +1,13 @@
 from typing import Literal
 
-TriggerKind = Literal["cron", "kafka", "nats", "queue", "redis_streams", "sqs_compat"]
+TriggerKind = Literal["cron", "kafka", "nats", "queue", "realtime", "redis_streams", "sqs_compat"]
 
 TRIGGER_KIND_VALUES: set[TriggerKind] = {
     "cron",
     "kafka",
     "nats",
     "queue",
+    "realtime",
     "redis_streams",
     "sqs_compat",
 }
