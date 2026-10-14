@@ -964,12 +964,40 @@ func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req Reg
 // InjectScenarioTestChaos installs bounded HTTP and TCP faults for one isolated run.
 func (c *Client) InjectScenarioTestChaos(ctx context.Context, runID string, req InjectScenarioTestChaosRequest) (InjectScenarioTestChaosResponse, error) {
 	var out InjectScenarioTestChaosResponse
-	return out, c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+	return out, retryScenarioControl(ctx, func() error {
+		out = InjectScenarioTestChaosResponse{}
+		return c.do(ctx, "PUT", "/v1/dev/test-runs/"+runID+"/chaos", req, &out)
+	})
 }
 
 // ClearScenarioTestChaos removes the active fault plan from a live scenario run.
 func (c *Client) ClearScenarioTestChaos(ctx context.Context, runID string) error {
-	return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+	return retryScenarioControl(ctx, func() error {
+		return c.do(ctx, "DELETE", "/v1/dev/test-runs/"+runID+"/chaos", nil, nil)
+	})
+}
+
+// scenarioControlRetryDelay is the first wait before retrying a scenario
+// chaos call; tests shorten it.
+var scenarioControlRetryDelay = time.Second
+
+// retryScenarioControl retries the scenario chaos calls after a transport
+// failure, up to three attempts. Both replace or remove the run's whole plan,
+// so a repeat is safe. On production-us a cold `gregale test` run failed
+// because one PUT met a connection reset at the edge (hunt #10).
+func retryScenarioControl(ctx context.Context, call func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := call()
+		var apiErr *APIError
+		if err == nil || attempt == 3 || errors.As(err, &apiErr) || !strings.Contains(err.Error(), "could not reach the API") {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		case <-time.After(time.Duration(attempt) * scenarioControlRetryDelay):
+		}
+	}
 }
 
 // ScenarioTestChaosMatches returns bounded per-rule match counts for the
