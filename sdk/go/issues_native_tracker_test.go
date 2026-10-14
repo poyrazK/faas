@@ -125,3 +125,27 @@ func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T
 		t.Fatal("connection response lost", err)
 	}
 }
+
+func TestIssueNativeLinearCreationSDKPreservesUUIDRecovery(t *testing.T) {
+	input := faas.CreateNativeLinearIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", TeamID: "22222222-2222-4222-8222-222222222222", Title: "Fix", Recover: true}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/issue/native-linear-tickets" {
+			t.Error("wrong Linear creation route")
+		}
+		var in faas.CreateNativeLinearIssueTicketRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
+			t.Error("UUID recovery lost", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(faas.NativeIssueTicketResult{RequestID: in.RequestID, State: "linked", TicketURL: "https://linear.app/acme/issue/PAY-42", LinkID: "link"})
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.CreateNativeLinearIssueTicket(t.Context(), "payments", "issue", input)
+	if err != nil || out.RequestID != input.RequestID || out.State != "linked" {
+		t.Fatal(out, err)
+	}
+}

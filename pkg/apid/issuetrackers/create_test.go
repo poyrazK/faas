@@ -2,7 +2,9 @@ package issuetrackers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -147,5 +149,88 @@ func TestNativeCreationRejectedCanRetryButInvalidEvidenceCannot(t *testing.T) {
 	}
 	if _, err := service.Run(t.Context(), in); err == nil || provider.creates != 2 {
 		t.Fatal("invalid evidence repeated creation")
+	}
+}
+
+func linearCreationFixture() (CreationService, *creationHostFake, *creationStoreFake, *creationProviderFake, api.CreateNativeLinearIssueTicketRequest) {
+	service, host, store, provider, in := creationFixture()
+	scope := LinearCredentialScope{AccountID: host.p.Connection.AccountID, AppID: host.p.Issue.AppID, Identity: issuetracker.LinearIdentity{WorkspaceID: uuid.NewString(), TeamID: uuid.NewString(), ViewerID: uuid.NewString()}}
+	host.p.Connection = Connection{AccountID: scope.AccountID, Linear: &LinearBoundConnection{Scope: scope, Revision: 1}}
+	provider.ticket = issuetracker.Ticket{URL: "https://linear.app/acme/issue/PAY-42", ProviderID: in.RequestID}
+	return service, host, store, provider, api.CreateNativeLinearIssueTicketRequest{RequestID: in.RequestID, TeamID: scope.Identity.TeamID, Title: in.Title}
+}
+func TestNativeLinearCreationUncertainRecoveryUsesUUIDAndSurvivesSameIdentityRotation(t *testing.T) {
+	service, host, store, provider, in := linearCreationFixture()
+	provider.err = errors.New("secret transport error")
+	if _, err := service.RunLinear(t.Context(), in); err == nil || store.r.State != "dispatching" {
+		t.Fatal("uncertain creation lost")
+	}
+	if _, err := service.RunLinear(t.Context(), in); err == nil || provider.creates != 1 {
+		t.Fatal("uncertain creation repeated")
+	}
+	in.Recover = true
+	provider.err = nil
+	if _, err := service.RunLinear(t.Context(), in); err == nil || provider.recovers != 0 {
+		t.Fatal("active lease ignored")
+	}
+	store.expired = true
+	host.p.Connection.Linear.Revision++
+	out, err := service.RunLinear(t.Context(), in)
+	if err != nil || out.State != "linked" || provider.creates != 1 || provider.recovers != 1 {
+		t.Fatal(out, err)
+	}
+	// A confirmed result remains durable across retries, without provider dispatch.
+	if _, err := service.RunLinear(t.Context(), in); err != nil || provider.recovers != 1 {
+		t.Fatal("confirmed recovery repeated", err)
+	}
+	host.p.Connection.Linear.Scope.Identity.WorkspaceID = uuid.NewString()
+	if _, err := service.RunLinear(t.Context(), in); err == nil || provider.creates != 1 {
+		t.Fatal("different workspace reused receipt")
+	}
+}
+func TestNativeLinearCreationFencesConnectionAndRequiresExactTicketIdentity(t *testing.T) {
+	for _, kind := range []string{"revision", "group", "ticket", "team", "version", "premature recovery"} {
+		t.Run(kind, func(t *testing.T) {
+			service, host, _, provider, in := linearCreationFixture()
+			switch kind {
+			case "revision":
+				host.tokenHook = func() { host.p.Connection.Linear.Revision++ }
+			case "group":
+				host.tokenHook = func() { host.p.GroupFingerprint = "different" }
+			case "ticket":
+				provider.ticket.ProviderID = uuid.NewString()
+			case "team":
+				in.TeamID = uuid.NewString()
+			case "version":
+				in.RequestID = "11111111-1111-1111-8111-111111111111"
+			case "premature recovery":
+				in.Recover = true
+			}
+			if _, err := service.RunLinear(t.Context(), in); err == nil {
+				t.Fatal("invalid creation accepted")
+			}
+			wanted := 0
+			if kind == "ticket" {
+				wanted = 1
+			}
+			if provider.creates != wanted {
+				t.Fatal("unexpected dispatch", provider.creates)
+			}
+		})
+	}
+}
+func TestNativeCreationConnectionHashPreservesGitHubAndOmitsLinearRotation(t *testing.T) {
+	c := Connection{AccountID: "account", BindingID: "binding", Repository: "owner/repo", InstallationID: 1, RepositoryID: 2, OwnerID: 3}
+	encoded, _ := json.Marshal(c)
+	const legacy = `{"AccountID":"account","BindingID":"binding","Repository":"owner/repo","InstallationID":1,"RepositoryID":2,"OwnerID":3}`
+	if string(encoded) != legacy {
+		t.Fatal("existing GitHub receipt identity changed", string(encoded))
+	}
+	_, host, _, _, _ := linearCreationFixture()
+	before, _ := json.Marshal(host.p.Connection)
+	host.p.Connection.Linear.Revision++
+	after, _ := json.Marshal(host.p.Connection)
+	if string(before) != string(after) || strings.Contains(string(after), "Revision") {
+		t.Fatal("credential rotation changes durable receipt hash")
 	}
 }

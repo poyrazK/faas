@@ -252,3 +252,52 @@ func TestIssueTicketLinearConnectionUsesRevisionAndErasesWithoutLocalKey(t *test
 		}
 	}
 }
+
+func TestIssueTicketNativeLinearUsesServerRecoveryWithoutLocalCredentials(t *testing.T) {
+	const appID = "22222222-2222-4222-8222-222222222222"
+	const issueID = "33333333-3333-4333-8333-333333333333"
+	const requestID = "11111111-1111-4111-8111-111111111111"
+	const teamID = "44444444-4444-4444-8444-444444444444"
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" {
+			if r.URL.Path == "/v1/apps/payments" {
+				_ = json.NewEncoder(w).Encode(api.AppResponse{ID: appID, Slug: "payments"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.IssueDetail{Issue: api.Issue{ID: issueID, AppID: appID}})
+			return
+		}
+		calls++
+		if r.URL.Path != "/v1/apps/payments/issues/"+issueID+"/native-linear-tickets" {
+			t.Error("wrong native Linear path")
+		}
+		var in api.CreateNativeLinearIssueTicketRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RequestID != requestID || in.TeamID != teamID || !in.Recover || in.RecoveryURL != "" {
+			t.Error("UUID recovery inputs lost", err)
+		}
+		_ = json.NewEncoder(w).Encode(api.NativeIssueTicketResult{RequestID: requestID, State: "linked", TicketURL: "https://linear.app/acme/issue/PAY-42", LinkID: "55555555-5555-4555-8555-555555555555"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	t.Setenv("GREGALE_LINEAR_TOKEN", "")
+	previousOut, previousJSON := osStdout, jsonOutput
+	var out bytes.Buffer
+	osStdout, jsonOutput = &out, true
+	t.Cleanup(func() { osStdout, jsonOutput = previousOut, previousJSON })
+	provider := &ticketCLIProvider{}
+	args := []string{"create", "--app", "payments", "--issue", issueID, "--provider", "linear", "--target", teamID, "--title", "Fix", "--request-id", requestID, "--native", "--recover"}
+	if code := runIssueTickets(args, provider); code != 0 || calls != 1 || provider.creates != 0 {
+		t.Fatal("native Linear used a local credential/provider", code)
+	}
+	for _, flag := range []string{"--token-env", "--journal-dir"} {
+		if code := runIssueTickets(append(args, flag, "local"), provider); code == 0 || calls != 1 {
+			t.Fatal("native Linear accepted local credential/journal")
+		}
+	}
+	if code := runIssueTickets([]string{"create", "--app", "payments", "--provider", "github", "--native", "--recover"}, provider); code == 0 || calls != 1 {
+		t.Fatal("GitHub accepted UUID-only recovery")
+	}
+}

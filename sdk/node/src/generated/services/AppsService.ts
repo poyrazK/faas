@@ -32,6 +32,7 @@ import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
 import type { CreateIssueIngestTokenRequest } from '../models/CreateIssueIngestTokenRequest.js';
 import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
+import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
 import type { CreateTCPListenerRequest } from '../models/CreateTCPListenerRequest.js';
 import type { CreateUDPListenerRequest } from '../models/CreateUDPListenerRequest.js';
 import type { CustomMetricListResponse } from '../models/CustomMetricListResponse.js';
@@ -2874,6 +2875,54 @@ export class AppsService {
         404: `code: app_not_found — slug does not exist for the authenticated account.`,
         409: `Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket.`,
         502: `GitHub rejected creation or connected credentials are unavailable.`,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Create or recover a Linear ticket using the owner's stored team connection.
+   * Requires the app owner with Issues entitlement and deploy-write and session MFA. Verifies the stored workspace/viewer/team before dispatch. request_id must be UUID v4 and is used as the provider issue ID. A durable receipt fences concurrent dispatch and preserves uncertain outcomes. Retry identical inputs to finish attachment; after an uncertain create use recover=true to query the stable UUID without needing a URL. Same-identity credential replacement preserves recovery. Changed identity or inputs conflict. Responses never include credentials. A provider write already dispatched cannot be recalled by disconnect.
+   * @returns NativeIssueTicketResult Durable creation evidence; created means attachment requires retry and linked means the reference is confirmed.
+   * @throws ApiError
+   */
+  public static createNativeLinearIssueTicket({
+    slug,
+    issueId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original Gregale issue identity whose current group receives the confirmed Linear reference.
+     */
+    issueId: string,
+    /**
+     * Explicit ticket inputs and stable UUID; recovery is an explicit decision after an unconfirmed dispatch.
+     */
+    requestBody: CreateNativeLinearIssueTicketRequest,
+  }): CancelablePromise<NativeIssueTicketResult> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets',
+      path: {
+        'slug': slug,
+        'issue_id': issueId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: app_not_found — slug does not exist for the authenticated account.`,
+        409: `Connection or inputs changed or outcome is unconfirmed or request quota is exhausted.`,
+        502: `Provider verification or credential availability failed or creation was explicitly rejected.`,
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.

@@ -110,3 +110,16 @@ def test_linear_connection_routes_preserve_revision_and_omit_key_on_disconnect()
     assert disconnected.to_dict() == {"connected": False, "expected_revision": 8}
     metadata = IssueTrackerLinearConnection.from_dict({"connected": False, "revision": 9})
     assert metadata.to_dict() == {"connected": False, "revision": 9}
+
+
+def test_native_linear_creation_preserves_uuid_recovery_without_url():
+    from faas_sdk.api.apps import create_native_linear_issue_ticket
+    from faas_sdk.models.create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
+
+    issue, request_id, team = uuid4(), uuid4(), uuid4()
+    payload = {"request_id": str(request_id), "team_id": str(team), "title": "Fix", "recover": True}
+    body = CreateNativeLinearIssueTicketRequest.from_dict(payload)
+    request = create_native_linear_issue_ticket._get_kwargs("payments", issue, body=body)
+    assert request["method"] == "post"
+    assert request["url"] == f"/v1/apps/payments/issues/{issue}/native-linear-tickets"
+    assert request["json"] == payload

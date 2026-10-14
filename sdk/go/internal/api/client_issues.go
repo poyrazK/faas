@@ -284,3 +284,9 @@ func (c *Client) UpdateIssueTrackerLinearConnection(ctx context.Context, slug st
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(slug)+"/issue-tracker-linear-connection", in, &out)
 	return out, err
 }
+
+func (c *Client) CreateNativeLinearIssueTicket(ctx context.Context, slug, issue string, in CreateNativeLinearIssueTicketRequest) (NativeIssueTicketResult, error) {
+	var out NativeIssueTicketResult
+	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/issues/"+url.PathEscape(issue)+"/native-linear-tickets", in, &out)
+	return out, err
+}

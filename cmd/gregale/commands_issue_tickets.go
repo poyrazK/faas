@@ -53,7 +53,8 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 	requestID := fs.String("request-id", "", "stable UUID reused on retries")
 	tokenEnv := fs.String("token-env", "", "credential environment variable (default GREGALE_GITHUB_TOKEN or GREGALE_LINEAR_TOKEN)")
 	journalDir := fs.String("journal-dir", "", "private durable journal directory")
-	native := fs.Bool("native", false, "use the app owner GitHub connection and server recovery receipt")
+	native := fs.Bool("native", false, "use the app owner stored connection and server recovery receipt")
+	recoverLinear := fs.Bool("recover", false, "recover an unconfirmed native Linear creation by its request UUID")
 	recoverURL := fs.String("recover-url", "", "verify an existing ticket after an uncertain create")
 	flags, pos := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "issue": true, "provider": true, "target": true, "title": true, "description": true, "request-id": true, "token-env": true, "journal-dir": true, "recover-url": true})
 	if err := fs.Parse(flags); err != nil {
@@ -73,9 +74,12 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 				incompatible = true
 			}
 		})
-		if incompatible || *provider != "github" {
-			return printErr("Invalid native ticket request", fmt.Errorf("--native requires --provider github and cannot be combined with --token-env or --journal-dir"))
+		if incompatible || (*provider != "github" && *provider != "linear") {
+			return printErr("Invalid native ticket request", fmt.Errorf("--native requires --provider github or linear and cannot be combined with --token-env or --journal-dir"))
 		}
+	}
+	if *recoverLinear && (!*native || *provider != "linear") {
+		return printErr("Invalid recovery request", fmt.Errorf("--recover requires --native --provider linear"))
 	}
 	// Validate operator-controlled inputs before authentication or any network call.
 	input, err := issuetracker.ValidateInputs(issuetracker.Request{RequestID: *requestID, APIBase: apiBase(), AppSlug: *app, IssueID: *issue, Provider: *provider, Target: *target, Title: *title, Description: *description})
@@ -117,7 +121,7 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 		input.Description = "Gregale app: " + metadata.Slug + "\nGregale issue: " + input.IssueID
 	}
 	if *native {
-		return runNativeIssueTicketCreate(ctx, client, *app, input, *recoverURL)
+		return runNativeIssueTicketCreate(ctx, client, *app, input, *recoverURL, *recoverLinear)
 	}
 	result, err := issuetracker.Run(ctx, *journalDir, input, os.Getenv(*tokenEnv), *recoverURL, external, func(ctx context.Context, ticket issuetracker.Ticket) (api.IssueTrackerLink, error) {
 		return client.PutIssueTrackerLink(ctx, *app, input.IssueID, api.PutIssueTrackerLinkRequest{URL: ticket.URL, Title: input.Title})
@@ -135,14 +139,20 @@ func runIssueTickets(args []string, external issuetracker.Provider) int {
 	return 0
 }
 
-func runNativeIssueTicketCreate(ctx context.Context, client *api.Client, slug string, input issuetracker.Request, recoveryURL string) int {
-	out, err := client.CreateNativeIssueTicket(ctx, slug, input.IssueID, api.CreateNativeIssueTicketRequest{RequestID: input.RequestID, Repository: input.Target, Title: input.Title, Description: input.Description, RecoveryURL: recoveryURL})
+func runNativeIssueTicketCreate(ctx context.Context, client *api.Client, slug string, input issuetracker.Request, recoveryURL string, recoverLinear bool) int {
+	var out api.NativeIssueTicketResult
+	var err error
+	if input.Provider == "linear" {
+		out, err = client.CreateNativeLinearIssueTicket(ctx, slug, input.IssueID, api.CreateNativeLinearIssueTicketRequest{RequestID: input.RequestID, TeamID: input.Target, Title: input.Title, Description: input.Description, Recover: recoverLinear, RecoveryURL: recoveryURL})
+	} else {
+		out, err = client.CreateNativeIssueTicket(ctx, slug, input.IssueID, api.CreateNativeIssueTicketRequest{RequestID: input.RequestID, Repository: input.Target, Title: input.Title, Description: input.Description, RecoveryURL: recoveryURL})
+	}
 	if err != nil {
 		return printErr("Native ticket request incomplete", err)
 	}
 	n, validationErr := api.NormalizeIssueTrackerLink(api.PutIssueTrackerLinkRequest{URL: out.TicketURL})
 	id, idErr := uuid.Parse(out.LinkID)
-	if out.RequestID != input.RequestID || validationErr != nil || n.Provider != "github" || !strings.HasPrefix(n.ExternalKey, input.Target+"#") || (out.State != "created" && out.State != "linked") || (out.State == "linked" && (idErr != nil || id == uuid.Nil)) {
+	if out.RequestID != input.RequestID || validationErr != nil || n.Provider != input.Provider || (input.Provider == "github" && !strings.HasPrefix(n.ExternalKey, input.Target+"#")) || (out.State != "created" && out.State != "linked") || (out.State == "linked" && (idErr != nil || id == uuid.Nil)) {
 		return printErr("Native ticket response invalid", fmt.Errorf("preserve the request ID and retry identical inputs"))
 	}
 	if jsonOutput {

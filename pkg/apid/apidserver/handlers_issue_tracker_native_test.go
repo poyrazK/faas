@@ -518,3 +518,106 @@ func TestNativeIssueLinearConnectionScopesSealsAndDisconnects(t *testing.T) {
 		t.Fatal("disconnect retained credential", err)
 	}
 }
+
+type nativeLinearCreateFake struct {
+	creates, recovers int
+	uncertain         bool
+	requestID         string
+}
+
+func (p *nativeLinearCreateFake) Create(_ context.Context, r issuetracker.Request, token string) (issuetracker.Ticket, error) {
+	p.creates++
+	p.requestID = r.RequestID
+	if token != "lin_api_secret" || r.Provider != "linear" {
+		return issuetracker.Ticket{}, errors.New("wrong credential or provider")
+	}
+	if p.uncertain {
+		return issuetracker.Ticket{}, errors.New("lin_api_secret transport diagnostics")
+	}
+	return issuetracker.Ticket{URL: "https://linear.app/acme/issue/PAY-42", ProviderID: r.RequestID}, nil
+}
+func (p *nativeLinearCreateFake) Recover(_ context.Context, r issuetracker.Request, token, url string) (issuetracker.Ticket, error) {
+	p.recovers++
+	if token != "lin_api_secret" || r.RequestID != p.requestID || url != "" {
+		return issuetracker.Ticket{}, errors.New("wrong UUID recovery inputs")
+	}
+	return issuetracker.Ticket{URL: "https://linear.app/acme/issue/PAY-42", ProviderID: r.RequestID}, nil
+}
+
+// adr: 1216
+func TestNativeIssueLinearCreationRecoversUUIDAndRejectsRevokedConnections(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "linear-native-create")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	reporterToken := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	reporter := map[string]string{"Authorization": "Bearer " + reporterToken.Token}
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "LinearCreateError", Message: "failed"}, reporter), 202)
+	path := base + "/issues/" + accepted.IssueID + "/native-linear-tickets"
+	in := api.CreateNativeLinearIssueTicketRequest{RequestID: uuid.NewString(), TeamID: "22222222-2222-4222-8222-222222222222", Title: "Fix payments"}
+	if w := e.Do(t, "POST", path, in, reporter); w.Code != 401 && w.Code != 403 {
+		t.Fatal("reporter reached stored credential", w.Code)
+	}
+	identity, _ := age.GenerateX25519Identity()
+	prevRecipient, prevIdentities := *apidserver.SetSecretRecipient, *apidserver.MfaIdentities
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	*apidserver.MfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = prevRecipient; *apidserver.MfaIdentities = prevIdentities })
+	verifier := &nativeLinearFake{}
+	apidserver.IssueNativeSetLinearVerifier(e, verifier)
+	connectionPath := base + "/issue-tracker-linear-connection"
+	connection := api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, TeamID: in.TeamID, APIKey: "lin_api_secret"}
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, connection, nil), 200)
+	provider := &nativeLinearCreateFake{uncertain: true}
+	apidserver.IssueNativeSetTicketProvider(e, provider)
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 409 || provider.creates != 1 || strings.Contains(w.Body.String(), "lin_api_secret") {
+		t.Fatal("unknown dispatch was not retained", w.Code, w.Body.String())
+	}
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 409 || provider.creates != 1 {
+		t.Fatal("uncertain creation duplicated", w.Code)
+	}
+	in.Recover = true
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 409 || provider.recovers != 0 {
+		t.Fatal("active dispatch lease ignored", w.Code)
+	}
+	acct := apidserver.IssueNativeAccount(e)
+	if err := apidserver.IssueNativeTicketExpire(e, t.Context(), acct.ID, in.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	// A replacement credential with unchanged provider identity preserves recovery.
+	connection.ExpectedRevision = 1
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, connection, nil), 200)
+	result := apidserver.IssueDecode[api.NativeIssueTicketResult](t, e.Do(t, "POST", path, in, nil), 200)
+	if result.State != "linked" || result.RequestID != in.RequestID || provider.creates != 1 || provider.recovers != 1 {
+		t.Fatal("UUID recovery failed", result)
+	}
+	apidserver.IssueDecode[api.NativeIssueTicketResult](t, e.Do(t, "POST", path, in, nil), 200)
+	if provider.recovers != 1 {
+		t.Fatal("durable result dispatched twice")
+	}
+	in.Title = "changed"
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 409 {
+		t.Fatal("changed inputs reused receipt", w.Code)
+	}
+	in.Title = "Fix payments"
+	in.Recover = false
+	in.RequestID = uuid.NewString()
+	wrong := in
+	wrong.TeamID = uuid.NewString()
+	if w := e.Do(t, "POST", path, wrong, nil); w.Code != 409 || provider.creates != 1 {
+		t.Fatal("foreign team dispatched", w.Code)
+	}
+	verifier.fail = true
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 502 || provider.creates != 1 || strings.Contains(w.Body.String(), "lin_api_secret") {
+		t.Fatal("revoked key dispatched or leaked", w.Code, w.Body.String())
+	}
+	verifier.fail = false
+	foreign := apidserver.SeedPGApp(t, e, "linear-native-foreign")
+	if w := e.Do(t, "POST", "/v1/apps/"+foreign.Slug+"/issues/"+accepted.IssueID+"/native-linear-tickets", in, nil); w.Code != 404 {
+		t.Fatal("cross-app issue reached connection", w.Code)
+	}
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 2}, nil), 200)
+	if w := e.Do(t, "POST", path, in, nil); w.Code != 409 || provider.creates != 1 {
+		t.Fatal("disconnected credential dispatched", w.Code)
+	}
+}

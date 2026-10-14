@@ -261,7 +261,7 @@ func (c *Client) Recover(ctx context.Context, r Request, token, recoveryURL stri
 		return Ticket{}, err
 	}
 	n, err := api.NormalizeIssueTrackerLink(api.PutIssueTrackerLinkRequest{URL: recoveryURL})
-	if err != nil || n.Provider != r.Provider {
+	if (r.Provider != "linear" || recoveryURL != "") && (err != nil || n.Provider != r.Provider) {
 		return Ticket{}, errors.New("recovery URL must match the selected provider")
 	}
 	if r.Provider == "github" {
@@ -284,7 +284,7 @@ func (c *Client) Recover(ctx context.Context, r Request, token, recoveryURL stri
 		return Ticket{}, err
 	}
 	ticket, err := linearTicket(r, out.Data.Issue)
-	if err != nil || ticket.URL != n.URL {
+	if len(out.Errors) > 0 || err != nil || recoveryURL != "" && ticket.URL != n.URL {
 		return Ticket{}, errors.New("Linear recovery issue does not match this request")
 	}
 	return ticket, nil

@@ -13656,6 +13656,41 @@ paths:
         '502': { description: GitHub rejected creation or connected credentials are unavailable. }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Original Gregale issue identity whose current group receives the confirmed Linear reference.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: createNativeLinearIssueTicket
+      summary: Create or recover a Linear ticket using the owner's stored team connection.
+      description: Requires the app owner with Issues entitlement and deploy-write and session MFA. Verifies the stored workspace/viewer/team before dispatch. request_id must be UUID v4 and is used as the provider issue ID. A durable receipt fences concurrent dispatch and preserves uncertain outcomes. Retry identical inputs to finish attachment; after an uncertain create use recover=true to query the stable UUID without needing a URL. Same-identity credential replacement preserves recovery. Changed identity or inputs conflict. Responses never include credentials. A provider write already dispatched cannot be recalled by disconnect.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit ticket inputs and stable UUID; recovery is an explicit decision after an unconfirmed dispatch.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNativeLinearIssueTicketRequest' }
+      responses:
+        '200':
+          description: Durable creation evidence; created means attachment requires retry and linked means the reference is confirmed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTicketResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Connection or inputs changed or outcome is unconfirmed or request quota is exhausted. }
+        '502': { description: Provider verification or credential availability failed or creation was explicitly rejected. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issue-tracker-linear-connection:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -82400,6 +82435,17 @@ components:
         ticket_url: { type: string, format: uri }
         link_id: { type: string, format: uuid }
 
+    CreateNativeLinearIssueTicketRequest:
+      type: object
+      description: Explicit creation or UUID recovery through the app owner's connected Linear team.
+      required: [request_id, team_id, title]
+      properties:
+        request_id: { type: string, format: uuid, description: Stable UUID v4 used as the Linear issue ID and reused across retries. }
+        team_id: { type: string, format: uuid, description: Verified team UUID matching the stored app connection. }
+        title: { type: string, minLength: 1, maxLength: 256, description: Explicit ticket title bounded to 256 UTF-8 bytes. }
+        description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
+        recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
+        recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
     IssueTrackerLinearConnection:
       type: object
       description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.

@@ -312,6 +312,7 @@ export type { CreateManagedPostgresDatabaseRequest } from './CreateManagedPostgr
 export type { CreateManagedRealtimeEndpointRequest } from './CreateManagedRealtimeEndpointRequest.js';
 export type { CreateMirrorRuleRequest } from './CreateMirrorRuleRequest.js';
 export type { CreateNativeIssueTicketRequest } from './CreateNativeIssueTicketRequest.js';
+export type { CreateNativeLinearIssueTicketRequest } from './CreateNativeLinearIssueTicketRequest.js';
 export type { CreateObjectMultipartUploadRequest } from './CreateObjectMultipartUploadRequest.js';
 export type { CreateObjectS3CredentialRequest } from './CreateObjectS3CredentialRequest.js';
 export type { CreateObjectStorageComputeBindingRequest } from './CreateObjectStorageComputeBindingRequest.js';

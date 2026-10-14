@@ -563,3 +563,5 @@ type UpdateIssueTrackerAutoSyncRequest = api.UpdateIssueTrackerAutoSyncRequest
 
 type IssueTrackerLinearConnection = api.IssueTrackerLinearConnection
 type UpdateIssueTrackerLinearConnectionRequest = api.UpdateIssueTrackerLinearConnectionRequest
+
+type CreateNativeLinearIssueTicketRequest = api.CreateNativeLinearIssueTicketRequest

@@ -317,6 +317,7 @@ export type { CreateManagedPostgresDatabaseRequest } from './models/CreateManage
 export type { CreateManagedRealtimeEndpointRequest } from './models/CreateManagedRealtimeEndpointRequest.js';
 export type { CreateMirrorRuleRequest } from './models/CreateMirrorRuleRequest.js';
 export type { CreateNativeIssueTicketRequest } from './models/CreateNativeIssueTicketRequest.js';
+export type { CreateNativeLinearIssueTicketRequest } from './models/CreateNativeLinearIssueTicketRequest.js';
 export type { CreateObjectMultipartUploadRequest } from './models/CreateObjectMultipartUploadRequest.js';
 export type { CreateObjectS3CredentialRequest } from './models/CreateObjectS3CredentialRequest.js';
 export type { CreateObjectStorageComputeBindingRequest } from './models/CreateObjectStorageComputeBindingRequest.js';

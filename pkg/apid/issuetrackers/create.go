@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/google/uuid"
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -26,18 +27,25 @@ type CreationService struct {
 }
 
 func unknownCreation() error {
-	return api.NewProblem(409, "issue_tracker_creation_unconfirmed", "Ticket outcome unconfirmed", "reuse the same request ID and inputs; after the dispatch window use recovery_url to verify the existing ticket's operation marker")
+	return api.NewProblem(409, "issue_tracker_creation_unconfirmed", "Ticket outcome unconfirmed", "reuse the same request ID and inputs; after the dispatch window use recovery_url for GitHub or recover=true for Linear to verify the existing ticket")
 }
 func creationResult(r state.NativeIssueTicketReceipt) api.NativeIssueTicketResult {
 	return api.NativeIssueTicketResult{RequestID: r.RequestID, State: r.State, TicketURL: r.TicketURL, LinkID: r.LinkID}
 }
 func creationTicketValid(r issuetracker.Request, t issuetracker.Ticket) bool {
 	n, e := api.NormalizeIssueTrackerLink(api.PutIssueTrackerLinkRequest{URL: t.URL})
+	if r.Provider == "linear" {
+		id, err := uuid.Parse(t.ProviderID)
+		return e == nil && err == nil && n.Provider == "linear" && n.URL == t.URL && id.String() == r.RequestID
+	}
 	number, e2 := strconv.ParseInt(t.ProviderID, 10, 64)
 	return e == nil && e2 == nil && number > 0 && n.Provider == "github" && n.URL == t.URL && n.ExternalKey == r.Target+"#"+t.ProviderID
 }
 func creationValid(p Prepared) bool {
 	c := p.Connection
+	if c.Linear != nil {
+		return p.Issue.ID != "" && p.Issue.AppID == c.Linear.Scope.AppID && c.AccountID == c.Linear.Scope.AccountID && validLinearScope(c.Linear.Scope) && c.Linear.Revision > 0
+	}
 	return p.Issue.ID != "" && p.Issue.AppID != "" && c.AccountID != "" && c.BindingID != "" && c.InstallationID > 0 && c.RepositoryID > 0 && c.OwnerID > 0 && c.Repository != ""
 }
 func (s CreationService) fresh(ctx context.Context, p Prepared) error {
@@ -51,6 +59,12 @@ func (s CreationService) fresh(ctx context.Context, p Prepared) error {
 	return nil
 }
 func (s CreationService) Run(ctx context.Context, in api.CreateNativeIssueTicketRequest) (api.NativeIssueTicketResult, error) {
+	return s.run(ctx, in, "github", in.RecoveryURL != "")
+}
+func (s CreationService) RunLinear(ctx context.Context, in api.CreateNativeLinearIssueTicketRequest) (api.NativeIssueTicketResult, error) {
+	return s.run(ctx, api.CreateNativeIssueTicketRequest{RequestID: in.RequestID, Repository: in.TeamID, Title: in.Title, Description: in.Description, RecoveryURL: in.RecoveryURL}, "linear", in.Recover || in.RecoveryURL != "")
+}
+func (s CreationService) run(ctx context.Context, in api.CreateNativeIssueTicketRequest, provider string, recoverRequested bool) (api.NativeIssueTicketResult, error) {
 	if s.Host == nil || s.Store == nil || s.Provider == nil {
 		return api.NativeIssueTicketResult{}, unavailable()
 	}
@@ -58,20 +72,34 @@ func (s CreationService) Run(ctx context.Context, in api.CreateNativeIssueTicket
 	if e != nil {
 		return api.NativeIssueTicketResult{}, e
 	}
-	if !creationValid(p) {
+	if !creationValid(p) || (provider == "linear") != (p.Connection.Linear != nil) {
+		if provider == "linear" {
+			return api.NativeIssueTicketResult{}, LinearConnectionRequired()
+		}
 		return api.NativeIssueTicketResult{}, ConnectionRequired()
 	}
-	request, e := issuetracker.ValidateRequest(issuetracker.Request{RequestID: in.RequestID, APIBase: "https://gregale.dev", AppID: p.Issue.AppID, AppSlug: s.AppSlug, IssueID: s.IssueID, Provider: "github", Target: in.Repository, Title: in.Title, Description: in.Description})
+	if p.Connection.Linear != nil {
+		copy := *p.Connection.Linear
+		p.Connection.Linear = &copy
+	}
+	request, e := issuetracker.ValidateRequest(issuetracker.Request{RequestID: in.RequestID, APIBase: "https://gregale.dev", AppID: p.Issue.AppID, AppSlug: s.AppSlug, IssueID: s.IssueID, Provider: provider, Target: in.Repository, Title: in.Title, Description: in.Description})
 	if e != nil {
 		return api.NativeIssueTicketResult{}, api.ErrValidation(e.Error())
 	}
-	if request.Target != p.Connection.Repository {
+	target := p.Connection.Repository
+	if p.Connection.Linear != nil {
+		target = p.Connection.Linear.Scope.Identity.TeamID
+	}
+	if request.Target != target {
+		if provider == "linear" {
+			return api.NativeIssueTicketResult{}, LinearConnectionRequired()
+		}
 		return api.NativeIssueTicketResult{}, ConnectionRequired()
 	}
 	if in.RecoveryURL != "" {
 		n, err := api.NormalizeIssueTrackerLink(api.PutIssueTrackerLinkRequest{URL: in.RecoveryURL})
-		if err != nil || n.Provider != "github" {
-			return api.NativeIssueTicketResult{}, api.ErrValidation("recovery_url must be a GitHub issue URL")
+		if err != nil || n.Provider != provider {
+			return api.NativeIssueTicketResult{}, api.ErrValidation("recovery_url must match the selected ticket provider")
 		}
 		in.RecoveryURL = n.URL
 	}
@@ -94,7 +122,7 @@ func (s CreationService) Run(ctx context.Context, in api.CreateNativeIssueTicket
 		return creationResult(receipt), nil
 	}
 	if receipt.State == "ready" || receipt.State == "dispatching" {
-		receipt, e = s.dispatch(ctx, p, request, receipt, in.RecoveryURL)
+		receipt, e = s.dispatch(ctx, p, request, receipt, in.RecoveryURL, recoverRequested)
 		if e != nil {
 			return creationResult(receipt), e
 		}
@@ -120,13 +148,13 @@ func (s CreationService) Run(ctx context.Context, in api.CreateNativeIssueTicket
 	}
 	return creationResult(receipt), nil
 }
-func (s CreationService) dispatch(ctx context.Context, p Prepared, r issuetracker.Request, receipt state.NativeIssueTicketReceipt, recoveryURL string) (state.NativeIssueTicketReceipt, error) {
+func (s CreationService) dispatch(ctx context.Context, p Prepared, r issuetracker.Request, receipt state.NativeIssueTicketReceipt, recoveryURL string, recoverRequested bool) (state.NativeIssueTicketReceipt, error) {
 	recovery := receipt.State == "dispatching"
-	if recovery && recoveryURL == "" {
+	if recovery && !recoverRequested {
 		return receipt, unknownCreation()
 	}
-	if !recovery && recoveryURL != "" {
-		return receipt, api.ErrValidation("recovery_url applies only to an unconfirmed dispatch")
+	if !recovery && recoverRequested {
+		return receipt, api.ErrValidation("recovery applies only to an unconfirmed dispatch")
 	}
 	token, e := s.Host.Token(ctx, p.Connection)
 	if e != nil || token == "" {
@@ -155,7 +183,7 @@ func (s CreationService) dispatch(ctx context.Context, p Prepared, r issuetracke
 			if _, err := s.Store.FinishNativeIssueTicket(ctx, receipt); err != nil {
 				return receipt, unknownCreation()
 			}
-			return receipt, api.NewProblem(502, "issue_tracker_creation_rejected", "Ticket creation rejected", "GitHub rejected creation; check installation Issues write permission and retry the same inputs")
+			return receipt, api.NewProblem(502, "issue_tracker_creation_rejected", "Ticket creation rejected", "provider rejected creation; check ticket write permission and retry the same inputs")
 		}
 		return receipt, unknownCreation()
 	}

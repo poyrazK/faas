@@ -67,3 +67,16 @@ test('Linear connections preserve revision and send credentials only on connect'
  const result=await AppsService.updateIssueTrackerLinearConnection({slug:'payments',requestBody:{connected:true,expected_revision:initial.revision,team_id:team,api_key:'secret'}});assert.equal(result.connected,true);
  const final=await AppsService.updateIssueTrackerLinearConnection({slug:'payments',requestBody:{connected:false,expected_revision:result.revision}});assert.deepEqual(final,{connected:false,revision:9});
 });
+
+test('native Linear creation preserves UUID recovery without a ticket URL',async(t)=>{
+ const issue='33333333-3333-4333-8333-333333333333';
+ const body={request_id:'11111111-1111-4111-8111-111111111111',team_id:'22222222-2222-4222-8222-222222222222',title:'Fix',recover:true};
+ const server=createServer(async(req,res)=>{
+  assert.equal(req.method,'POST');assert.equal(req.url,`/v1/apps/payments/issues/${issue}/native-linear-tickets`);
+  const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),body);
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({request_id:body.request_id,state:'linked',ticket_url:'https://linear.app/acme/issue/PAY-42',link_id:'55555555-5555-4555-8555-555555555555'}));
+ });
+ server.listen(0,'127.0.0.1');await once(server,'listening');t.after(()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())));
+ const address=server.address();assert.ok(address && typeof address!=='string');new FaaSClient(`http://127.0.0.1:${address.port}`,{token:'test',retry:{maxAttempts:1,backoffMs:0}});
+ const result=await AppsService.createNativeLinearIssueTicket({slug:'payments',issueId:issue,requestBody:body});assert.equal(result.state,'linked');assert.equal(result.request_id,body.request_id);
+});

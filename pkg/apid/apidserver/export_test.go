@@ -1311,3 +1311,8 @@ func IssueNativeAutoSyncDue(e pgHandlerEnv, ctx context.Context, link string) er
 func IssueNativeSetLinearVerifier(e pgHandlerEnv, p issuetrackers.LinearConnectionVerifier) {
 	e.s.nativeLinearVerifier = p
 }
+
+func IssueNativeTicketExpire(e pgHandlerEnv, ctx context.Context, account, request string) error {
+	_, err := e.pool.Exec(ctx, "UPDATE native_issue_ticket_receipts SET recover_after=now()-interval '1 second' WHERE account_id=$1 AND request_id=$2", account, request)
+	return err
+}

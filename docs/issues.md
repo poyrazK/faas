@@ -996,7 +996,7 @@ If the provider outcome is unconfirmed, the server refuses another create. After
 
 A `created` result means GitHub accepted the ticket but Gregale attachment needs retry; the CLI exits unsuccessfully and prints the confirmed URL. Repeat identical inputs to resume attachment. A `linked` receipt is retained even if the link is subsequently removed, so retrying never creates another ticket. Existing link quota, group lookup and audit rules apply; a full group may leave the external ticket awaiting attachment.
 
-The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation remains future work; automatic GitHub push is described below. See [ADR-1212](adr/1212-native-github-ticket-creation.md).
+The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation is described below; automatic GitHub push is described below. See [ADR-1212](adr/1212-native-github-ticket-creation.md).
 
 ## Automatic native GitHub lifecycle sync
 
@@ -1020,7 +1020,7 @@ Unexpected provider edits, a changed source group or connection, ignored/unsuppo
 
 Disabling remains available when repository access is revoked and invalidates the worker claim. A GitHub write already dispatched during disable cannot be recalled. The provider and Gregale do not share an atomic transaction; see [ADR-1213](adr/1213-automatic-native-github-lifecycle.md) for the recovery and concurrency limits.
 
-The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear ticket operations, provider callbacks and automatic inbound resolution remain separate work.
+The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear lifecycle sync, provider callbacks and automatic inbound resolution remain separate work.
 
 ## Connect a Linear team
 
@@ -1046,6 +1046,44 @@ configuration. PUT supplies `connected` and `expected_revision`; connecting also
 requires `team_id` and `api_key`, while disconnect must omit both. Go exposes
 `GetIssueTrackerLinearConnection`/`UpdateIssueTrackerLinearConnection`, Node uses
 matching `AppsService` operations, and Python exposes matching `faas_sdk.api.apps`
-operations. This connection does not yet enable native Linear creation, lifecycle
-sync or OAuth. Existing explicit CLI Linear operations still use a local key.
+operations. Native Linear creation is described below; lifecycle sync and OAuth remain separate work. Existing explicit CLI Linear operations still use a local key.
 See [ADR-1215](adr/1215-durable-linear-issue-connections.md).
+
+## Native Linear ticket creation
+
+After connecting the app's Linear team, create a ticket without a local provider key:
+
+```sh
+gregale issues tickets create --app payments --issue <ISSUE_UUID> \
+  --provider linear --target <CONNECTED_TEAM_UUID> --title 'Fix checkout failures' \
+  --request-id <UUID_V4> --native
+```
+
+Use the same request UUID and identical inputs on every retry. The server uses that
+UUID as the Linear issue ID, verifies the owner's current workspace/viewer/team,
+and records a durable receipt before dispatch. It rechecks the current issue group
+and connection before proceeding. Creation requires the app owner with Issues
+entitlement and deploy-write; session callers also need MFA. Native mode rejects
+`--token-env` and `--journal-dir` and does not read a local Linear key.
+
+If the provider response is unconfirmed, wait for the 15-second dispatch lease to
+expire, then repeat the command with `--recover`. Recovery queries the stable
+request UUID and verifies the returned ticket identity and team; no ticket URL is
+required. An optional `--recover-url URL` also requests recovery and must match the
+UUID lookup. Missing tickets or partial provider errors remain unconfirmed and
+never trigger another create. Do not replace the request UUID to retry an uncertain
+operation. Same-identity credential replacement preserves recovery; changed
+workspace/viewer/team or request inputs conflict with the existing receipt.
+
+Confirmed provider evidence is saved before reference attachment. A `created`
+result means the ticket exists but linking needs retry; `linked` means attachment
+is confirmed. Native GitHub and Linear operations share the 100 retained receipt
+limit per original Gregale issue. A provider write already dispatched cannot be
+recalled by disconnect or a concurrent edit.
+
+POST `/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets` accepts `request_id`,
+`team_id`, `title`, optional `description`, `recover` and `recovery_url`. Go exposes
+`CreateNativeLinearIssueTicket`, Node uses `AppsService.createNativeLinearIssueTicket`,
+and Python exposes `faas_sdk.api.apps.create_native_linear_issue_ticket`. This uses
+the stored personal API key; OAuth and native Linear lifecycle sync remain separate
+work. See [ADR-1216](adr/1216-native-linear-ticket-creation.md).

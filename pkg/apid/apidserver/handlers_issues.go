@@ -22,6 +22,7 @@ import (
 var issueEnvironmentPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func (s *server) registerIssueRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createNativeLinearIssueTicket))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-tracker-linear-connection", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getIssueTrackerLinearConnection)))
 	mux.HandleFunc("PUT /v1/apps/{slug}/issue-tracker-linear-connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateIssueTrackerLinearConnection))))
 	mux.HandleFunc("GET /v1/apps/{slug}/issue-saved-views", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listIssueSavedViews)))

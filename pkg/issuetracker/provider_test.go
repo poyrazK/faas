@@ -188,3 +188,35 @@ func TestLinearRejectsUnsupportedIssueUUIDVersionBeforeDispatch(t *testing.T) {
 		t.Fatal("unsupported UUID accepted")
 	}
 }
+
+func TestLinearRecoveryWithoutURLVerifiesStableIDTeamAndGraphQLErrors(t *testing.T) {
+	r := requestFixture()
+	r.Provider = "linear"
+	r.Target = "44444444-4444-4444-8444-444444444444"
+	for _, kind := range []string{"valid", "id", "team", "partial"} {
+		t.Run(kind, func(t *testing.T) {
+			body := linearResponseBody(r, false)
+			switch kind {
+			case "id":
+				body = strings.ReplaceAll(body, r.RequestID, "55555555-5555-4555-8555-555555555555")
+			case "team":
+				body = strings.ReplaceAll(body, r.Target, "55555555-5555-4555-8555-555555555555")
+			case "partial":
+				body = strings.Replace(body, `{"data":`, `{"errors":[{"message":"secret diagnostic"}],"data":`, 1)
+			}
+			client := NewClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				var input struct {
+					Variables map[string]string `json:"variables"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&input); err != nil || input.Variables["id"] != r.RequestID {
+					t.Fatal("recovery lost request UUID", err)
+				}
+				return response(200, body), nil
+			})})
+			ticket, err := client.Recover(t.Context(), r, "lin_api_secret", "")
+			if (err == nil) != (kind == "valid") || err == nil && ticket.ProviderID != r.RequestID {
+				t.Fatal("recovery identity not verified", err)
+			}
+		})
+	}
+}

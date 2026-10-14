@@ -1821,6 +1821,7 @@ var methodRouteMap = map[string]string{
 
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":  "GetNativeIssueTrackerStatus",
 	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status": "UpdateNativeIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                 "CreateNativeLinearIssueTicket",
 	"GET /v1/apps/{slug}/issue-tracker-linear-connection":                          "GetIssueTrackerLinearConnection",
 	"PUT /v1/apps/{slug}/issue-tracker-linear-connection":                          "UpdateIssueTrackerLinearConnection",
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":      "GetIssueTrackerAutoSync",

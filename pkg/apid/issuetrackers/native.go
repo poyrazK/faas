@@ -14,6 +14,7 @@ import (
 type Connection struct {
 	AccountID, BindingID, Repository      string
 	InstallationID, RepositoryID, OwnerID int64
+	Linear                                *LinearBoundConnection `json:"Linear,omitempty"`
 }
 type Prepared struct {
 	GroupFingerprint string
@@ -34,7 +35,7 @@ func ConnectionRequired() error {
 	return api.NewProblem(409, "issue_tracker_connection_required", "Connected GitHub repository required", "connect and bind the app owner's GitHub installation with verified repository identity")
 }
 func Changed() error {
-	return api.NewProblem(409, "issue_tracker_connection_changed", "Tracker connection changed", "the issue group, reference or GitHub binding changed; preview again")
+	return api.NewProblem(409, "issue_tracker_connection_changed", "Tracker connection changed", "the issue group, reference or provider connection changed; preview again")
 }
 func unavailable() error {
 	return api.NewProblem(http.StatusBadGateway, "issue_tracker_provider_unavailable", "Tracker unavailable", "connected provider status could not be confirmed; preview again before retrying")
@@ -52,7 +53,7 @@ func valid(p Prepared) error {
 	return nil
 }
 func same(a, b Prepared) bool {
-	return a.Issue.ID == b.Issue.ID && a.Issue.AppID == b.Issue.AppID && a.Issue.State == b.Issue.State && a.Link.ID == b.Link.ID && a.Link.URL == b.Link.URL && a.Link.Provider == b.Link.Provider && a.Connection == b.Connection && a.GroupFingerprint == b.GroupFingerprint
+	return a.Issue.ID == b.Issue.ID && a.Issue.AppID == b.Issue.AppID && a.Issue.State == b.Issue.State && a.Link.ID == b.Link.ID && a.Link.URL == b.Link.URL && a.Link.Provider == b.Link.Provider && sameConnection(a.Connection, b.Connection) && a.GroupFingerprint == b.GroupFingerprint
 }
 func fromStatus(s issuetracker.Status) api.IssueTrackerProviderStatus {
 	return api.IssueTrackerProviderStatus{Provider: s.Provider, URL: s.URL, ID: s.ID, State: s.State, TeamID: s.TeamID, StateID: s.StateID}
@@ -151,4 +152,26 @@ func (s Service) Push(ctx context.Context, in api.UpdateNativeIssueTrackerStatus
 		return api.NativeIssueTrackerStatus{}, unavailable()
 	}
 	return result(p, remote), nil
+}
+
+// Revision fences in-flight operations; durable receipts bind identity across key rotation.
+type LinearBoundConnection struct {
+	Scope    LinearCredentialScope
+	Revision int64 `json:"-"`
+}
+
+func sameConnection(a, b Connection) bool {
+	if (a.Linear == nil) != (b.Linear == nil) {
+		return false
+	}
+	if a.Linear != nil && *a.Linear != *b.Linear {
+		return false
+	}
+	a.Linear = nil
+	b.Linear = nil
+	return a == b
+}
+
+func LinearConnectionRequired() error {
+	return api.NewProblem(409, "issue_tracker_connection_required", "Connected Linear team required", "connect the app owner's Linear personal API key to the selected active team")
 }

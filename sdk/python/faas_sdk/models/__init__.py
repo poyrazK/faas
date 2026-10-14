@@ -630,6 +630,7 @@ from .create_managed_realtime_endpoint_request_auth_required_claims import (
 )
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
+from .create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
@@ -4734,6 +4735,7 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMirrorRuleRequest",
     "CreateNativeIssueTicketRequest",
+    "CreateNativeLinearIssueTicketRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
     "CreateObjectS3CredentialRequest",
