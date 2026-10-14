@@ -235,6 +235,14 @@ the builder VM. That is the only case that waits for a build.
    - `gregale dev --all --watch` passes `--watch` to every member with a
      command to run; the others keep production-shaped builds, and a
      member's own `dev.watch.command` still applies.
+   - Metal (internal test node, 2026-10-14, b85a11d5c9): `TestDevWatchMetal`
+     passed with a fixture that listens like Vite's default
+     (`127.0.0.1:5173`, refusing unknown hosts) and plain `npm run dev`.
+     guest-init logged `bridging the runtime port to the development
+     server port=3000 target=127.0.0.1:5173`; the environment's hostname
+     got 200 and `GREGALE_DEV_HOST`; an edit hot-reloaded in 7 s without a
+     restart; the second build kept the dependency cache. No new leaks
+     (the host's pre-existing leakcheck entries were unchanged).
    - The rebuild explainer suggests `--watch`, with the command it would
      run, only when the CLI can pick one for the app.
    - Checked against the real servers (2026-10-13, local): Vite 8.3.4's

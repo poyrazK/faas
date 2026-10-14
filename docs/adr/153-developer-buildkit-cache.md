@@ -72,3 +72,9 @@ including a hashing error, exports as before. BuildKit still validates every
 imported layer, so a wrong answer can cost a cache miss, never a wrong image.
 Dockerfile builds keep exporting every time: their install inputs are not
 known before the build.
+
+Metal (internal test node, 2026-10-14): in `TestDevLoopMetal` the first
+developer build exported the cache (the export step took 171 s; builder VM
+295 s), and the second, a source-only edit, logged `dependency inputs
+unchanged; keeping the imported dependency cache` and its builder VM
+finished in 122 s. `TestDevWatchMetal`'s second build kept the cache too.
