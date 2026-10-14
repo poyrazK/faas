@@ -52,7 +52,7 @@ func cmdAccountBillingRun(args []string) int {
 	fs.StringVar(&f.month, "month", "", "UTC calendar month to bill, YYYY-MM (default: last month)")
 	fs.StringVar(&f.sources, "sources", "", "comma-separated app_consumers,platform_tenants (default: both)")
 	fs.BoolVar(&f.noFinalize, "no-finalize", false, "only draft statements")
-	fs.StringVar(&f.export, "export", "", "none or stripe (default none)")
+	fs.StringVar(&f.export, "export", "", "none, stripe, paddle or lago (default none)")
 	fs.BoolVar(&f.noHoldOnGaps, "no-hold-on-gaps", false, "finalize consumers even when request telemetry shows unbilled requests")
 	fs.BoolVar(&f.wait, "wait", false, "wait until the run completes and print held and failed customers")
 	fs.IntVar(&f.limit, "limit", 0, "runs to list (1-100, default 20)")

@@ -84,3 +84,10 @@ func TestPgStatementInvoicePaymentLifecycle(t *testing.T) {
 		t.Fatal("deferring an unknown export succeeded")
 	}
 }
+
+// adr: 1305
+func TestPgStoreBillingProviders(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
+	checkBillingProviders(t, ctx, store, accountID)
+}

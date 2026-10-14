@@ -13,6 +13,7 @@
     "table": "account_billing_connections",
     "columns": [
       "account_id",
+      "api_url",
       "created_at",
       "key_last4",
       "livemode",

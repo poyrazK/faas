@@ -7963,7 +7963,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
-  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/stripe-invoice:
+  /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice:
     parameters:
       - name: id
         in: path
@@ -7977,8 +7977,8 @@ paths:
         schema: { type: string, format: uuid }
     get:
       tags: [platform-tenants]
-      operationId: getPlatformTenantStatementStripeInvoice
-      summary: Read the platform tenant statement's Stripe invoice export.
+      operationId: getPlatformTenantStatementInvoice
+      summary: Read the platform tenant statement's invoice export.
       responses:
         '200':
           description: The platform tenant statement's export.
@@ -7989,18 +7989,22 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [platform-tenants]
-      operationId: exportPlatformTenantStatementToStripe
-      summary: Export a finalized platform tenant statement as a draft Stripe invoice.
+      operationId: exportPlatformTenantStatementInvoice
+      summary: Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
       description: |
-        Exports one finalized platform tenant statement revision.
-        Creates a draft invoice in the account's own Stripe (connect it with
-        PUT /v1/account/billing-connections/stripe) with one item per rate card
-        and unit price, plus a rounding item when needed so the invoice equals
-        the statement total rounded to the cent. The draft is never finalized
-        or sent. On success the statement's handoff records the Stripe invoice
-        ID. Retrying after a failure resumes the same invoice and skips items
-        Stripe already holds; repeating a completed export returns it.
-        Two-decimal currencies only.
+        Exports one finalized platform tenant statement revision to the
+        provider in the body (default stripe; connect it with
+        PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+        Stripe gets a draft invoice and Paddle a draft manually collected
+        transaction; neither is finalized or sent. Lago issues a one-off
+        invoice at once, without charging it. Items are one per rate card and
+        unit price plus a rounding item, so the invoice equals the statement
+        total rounded to the cent; Paddle and Lago receive one summary item
+        when a line is negative. On success the statement's handoff records
+        the provider invoice ID. Retrying after a failure resumes the same
+        invoice; repeating a completed export returns it. A statement exports
+        to one provider only. Two-decimal currencies only; Paddle allows USD,
+        EUR and GBP.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -8018,21 +8022,27 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422':
-          description: The platform tenant statement or customer cannot be invoiced, or Stripe rejected the request.
+          description: The platform tenant statement or customer cannot be invoiced, or the provider rejected the request.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
-          description: Stripe could not be reached (`billing_provider_unavailable`); retry to resume the platform tenant statement export.
+          description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the platform tenant statement export.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
-  /v1/account/billing-connections/stripe:
+  /v1/account/billing-connections/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: Billing provider statements export to (ADR-1305).
+        schema: { $ref: '#/components/schemas/BillingProvider' }
     get:
       tags: [account]
-      operationId: getStripeConnection
-      summary: Describe the account's Stripe key for statement invoice exports.
+      operationId: getBillingConnection
+      summary: Describe the account's key for one billing provider.
       responses:
         '200':
           description: The connection; the key itself is never returned.
@@ -8043,18 +8053,21 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [account]
-      operationId: putStripeConnection
-      summary: Store or replace the account's Stripe key.
+      operationId: putBillingConnection
+      summary: Store or replace the account's key for one billing provider.
       description: |
-        Checks the key against Stripe, then seals it at rest. Use a restricted
-        key (rk_live_… or rk_test_…) with read and write access to invoices
-        and invoice items. Only the last four characters and the mode are
-        ever returned.
+        Checks the key against the provider, then seals it at rest. Stripe
+        takes a restricted key (rk_live_… or rk_test_…) with read and write
+        access to invoices and invoice items; Paddle an API key
+        (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access; Lago
+        an API key and, for the EU region or a self-hosted Lago, api_url. Only
+        the last four characters, the mode and the Lago API URL are ever
+        returned.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PutStripeConnectionRequest' }
+            schema: { $ref: '#/components/schemas/PutBillingConnectionRequest' }
       responses:
         '200':
           description: The stored connection.
@@ -8062,20 +8075,21 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/BillingConnectionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '422':
-          description: Not a Stripe secret or restricted key, or Stripe rejected it.
+          description: Not a key of this provider, a bad api_url, or the provider rejected the key.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
-          description: Stripe could not be reached (`billing_provider_unavailable`).
+          description: The provider could not be reached (`billing_provider_unavailable`).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
     delete:
       tags: [account]
-      operationId: deleteStripeConnection
-      summary: Remove the account's Stripe key.
+      operationId: deleteBillingConnection
+      summary: Remove the account's key for one billing provider.
       responses:
         '204': { description: Removed. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -8085,7 +8099,7 @@ paths:
     get:
       tags: [account]
       operationId: listStatementInvoices
-      summary: List Stripe invoices drafted from usage statements, with their payment status (ADR-1302).
+      summary: List invoices exported from usage statements, with their payment status (ADR-1302).
       parameters:
         - name: status
           in: query
@@ -8139,7 +8153,7 @@ paths:
         an hour ago. For every app consumer and platform tenant with billable
         usage, it drafts the month's statement, holds consumers whose ledger
         misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
-        `export: stripe` creates draft Stripe invoices. Usage attributed to a
+        `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to a
         platform tenant is billed on the tenant's statement. One run per
         account can be queued or running at a time.
       parameters:
@@ -8158,7 +8172,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409':
-          description: Another run is in progress, or `export` is `stripe` without a connected Stripe key.
+          description: Another run is in progress, or `export` names a provider without a connected key.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -8261,7 +8275,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409':
-          description: '`export` is `stripe` without a connected Stripe key.'
+          description: '`export` names a provider without a connected key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -11793,7 +11807,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
-  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice:
+  /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice:
     parameters:
       - $ref: '#/components/parameters/Slug'
       - name: consumer_id
@@ -11808,8 +11822,8 @@ paths:
         schema: { type: string, format: uuid }
     get:
       tags: [consumers]
-      operationId: getAPIConsumerUsageStatementStripeInvoice
-      summary: Read the app consumer statement's Stripe invoice export.
+      operationId: getAPIConsumerUsageStatementInvoice
+      summary: Read the app consumer statement's invoice export.
       responses:
         '200':
           description: The app consumer statement's export.
@@ -11820,18 +11834,21 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     post:
       tags: [consumers]
-      operationId: exportAPIConsumerUsageStatementToStripe
-      summary: Export a finalized app consumer statement as a draft Stripe invoice.
+      operationId: exportAPIConsumerUsageStatementInvoice
+      summary: Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
       description: |
-        Exports one finalized app consumer statement revision.
-        Creates a draft invoice in the account's own Stripe (connect it with
-        PUT /v1/account/billing-connections/stripe) with one item per rate card
-        and unit price, plus a rounding item when needed so the invoice equals
-        the statement total rounded to the cent. The draft is never finalized
-        or sent. On success the statement's handoff records the Stripe invoice
-        ID. Retrying after a failure resumes the same invoice and skips items
-        Stripe already holds; repeating a completed export returns it.
-        Two-decimal currencies only.
+        Exports one finalized app consumer statement revision to the
+        provider in the body (default stripe; connect it with
+        PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+        Stripe and Paddle receive drafts that Gregale never finalizes or
+        sends; Lago issues its one-off invoice immediately but never charges
+        it. One item per rate card and unit price, plus a rounding item, makes
+        the invoice equal the statement total rounded to the cent; with a
+        negative line, Paddle and Lago get a single summary item instead. The
+        statement's handoff records the provider invoice ID on success. A retry
+        resumes the same invoice, a completed export is returned as is, and a
+        statement exports to one provider only. Two-decimal currencies only;
+        Paddle takes USD, EUR and GBP.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -11849,12 +11866,12 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422':
-          description: The app consumer statement or customer cannot be invoiced, or Stripe rejected the request.
+          description: The app consumer statement or customer cannot be invoiced, or the provider rejected the request.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
-          description: Stripe could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export.
+          description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -79176,21 +79193,28 @@ components:
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
 
-    PutStripeConnectionRequest:
-      description: "The account's own Stripe key for statement invoice exports (ADR-1300)."
+    BillingProvider:
+      description: "A billing provider statements export to (ADR-1305)."
+      type: string
+      enum: [stripe, paddle, lago]
+
+    PutBillingConnectionRequest:
+      description: "The account's own key for one billing provider (ADR-1300, ADR-1305)."
       type: object
       required: [secret_key]
       properties:
-        secret_key: { type: string, minLength: 12, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…); prefer a restricted key limited to invoices and invoice items.", writeOnly: true }
+        secret_key: { type: string, minLength: 8, maxLength: 512, description: "A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key.", writeOnly: true }
+        api_url: { type: string, format: uri, maxLength: 512, description: "Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default https://api.getlago.com." }
 
     BillingConnectionResponse:
       description: "A stored payment-provider key, identified without revealing it."
       type: object
       required: [provider, key_last4, livemode, created_at, updated_at]
       properties:
-        provider: { type: string, enum: [stripe] }
+        provider: { $ref: '#/components/schemas/BillingProvider' }
         key_last4: { type: string, minLength: 4, maxLength: 4 }
-        livemode: { type: boolean }
+        livemode: { type: boolean, description: "False for Stripe test and Paddle sandbox keys; Lago has no test mode." }
+        api_url: { type: string, format: uri, description: "The Lago API origin." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -79198,15 +79222,16 @@ components:
       description: "Target of a statement invoice export."
       type: object
       properties:
-        customer: { type: string, pattern: '^cus_[A-Za-z0-9]+$', description: "Stripe customer ID; omitted, the consumer's or tenant's external_ref is used when it is one." }
+        provider: { $ref: '#/components/schemas/BillingProvider' }
+        customer: { type: string, maxLength: 255, description: "The provider's customer: a Stripe cus_… ID, a Paddle ctm_… ID, or a Lago external customer ID. Omitted, the consumer's or tenant's external_ref is used when it is one." }
 
     StatementInvoiceExportResponse:
-      description: "A finalized statement's draft invoice in the account's Stripe (ADR-1300)."
+      description: "A finalized statement's invoice in the account's billing provider (ADR-1300, ADR-1305)."
       type: object
       required: [statement_id, provider, customer, status, currency, amount_minor, livemode, created_at]
       properties:
         statement_id: { type: string, format: uuid }
-        provider: { type: string, enum: [stripe] }
+        provider: { $ref: '#/components/schemas/BillingProvider' }
         customer: { type: string }
         status: { type: string, enum: [creating, completed], description: "creating means an earlier attempt stopped part-way; repeat the export to resume it." }
         invoice_id: { type: string }
@@ -79220,17 +79245,17 @@ components:
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
-          description: "The Stripe invoice's status as last read by Gregale (ADR-1302); deleted means Stripe no longer has the draft. Absent until the first sync."
+          description: "The provider invoice's status as last read by Gregale (ADR-1302, ADR-1305); deleted means the provider no longer has it. Absent until the first sync."
         amount_paid_minor: { type: integer, format: int64, minimum: 0 }
         amount_remaining_minor: { type: integer, format: int64, minimum: 0 }
         due_at: { type: string, format: date-time }
         paid_at: { type: string, format: date-time }
-        hosted_invoice_url: { type: string, format: uri, description: "Stripe's customer-facing invoice page once the invoice is finalized." }
+        hosted_invoice_url: { type: string, format: uri, description: "The provider's customer-facing invoice or checkout page once there is one." }
         overdue: { type: boolean, description: "Open, past its due date, with an amount remaining." }
         status_synced_at: { type: string, format: date-time }
 
     StatementInvoiceListResponse:
-      description: "One page of an account's exported Stripe invoices, newest first."
+      description: "One page of an account's exported invoices, newest first."
       type: object
       required: [invoices]
       properties:
@@ -79286,7 +79311,7 @@ components:
           items: { $ref: '#/components/schemas/ConsumerBillingDay' }
 
     ConsumerBillingInvoice:
-      description: "The customer-facing view of a statement's Stripe invoice (ADR-1302)."
+      description: "The customer-facing view of a statement's exported invoice (ADR-1302)."
       type: object
       required: [amount_minor]
       properties:
@@ -79341,9 +79366,9 @@ components:
       items: { type: string, enum: [app_consumers, platform_tenants] }
 
     BillingRunExport:
-      description: "Where finalized statements go: none, or draft invoices in the account's Stripe (requires finalize and a connected key)."
+      description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1305; requires finalize and a connected key)."
       type: string
-      enum: [none, stripe]
+      enum: [none, stripe, paddle, lago]
 
     BillingRunCounts:
       description: "How many of a run's customers reached each outcome."
@@ -79407,15 +79432,15 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         amount_millicents: { type: integer, format: int64, description: "The statement revision's amount in millicents." }
         completeness: { type: string, enum: [verified, partial, gaps_detected, unverifiable] }
-        invoice_id: { type: string, description: "The last Stripe invoice this run created for the customer." }
-        exported_invoices: { type: integer, minimum: 0, description: "Draft Stripe invoices this run created for the customer." }
+        invoice_id: { type: string, description: "The last provider invoice this run created for the customer." }
+        exported_invoices: { type: integer, minimum: 0, description: "Provider invoices this run created for the customer." }
         reason: { type: string, description: "Why the customer was held, skipped or failed, or why a retry is pending." }
         attempts: { type: integer, minimum: 0 }
         updated_at: { type: string, format: date-time }
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
-          description: "Payment status of the Stripe invoice exported for the item's statement (ADR-1302)."
+          description: "Payment status of the invoice exported for the item's statement (ADR-1302)."
 
     BillingRunItemListResponse:
       description: "One page of a billing run's customers, ordered by kind and ID."

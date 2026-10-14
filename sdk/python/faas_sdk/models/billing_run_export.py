@@ -1,9 +1,11 @@
 from typing import Literal
 
-BillingRunExport = Literal["none", "stripe"]
+BillingRunExport = Literal["lago", "none", "paddle", "stripe"]
 
 BILLING_RUN_EXPORT_VALUES: set[BillingRunExport] = {
+    "lago",
     "none",
+    "paddle",
     "stripe",
 }
 

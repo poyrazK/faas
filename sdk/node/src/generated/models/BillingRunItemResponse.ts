@@ -27,11 +27,11 @@ export type BillingRunItemResponse = {
   amount_millicents?: number;
   completeness?: 'verified' | 'partial' | 'gaps_detected' | 'unverifiable';
   /**
-   * The last Stripe invoice this run created for the customer.
+   * The last provider invoice this run created for the customer.
    */
   invoice_id?: string;
   /**
-   * Draft Stripe invoices this run created for the customer.
+   * Provider invoices this run created for the customer.
    */
   exported_invoices: number;
   /**
@@ -41,7 +41,7 @@ export type BillingRunItemResponse = {
   attempts: number;
   updated_at: string;
   /**
-   * Payment status of the Stripe invoice exported for the item's statement (ADR-1302).
+   * Payment status of the invoice exported for the item's statement (ADR-1302).
    */
   payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';
 };

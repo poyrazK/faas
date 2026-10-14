@@ -8,13 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.billing_provider import BillingProvider, check_billing_provider
 from ..models.statement_invoice_export_response_payment_status import (
     StatementInvoiceExportResponsePaymentStatus,
     check_statement_invoice_export_response_payment_status,
-)
-from ..models.statement_invoice_export_response_provider import (
-    StatementInvoiceExportResponseProvider,
-    check_statement_invoice_export_response_provider,
 )
 from ..models.statement_invoice_export_response_source_kind import (
     StatementInvoiceExportResponseSourceKind,
@@ -31,10 +28,11 @@ T = TypeVar("T", bound="StatementInvoiceExportResponse")
 
 @_attrs_define
 class StatementInvoiceExportResponse:
-    """A finalized statement's draft invoice in the account's Stripe (ADR-1300)."""
+    """A finalized statement's invoice in the account's billing provider (ADR-1300, ADR-1305)."""
 
     statement_id: UUID
-    provider: StatementInvoiceExportResponseProvider
+    provider: BillingProvider
+    """A billing provider statements export to (ADR-1305)."""
     customer: str
     status: StatementInvoiceExportResponseStatus
     """creating means an earlier attempt stopped part-way; repeat the export to resume it."""
@@ -48,14 +46,14 @@ class StatementInvoiceExportResponse:
     completed_at: datetime.datetime | Unset = UNSET
     source_kind: StatementInvoiceExportResponseSourceKind | Unset = UNSET
     payment_status: StatementInvoiceExportResponsePaymentStatus | Unset = UNSET
-    """The Stripe invoice's status as last read by Gregale (ADR-1302); deleted means Stripe no longer has the
-    draft. Absent until the first sync."""
+    """The provider invoice's status as last read by Gregale (ADR-1302, ADR-1305); deleted means the provider no
+    longer has it. Absent until the first sync."""
     amount_paid_minor: int | Unset = UNSET
     amount_remaining_minor: int | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET
     paid_at: datetime.datetime | Unset = UNSET
     hosted_invoice_url: str | Unset = UNSET
-    """Stripe's customer-facing invoice page once the invoice is finalized."""
+    """The provider's customer-facing invoice or checkout page once there is one."""
     overdue: bool | Unset = UNSET
     """Open, past its due date, with an amount remaining."""
     status_synced_at: datetime.datetime | Unset = UNSET
@@ -160,7 +158,7 @@ class StatementInvoiceExportResponse:
         d = dict(src_dict)
         statement_id = UUID(d.pop("statement_id"))
 
-        provider = check_statement_invoice_export_response_provider(d.pop("provider"))
+        provider = check_billing_provider(d.pop("provider"))
 
         customer = d.pop("customer")
 

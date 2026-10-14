@@ -90,7 +90,8 @@ def sync_detailed(
     an hour ago. For every app consumer and platform tenant with billable
     usage, it drafts the month's statement, holds consumers whose ledger
     misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
-    `export: stripe` creates draft Stripe invoices. Usage attributed to a
+    `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to
+    a
     platform tenant is billed on the tenant's statement. One run per
     account can be queued or running at a time.
 
@@ -131,7 +132,8 @@ def sync(
     an hour ago. For every app consumer and platform tenant with billable
     usage, it drafts the month's statement, holds consumers whose ledger
     misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
-    `export: stripe` creates draft Stripe invoices. Usage attributed to a
+    `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to
+    a
     platform tenant is billed on the tenant's statement. One run per
     account can be queued or running at a time.
 
@@ -167,7 +169,8 @@ async def asyncio_detailed(
     an hour ago. For every app consumer and platform tenant with billable
     usage, it drafts the month's statement, holds consumers whose ledger
     misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
-    `export: stripe` creates draft Stripe invoices. Usage attributed to a
+    `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to
+    a
     platform tenant is billed on the tenant's statement. One run per
     account can be queued or running at a time.
 
@@ -206,7 +209,8 @@ async def asyncio(
     an hour ago. For every app consumer and platform tenant with billable
     usage, it drafts the month's statement, holds consumers whose ledger
     misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
-    `export: stripe` creates draft Stripe invoices. Usage attributed to a
+    `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to
+    a
     platform tenant is billed on the tenant's statement. One run per
     account can be queued or running at a time.
 

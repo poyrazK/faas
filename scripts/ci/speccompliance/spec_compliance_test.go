@@ -665,6 +665,7 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
 	"BillingRunExport":           true, // ADR-1301: enum shared by run and schedule DTOs, which carry it as a string field.
 	"BillingRunSources":          true, // ADR-1301: array enum shared by run and schedule DTOs, which carry it as []string.
+	"BillingProvider":            true, // ADR-1305: enum shared by connection and export DTOs, which carry it as a string field.
 	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
 	// in the pkg/api request/response DTOs. This scanner only indexes structs
 	// declared directly in pkg/api; request field parity still checks them.

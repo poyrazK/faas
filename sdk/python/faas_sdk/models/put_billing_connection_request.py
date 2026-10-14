@@ -6,20 +6,26 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="PutStripeConnectionRequest")
+from ..types import UNSET, Unset
+
+T = TypeVar("T", bound="PutBillingConnectionRequest")
 
 
 @_attrs_define
-class PutStripeConnectionRequest:
-    """The account's own Stripe key for statement invoice exports (ADR-1300)."""
+class PutBillingConnectionRequest:
+    """The account's own key for one billing provider (ADR-1300, ADR-1305)."""
 
     secret_key: str
-    """A Stripe secret or restricted key (sk_… or rk_…); prefer a restricted key limited to invoices and invoice
-    items."""
+    """A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key."""
+    api_url: str | Unset = UNSET
+    """Lago only: the API origin for the EU region or a self-hosted Lago, https:// only; default
+    https://api.getlago.com."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         secret_key = self.secret_key
+
+        api_url = self.api_url
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -28,6 +34,8 @@ class PutStripeConnectionRequest:
                 "secret_key": secret_key,
             }
         )
+        if api_url is not UNSET:
+            field_dict["api_url"] = api_url
 
         return field_dict
 
@@ -36,12 +44,15 @@ class PutStripeConnectionRequest:
         d = dict(src_dict)
         secret_key = d.pop("secret_key")
 
-        put_stripe_connection_request = cls(
+        api_url = d.pop("api_url", UNSET)
+
+        put_billing_connection_request = cls(
             secret_key=secret_key,
+            api_url=api_url,
         )
 
-        put_stripe_connection_request.additional_properties = d
-        return put_stripe_connection_request
+        put_billing_connection_request.additional_properties = d
+        return put_billing_connection_request
 
     @property
     def additional_keys(self) -> list[str]:

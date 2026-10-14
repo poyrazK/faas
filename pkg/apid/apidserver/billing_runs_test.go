@@ -37,7 +37,7 @@ func newBillingRunFixture(t *testing.T) billingRunFixture {
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
 	// Two days into the current month, last month has settled.
 	(*e.S()).BillingRuns().Now = func() time.Time { return month.AddDate(0, 1, 2) }
-	if res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutStripeConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, nil); res.Code != http.StatusOK {
+	if res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, nil); res.Code != http.StatusOK {
 		t.Fatalf("connect: %d %s", res.Code, res.Body)
 	}
 	return billingRunFixture{e: e, stripe: stripe, month: month}

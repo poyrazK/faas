@@ -528,13 +528,15 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write DPA metadata to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
-			{Name: "stripe", Short: "Connect, show, or disconnect the Stripe key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}"}},
+			{Name: "billing-connection", Short: "Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin", Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
+				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
+			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt"}},
 			{Name: "billing-run", Short: "Bill an ended month for every API customer: draft, check, finalize and optionally export each statement", Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
 					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants (default: both)", Value: "LIST"},
 					{Name: "no-finalize", Short: "only draft statements", Bool: true},
-					{Name: "export", Short: "none or stripe (default none)", Value: "TARGET"},
+					{Name: "export", Short: "none, stripe, paddle or lago (default none)", Value: "TARGET"},
 					{Name: "no-hold-on-gaps", Short: "finalize consumers even when request telemetry shows unbilled requests", Bool: true},
 					{Name: "wait", Short: "wait until the run completes and list its customers", Bool: true},
 				}, Examples: []string{"gregale account billing-run start --month 2026-09 --export stripe --wait"}},
@@ -546,13 +548,13 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-set", Short: "Start a run automatically after each month ends", Flags: []cliFlag{
 					{Name: "sources", Short: "comma-separated app_consumers,platform_tenants for scheduled runs (default: both)", Value: "LIST"},
 					{Name: "no-finalize", Short: "scheduled runs only draft statements", Bool: true},
-					{Name: "export", Short: "none or stripe for scheduled runs (default none)", Value: "TARGET"},
+					{Name: "export", Short: "none, stripe, paddle or lago for scheduled runs (default none)", Value: "TARGET"},
 					{Name: "no-hold-on-gaps", Short: "scheduled runs finalize consumers with completeness gaps", Bool: true},
 					{Name: "delay-hours", Short: "hours after month end before the run starts (1-240, default 24)", Value: "N"},
 				}, Examples: []string{"gregale account billing-run schedule-set --export stripe --delay-hours 6"}},
 				{Name: "schedule-delete", Short: "Stop scheduled runs; a started run continues"},
 			}},
-			{Name: "invoices", Short: "List Stripe invoices drafted from usage statements and whether they were paid", Flags: []cliFlag{
+			{Name: "invoices", Short: "List invoices exported from usage statements and whether they were paid", Flags: []cliFlag{
 				{Name: "status", Short: "unpaid, overdue, or one payment status: draft, open, paid, void, uncollectible, deleted", Value: "STATUS"},
 			}, Examples: []string{"gregale account invoices --status overdue"}},
 		},
@@ -2683,8 +2685,9 @@ var cliCommands = []cliCommand{
 			{Name: "statement-handoff", Short: "Record your invoice reference for a finalized revision", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
-			{Name: "statement-export", Short: "Create a draft Stripe invoice for a finalized revision and record its handoff", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
-				{Name: "customer", Short: "Stripe customer ID (default: the consumer's external_ref when it is one)", Value: "cus_ID"},
+			{Name: "statement-export", Short: "Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff", Positionals: []string{"<slug>", "<consumer-id>", "<statement-id>"}, Flags: []cliFlag{
+				{Name: "customer", Short: "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the consumer's external_ref when it is one)", Value: "ID"},
+				{Name: "provider", Short: "billing provider (default stripe)", Value: "PROVIDER", ClosedSet: []string{"stripe", "paddle", "lago"}},
 			}},
 			{Name: "plans", Short: "List an app's consumer plans", Positionals: []string{"<slug>"}},
 			{Name: "plan-create", Short: "Create a consumer plan with request limits", Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -2790,9 +2793,10 @@ var cliCommands = []cliCommand{
 				platformTenantIDFlag, platformTenantStatementIDFlag,
 				{Name: "invoice-id", Short: "your billing system's invoice reference", Value: "ID", Req: true},
 			}},
-			{Name: "statement-export", Short: "Create a draft Stripe invoice for a finalized revision and record its handoff", Flags: []cliFlag{
+			{Name: "statement-export", Short: "Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff", Flags: []cliFlag{
 				platformTenantIDFlag, platformTenantStatementIDFlag,
-				{Name: "customer", Short: "Stripe customer ID (default: the tenant's external_ref when it is one)", Value: "cus_ID"},
+				{Name: "customer", Short: "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the tenant's external_ref when it is one)", Value: "ID"},
+				{Name: "provider", Short: "billing provider (default stripe)", Value: "PROVIDER", ClosedSet: []string{"stripe", "paddle", "lago"}},
 			}},
 		},
 	},

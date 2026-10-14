@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,9 +13,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Statement invoice export constants (ADR-1300).
+// Statement invoice export constants (ADR-1300, ADR-1305).
 const (
 	BillingProviderStripe = "stripe"
+	BillingProviderPaddle = "paddle"
+	BillingProviderLago   = "lago"
 
 	StatementSourceAppConsumer    = "app_consumer"
 	StatementSourcePlatformTenant = "platform_tenant"
@@ -23,14 +26,24 @@ const (
 	StatementInvoiceExportCompleted = "completed"
 )
 
+// BillingProviders are the providers statements export to (ADR-1305).
+var BillingProviders = []string{BillingProviderStripe, BillingProviderPaddle, BillingProviderLago}
+
+// ValidBillingProvider reports whether p is a known export provider.
+func ValidBillingProvider(p string) bool {
+	return p == BillingProviderStripe || p == BillingProviderPaddle || p == BillingProviderLago
+}
+
 // BillingConnection is an account's sealed payment-provider credential.
 // SealedSecret never leaves the server; KeyLast4 and Livemode identify it.
+// APIURL is set for Lago only (ADR-1305).
 type BillingConnection struct {
 	AccountID    string
 	Provider     string
 	SealedSecret []byte
 	KeyLast4     string
 	Livemode     bool
+	APIURL       string
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -79,7 +92,7 @@ type StatementInvoiceExportStore interface {
 	DeleteBillingConnection(ctx context.Context, accountID, provider string) error
 	// BeginStatementInvoiceExport records an export or returns the existing
 	// one for the statement; existing reports which. An existing export for
-	// a different customer is ErrConflict.
+	// a different customer or provider is ErrConflict.
 	BeginStatementInvoiceExport(context.Context, StatementInvoiceExport) (export StatementInvoiceExport, existing bool, err error)
 	// SetStatementInvoiceExportInvoice records the provider invoice once;
 	// recording a different invoice is ErrConflict.
@@ -102,7 +115,7 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 	if e.SourceKind != StatementSourceAppConsumer && e.SourceKind != StatementSourcePlatformTenant {
 		return fmt.Errorf("%w: unknown statement source %q", ErrInvalidArgument, e.SourceKind)
 	}
-	if e.Provider != BillingProviderStripe || e.Customer == "" || !isUpperASCIICurrency(e.Currency) {
+	if !ValidBillingProvider(e.Provider) || e.Customer == "" || !isUpperASCIICurrency(e.Currency) {
 		return fmt.Errorf("%w: invalid statement invoice export", ErrInvalidArgument)
 	}
 	return nil
@@ -110,9 +123,17 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 
 // --- MemStore ---
 
+func validateBillingConnection(c BillingConnection) error {
+	if !ValidBillingProvider(c.Provider) || len(c.KeyLast4) != 4 || len(c.SealedSecret) == 0 ||
+		(c.APIURL != "" && (len(c.APIURL) > 512 || !strings.HasPrefix(c.APIURL, "https://"))) {
+		return ErrInvalidArgument
+	}
+	return nil
+}
+
 func (m *MemStore) PutBillingConnection(_ context.Context, c BillingConnection) (BillingConnection, error) {
-	if c.Provider != BillingProviderStripe || len(c.KeyLast4) != 4 || len(c.SealedSecret) == 0 {
-		return BillingConnection{}, ErrInvalidArgument
+	if err := validateBillingConnection(c); err != nil {
+		return BillingConnection{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -161,7 +182,7 @@ func (m *MemStore) BeginStatementInvoiceExport(_ context.Context, e StatementInv
 	defer m.mu.Unlock()
 	for _, existing := range m.statementInvoiceExports {
 		if existing.SourceKind == e.SourceKind && existing.StatementID == e.StatementID {
-			if existing.AccountID != e.AccountID || existing.Customer != e.Customer {
+			if existing.AccountID != e.AccountID || existing.Customer != e.Customer || existing.Provider != e.Provider {
 				return StatementInvoiceExport{}, true, ErrConflict
 			}
 			return existing, true, nil
@@ -224,17 +245,17 @@ func (m *MemStore) GetStatementInvoiceExport(_ context.Context, accountID, sourc
 // --- PgStore ---
 
 func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection) (BillingConnection, error) {
-	if c.Provider != BillingProviderStripe || len(c.KeyLast4) != 4 || len(c.SealedSecret) == 0 {
-		return BillingConnection{}, ErrInvalidArgument
+	if err := validateBillingConnection(c); err != nil {
+		return BillingConnection{}, err
 	}
 	err := s.pool.QueryRow(ctx, `insert into account_billing_connections
-			(account_id, provider, sealed_secret, key_last4, livemode)
-		values ($1::uuid, $2, $3, $4, $5)
+			(account_id, provider, sealed_secret, key_last4, livemode, api_url)
+		values ($1::uuid, $2, $3, $4, $5, nullif($6, ''))
 		on conflict (account_id, provider) do update
 		   set sealed_secret = excluded.sealed_secret, key_last4 = excluded.key_last4,
-		       livemode = excluded.livemode, updated_at = now()
+		       livemode = excluded.livemode, api_url = excluded.api_url, updated_at = now()
 		returning created_at, updated_at`,
-		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode).Scan(&c.CreatedAt, &c.UpdatedAt)
+		c.AccountID, c.Provider, c.SealedSecret, c.KeyLast4, c.Livemode, c.APIURL).Scan(&c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return BillingConnection{}, fmt.Errorf("put billing connection: %w", err)
 	}
@@ -244,9 +265,9 @@ func (s *PgStore) PutBillingConnection(ctx context.Context, c BillingConnection)
 
 func (s *PgStore) GetBillingConnection(ctx context.Context, accountID, provider string) (BillingConnection, error) {
 	c := BillingConnection{AccountID: accountID, Provider: provider}
-	err := s.pool.QueryRow(ctx, `select sealed_secret, key_last4, livemode, created_at, updated_at
+	err := s.pool.QueryRow(ctx, `select sealed_secret, key_last4, livemode, coalesce(api_url, ''), created_at, updated_at
 		from account_billing_connections where account_id = $1::uuid and provider = $2`, accountID, provider).
-		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.CreatedAt, &c.UpdatedAt)
+		Scan(&c.SealedSecret, &c.KeyLast4, &c.Livemode, &c.APIURL, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BillingConnection{}, ErrNotFound
 	}
@@ -314,7 +335,7 @@ func (s *PgStore) BeginStatementInvoiceExport(ctx context.Context, e StatementIn
 	if err != nil {
 		return StatementInvoiceExport{}, false, fmt.Errorf("read statement invoice export: %w", err)
 	}
-	if existing.AccountID != e.AccountID || existing.Customer != e.Customer {
+	if existing.AccountID != e.AccountID || existing.Customer != e.Customer || existing.Provider != e.Provider {
 		return StatementInvoiceExport{}, true, ErrConflict
 	}
 	return existing, true, nil

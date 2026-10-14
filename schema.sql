@@ -3155,8 +3155,10 @@ CREATE TABLE public.account_billing_connections (
     livemode boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    api_url text,
+    CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
     CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
-    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = 'stripe'::text))
+    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
 );
 
 
@@ -17378,7 +17380,7 @@ CREATE TABLE public.billing_run_schedules (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT billing_run_schedules_delay_chk CHECK (((delay_hours >= 1) AND (delay_hours <= 240))),
-    CONSTRAINT billing_run_schedules_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text]))),
+    CONSTRAINT billing_run_schedules_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text, 'paddle'::text, 'lago'::text]))),
     CONSTRAINT billing_run_schedules_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
     CONSTRAINT billing_run_schedules_last_month_chk CHECK (((last_period_start IS NULL) OR (last_period_start = (date_trunc('month'::text, (last_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
     CONSTRAINT billing_run_schedules_next_month_chk CHECK (((next_period_start = (date_trunc('month'::text, (next_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (next_run_at > next_period_start))),
@@ -17416,7 +17418,7 @@ CREATE TABLE public.billing_runs (
     completed_at timestamp with time zone,
     notified_at timestamp with time zone,
     CONSTRAINT billing_runs_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
-    CONSTRAINT billing_runs_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text]))),
+    CONSTRAINT billing_runs_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text, 'paddle'::text, 'lago'::text]))),
     CONSTRAINT billing_runs_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
     CONSTRAINT billing_runs_lease_chk CHECK (((lease_owner IS NULL) = (lease_until IS NULL))),
     CONSTRAINT billing_runs_month_chk CHECK (((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (period_end = ((date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) + '1 mon'::interval) AT TIME ZONE 'UTC'::text)))),
@@ -18895,7 +18897,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (((hosted_invoice_url IS NULL) OR ((char_length(hosted_invoice_url) <= 2048) AND (hosted_invoice_url ~~ 'https://%'::text)))),
     CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
     CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
-    CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = 'stripe'::text)),
+    CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
     CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
     CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
 );

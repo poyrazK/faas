@@ -1,20 +1,28 @@
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.billing_connection_response import BillingConnectionResponse
 from ...models.problem import Problem
+from ...models.statement_invoice_export_response import StatementInvoiceExportResponse
 from ...types import Response
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    id: UUID,
+    statement_id: UUID,
+) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/account/billing-connections/stripe",
+        "url": "/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice".format(
+            id=quote(str(id), safe=""),
+            statement_id=quote(str(statement_id), safe=""),
+        ),
     }
 
     return _kwargs
@@ -22,9 +30,9 @@ def _get_kwargs() -> dict[str, Any]:
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> BillingConnectionResponse | Problem | None:
+) -> Problem | StatementInvoiceExportResponse | None:
     if response.status_code == 200:
-        response_200 = BillingConnectionResponse.from_dict(response.json())
+        response_200 = StatementInvoiceExportResponse.from_dict(response.json())
 
         return response_200
 
@@ -46,7 +54,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[BillingConnectionResponse | Problem]:
+) -> Response[Problem | StatementInvoiceExportResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -56,20 +64,29 @@ def _build_response(
 
 
 def sync_detailed(
+    id: UUID,
+    statement_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[BillingConnectionResponse | Problem]:
-    """Describe the account's Stripe key for statement invoice exports.
+) -> Response[Problem | StatementInvoiceExportResponse]:
+    """Read the platform tenant statement's invoice export.
+
+    Args:
+        id (UUID):
+        statement_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[BillingConnectionResponse | Problem]
+        Response[Problem | StatementInvoiceExportResponse]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        id=id,
+        statement_id=statement_id,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -79,39 +96,56 @@ def sync_detailed(
 
 
 def sync(
+    id: UUID,
+    statement_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> BillingConnectionResponse | Problem | None:
-    """Describe the account's Stripe key for statement invoice exports.
+) -> Problem | StatementInvoiceExportResponse | None:
+    """Read the platform tenant statement's invoice export.
+
+    Args:
+        id (UUID):
+        statement_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        BillingConnectionResponse | Problem
+        Problem | StatementInvoiceExportResponse
     """
 
     return sync_detailed(
+        id=id,
+        statement_id=statement_id,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
+    id: UUID,
+    statement_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[BillingConnectionResponse | Problem]:
-    """Describe the account's Stripe key for statement invoice exports.
+) -> Response[Problem | StatementInvoiceExportResponse]:
+    """Read the platform tenant statement's invoice export.
+
+    Args:
+        id (UUID):
+        statement_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[BillingConnectionResponse | Problem]
+        Response[Problem | StatementInvoiceExportResponse]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        id=id,
+        statement_id=statement_id,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -119,21 +153,29 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    id: UUID,
+    statement_id: UUID,
     *,
     client: AuthenticatedClient | Client,
-) -> BillingConnectionResponse | Problem | None:
-    """Describe the account's Stripe key for statement invoice exports.
+) -> Problem | StatementInvoiceExportResponse | None:
+    """Read the platform tenant statement's invoice export.
+
+    Args:
+        id (UUID):
+        statement_id (UUID):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        BillingConnectionResponse | Problem
+        Problem | StatementInvoiceExportResponse
     """
 
     return (
         await asyncio_detailed(
+            id=id,
+            statement_id=statement_id,
             client=client,
         )
     ).parsed

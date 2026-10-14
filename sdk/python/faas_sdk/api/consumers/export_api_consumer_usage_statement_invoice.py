@@ -27,7 +27,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice".format(
+        "url": "/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice".format(
             slug=quote(str(slug), safe=""),
             consumer_id=quote(str(consumer_id), safe=""),
             statement_id=quote(str(statement_id), safe=""),
@@ -102,17 +102,20 @@ def sync_detailed(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | StatementInvoiceExportResponse]:
-    """Export a finalized app consumer statement as a draft Stripe invoice.
+    """Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized app consumer statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized app consumer statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe and Paddle receive drafts that Gregale never finalizes or
+    sends; Lago issues its one-off invoice immediately but never charges
+    it. One item per rate card and unit price, plus a rounding item, makes
+    the invoice equal the statement total rounded to the cent; with a
+    negative line, Paddle and Lago get a single summary item instead. The
+    statement's handoff records the provider invoice ID on success. A retry
+    resumes the same invoice, a completed export is returned as is, and a
+    statement exports to one provider only. Two-decimal currencies only;
+    Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):
@@ -153,17 +156,20 @@ def sync(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | StatementInvoiceExportResponse | None:
-    """Export a finalized app consumer statement as a draft Stripe invoice.
+    """Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized app consumer statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized app consumer statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe and Paddle receive drafts that Gregale never finalizes or
+    sends; Lago issues its one-off invoice immediately but never charges
+    it. One item per rate card and unit price, plus a rounding item, makes
+    the invoice equal the statement total rounded to the cent; with a
+    negative line, Paddle and Lago get a single summary item instead. The
+    statement's handoff records the provider invoice ID on success. A retry
+    resumes the same invoice, a completed export is returned as is, and a
+    statement exports to one provider only. Two-decimal currencies only;
+    Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):
@@ -199,17 +205,20 @@ async def asyncio_detailed(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | StatementInvoiceExportResponse]:
-    """Export a finalized app consumer statement as a draft Stripe invoice.
+    """Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized app consumer statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized app consumer statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe and Paddle receive drafts that Gregale never finalizes or
+    sends; Lago issues its one-off invoice immediately but never charges
+    it. One item per rate card and unit price, plus a rounding item, makes
+    the invoice equal the statement total rounded to the cent; with a
+    negative line, Paddle and Lago get a single summary item instead. The
+    statement's handoff records the provider invoice ID on success. A retry
+    resumes the same invoice, a completed export is returned as is, and a
+    statement exports to one provider only. Two-decimal currencies only;
+    Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):
@@ -248,17 +257,20 @@ async def asyncio(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | StatementInvoiceExportResponse | None:
-    """Export a finalized app consumer statement as a draft Stripe invoice.
+    """Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized app consumer statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized app consumer statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe and Paddle receive drafts that Gregale never finalizes or
+    sends; Lago issues its one-off invoice immediately but never charges
+    it. One item per rate card and unit price, plus a rounding item, makes
+    the invoice equal the statement total rounded to the cent; with a
+    negative line, Paddle and Lago get a single summary item instead. The
+    statement's handoff records the provider invoice ID on success. A retry
+    resumes the same invoice, a completed export is returned as is, and a
+    statement exports to one provider only. Two-decimal currencies only;
+    Paddle takes USD, EUR and GBP.
 
     Args:
         slug (str):

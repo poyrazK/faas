@@ -213,6 +213,7 @@ export type { BillingCatalogResponse } from './models/BillingCatalogResponse.js'
 export type { BillingConnectionResponse } from './models/BillingConnectionResponse.js';
 export type { BillingPaddleOveragePreflightResponse } from './models/BillingPaddleOveragePreflightResponse.js';
 export type { BillingPortalResponse } from './models/BillingPortalResponse.js';
+export type { BillingProvider } from './models/BillingProvider.js';
 export type { BillingReconcileResponse } from './models/BillingReconcileResponse.js';
 export type { BillingRetryResponse } from './models/BillingRetryResponse.js';
 export type { BillingRunCounts } from './models/BillingRunCounts.js';
@@ -1646,6 +1647,7 @@ export type { PutAppEnvRequest } from './models/PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenceRequest.js';
 export type { PutAppSecretRequest } from './models/PutAppSecretRequest.js';
+export type { PutBillingConnectionRequest } from './models/PutBillingConnectionRequest.js';
 export type { PutBillingRunScheduleRequest } from './models/PutBillingRunScheduleRequest.js';
 export type { PutDataUpstreamRequest } from './models/PutDataUpstreamRequest.js';
 export type { PutJobRegistryCredentialRequest } from './models/PutJobRegistryCredentialRequest.js';
@@ -1659,7 +1661,6 @@ export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentia
 export type { PutOutboundDailyRequestBudgetRequest } from './models/PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './models/PutOutboundRequestPolicyRequest.js';
 export type { PutOutboundRunsBindingRequest } from './models/PutOutboundRunsBindingRequest.js';
-export type { PutStripeConnectionRequest } from './models/PutStripeConnectionRequest.js';
 export type { PutWebhookAutomationBindingRequest } from './models/PutWebhookAutomationBindingRequest.js';
 export type { QueueBindingResponse } from './models/QueueBindingResponse.js';
 export type { QueueBindingStatusResponse } from './models/QueueBindingStatusResponse.js';

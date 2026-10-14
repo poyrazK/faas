@@ -17,7 +17,7 @@ T = TypeVar("T", bound="StatementInvoiceListResponse")
 
 @_attrs_define
 class StatementInvoiceListResponse:
-    """One page of an account's exported Stripe invoices, newest first."""
+    """One page of an account's exported invoices, newest first."""
 
     invoices: list[StatementInvoiceExportResponse]
     next_cursor: str | Unset = UNSET

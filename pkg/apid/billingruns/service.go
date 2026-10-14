@@ -36,11 +36,11 @@ type Host interface {
 	// ConsumerCompleteness compares the consumer's ledger with request
 	// telemetry over the period (ADR-954).
 	ConsumerCompleteness(ctx context.Context, acct state.Account, appID, consumerID string, start, end time.Time) (status string, missing int64, err error)
-	ExportConsumerStatement(ctx context.Context, acct state.Account, consumer state.APIConsumer, statement state.APIConsumerUsageStatement) (state.StatementInvoiceExport, *api.Problem)
+	ExportConsumerStatement(ctx context.Context, acct state.Account, consumer state.APIConsumer, statement state.APIConsumerUsageStatement, provider string) (state.StatementInvoiceExport, *api.Problem)
 
 	DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string, start, end time.Time) (state.PlatformTenantStatement, *api.Problem)
 	FinalizeTenantStatement(ctx context.Context, acct state.Account, tenantID, statementID string) (state.PlatformTenantStatement, *api.Problem)
-	ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement) (state.StatementInvoiceExport, *api.Problem)
+	ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement, provider string) (state.StatementInvoiceExport, *api.Problem)
 	// SendEmail sends a plain-text notification (ADR-1302); messageID is the
 	// provider idempotency key.
 	SendEmail(ctx context.Context, to, subject, body, messageID string) error
@@ -108,20 +108,21 @@ func runOptions(sources []string, finalize *bool, export string, holdOnGaps *boo
 	return opts, nil
 }
 
-// requireExportTarget rejects a Stripe export when no key is connected.
+// requireExportTarget rejects an export to a provider with no connected
+// key (ADR-1305).
 func (s *Service) requireExportTarget(ctx context.Context, acct state.Account, opts state.BillingRunOptions) *api.Problem {
-	if opts.Export != state.BillingRunExportStripe {
+	if opts.Export == state.BillingRunExportNone {
 		return nil
 	}
 	exports, ok := s.Host.Store().(state.StatementInvoiceExportStore)
 	if !ok {
 		return api.ErrInternal("statement invoice exports are unavailable")
 	}
-	if _, err := exports.GetBillingConnection(ctx, acct.ID, state.BillingProviderStripe); errors.Is(err, state.ErrNotFound) {
-		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Stripe not connected",
-			"connect Stripe first: PUT /v1/account/billing-connections/stripe")
+	if _, err := exports.GetBillingConnection(ctx, acct.ID, opts.Export); errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Billing provider not connected",
+			fmt.Sprintf("connect %s first: PUT /v1/account/billing-connections/%s", opts.Export, opts.Export))
 	} else if err != nil {
-		return api.ErrInternal("could not load the Stripe connection")
+		return api.ErrInternal("could not load the " + opts.Export + " connection")
 	}
 	return nil
 }

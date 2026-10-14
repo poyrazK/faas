@@ -23,8 +23,8 @@ class PutBillingRunScheduleRequest:
     finalize: bool | Unset = UNSET
     """Finalize each drafted statement in scheduled runs (default true)."""
     export: BillingRunExport | Unset = UNSET
-    """Where finalized statements go: none, or draft invoices in the account's Stripe (requires finalize and a
-    connected key)."""
+    """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1305; requires
+    finalize and a connected key)."""
     hold_on_gaps: bool | Unset = UNSET
     """Hold app consumers with completeness gaps in scheduled runs (default true)."""
     delay_hours: int | Unset = UNSET

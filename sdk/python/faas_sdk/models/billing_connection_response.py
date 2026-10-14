@@ -7,10 +7,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.billing_connection_response_provider import (
-    BillingConnectionResponseProvider,
-    check_billing_connection_response_provider,
-)
+from ..models.billing_provider import BillingProvider, check_billing_provider
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="BillingConnectionResponse")
 
@@ -19,11 +17,15 @@ T = TypeVar("T", bound="BillingConnectionResponse")
 class BillingConnectionResponse:
     """A stored payment-provider key, identified without revealing it."""
 
-    provider: BillingConnectionResponseProvider
+    provider: BillingProvider
+    """A billing provider statements export to (ADR-1305)."""
     key_last4: str
     livemode: bool
+    """False for Stripe test and Paddle sandbox keys; Lago has no test mode."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    api_url: str | Unset = UNSET
+    """The Lago API origin."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +39,8 @@ class BillingConnectionResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        api_url = self.api_url
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -48,13 +52,15 @@ class BillingConnectionResponse:
                 "updated_at": updated_at,
             }
         )
+        if api_url is not UNSET:
+            field_dict["api_url"] = api_url
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        provider = check_billing_connection_response_provider(d.pop("provider"))
+        provider = check_billing_provider(d.pop("provider"))
 
         key_last4 = d.pop("key_last4")
 
@@ -64,12 +70,15 @@ class BillingConnectionResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        api_url = d.pop("api_url", UNSET)
+
         billing_connection_response = cls(
             provider=provider,
             key_last4=key_last4,
             livemode=livemode,
             created_at=created_at,
             updated_at=updated_at,
+            api_url=api_url,
         )
 
         billing_connection_response.additional_properties = d

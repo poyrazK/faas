@@ -85,8 +85,8 @@ func (h billingRunsHost) ConsumerCompleteness(ctx context.Context, acct state.Ac
 }
 
 func (h billingRunsHost) ExportConsumerStatement(ctx context.Context, acct state.Account, consumer state.APIConsumer,
-	statement state.APIConsumerUsageStatement) (state.StatementInvoiceExport, *api.Problem) {
-	return h.s.statementInvoices.ExportAppConsumer(ctx, acct, consumer, statement, "")
+	statement state.APIConsumerUsageStatement, provider string) (state.StatementInvoiceExport, *api.Problem) {
+	return h.s.statementInvoices.ExportAppConsumer(ctx, acct, consumer, statement, provider, "")
 }
 
 func (h billingRunsHost) DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string,
@@ -119,8 +119,8 @@ func (h billingRunsHost) FinalizeTenantStatement(ctx context.Context, acct state
 }
 
 func (h billingRunsHost) ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant,
-	statement state.PlatformTenantStatement) (state.StatementInvoiceExport, *api.Problem) {
-	return h.s.statementInvoices.ExportPlatformTenant(ctx, acct, tenant, statement, "")
+	statement state.PlatformTenantStatement, provider string) (state.StatementInvoiceExport, *api.Problem) {
+	return h.s.statementInvoices.ExportPlatformTenant(ctx, acct, tenant, statement, provider, "")
 }
 
 func (h billingRunsHost) SendEmail(ctx context.Context, to, subject, body, messageID string) error {

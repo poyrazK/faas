@@ -20,7 +20,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice".format(
+        "url": "/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice".format(
             slug=quote(str(slug), safe=""),
             consumer_id=quote(str(consumer_id), safe=""),
             statement_id=quote(str(statement_id), safe=""),
@@ -72,7 +72,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | StatementInvoiceExportResponse]:
-    """Read the app consumer statement's Stripe invoice export.
+    """Read the app consumer statement's invoice export.
 
     Args:
         slug (str):
@@ -107,7 +107,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | StatementInvoiceExportResponse | None:
-    """Read the app consumer statement's Stripe invoice export.
+    """Read the app consumer statement's invoice export.
 
     Args:
         slug (str):
@@ -137,7 +137,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | StatementInvoiceExportResponse]:
-    """Read the app consumer statement's Stripe invoice export.
+    """Read the app consumer statement's invoice export.
 
     Args:
         slug (str):
@@ -170,7 +170,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | StatementInvoiceExportResponse | None:
-    """Read the app consumer statement's Stripe invoice export.
+    """Read the app consumer statement's invoice export.
 
     Args:
         slug (str):

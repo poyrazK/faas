@@ -1,19 +1,25 @@
 from http import HTTPStatus
 from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.billing_provider import BillingProvider
 from ...models.problem import Problem
 from ...types import Response
 
 
-def _get_kwargs() -> dict[str, Any]:
+def _get_kwargs(
+    provider: BillingProvider,
+) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
-        "url": "/v1/account/billing-connections/stripe",
+        "url": "/v1/account/billing-connections/{provider}".format(
+            provider=quote(str(provider), safe=""),
+        ),
     }
 
     return _kwargs
@@ -50,10 +56,14 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
 def sync_detailed(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Remove the account's Stripe key.
+    """Remove the account's key for one billing provider.
+
+    Args:
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -63,7 +73,9 @@ def sync_detailed(
         Response[Any | Problem]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        provider=provider,
+    )
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -73,10 +85,14 @@ def sync_detailed(
 
 
 def sync(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Remove the account's Stripe key.
+    """Remove the account's key for one billing provider.
+
+    Args:
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -87,15 +103,20 @@ def sync(
     """
 
     return sync_detailed(
+        provider=provider,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Any | Problem]:
-    """Remove the account's Stripe key.
+    """Remove the account's key for one billing provider.
+
+    Args:
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -105,7 +126,9 @@ async def asyncio_detailed(
         Response[Any | Problem]
     """
 
-    kwargs = _get_kwargs()
+    kwargs = _get_kwargs(
+        provider=provider,
+    )
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -113,10 +136,14 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
 ) -> Any | Problem | None:
-    """Remove the account's Stripe key.
+    """Remove the account's key for one billing provider.
+
+    Args:
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -128,6 +155,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
+            provider=provider,
             client=client,
         )
     ).parsed

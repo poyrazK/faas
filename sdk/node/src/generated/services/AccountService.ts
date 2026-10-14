@@ -14,6 +14,7 @@ import type { AccountResponse } from '../models/AccountResponse.js';
 import type { AccountSLOResponse } from '../models/AccountSLOResponse.js';
 import type { AccountTraceLookupResponse } from '../models/AccountTraceLookupResponse.js';
 import type { BillingConnectionResponse } from '../models/BillingConnectionResponse.js';
+import type { BillingProvider } from '../models/BillingProvider.js';
 import type { BillingRunItemListResponse } from '../models/BillingRunItemListResponse.js';
 import type { BillingRunListResponse } from '../models/BillingRunListResponse.js';
 import type { BillingRunResponse } from '../models/BillingRunResponse.js';
@@ -22,8 +23,8 @@ import type { CapabilitiesResponse } from '../models/CapabilitiesResponse.js';
 import type { ChangePlanRequest } from '../models/ChangePlanRequest.js';
 import type { CreateBillingRunRequest } from '../models/CreateBillingRunRequest.js';
 import type { DeadLetterEvent } from '../models/DeadLetterEvent.js';
+import type { PutBillingConnectionRequest } from '../models/PutBillingConnectionRequest.js';
 import type { PutBillingRunScheduleRequest } from '../models/PutBillingRunScheduleRequest.js';
-import type { PutStripeConnectionRequest } from '../models/PutStripeConnectionRequest.js';
 import type { RaiseOverageCapRequest } from '../models/RaiseOverageCapRequest.js';
 import type { SetAccountEgressAllowlistExtraRequest } from '../models/SetAccountEgressAllowlistExtraRequest.js';
 import type { StatementInvoiceListResponse } from '../models/StatementInvoiceListResponse.js';
@@ -575,14 +576,24 @@ export class AccountService {
     });
   }
   /**
-   * Describe the account's Stripe key for statement invoice exports.
+   * Describe the account's key for one billing provider.
    * @returns BillingConnectionResponse The connection; the key itself is never returned.
    * @throws ApiError
    */
-  public static getStripeConnection(): CancelablePromise<BillingConnectionResponse> {
+  public static getBillingConnection({
+    provider,
+  }: {
+    /**
+     * Billing provider statements export to (ADR-1305).
+     */
+    provider: BillingProvider,
+  }): CancelablePromise<BillingConnectionResponse> {
     return __request(OpenAPI, {
       method: 'GET',
-      url: '/v1/account/billing-connections/stripe',
+      url: '/v1/account/billing-connections/{provider}',
+      path: {
+        'provider': provider,
+      },
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
@@ -590,41 +601,63 @@ export class AccountService {
     });
   }
   /**
-   * Store or replace the account's Stripe key.
-   * Checks the key against Stripe, then seals it at rest. Use a restricted
-   * key (rk_live_… or rk_test_…) with read and write access to invoices
-   * and invoice items. Only the last four characters and the mode are
-   * ever returned.
+   * Store or replace the account's key for one billing provider.
+   * Checks the key against the provider, then seals it at rest. Stripe
+   * takes a restricted key (rk_live_… or rk_test_…) with read and write
+   * access to invoices and invoice items; Paddle an API key
+   * (pdl_live_apikey_… or pdl_sdbx_apikey_…) with transaction access; Lago
+   * an API key and, for the EU region or a self-hosted Lago, api_url. Only
+   * the last four characters, the mode and the Lago API URL are ever
+   * returned.
    *
    * @returns BillingConnectionResponse The stored connection.
    * @throws ApiError
    */
-  public static putStripeConnection({
+  public static putBillingConnection({
+    provider,
     requestBody,
   }: {
-    requestBody: PutStripeConnectionRequest,
+    /**
+     * Billing provider statements export to (ADR-1305).
+     */
+    provider: BillingProvider,
+    requestBody: PutBillingConnectionRequest,
   }): CancelablePromise<BillingConnectionResponse> {
     return __request(OpenAPI, {
       method: 'PUT',
-      url: '/v1/account/billing-connections/stripe',
+      url: '/v1/account/billing-connections/{provider}',
+      path: {
+        'provider': provider,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
-        422: `Not a Stripe secret or restricted key, or Stripe rejected it.`,
-        502: `Stripe could not be reached (\`billing_provider_unavailable\`).`,
+        404: `code: not_found`,
+        422: `Not a key of this provider, a bad api_url, or the provider rejected the key.`,
+        502: `The provider could not be reached (\`billing_provider_unavailable\`).`,
       },
     });
   }
   /**
-   * Remove the account's Stripe key.
+   * Remove the account's key for one billing provider.
    * @returns void
    * @throws ApiError
    */
-  public static deleteStripeConnection(): CancelablePromise<void> {
+  public static deleteBillingConnection({
+    provider,
+  }: {
+    /**
+     * Billing provider statements export to (ADR-1305).
+     */
+    provider: BillingProvider,
+  }): CancelablePromise<void> {
     return __request(OpenAPI, {
       method: 'DELETE',
-      url: '/v1/account/billing-connections/stripe',
+      url: '/v1/account/billing-connections/{provider}',
+      path: {
+        'provider': provider,
+      },
       errors: {
         401: `code: unauthorized`,
         404: `code: not_found`,
@@ -632,7 +665,7 @@ export class AccountService {
     });
   }
   /**
-   * List Stripe invoices drafted from usage statements, with their payment status (ADR-1302).
+   * List invoices exported from usage statements, with their payment status (ADR-1302).
    * @returns StatementInvoiceListResponse Exported invoices, newest first.
    * @throws ApiError
    */
@@ -699,7 +732,7 @@ export class AccountService {
    * an hour ago. For every app consumer and platform tenant with billable
    * usage, it drafts the month's statement, holds consumers whose ledger
    * misses requests telemetry saw (`hold_on_gaps`), finalizes it, and with
-   * `export: stripe` creates draft Stripe invoices. Usage attributed to a
+   * `export` set to stripe, paddle or lago exports each statement to that provider. Usage attributed to a
    * platform tenant is billed on the tenant's statement. One run per
    * account can be queued or running at a time.
    *
@@ -729,7 +762,7 @@ export class AccountService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
-        409: `Another run is in progress, or \`export\` is \`stripe\` without a connected Stripe key.`,
+        409: `Another run is in progress, or \`export\` names a provider without a connected key.`,
         422: `The month has not ended, or the options are invalid.`,
       },
     });
@@ -843,7 +876,7 @@ export class AccountService {
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
-        409: `\`export\` is \`stripe\` without a connected Stripe key.`,
+        409: `\`export\` names a provider without a connected key.`,
         422: `Invalid schedule options or delay.`,
       },
     });

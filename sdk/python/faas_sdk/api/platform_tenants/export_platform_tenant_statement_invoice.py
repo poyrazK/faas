@@ -26,7 +26,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/stripe-invoice".format(
+        "url": "/v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice".format(
             id=quote(str(id), safe=""),
             statement_id=quote(str(statement_id), safe=""),
         ),
@@ -99,17 +99,21 @@ def sync_detailed(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | StatementInvoiceExportResponse]:
-    """Export a finalized platform tenant statement as a draft Stripe invoice.
+    """Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized platform tenant statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized platform tenant statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe gets a draft invoice and Paddle a draft manually collected
+    transaction; neither is finalized or sent. Lago issues a one-off
+    invoice at once, without charging it. Items are one per rate card and
+    unit price plus a rounding item, so the invoice equals the statement
+    total rounded to the cent; Paddle and Lago receive one summary item
+    when a line is negative. On success the statement's handoff records
+    the provider invoice ID. Retrying after a failure resumes the same
+    invoice; repeating a completed export returns it. A statement exports
+    to one provider only. Two-decimal currencies only; Paddle allows USD,
+    EUR and GBP.
 
     Args:
         id (UUID):
@@ -147,17 +151,21 @@ def sync(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | StatementInvoiceExportResponse | None:
-    """Export a finalized platform tenant statement as a draft Stripe invoice.
+    """Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized platform tenant statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized platform tenant statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe gets a draft invoice and Paddle a draft manually collected
+    transaction; neither is finalized or sent. Lago issues a one-off
+    invoice at once, without charging it. Items are one per rate card and
+    unit price plus a rounding item, so the invoice equals the statement
+    total rounded to the cent; Paddle and Lago receive one summary item
+    when a line is negative. On success the statement's handoff records
+    the provider invoice ID. Retrying after a failure resumes the same
+    invoice; repeating a completed export returns it. A statement exports
+    to one provider only. Two-decimal currencies only; Paddle allows USD,
+    EUR and GBP.
 
     Args:
         id (UUID):
@@ -190,17 +198,21 @@ async def asyncio_detailed(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | StatementInvoiceExportResponse]:
-    """Export a finalized platform tenant statement as a draft Stripe invoice.
+    """Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized platform tenant statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized platform tenant statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe gets a draft invoice and Paddle a draft manually collected
+    transaction; neither is finalized or sent. Lago issues a one-off
+    invoice at once, without charging it. Items are one per rate card and
+    unit price plus a rounding item, so the invoice equals the statement
+    total rounded to the cent; Paddle and Lago receive one summary item
+    when a line is negative. On success the statement's handoff records
+    the provider invoice ID. Retrying after a failure resumes the same
+    invoice; repeating a completed export returns it. A statement exports
+    to one provider only. Two-decimal currencies only; Paddle allows USD,
+    EUR and GBP.
 
     Args:
         id (UUID):
@@ -236,17 +248,21 @@ async def asyncio(
     body: CreateStatementInvoiceRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | StatementInvoiceExportResponse | None:
-    """Export a finalized platform tenant statement as a draft Stripe invoice.
+    """Export a finalized platform tenant statement as an invoice in Stripe, Paddle or Lago.
 
-     Exports one finalized platform tenant statement revision.
-    Creates a draft invoice in the account's own Stripe (connect it with
-    PUT /v1/account/billing-connections/stripe) with one item per rate card
-    and unit price, plus a rounding item when needed so the invoice equals
-    the statement total rounded to the cent. The draft is never finalized
-    or sent. On success the statement's handoff records the Stripe invoice
-    ID. Retrying after a failure resumes the same invoice and skips items
-    Stripe already holds; repeating a completed export returns it.
-    Two-decimal currencies only.
+     Exports one finalized platform tenant statement revision to the
+    provider in the body (default stripe; connect it with
+    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    Stripe gets a draft invoice and Paddle a draft manually collected
+    transaction; neither is finalized or sent. Lago issues a one-off
+    invoice at once, without charging it. Items are one per rate card and
+    unit price plus a rounding item, so the invoice equals the statement
+    total rounded to the cent; Paddle and Lago receive one summary item
+    when a line is negative. On success the statement's handoff records
+    the provider invoice ID. Retrying after a failure resumes the same
+    invoice; repeating a completed export returns it. A statement exports
+    to one provider only. Two-decimal currencies only; Paddle allows USD,
+    EUR and GBP.
 
     Args:
         id (UUID):

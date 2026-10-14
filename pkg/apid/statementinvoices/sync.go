@@ -5,13 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -57,36 +55,40 @@ func (s *Service) SyncOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("claim statement invoice syncs: %w", err)
 	}
-	keys := map[string]string{}
+	conns := map[string]*connection{}
 	for _, export := range due {
-		if err := s.syncInvoice(ctx, payments, exports, keys, export, now); err != nil {
+		if err := s.syncInvoice(ctx, payments, exports, conns, export, now); err != nil {
 			return err
 		}
 	}
 	return s.notifyOverdue(ctx, payments, now)
 }
 
-// syncInvoice reads one invoice from Stripe and records its status. Errors
-// reach the caller only when the store fails; Stripe failures defer.
+// syncInvoice reads one invoice from its provider and records its status.
+// Errors reach the caller only when the store fails; provider failures
+// defer. conns caches each account's opened connection per provider; nil
+// marks one that is missing or rejected.
 func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoicePaymentStore, exports state.StatementInvoiceExportStore,
-	keys map[string]string, export state.StatementInvoiceExport, now time.Time) error {
-	key, ok := keys[export.AccountID]
-	if !ok {
-		conn, err := exports.GetBillingConnection(ctx, export.AccountID, state.BillingProviderStripe)
-		if err == nil {
-			key, _ = s.openStripeKey(export.AccountID, conn)
+	conns map[string]*connection, export state.StatementInvoiceExport, now time.Time) error {
+	p := s.provider(export.Provider)
+	cacheKey := export.AccountID + "/" + export.Provider
+	conn, ok := conns[cacheKey]
+	if !ok && p != nil {
+		if stored, err := exports.GetBillingConnection(ctx, export.AccountID, export.Provider); err == nil {
+			if key, opened := s.openKey(export.AccountID, stored); opened {
+				conn = &connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode}
+			}
 		}
-		keys[export.AccountID] = key
+		conns[cacheKey] = conn
 	}
-	if key == "" {
+	if conn == nil {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncKeyRetry))
 	}
-	invoice, err := s.stripeInvoiceClient().GetInvoice(ctx, key, export.ProviderInvoiceID)
-	if errors.Is(err, stripeinvoice.ErrKeyRejected) {
-		keys[export.AccountID] = ""
+	payment, known, err := p.payment(ctx, *conn, export.ProviderInvoiceID)
+	if errors.Is(err, errKeyRejected) {
+		conns[cacheKey] = nil
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncKeyRetry))
 	}
-	payment, known := invoicePayment(invoice)
 	if err != nil || !known {
 		return payments.DeferStatementInvoiceSync(ctx, export.ID, now.Add(api.StatementInvoiceSyncRetry))
 	}
@@ -100,20 +102,6 @@ func (s *Service) syncInvoice(ctx context.Context, payments state.StatementInvoi
 			"from": prev, "to": payment.Status})
 	}
 	return nil
-}
-
-// invoicePayment maps Stripe's invoice to a payment; known is false for a
-// status Gregale does not track.
-func invoicePayment(invoice stripeinvoice.InvoiceState) (state.StatementInvoicePayment, bool) {
-	if invoice.Deleted {
-		return state.StatementInvoicePayment{Status: state.InvoicePaymentDeleted}, true
-	}
-	p := state.StatementInvoicePayment{Status: invoice.Status, AmountPaidMinor: max(invoice.AmountPaid, 0),
-		AmountRemainingMinor: max(invoice.AmountRemaining, 0), DueAt: invoice.DueDate, PaidAt: invoice.PaidAt}
-	if strings.HasPrefix(invoice.HostedURL, "https://") && len(invoice.HostedURL) <= 2048 {
-		p.HostedInvoiceURL = invoice.HostedURL
-	}
-	return p, slices.Contains(state.InvoicePaymentStatuses, p.Status) && p.Status != state.InvoicePaymentDeleted
 }
 
 // nextInvoiceSync is when to read the invoice again; nil once it is final.
@@ -175,12 +163,12 @@ func (s *Service) notifyOverdue(ctx context.Context, payments state.StatementInv
 }
 
 func overdueDigest(invoices []state.StatementInvoiceExport, now time.Time) (string, string) {
-	subject := fmt.Sprintf("%d Stripe invoices from Gregale usage statements are overdue", len(invoices))
+	subject := fmt.Sprintf("%d invoices from Gregale usage statements are overdue", len(invoices))
 	if len(invoices) == 1 {
-		subject = "A Stripe invoice from a Gregale usage statement is overdue"
+		subject = "An invoice from a Gregale usage statement is overdue"
 	}
 	var b strings.Builder
-	b.WriteString("These invoices Gregale drafted in your Stripe account from usage statements are past due:\n\n")
+	b.WriteString("These invoices Gregale exported to your billing provider from usage statements are past due:\n\n")
 	for i, invoice := range invoices {
 		if i == api.StatementInvoiceOverdueDigestMax {
 			fmt.Fprintf(&b, "  …and %d more\n", len(invoices)-i)
@@ -190,9 +178,12 @@ func overdueDigest(invoices []state.StatementInvoiceExport, now time.Time) (stri
 		if invoice.AmountRemainingMinor != nil {
 			remaining = *invoice.AmountRemainingMinor
 		}
-		fmt.Fprintf(&b, "  %s  %s  %s remaining  due %s  %s\n", invoice.ProviderInvoiceID, invoice.Customer,
-			formatMinor(invoice.Currency, remaining), invoice.DueAt.UTC().Format(time.DateOnly),
-			stripeinvoice.DashboardURL(invoice.Livemode, invoice.ProviderInvoiceID))
+		link := dashboardURL(invoice.Provider, invoice.Livemode, invoice.ProviderInvoiceID)
+		if link == "" {
+			link = invoice.HostedInvoiceURL
+		}
+		fmt.Fprintf(&b, "  %s %s  %s  %s remaining  due %s  %s\n", invoice.Provider, invoice.ProviderInvoiceID, invoice.Customer,
+			formatMinor(invoice.Currency, remaining), invoice.DueAt.UTC().Format(time.DateOnly), link)
 	}
 	fmt.Fprintf(&b, "\nList unpaid invoices with: gregale account invoices --status overdue\n(as of %s)\n", now.Format(time.RFC3339))
 	return subject, b.String()

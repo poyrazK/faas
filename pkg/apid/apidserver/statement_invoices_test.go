@@ -113,13 +113,13 @@ func TestExportAPIConsumerUsageStatementToStripe(t *testing.T) {
 	defer srv.Close()
 	(*e.S()).StatementInvoices().Stripe = &stripeinvoice.Client{BaseURL: srv.URL, HTTP: srv.Client()}
 
-	if res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutStripeConnectionRequest{SecretKey: "pk_test_nope"}, nil); res.Code != http.StatusUnprocessableEntity {
+	if res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "pk_test_nope"}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("publishable key: %d %s", res.Code, res.Body)
 	}
-	if res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutStripeConnectionRequest{SecretKey: "sk_test_rejected"}, nil); res.Code != http.StatusUnprocessableEntity {
+	if res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "sk_test_rejected"}, nil); res.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("rejected key: %d %s", res.Code, res.Body)
 	}
-	res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutStripeConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, nil)
+	res := e.Do(t, http.MethodPut, "/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}, nil)
 	var conn api.BillingConnectionResponse
 	if err := json.Unmarshal(res.Body.Bytes(), &conn); err != nil || res.Code != http.StatusOK || conn.KeyLast4 != "WXYZ" || conn.Livemode {
 		t.Fatalf("connect: %d %s", res.Code, res.Body)
@@ -150,7 +150,7 @@ func TestExportAPIConsumerUsageStatementToStripe(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &statement); err != nil || res.Code != http.StatusCreated {
 		t.Fatalf("statement: %d %s", res.Code, res.Body)
 	}
-	exportPath := statements + "/" + statement.ID + "/stripe-invoice"
+	exportPath := statements + "/" + statement.ID + "/invoice"
 	if res := e.Do(t, http.MethodPost, exportPath, struct{}{}, nil); res.Code != http.StatusConflict {
 		t.Fatalf("draft export: %d %s, want 409", res.Code, res.Body)
 	}

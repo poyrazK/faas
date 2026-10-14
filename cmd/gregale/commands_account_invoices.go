@@ -13,7 +13,7 @@ import (
 
 const accountInvoicesUsage = "usage: gregale account invoices [--status unpaid|overdue|draft|open|paid|void|uncollectible|deleted]"
 
-// cmdAccountInvoices lists the Stripe invoices Gregale drafted from usage
+// cmdAccountInvoices lists the invoices Gregale exported from usage
 // statements, with their payment status (ADR-1302).
 func cmdAccountInvoices(args []string) int {
 	fs := newFlagSet("account invoices", flag.ContinueOnError)
@@ -47,7 +47,7 @@ func cmdAccountInvoices(args []string) int {
 		return jsonOut(writeJSON(api.StatementInvoiceListResponse{Invoices: invoices}))
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "INVOICE\tCUSTOMER\tPAYMENT\tAMOUNT\tREMAINING\tDUE\tPAID")
+	_, _ = fmt.Fprintln(tw, "PROVIDER\tINVOICE\tCUSTOMER\tPAYMENT\tAMOUNT\tREMAINING\tDUE\tPAID")
 	for _, invoice := range invoices {
 		payment := dashIfEmpty(invoice.PaymentStatus)
 		if invoice.Overdue {
@@ -57,7 +57,7 @@ func cmdAccountInvoices(args []string) int {
 		if invoice.AmountRemainingMinor != nil {
 			remaining = formatMillicents(invoice.Currency, *invoice.AmountRemainingMinor*1000)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", invoice.InvoiceID, invoice.Customer, payment,
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", dashIfEmpty(invoice.Provider), invoice.InvoiceID, invoice.Customer, payment,
 			formatMillicents(invoice.Currency, invoice.AmountMinor*1000), remaining, formatDate(invoice.DueAt), formatDate(invoice.PaidAt))
 	}
 	_ = tw.Flush()

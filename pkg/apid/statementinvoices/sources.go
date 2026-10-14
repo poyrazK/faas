@@ -16,21 +16,21 @@ func notFinalizedProblem() *api.Problem {
 		"only finalized statements can be exported as invoices")
 }
 
-// ExportAppConsumerStatement exports a finalized app consumer
-// statement as a draft invoice in the account's Stripe (ADR-1300).
+// ExportAppConsumerStatement exports a finalized app consumer statement as
+// an invoice in the account's billing provider (ADR-1300, ADR-1305).
 func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	exports, ok := s.statementInvoiceStore(w, acct)
 	if !ok {
 		return
 	}
-	src, problem := s.apiConsumerStatementInvoiceSource(w, r, acct)
+	src, providerName, problem := s.apiConsumerStatementInvoiceSource(w, r, acct)
 	if src == nil {
 		if problem != nil {
 			api.WriteProblem(w, problem)
 		}
 		return
 	}
-	export, problem := s.exportAppConsumer(r.Context(), acct, exports, *src)
+	export, problem := s.exportAppConsumer(r.Context(), acct, exports, *src, providerName)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -38,11 +38,11 @@ func (s *Service) ExportAppConsumerStatement(w http.ResponseWriter, r *http.Requ
 	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
 }
 
-// ExportAppConsumer exports a finalized app consumer statement without an
-// HTTP request; billing runs (ADR-1301) use it. An empty customer uses the
-// consumer's external_ref.
+// ExportAppConsumer exports a finalized app consumer statement to provider
+// without an HTTP request; billing runs (ADR-1301) use it. An empty customer
+// uses the consumer's external_ref.
 func (s *Service) ExportAppConsumer(ctx context.Context, acct state.Account, consumer state.APIConsumer,
-	statement state.APIConsumerUsageStatement, customer string) (state.StatementInvoiceExport, *api.Problem) {
+	statement state.APIConsumerUsageStatement, provider, customer string) (state.StatementInvoiceExport, *api.Problem) {
 	exports, ok := s.Host.Store().(state.StatementInvoiceExportStore)
 	if !ok {
 		return state.StatementInvoiceExport{}, api.ErrInternal("statement invoice exports are unavailable")
@@ -51,48 +51,48 @@ func (s *Service) ExportAppConsumer(ctx context.Context, acct state.Account, con
 	if problem != nil {
 		return state.StatementInvoiceExport{}, problem
 	}
-	return s.exportAppConsumer(ctx, acct, exports, src)
+	return s.exportAppConsumer(ctx, acct, exports, src, provider)
 }
 
 func (s *Service) exportAppConsumer(ctx context.Context, acct state.Account, exports state.StatementInvoiceExportStore,
-	src statementInvoiceSource) (state.StatementInvoiceExport, *api.Problem) {
-	export, problem := s.exportStatementInvoice(ctx, acct, exports, src)
+	src statementInvoiceSource, provider string) (state.StatementInvoiceExport, *api.Problem) {
+	export, problem := s.exportStatementInvoice(ctx, acct, exports, src, provider)
 	if problem != nil {
 		return export, problem
 	}
-	s.Host.Audit(ctx, "api_consumer_usage_statement.stripe_invoice_exported", acct.ID, map[string]any{
+	s.Host.Audit(ctx, "api_consumer_usage_statement.invoice_exported", acct.ID, map[string]any{"provider": export.Provider,
 		"statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode})
 	return export, nil
 }
 
 // apiConsumerStatementInvoiceSource loads a finalized app consumer
-// statement and prices its invoice lines. A nil source with a nil problem
-// means a response was already written.
-func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *http.Request, acct state.Account) (*statementInvoiceSource, *api.Problem) {
+// statement, prices its invoice lines and reads the target provider. A nil
+// source with a nil problem means a response was already written.
+func (s *Service) apiConsumerStatementInvoiceSource(w http.ResponseWriter, r *http.Request, acct state.Account) (*statementInvoiceSource, string, *api.Problem) {
 	app, consumer, statements, ok := s.Host.ConsumerStatements(w, r, acct)
 	if !ok {
-		return nil, nil
+		return nil, "", nil
 	}
 	statement, err := statements.GetAPIConsumerUsageStatement(r.Context(), acct.ID, app.ID, consumer.ID, r.PathValue("statement_id"))
 	if errors.Is(err, state.ErrNotFound) {
 		httpkit.NotFound(w, "no such usage statement")
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, api.ErrInternal("could not load API consumer usage statement")
+		return nil, "", api.ErrInternal("could not load API consumer usage statement")
 	}
 	if statement.Status != state.APIConsumerUsageStatementFinalized {
-		return nil, notFinalizedProblem()
+		return nil, "", notFinalizedProblem()
 	}
 	req, problem := decodeStatementInvoiceRequest(r)
 	if problem != nil {
-		return nil, problem
+		return nil, "", problem
 	}
 	src, problem := s.appConsumerInvoiceSource(r.Context(), acct, consumer, statement, req.Customer)
 	if problem != nil {
-		return nil, problem
+		return nil, "", problem
 	}
-	return &src, nil
+	return &src, req.Provider, nil
 }
 
 // appConsumerInvoiceSource prices a finalized app consumer statement's
@@ -107,10 +107,6 @@ func (s *Service) appConsumerInvoiceSource(ctx context.Context, acct state.Accou
 	if statement.Status != state.APIConsumerUsageStatementFinalized {
 		return statementInvoiceSource{}, notFinalizedProblem()
 	}
-	customer, problem := statementInvoiceCustomer(requestedCustomer, consumer.ExternalRef)
-	if problem != nil {
-		return statementInvoiceSource{}, problem
-	}
 	appCards, err := cards.ListAPIConsumerRateCardsForApp(ctx, acct.ID, statement.AppID)
 	if err != nil {
 		return statementInvoiceSource{}, api.ErrInternal("could not load API consumer rate cards")
@@ -120,7 +116,7 @@ func (s *Service) appConsumerInvoiceSource(ctx context.Context, acct state.Accou
 		return statementInvoiceSource{}, statementInvoiceProblem(err)
 	}
 	src := statementInvoiceSource{kind: state.StatementSourceAppConsumer, statementID: statement.ID, revision: statement.Revision,
-		start: statement.PeriodStart, end: statement.PeriodEnd, customer: customer, invoice: invoice}
+		start: statement.PeriodStart, end: statement.PeriodEnd, requestedCustomer: requestedCustomer, externalRef: consumer.ExternalRef, invoice: invoice}
 	if handoff, err := handoffs.GetAPIConsumerUsageStatementHandoff(ctx, acct.ID, statement.AppID, statement.ConsumerID, statement.ID); err == nil {
 		src.existingHandoff = handoff.ExternalInvoiceID
 	}
@@ -161,8 +157,8 @@ func (s *Service) writeStatementInvoiceExport(w http.ResponseWriter, r *http.Req
 	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
 }
 
-// ExportPlatformTenantStatement exports a finalized cross-app
-// statement as a draft invoice in the account's Stripe (ADR-1300).
+// ExportPlatformTenantStatement exports a finalized cross-app statement as
+// an invoice in the account's billing provider (ADR-1300, ADR-1305).
 func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	exports, ok := s.statementInvoiceStore(w, acct)
 	if !ok {
@@ -190,7 +186,7 @@ func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, problem)
 		return
 	}
-	export, problem := s.exportPlatformTenant(r.Context(), acct, exports, tenant, statement, statements, req.Customer)
+	export, problem := s.exportPlatformTenant(r.Context(), acct, exports, tenant, statement, statements, req.Provider, req.Customer)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -198,31 +194,31 @@ func (s *Service) ExportPlatformTenantStatement(w http.ResponseWriter, r *http.R
 	httpkit.WriteJSON(w, http.StatusOK, statementInvoiceExportResponse(export))
 }
 
-// ExportPlatformTenant exports a finalized platform tenant statement
-// without an HTTP request; billing runs (ADR-1301) use it. An empty customer
-// uses the tenant's external_ref.
+// ExportPlatformTenant exports a finalized platform tenant statement to
+// provider without an HTTP request; billing runs (ADR-1301) use it. An empty
+// customer uses the tenant's external_ref.
 func (s *Service) ExportPlatformTenant(ctx context.Context, acct state.Account, tenant state.PlatformTenant,
-	statement state.PlatformTenantStatement, customer string) (state.StatementInvoiceExport, *api.Problem) {
+	statement state.PlatformTenantStatement, provider, customer string) (state.StatementInvoiceExport, *api.Problem) {
 	exports, okExports := s.Host.Store().(state.StatementInvoiceExportStore)
 	statements, okStatements := s.Host.Store().(state.PlatformTenantStatementStore)
 	if !okExports || !okStatements {
 		return state.StatementInvoiceExport{}, api.ErrInternal("statement invoice exports are unavailable")
 	}
-	return s.exportPlatformTenant(ctx, acct, exports, tenant, statement, statements, customer)
+	return s.exportPlatformTenant(ctx, acct, exports, tenant, statement, statements, provider, customer)
 }
 
 func (s *Service) exportPlatformTenant(ctx context.Context, acct state.Account, exports state.StatementInvoiceExportStore,
 	tenant state.PlatformTenant, statement state.PlatformTenantStatement, statements state.PlatformTenantStatementStore,
-	customer string) (state.StatementInvoiceExport, *api.Problem) {
+	provider, customer string) (state.StatementInvoiceExport, *api.Problem) {
 	src, problem := tenantStatementInvoiceSource(ctx, acct, tenant, statement, statements, customer)
 	if problem != nil {
 		return state.StatementInvoiceExport{}, problem
 	}
-	export, problem := s.exportStatementInvoice(ctx, acct, exports, src)
+	export, problem := s.exportStatementInvoice(ctx, acct, exports, src, provider)
 	if problem != nil {
 		return export, problem
 	}
-	s.Host.Audit(ctx, "platform_tenant_statement.stripe_invoice_exported", acct.ID, map[string]any{
+	s.Host.Audit(ctx, "platform_tenant_statement.invoice_exported", acct.ID, map[string]any{"provider": export.Provider,
 		"tenant_id": tenant.ID, "statement_id": export.StatementID, "invoice_id": export.ProviderInvoiceID, "livemode": export.Livemode})
 	return export, nil
 }
@@ -232,16 +228,12 @@ func tenantStatementInvoiceSource(ctx context.Context, acct state.Account, tenan
 	if statement.Status != state.APIConsumerUsageStatementFinalized {
 		return statementInvoiceSource{}, notFinalizedProblem()
 	}
-	customer, problem := statementInvoiceCustomer(requestedCustomer, tenant.ExternalRef)
-	if problem != nil {
-		return statementInvoiceSource{}, problem
-	}
 	invoice, err := billing.TenantStatementInvoice(statement)
 	if err != nil {
 		return statementInvoiceSource{}, statementInvoiceProblem(err)
 	}
 	src := statementInvoiceSource{kind: state.StatementSourcePlatformTenant, statementID: statement.ID, revision: statement.Revision,
-		start: statement.PeriodStart, end: statement.PeriodEnd, customer: customer, invoice: invoice}
+		start: statement.PeriodStart, end: statement.PeriodEnd, requestedCustomer: requestedCustomer, externalRef: tenant.ExternalRef, invoice: invoice}
 	if handoff, err := statements.GetPlatformTenantStatementHandoff(ctx, acct.ID, tenant.ID, statement.ID); err == nil {
 		src.existingHandoff = handoff.ExternalInvoiceID
 	}

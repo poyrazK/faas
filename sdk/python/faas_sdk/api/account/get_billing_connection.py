@@ -1,32 +1,28 @@
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.billing_connection_response import BillingConnectionResponse
+from ...models.billing_provider import BillingProvider
 from ...models.problem import Problem
-from ...models.put_stripe_connection_request import PutStripeConnectionRequest
 from ...types import Response
 
 
 def _get_kwargs(
-    *,
-    body: PutStripeConnectionRequest,
+    provider: BillingProvider,
 ) -> dict[str, Any]:
-    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
-        "method": "put",
-        "url": "/v1/account/billing-connections/stripe",
+        "method": "get",
+        "url": "/v1/account/billing-connections/{provider}".format(
+            provider=quote(str(provider), safe=""),
+        ),
     }
 
-    _kwargs["json"] = body.to_dict()
-
-    headers["Content-Type"] = "application/json"
-
-    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -43,15 +39,10 @@ def _parse_response(
 
         return response_401
 
-    if response.status_code == 422:
-        response_422 = Problem.from_dict(response.json())
+    if response.status_code == 404:
+        response_404 = Problem.from_dict(response.json())
 
-        return response_422
-
-    if response.status_code == 502:
-        response_502 = Problem.from_dict(response.json())
-
-        return response_502
+        return response_404
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -71,20 +62,14 @@ def _build_response(
 
 
 def sync_detailed(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
-    body: PutStripeConnectionRequest,
 ) -> Response[BillingConnectionResponse | Problem]:
-    """Store or replace the account's Stripe key.
-
-     Checks the key against Stripe, then seals it at rest. Use a restricted
-    key (rk_live_… or rk_test_…) with read and write access to invoices
-    and invoice items. Only the last four characters and the mode are
-    ever returned.
+    """Describe the account's key for one billing provider.
 
     Args:
-        body (PutStripeConnectionRequest): The account's own Stripe key for statement invoice
-            exports (ADR-1300).
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -95,7 +80,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
-        body=body,
+        provider=provider,
     )
 
     response = client.get_httpx_client().request(
@@ -106,20 +91,14 @@ def sync_detailed(
 
 
 def sync(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
-    body: PutStripeConnectionRequest,
 ) -> BillingConnectionResponse | Problem | None:
-    """Store or replace the account's Stripe key.
-
-     Checks the key against Stripe, then seals it at rest. Use a restricted
-    key (rk_live_… or rk_test_…) with read and write access to invoices
-    and invoice items. Only the last four characters and the mode are
-    ever returned.
+    """Describe the account's key for one billing provider.
 
     Args:
-        body (PutStripeConnectionRequest): The account's own Stripe key for statement invoice
-            exports (ADR-1300).
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,26 +109,20 @@ def sync(
     """
 
     return sync_detailed(
+        provider=provider,
         client=client,
-        body=body,
     ).parsed
 
 
 async def asyncio_detailed(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
-    body: PutStripeConnectionRequest,
 ) -> Response[BillingConnectionResponse | Problem]:
-    """Store or replace the account's Stripe key.
-
-     Checks the key against Stripe, then seals it at rest. Use a restricted
-    key (rk_live_… or rk_test_…) with read and write access to invoices
-    and invoice items. Only the last four characters and the mode are
-    ever returned.
+    """Describe the account's key for one billing provider.
 
     Args:
-        body (PutStripeConnectionRequest): The account's own Stripe key for statement invoice
-            exports (ADR-1300).
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -160,7 +133,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
-        body=body,
+        provider=provider,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -169,20 +142,14 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    provider: BillingProvider,
     *,
     client: AuthenticatedClient | Client,
-    body: PutStripeConnectionRequest,
 ) -> BillingConnectionResponse | Problem | None:
-    """Store or replace the account's Stripe key.
-
-     Checks the key against Stripe, then seals it at rest. Use a restricted
-    key (rk_live_… or rk_test_…) with read and write access to invoices
-    and invoice items. Only the last four characters and the mode are
-    ever returned.
+    """Describe the account's key for one billing provider.
 
     Args:
-        body (PutStripeConnectionRequest): The account's own Stripe key for statement invoice
-            exports (ADR-1300).
+        provider (BillingProvider): A billing provider statements export to (ADR-1305).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +161,7 @@ async def asyncio(
 
     return (
         await asyncio_detailed(
+            provider=provider,
             client=client,
-            body=body,
         )
     ).parsed

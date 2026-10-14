@@ -56,7 +56,7 @@ type consumerFlags struct {
 	priceMillicents, includedUnits     int64
 	periodStart, periodEnd, month      string
 	invoiceID                          string
-	customer                           string
+	customer, provider                 string
 	tiers                              multiFlag
 	weights                            multiFlag
 	plan                               string
@@ -76,7 +76,7 @@ var consumerVerbFlags = map[string][]string{
 	"set-plan":          {"plan", "effective-from"},
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
-	"statement-export":  {"customer"},
+	"statement-export":  {"customer", "provider"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -110,7 +110,8 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM (instead of --period-start/--period-end)")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference (statement-handoff)")
-	fs.StringVar(&f.customer, "customer", "", "Stripe customer ID cus_… (statement-export; default: the consumer's external_ref)")
+	fs.StringVar(&f.customer, "customer", "", "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (statement-export; default: the consumer's external_ref)")
+	fs.StringVar(&f.provider, "provider", "", "billing provider: stripe, paddle or lago (statement-export; default stripe)")
 	fs.StringVar(&f.plan, "plan", "", "consumer plan name; \"default\" is the app default plan")
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "plan limit: requests per consumer per minute; 0 is unlimited")
 	fs.Int64Var(&f.maxPerMonth, "max-units-per-month", -1, "plan limit: weighted units per consumer per UTC month; 0 is unlimited")
@@ -197,7 +198,7 @@ func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
 		}
 		return api.CreateAPIConsumerUsageStatementRequest{PeriodStart: &start, PeriodEnd: &end}, nil
 	case "statement-export":
-		return api.CreateStatementInvoiceRequest{Customer: strings.TrimSpace(f.customer)}, nil
+		return api.CreateStatementInvoiceRequest{Provider: strings.TrimSpace(f.provider), Customer: strings.TrimSpace(f.customer)}, nil
 	case "statement-handoff":
 		if strings.TrimSpace(f.invoiceID) == "" {
 			return nil, errors.New("--invoice-id is required")
@@ -439,7 +440,7 @@ func callConsumerStatements(ctx context.Context, client *Client, verb string, ar
 	case "statement-handoff":
 		return client.ClaimAPIConsumerUsageStatement(ctx, slug, consumerID, args[2], request.(api.ClaimAPIConsumerUsageStatementRequest))
 	case "statement-export":
-		return client.ExportAPIConsumerUsageStatementToStripe(ctx, slug, consumerID, args[2], request.(api.CreateStatementInvoiceRequest))
+		return client.ExportAPIConsumerUsageStatementInvoice(ctx, slug, consumerID, args[2], request.(api.CreateStatementInvoiceRequest))
 	}
 	return nil, fmt.Errorf("unknown consumers verb %q", verb)
 }

@@ -46,7 +46,7 @@ func (s *Service) billConsumer(ctx context.Context, acct state.Account, run stat
 			recordStatement(item, final.ID, final.Revision, final.Currency, final.AmountMillicents)
 		}
 	}
-	if run.Export == state.BillingRunExportStripe {
+	if run.Export != state.BillingRunExportNone {
 		if done, problem := s.exportConsumer(ctx, acct, consumer, run, item); problem != nil || done {
 			return problem
 		}
@@ -103,7 +103,7 @@ func (s *Service) exportConsumer(ctx context.Context, acct state.Account, consum
 		if err != nil {
 			return false, api.ErrInternal("could not load the statement")
 		}
-		export, problem := s.Host.ExportConsumerStatement(ctx, acct, consumer, full)
+		export, problem := s.Host.ExportConsumerStatement(ctx, acct, consumer, full, run.Export)
 		if problem != nil {
 			return true, settle(item, state.BillingRunItemFailed, problem)
 		}
@@ -147,7 +147,7 @@ func (s *Service) billTenant(ctx context.Context, acct state.Account, run state.
 			recordStatement(item, final.ID, final.Revision, final.Currency, final.AmountMillicents)
 		}
 	}
-	if run.Export == state.BillingRunExportStripe {
+	if run.Export != state.BillingRunExportNone {
 		if done, problem := s.exportTenant(ctx, acct, tenant, run, item); problem != nil || done {
 			return problem
 		}
@@ -187,7 +187,7 @@ func (s *Service) exportTenant(ctx context.Context, acct state.Account, tenant s
 		if err != nil {
 			return false, api.ErrInternal("could not load the statement")
 		}
-		export, problem := s.Host.ExportTenantStatement(ctx, acct, tenant, full)
+		export, problem := s.Host.ExportTenantStatement(ctx, acct, tenant, full, run.Export)
 		if problem != nil {
 			return true, settle(item, state.BillingRunItemFailed, problem)
 		}

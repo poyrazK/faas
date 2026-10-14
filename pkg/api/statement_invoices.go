@@ -11,11 +11,14 @@ import (
 // provider could not be reached; the request is safe to retry (ADR-1300).
 const CodeBillingProviderUnavailable = "billing_provider_unavailable"
 
-// PutStripeConnectionRequest stores the account's own Stripe key for
-// statement invoice exports (ADR-1300). Use a restricted key (rk_live_ or
-// rk_test_) with write access to invoices and invoice items.
-type PutStripeConnectionRequest struct {
+// PutBillingConnectionRequest stores the account's own key for a billing
+// provider (ADR-1300, ADR-1305). Stripe takes a restricted key (rk_live_ or
+// rk_test_) with write access to invoices and invoice items, Paddle an API
+// key with transaction write access, and Lago an API key plus, for the EU
+// region or a self-hosted Lago, APIURL.
+type PutBillingConnectionRequest struct {
 	SecretKey string `json:"secret_key"`
+	APIURL    string `json:"api_url,omitempty"`
 }
 
 // BillingConnectionResponse describes a stored payment-provider key without
@@ -24,19 +27,23 @@ type BillingConnectionResponse struct {
 	Provider  string    `json:"provider"`
 	KeyLast4  string    `json:"key_last4"`
 	Livemode  bool      `json:"livemode"`
+	APIURL    string    `json:"api_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// CreateStatementInvoiceRequest exports a finalized statement as a draft
-// invoice. Customer is the Stripe customer ID (cus_…); omitted, the
-// consumer's or tenant's external_ref is used when it is one.
+// CreateStatementInvoiceRequest exports a finalized statement as an invoice
+// in Provider (stripe, paddle or lago; default stripe). Customer is the
+// provider's customer: a Stripe cus_… ID, a Paddle ctm_… ID, or a Lago
+// external customer ID. Omitted, the consumer's or tenant's external_ref is
+// used when it is one.
 type CreateStatementInvoiceRequest struct {
+	Provider string `json:"provider,omitempty"`
 	Customer string `json:"customer,omitempty"`
 }
 
-// StatementInvoiceExportResponse is one statement's draft invoice in the
-// account's Stripe. AmountMinor is in the currency's minor unit (cents).
+// StatementInvoiceExportResponse is one statement's invoice in the account's
+// billing provider. AmountMinor is in the currency's minor unit (cents).
 type StatementInvoiceExportResponse struct {
 	StatementID  string     `json:"statement_id"`
 	Provider     string     `json:"provider"`
@@ -49,7 +56,7 @@ type StatementInvoiceExportResponse struct {
 	Livemode     bool       `json:"livemode"`
 	CreatedAt    time.Time  `json:"created_at"`
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	// Payment fields follow the Stripe invoice (ADR-1302).
+	// Payment fields follow the provider invoice (ADR-1302).
 	SourceKind           string     `json:"source_kind,omitempty"`
 	PaymentStatus        string     `json:"payment_status,omitempty"`
 	AmountPaidMinor      *int64     `json:"amount_paid_minor,omitempty"`
@@ -88,47 +95,51 @@ func (c *Client) ListStatementInvoices(ctx context.Context, status, cursor strin
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
-// PutStripeConnection stores or replaces the account's Stripe key.
-func (c *Client) PutStripeConnection(ctx context.Context, req PutStripeConnectionRequest) (BillingConnectionResponse, error) {
+func billingConnectionPath(provider string) string {
+	return "/v1/account/billing-connections/" + url.PathEscape(provider)
+}
+
+// PutBillingConnection stores or replaces the account's key for provider.
+func (c *Client) PutBillingConnection(ctx context.Context, provider string, req PutBillingConnectionRequest) (BillingConnectionResponse, error) {
 	var out BillingConnectionResponse
-	return out, c.do(ctx, "PUT", "/v1/account/billing-connections/stripe", req, &out)
+	return out, c.do(ctx, "PUT", billingConnectionPath(provider), req, &out)
 }
 
-// GetStripeConnection describes the account's stored Stripe key.
-func (c *Client) GetStripeConnection(ctx context.Context) (BillingConnectionResponse, error) {
+// GetBillingConnection describes the account's stored key for provider.
+func (c *Client) GetBillingConnection(ctx context.Context, provider string) (BillingConnectionResponse, error) {
 	var out BillingConnectionResponse
-	return out, c.do(ctx, "GET", "/v1/account/billing-connections/stripe", nil, &out)
+	return out, c.do(ctx, "GET", billingConnectionPath(provider), nil, &out)
 }
 
-// DeleteStripeConnection removes the account's Stripe key.
-func (c *Client) DeleteStripeConnection(ctx context.Context) error {
-	return c.do(ctx, "DELETE", "/v1/account/billing-connections/stripe", nil, nil)
+// DeleteBillingConnection removes the account's key for provider.
+func (c *Client) DeleteBillingConnection(ctx context.Context, provider string) error {
+	return c.do(ctx, "DELETE", billingConnectionPath(provider), nil, nil)
 }
 
-// ExportAPIConsumerUsageStatementToStripe creates (or resumes) the draft
-// Stripe invoice for a finalized app consumer statement.
-func (c *Client) ExportAPIConsumerUsageStatementToStripe(ctx context.Context, slug, consumerID, statementID string, req CreateStatementInvoiceRequest) (StatementInvoiceExportResponse, error) {
+// ExportAPIConsumerUsageStatementInvoice creates (or resumes) the invoice
+// for a finalized app consumer statement.
+func (c *Client) ExportAPIConsumerUsageStatementInvoice(ctx context.Context, slug, consumerID, statementID string, req CreateStatementInvoiceRequest) (StatementInvoiceExportResponse, error) {
 	var out StatementInvoiceExportResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/stripe-invoice", req, &out)
+	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/invoice", req, &out)
 }
 
-// GetAPIConsumerUsageStatementStripeInvoice reads an app consumer
-// statement's export.
-func (c *Client) GetAPIConsumerUsageStatementStripeInvoice(ctx context.Context, slug, consumerID, statementID string) (StatementInvoiceExportResponse, error) {
+// GetAPIConsumerUsageStatementInvoice reads an app consumer statement's
+// export.
+func (c *Client) GetAPIConsumerUsageStatementInvoice(ctx context.Context, slug, consumerID, statementID string) (StatementInvoiceExportResponse, error) {
 	var out StatementInvoiceExportResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/stripe-invoice", nil, &out)
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/invoice", nil, &out)
 }
 
-// ExportPlatformTenantStatementToStripe creates (or resumes) the draft
-// Stripe invoice for a finalized platform tenant statement.
-func (c *Client) ExportPlatformTenantStatementToStripe(ctx context.Context, tenantID, statementID string, req CreateStatementInvoiceRequest) (StatementInvoiceExportResponse, error) {
+// ExportPlatformTenantStatementInvoice creates (or resumes) the invoice for
+// a finalized platform tenant statement.
+func (c *Client) ExportPlatformTenantStatementInvoice(ctx context.Context, tenantID, statementID string, req CreateStatementInvoiceRequest) (StatementInvoiceExportResponse, error) {
 	var out StatementInvoiceExportResponse
-	return out, c.do(ctx, "POST", "/v1/account/platform-tenants/"+tenantID+"/usage-statements/"+statementID+"/stripe-invoice", req, &out)
+	return out, c.do(ctx, "POST", "/v1/account/platform-tenants/"+tenantID+"/usage-statements/"+statementID+"/invoice", req, &out)
 }
 
-// GetPlatformTenantStatementStripeInvoice reads a platform tenant
-// statement's export.
-func (c *Client) GetPlatformTenantStatementStripeInvoice(ctx context.Context, tenantID, statementID string) (StatementInvoiceExportResponse, error) {
+// GetPlatformTenantStatementInvoice reads a platform tenant statement's
+// export.
+func (c *Client) GetPlatformTenantStatementInvoice(ctx context.Context, tenantID, statementID string) (StatementInvoiceExportResponse, error) {
 	var out StatementInvoiceExportResponse
-	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+tenantID+"/usage-statements/"+statementID+"/stripe-invoice", nil, &out)
+	return out, c.do(ctx, "GET", "/v1/account/platform-tenants/"+tenantID+"/usage-statements/"+statementID+"/invoice", nil, &out)
 }

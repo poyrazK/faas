@@ -22,12 +22,12 @@ var platformTenantBillingVerbs = map[string][]string{
 	"statement-show":     {"id", "statement-id"},
 	"statement-finalize": {"id", "statement-id"},
 	"statement-handoff":  {"id", "statement-id", "invoice-id"},
-	"statement-export":   {"id", "statement-id", "customer"},
+	"statement-export":   {"id", "statement-id", "customer", "provider"},
 }
 
 type platformTenantBillingFlags struct {
 	id, statementID, invoiceID    string
-	customer                      string
+	customer, provider            string
 	currency, effectiveFrom       string
 	priceMillicents               int64
 	includedUnits                 int64
@@ -47,7 +47,8 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.StringVar(&f.id, "id", "", "platform tenant UUID")
 	fs.StringVar(&f.statementID, "statement-id", "", "statement revision UUID")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference")
-	fs.StringVar(&f.customer, "customer", "", "Stripe customer ID cus_… (statement-export; default: the tenant's external_ref)")
+	fs.StringVar(&f.customer, "customer", "", "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (statement-export; default: the tenant's external_ref)")
+	fs.StringVar(&f.provider, "provider", "", "billing provider: stripe, paddle or lago (statement-export; default stripe)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per tenant per UTC calendar month across all apps")
@@ -135,7 +136,7 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "statement-handoff":
 		out, err = client.ClaimPlatformTenantStatement(ctx, f.id, f.statementID, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: f.invoiceID})
 	case "statement-export":
-		out, err = client.ExportPlatformTenantStatementToStripe(ctx, f.id, f.statementID, api.CreateStatementInvoiceRequest{Customer: strings.TrimSpace(f.customer)})
+		out, err = client.ExportPlatformTenantStatementInvoice(ctx, f.id, f.statementID, api.CreateStatementInvoiceRequest{Provider: strings.TrimSpace(f.provider), Customer: strings.TrimSpace(f.customer)})
 	}
 	if err != nil {
 		return printErr("Platform tenant "+verb+" failed", err)

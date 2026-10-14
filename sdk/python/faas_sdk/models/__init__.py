@@ -401,9 +401,9 @@ from .billing_catalog_entry_kind import BillingCatalogEntryKind
 from .billing_catalog_entry_plan import BillingCatalogEntryPlan
 from .billing_catalog_response import BillingCatalogResponse
 from .billing_connection_response import BillingConnectionResponse
-from .billing_connection_response_provider import BillingConnectionResponseProvider
 from .billing_paddle_overage_preflight_response import BillingPaddleOveragePreflightResponse
 from .billing_portal_response import BillingPortalResponse
+from .billing_provider import BillingProvider
 from .billing_reconcile_response import BillingReconcileResponse
 from .billing_retry_response import BillingRetryResponse
 from .billing_run_counts import BillingRunCounts
@@ -3123,6 +3123,7 @@ from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
+from .put_billing_connection_request import PutBillingConnectionRequest
 from .put_billing_run_schedule_request import PutBillingRunScheduleRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
@@ -3139,7 +3140,6 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
-from .put_stripe_connection_request import PutStripeConnectionRequest
 from .put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
 from .put_webhook_automation_binding_request_filter import PutWebhookAutomationBindingRequestFilter
 from .queue_binding_response import QueueBindingResponse
@@ -3682,7 +3682,6 @@ from .start_durable_entity_retirement_body import StartDurableEntityRetirementBo
 from .start_durable_entity_retirement_response_200 import StartDurableEntityRetirementResponse200
 from .statement_invoice_export_response import StatementInvoiceExportResponse
 from .statement_invoice_export_response_payment_status import StatementInvoiceExportResponsePaymentStatus
-from .statement_invoice_export_response_provider import StatementInvoiceExportResponseProvider
 from .statement_invoice_export_response_source_kind import StatementInvoiceExportResponseSourceKind
 from .statement_invoice_export_response_status import StatementInvoiceExportResponseStatus
 from .statement_invoice_list_response import StatementInvoiceListResponse
@@ -4500,9 +4499,9 @@ __all__ = (
     "BillingCatalogEntryPlan",
     "BillingCatalogResponse",
     "BillingConnectionResponse",
-    "BillingConnectionResponseProvider",
     "BillingPaddleOveragePreflightResponse",
     "BillingPortalResponse",
+    "BillingProvider",
     "BillingReconcileResponse",
     "BillingRetryResponse",
     "BillingRunCounts",
@@ -7050,6 +7049,7 @@ __all__ = (
     "PutAppSecretReferenceRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
+    "PutBillingConnectionRequest",
     "PutBillingRunScheduleRequest",
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
@@ -7066,7 +7066,6 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
-    "PutStripeConnectionRequest",
     "PutWebhookAutomationBindingRequest",
     "PutWebhookAutomationBindingRequestFilter",
     "QueueBindingResponse",
@@ -7593,7 +7592,6 @@ __all__ = (
     "StartDurableEntityRetirementResponse200",
     "StatementInvoiceExportResponse",
     "StatementInvoiceExportResponsePaymentStatus",
-    "StatementInvoiceExportResponseProvider",
     "StatementInvoiceExportResponseSourceKind",
     "StatementInvoiceExportResponseStatus",
     "StatementInvoiceListResponse",

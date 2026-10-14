@@ -19,6 +19,8 @@ const (
 
 	BillingRunExportNone   = "none"
 	BillingRunExportStripe = "stripe"
+	BillingRunExportPaddle = "paddle"
+	BillingRunExportLago   = "lago"
 
 	BillingRunTriggerAPI      = "api"
 	BillingRunTriggerSchedule = "schedule"
@@ -163,8 +165,8 @@ func ValidateBillingRunOptions(o BillingRunOptions) error {
 			return fmt.Errorf("%w: unknown or repeated source %q", ErrInvalidArgument, source)
 		}
 	}
-	if o.Export != BillingRunExportNone && o.Export != BillingRunExportStripe {
-		return fmt.Errorf("%w: export must be none or stripe", ErrInvalidArgument)
+	if o.Export != BillingRunExportNone && !ValidBillingProvider(o.Export) {
+		return fmt.Errorf("%w: export must be none, stripe, paddle or lago", ErrInvalidArgument)
 	}
 	if o.Export != BillingRunExportNone && !o.Finalize {
 		return fmt.Errorf("%w: exporting requires finalize", ErrInvalidArgument)

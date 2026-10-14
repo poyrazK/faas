@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { StatementInvoiceExportResponse } from './StatementInvoiceExportResponse.js';
 /**
- * One page of an account's exported Stripe invoices, newest first.
+ * One page of an account's exported invoices, newest first.
  */
 export type StatementInvoiceListResponse = {
   invoices: Array<StatementInvoiceExportResponse>;

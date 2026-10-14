@@ -40,7 +40,7 @@ class BillingRunItemResponse:
     """up_to_date: nothing new to bill or export. held: needs attention, such as unpriced usage or a completeness
     gap. skipped: billed through a platform tenant, or already invoiced through the other path."""
     exported_invoices: int
-    """Draft Stripe invoices this run created for the customer."""
+    """Provider invoices this run created for the customer."""
     attempts: int
     updated_at: datetime.datetime
     app_id: UUID | Unset = UNSET
@@ -53,11 +53,11 @@ class BillingRunItemResponse:
     """The statement revision's amount in millicents."""
     completeness: BillingRunItemResponseCompleteness | Unset = UNSET
     invoice_id: str | Unset = UNSET
-    """The last Stripe invoice this run created for the customer."""
+    """The last provider invoice this run created for the customer."""
     reason: str | Unset = UNSET
     """Why the customer was held, skipped or failed, or why a retry is pending."""
     payment_status: BillingRunItemResponsePaymentStatus | Unset = UNSET
-    """Payment status of the Stripe invoice exported for the item's statement (ADR-1302)."""
+    """Payment status of the invoice exported for the item's statement (ADR-1302)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

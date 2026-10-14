@@ -665,11 +665,11 @@ export class ConsumersService {
     });
   }
   /**
-   * Read the app consumer statement's Stripe invoice export.
+   * Read the app consumer statement's invoice export.
    * @returns StatementInvoiceExportResponse The app consumer statement's export.
    * @throws ApiError
    */
-  public static getApiConsumerUsageStatementStripeInvoice({
+  public static getApiConsumerUsageStatementInvoice({
     slug,
     consumerId,
     statementId,
@@ -689,7 +689,7 @@ export class ConsumersService {
   }): CancelablePromise<StatementInvoiceExportResponse> {
     return __request(OpenAPI, {
       method: 'GET',
-      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice',
       path: {
         'slug': slug,
         'consumer_id': consumerId,
@@ -702,21 +702,24 @@ export class ConsumersService {
     });
   }
   /**
-   * Export a finalized app consumer statement as a draft Stripe invoice.
-   * Exports one finalized app consumer statement revision.
-   * Creates a draft invoice in the account's own Stripe (connect it with
-   * PUT /v1/account/billing-connections/stripe) with one item per rate card
-   * and unit price, plus a rounding item when needed so the invoice equals
-   * the statement total rounded to the cent. The draft is never finalized
-   * or sent. On success the statement's handoff records the Stripe invoice
-   * ID. Retrying after a failure resumes the same invoice and skips items
-   * Stripe already holds; repeating a completed export returns it.
-   * Two-decimal currencies only.
+   * Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
+   * Exports one finalized app consumer statement revision to the
+   * provider in the body (default stripe; connect it with
+   * PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+   * Stripe and Paddle receive drafts that Gregale never finalizes or
+   * sends; Lago issues its one-off invoice immediately but never charges
+   * it. One item per rate card and unit price, plus a rounding item, makes
+   * the invoice equal the statement total rounded to the cent; with a
+   * negative line, Paddle and Lago get a single summary item instead. The
+   * statement's handoff records the provider invoice ID on success. A retry
+   * resumes the same invoice, a completed export is returned as is, and a
+   * statement exports to one provider only. Two-decimal currencies only;
+   * Paddle takes USD, EUR and GBP.
    *
    * @returns StatementInvoiceExportResponse The completed app consumer statement export.
    * @throws ApiError
    */
-  public static exportApiConsumerUsageStatementToStripe({
+  public static exportApiConsumerUsageStatementInvoice({
     slug,
     consumerId,
     statementId,
@@ -745,7 +748,7 @@ export class ConsumersService {
   }): CancelablePromise<StatementInvoiceExportResponse> {
     return __request(OpenAPI, {
       method: 'POST',
-      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/stripe-invoice',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice',
       path: {
         'slug': slug,
         'consumer_id': consumerId,
@@ -760,8 +763,8 @@ export class ConsumersService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
-        422: `The app consumer statement or customer cannot be invoiced, or Stripe rejected the request.`,
-        502: `Stripe could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
+        422: `The app consumer statement or customer cannot be invoiced, or the provider rejected the request.`,
+        502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
       },
     });
   }

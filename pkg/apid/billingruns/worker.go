@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -215,10 +216,7 @@ func problemDetail(p *api.Problem) string {
 	if p.Detail != "" {
 		detail = p.Title + ": " + p.Detail
 	}
-	if len(detail) > 1000 {
-		detail = detail[:1000]
-	}
-	return detail
+	return safetext.Truncate(detail, 1000)
 }
 
 // settle records a deterministic problem as the item's outcome and passes
@@ -252,7 +250,7 @@ func (s *Service) handoffBlocked(ctx context.Context, acct state.Account, kind, 
 // finish sets the outcome of a customer whose statement needed no hold.
 func finish(item *state.BillingRunItem, run state.BillingRun, newUsage bool) {
 	switch {
-	case item.ExportedCount > 0 && run.Export == state.BillingRunExportStripe:
+	case item.ExportedCount > 0 && run.Export != state.BillingRunExportNone:
 		item.Outcome = state.BillingRunItemExported
 	case !newUsage:
 		item.Outcome = state.BillingRunItemUpToDate
@@ -260,7 +258,7 @@ func finish(item *state.BillingRunItem, run state.BillingRun, newUsage bool) {
 		item.Outcome = state.BillingRunItemDrafted
 	default:
 		item.Outcome = state.BillingRunItemFinalized
-		if run.Export == state.BillingRunExportStripe && item.AmountMillicents == 0 {
+		if run.Export != state.BillingRunExportNone && item.AmountMillicents == 0 {
 			item.Reason = zeroTotalReason
 		}
 	}

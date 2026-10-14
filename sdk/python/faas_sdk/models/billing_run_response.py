@@ -37,8 +37,8 @@ class BillingRunResponse:
     tenant statement and its app item is skipped."""
     finalize: bool
     export: BillingRunExport
-    """Where finalized statements go: none, or draft invoices in the account's Stripe (requires finalize and a
-    connected key)."""
+    """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1305; requires
+    finalize and a connected key)."""
     hold_on_gaps: bool
     trigger: BillingRunResponseTrigger
     status: BillingRunResponseStatus

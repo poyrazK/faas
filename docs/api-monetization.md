@@ -229,35 +229,53 @@ month-end statement. `statement-draft` and `statement-finalize` print a
 warning when the check finds gaps. The check is advisory: it never blocks
 finalizing and stores nothing.
 
-### Send statements to Stripe
+### Send statements to Stripe, Paddle or Lago
 
-Turn finalized statements into draft invoices in your own Stripe account
-instead of retyping totals. Store a restricted key once, with read and write
-access to invoices and invoice items; it is read from stdin and sealed at rest:
+Turn finalized statements into invoices in your own billing provider instead
+of retyping totals. Connect each provider once; the key is read from stdin
+and sealed at rest:
 
 ```bash
-gregale account stripe connect < stripe-key.txt
-gregale consumers statement-export my-api CONSUMER_ID STATEMENT_ID
+gregale account billing-connection connect stripe < stripe-key.txt
+gregale account billing-connection connect paddle < paddle-key.txt
+gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt
+gregale consumers statement-export my-api CONSUMER_ID STATEMENT_ID --provider paddle
 gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMENT_ID
 ```
 
-- **Customer.** Use `--customer cus_…`, or set the consumer's or tenant's
-  `external_ref` to its Stripe customer ID.
+- **Providers.** `--provider` is `stripe` (the default), `paddle` or `lago`:
+
+  | Provider | Key | What the export creates |
+  |---|---|---|
+  | Stripe | A restricted key with read and write access to invoices and invoice items. | A draft invoice. |
+  | Paddle | An API key with transaction access. | A draft, manually collected transaction with 30-day payment terms. |
+  | Lago | An API key. `--api-url` selects the EU region or a self-hosted Lago. | A one-off invoice on the `gregale_usage` add-on. Lago issues it at once but never charges it. |
+
+- **Customer.** Use `--customer`, or set the consumer's or tenant's
+  `external_ref` to the provider's customer. That is a Stripe `cus_…` ID, a
+  Paddle `ctm_…` ID, or the Lago external customer ID.
 - **Invoice lines.** Each rate card and unit price becomes one invoice item,
   and free requests show as no-charge items. If rounding each item to the cent
   would change the total, a rounding item keeps the invoice equal to the
-  statement total rounded to the cent.
-- **Drafts only.** Gregale never finalizes or sends the invoice, and it leaves
-  other pending items on the customer alone. Review the draft and send it
-  from Stripe.
-- **Handoff.** The export records the statement's handoff with the Stripe
-  invoice ID, so the usual rule that a revision is invoiced once applies.
-- **Retries.** If Stripe fails part-way, run the export again: it resumes the
-  same draft invoice and never adds an item twice.
+  statement total rounded to the cent. Paddle and Lago reject negative
+  amounts. They receive one summary item instead when an adjustment has a
+  negative line, or when a statement has more than 100 lines.
+- **Drafts.** Gregale never finalizes or sends a Stripe or Paddle invoice,
+  and it leaves other pending items on the customer alone. Review the draft
+  and send it from the provider. Lago has no draft one-off invoices, so a
+  Lago export is issued right away. Whether Lago emails it depends on your
+  Lago settings.
+- **Handoff.** The export records the statement's handoff with the provider's
+  invoice ID, so the usual rule that a revision is invoiced once applies. A
+  statement exports to one provider only.
+- **Retries.** If the provider fails part-way, run the export again. It
+  resumes the same invoice and never adds an item twice. If Lago issued an
+  invoice but the export stopped before tagging it, the retry names that
+  invoice and stops; void it in Lago, then retry.
 - **Currencies.** Only two-decimal currencies are supported, such as EUR, USD
-  and GBP.
-- **Payment status.** Gregale checks each exported invoice in Stripe until it
-  is paid, voided or deleted. It checks drafts every 6 hours and open
+  and GBP. Paddle accepts only USD, EUR and GBP.
+- **Payment status.** Gregale checks each exported invoice in the provider
+  until it is paid, voided or deleted. It checks drafts every 6 hours and open
   invoices every hour. List what is still owed:
 
   ```bash
@@ -283,7 +301,7 @@ gregale account billing-run show RUN_ID --outcome held
 
 For each customer the run drafts the month's statement and checks
 completeness. It then finalizes the statement and, with `--export stripe`,
-creates its draft Stripe invoice.
+`paddle` or `lago`, exports it to that provider.
 
 - **When.** A run can start one hour after the month ends, once late usage
   has arrived. Only one run per account is in progress at a time.
@@ -291,13 +309,13 @@ creates its draft Stripe invoice.
 
   | Outcome | Meaning |
   |---|---|
-  | `exported` | Draft Stripe invoices were created. |
+  | `exported` | Invoices were created in the provider. |
   | `finalized` | The statement was finalized and not exported. |
   | `drafted` | The statement was drafted only (`--no-finalize`). |
   | `up_to_date` | Nothing new to bill since the last run. |
   | `held` | Needs your attention, for example unpriced usage or a completeness gap. |
   | `skipped` | Billed through a platform tenant, or already invoiced another way. |
-  | `failed` | Stripe or Gregale kept failing after retries. |
+  | `failed` | The provider or Gregale kept failing after retries, or the customer has no ID in the provider. |
 
   Held and failed customers don't stop the run. Fix the cause, then start
   another run for the same month.
@@ -341,8 +359,8 @@ curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billi
   next statement will, and shows the plan's monthly cap. Late usage can still
   change it.
 - **Statements.** The latest finalized statements include each invoice's
-  payment status and Stripe's hosted invoice page, where your customer can
-  pay.
+  payment status and the provider's hosted invoice or checkout page, where
+  your customer can pay.
 - **Own data only.** A key reads only its own consumer, never other customers
   or your rate cards. A key with only the `billing` scope cannot call your
   app.
@@ -388,8 +406,11 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   served request. A request whose usage can't be recorded is not completed
   for the client and isn't billed. The completeness check still compares
   billed requests with request telemetry, to catch other gaps.
-- Gregale records the handoff to your billing system, or creates a draft
-  invoice in your own Stripe, but never charges your customers.
+- Gregale records the handoff to your billing system, or creates an invoice
+  in your own Stripe, Paddle or Lago, but never charges your customers.
+- The Paddle and Lago exports follow those providers' published API
+  references and were tested against recorded-shape fakes, not live
+  accounts.
 
 See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-billing.md),
 [ADR-950](adr/950-api-consumer-monthly-allowances.md),
@@ -402,8 +423,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1300](adr/1300-stripe-statement-invoice-exports.md),
 [ADR-1301](adr/1301-month-end-billing-runs.md),
 [ADR-1302](adr/1302-statement-invoice-payment-status.md),
-[ADR-1303](adr/1303-usage-durable-before-response-completes.md), and
-[ADR-1304](adr/1304-consumer-billing-self-service.md) for the billing rules.
+[ADR-1303](adr/1303-usage-durable-before-response-completes.md),
+[ADR-1304](adr/1304-consumer-billing-self-service.md), and
+[ADR-1305](adr/1305-paddle-and-lago-statement-exports.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

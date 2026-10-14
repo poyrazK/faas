@@ -766,11 +766,22 @@ Show DPA metadata
 
 Account-wide SLO panel
 
-### account stripe
+### account billing-connection
 
-Connect, show, or disconnect the Stripe key for statement invoice exports; connect reads the key from stdin
+Connect, show, or disconnect a Stripe, Paddle or Lago key for statement invoice exports; connect reads the key from stdin
 
-`gregale account stripe {connect|status|disconnect}`
+`gregale account billing-connection [--api-url <URL>] {connect|status|disconnect} {stripe|paddle|lago}`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--api-url <URL>` | Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com) |  |
+
+Examples:
+
+```sh
+gregale account billing-connection connect paddle < paddle-key.txt
+gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt
+```
 
 ### account billing-run
 
@@ -787,7 +798,7 @@ Start a run for one ended UTC month
 | `--month <YYYY-MM>` | UTC calendar month to bill (default: last month) |  |
 | `--sources <LIST>` | comma-separated app_consumers,platform_tenants (default: both) |  |
 | `--no-finalize` | only draft statements |  |
-| `--export <TARGET>` | none or stripe (default none) |  |
+| `--export <TARGET>` | none, stripe, paddle or lago (default none) |  |
 | `--no-hold-on-gaps` | finalize consumers even when request telemetry shows unbilled requests |  |
 | `--wait` | wait until the run completes and list its customers |  |
 
@@ -833,7 +844,7 @@ Start a run automatically after each month ends
 |---|---|---|
 | `--sources <LIST>` | comma-separated app_consumers,platform_tenants for scheduled runs (default: both) |  |
 | `--no-finalize` | scheduled runs only draft statements |  |
-| `--export <TARGET>` | none or stripe for scheduled runs (default none) |  |
+| `--export <TARGET>` | none, stripe, paddle or lago for scheduled runs (default none) |  |
 | `--no-hold-on-gaps` | scheduled runs finalize consumers with completeness gaps |  |
 | `--delay-hours <N>` | hours after month end before the run starts (1-240, default 24) |  |
 
@@ -851,7 +862,7 @@ Stop scheduled runs; a started run continues
 
 ### account invoices
 
-List Stripe invoices drafted from usage statements and whether they were paid
+List invoices exported from usage statements and whether they were paid
 
 `gregale account invoices [--status <STATUS>]`
 
@@ -7423,13 +7434,14 @@ Record your invoice reference for a finalized revision
 
 ### consumers statement-export
 
-Create a draft Stripe invoice for a finalized revision and record its handoff
+Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff
 
-`gregale consumers statement-export [--customer <cus_ID>] <slug> <consumer-id> <statement-id>`
+`gregale consumers statement-export [--customer <ID>] [--provider <PROVIDER>] <slug> <consumer-id> <statement-id>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--customer <cus_ID>` | Stripe customer ID (default: the consumer&#39;s external_ref when it is one) |  |
+| `--customer <ID>` | provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the consumer&#39;s external_ref when it is one) |  |
+| `--provider <PROVIDER>` | billing provider (default stripe) | one of `stripe` · `paddle` · `lago` |
 
 ### consumers plans
 
@@ -7728,15 +7740,16 @@ Record your invoice reference for a finalized revision
 
 ### platform-tenants statement-export
 
-Create a draft Stripe invoice for a finalized revision and record its handoff
+Create an invoice in Stripe, Paddle or Lago for a finalized revision and record its handoff
 
-`gregale platform-tenants statement-export --id <UUID> --statement-id <UUID> [--customer <cus_ID>]`
+`gregale platform-tenants statement-export --id <UUID> --statement-id <UUID> [--customer <ID>] [--provider <PROVIDER>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--id <UUID>` | platform tenant UUID | required |
 | `--statement-id <UUID>` | statement revision UUID | required |
-| `--customer <cus_ID>` | Stripe customer ID (default: the tenant&#39;s external_ref when it is one) |  |
+| `--customer <ID>` | provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (default: the tenant&#39;s external_ref when it is one) |  |
+| `--provider <PROVIDER>` | billing provider (default stripe) | one of `stripe` · `paddle` · `lago` |
 
 
 ## edge-rule-lists
