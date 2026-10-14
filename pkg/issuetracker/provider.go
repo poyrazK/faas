@@ -166,7 +166,7 @@ func (c *Client) request(ctx context.Context, provider, method, path, token stri
 		if write && (response.StatusCode == 400 || response.StatusCode == 401 || response.StatusCode == 403 || response.StatusCode == 404 || response.StatusCode == 422) {
 			return &RejectedError{Status: response.StatusCode}
 		}
-		return fmt.Errorf("tracker returned HTTP %d; creation outcome is unconfirmed", response.StatusCode)
+		return fmt.Errorf("tracker returned HTTP %d; request outcome is unconfirmed", response.StatusCode)
 	}
 	payload, err := io.ReadAll(io.LimitReader(response.Body, api.IssueTrackerResponseMaxBytes+1))
 	if err != nil || len(payload) > api.IssueTrackerResponseMaxBytes {
@@ -250,7 +250,7 @@ func (c *Client) Create(ctx context.Context, r Request, token string) (Ticket, e
 		return Ticket{}, err
 	}
 	if len(out.Errors) > 0 || !out.Data.Create.Success {
-		return Ticket{}, errors.New("Linear creation outcome is unconfirmed")
+		return Ticket{}, errors.New("Linear request outcome is unconfirmed")
 	}
 	return linearTicket(r, out.Data.Create.Issue)
 }

@@ -11,7 +11,19 @@ import (
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 )
 
-func cmdIssueTickets(args []string) int { return runIssueTickets(args, issuetracker.NewClient(nil)) }
+func cmdIssueTickets(args []string) int {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "usage: gregale issues tickets <create|sync> [flags]")
+		if len(args) == 0 {
+			return 1
+		}
+		return 0
+	}
+	if len(args) > 0 && args[0] == "sync" {
+		return runIssueTicketSync(args[1:], issuetracker.NewClient(nil))
+	}
+	return runIssueTickets(args, issuetracker.NewClient(nil))
+}
 
 func runIssueTickets(args []string, external issuetracker.Provider) int {
 	usage := "usage: gregale issues tickets create --app SLUG --issue UUID --provider github|linear --target OWNER/REPO|TEAM_UUID --title TEXT --request-id UUID [--description TEXT --token-env NAME --journal-dir PATH --recover-url URL]"

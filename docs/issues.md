@@ -945,3 +945,19 @@ gregale issues tickets create --app my-api --issue ISSUE_UUID --provider linear 
 A private journal under the current profile's config directory records creation and attachment. `--journal-dir PATH` chooses another durable private directory (0700, with 0600 receipt files). Keep the journal and reuse the same request UUID, API profile, issue, destination, title and description for retries. Concurrent processes sharing that directory are fenced by a request lock. A confirmed ticket is saved before Gregale attachment: if linking fails because of permissions, quota or availability, fix the cause and repeat the command. The retry attaches the existing ticket and can run without the provider credential. JSON output includes `request_id`, `state`, `ticket` and, after successful attachment, `link_id`.
 
 If a timeout, server error or crash leaves creation uncertain, the CLI stops rather than creating again. Find the existing provider ticket and repeat the original command with `--recover-url TICKET_URL`. GitHub recovery checks the repository and operation marker; Linear checks the stable issue UUID, team and URL. Unrelated tickets and pull requests are rejected. An explicit provider HTTP 400/401/403/404/422 rejection permits a safe retry after fixing the input or credential. Other failures retain uncertain evidence. Do not delete the journal or choose a new UUID to work around uncertainty: separate journals or new UUIDs do not deduplicate provider writes. Completed operations return their recorded reference; use `issues links` if someone later removes that reference.
+
+## Synchronize tracker status
+
+Preview or apply lifecycle synchronization for one stored tracker reference:
+
+```sh
+gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push
+gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction push --apply
+gregale issues tickets sync --app my-api --issue ISSUE_UUID --link LINK_UUID --direction pull --apply --deployment FIXING_DEPLOYMENT_UUID
+```
+
+`push` uses Gregale as authority; `pull` uses the provider. Commands preview by default and write only with `--apply`. GitHub open/closed-completed maps to Gregale open/resolved. Linear backlog, unstarted and started types map to open; completed maps to resolved. Ignored Gregale issues, GitHub not-planned closures, unfamiliar statuses and canceled or archived Linear issues require manual triage. Pulling a resolution requires `--deployment UUID` unless Gregale is already resolved. Pulling an open state reopens Gregale through its normal lifecycle API. Existing release attribution, regression handling, activity and notifications apply.
+
+Linear push requires `--linear-state WORKFLOW_STATE_UUID` when changing status. The selected state must belong to the linked issue's team, be active and have the appropriate workflow type. The CLI does not guess state names. Credentials use the same `GREGALE_GITHUB_TOKEN` / `GREGALE_LINEAR_TOKEN` defaults and `--token-env NAME` override as ticket creation. Preview requires provider read access; push requires provider issue-write permission; pull requires Gregale's normal mutation authority.
+
+The CLI finds the link through paginated issue-group references, checks exact provider identity, and rechecks group membership and both lifecycle snapshots before applying. JSON output includes the observed states, `desired_state`, `would_change`, `applied`, `needs_deployment` and `needs_linear_state`. Equal states are a no-op. After a timeout or uncertain update response, preview again before applying: a confirmed desired state needs no repeated action. Provider and Gregale reads and writes are separate operations, so concurrent changes can still race after the final check. This is explicit CLI sync; native organization connections, OAuth setup, provider callbacks and continuous reconciliation remain separate work.
