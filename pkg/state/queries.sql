@@ -19975,3 +19975,25 @@ SELECT EXISTS (
       )
     )
 ) AS managed;
+
+-- name: InstanceLogsOwnedByApp :one
+-- Archived runtime logs are keyed by instance only. The instance row proves
+-- ownership while it exists; afterwards the app's billing rows for that
+-- instance in [from_minute, to_minute) do.
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = sqlc.arg(instance_id)::uuid
+          AND i.app_id = sqlc.arg(app_id)::uuid
+          AND a.account_id = sqlc.arg(account_id)::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = sqlc.arg(account_id)::uuid
+          AND u.app_id = sqlc.arg(app_id)::uuid
+          AND u.instance_id = sqlc.arg(instance_id)::uuid
+          AND u.minute >= sqlc.arg(from_minute)::timestamptz
+          AND u.minute < sqlc.arg(to_minute)::timestamptz
+    )
+)::boolean AS owned;

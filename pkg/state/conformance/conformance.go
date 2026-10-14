@@ -90,6 +90,7 @@ func Run(t *testing.T, open Open) {
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"usage_rollup_merges_minutes", testUsageRollup},
+		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
 		{"live_state_readers_count_running_instances", testLiveStateReaders},
 		{"frozen_instance_holds_ram_without_concurrency", testFrozenInstanceState},

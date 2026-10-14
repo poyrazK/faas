@@ -4369,6 +4369,18 @@
     "kind": "operational"
   },
   {
+    "table": "invocation_queue_lease_receipts",
+    "columns": [
+      "attempt",
+      "invocation_id",
+      "issued_at",
+      "lease_expires_at",
+      "replay_generation",
+      "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "invocation_work_cancellations",
     "columns": [
       "app_id",

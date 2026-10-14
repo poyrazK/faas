@@ -42,7 +42,7 @@ func cmdJobsResults(args []string) int {
 	}
 	name, defaultsErr := applyJobResultsDefaults(fs, fs.Arg(0), includes, excludes, *allArtifacts)
 	if defaultsErr != nil {
-		return printErr("Could not apply Job defaults", defaultsErr)
+		return printJobDefaultsSelectionError("Could not apply Job defaults", defaultsErr)
 	}
 	if fs.NArg() > 2 || !jobSlugPattern.MatchString(name) || (ref != "latest" && !jobRunIDPattern.MatchString(ref)) || (directorySet && *directory == "") || *timeout <= 0 || *interval <= 0 {
 		return printErr("Invalid results arguments", errors.New("use jobs results JOB [RUN_ID|latest] [--out-dir DIR], with positive --timeout and --poll-interval"))

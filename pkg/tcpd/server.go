@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -64,6 +65,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if slots == nil && s.MaxConnections > 0 {
 		slots = make(chan struct{}, s.MaxConnections)
 	}
+	var backoff time.Duration
 	for {
 		conn, err := s.Listener.Accept()
 		if err != nil {
@@ -72,7 +74,8 @@ func (s *Server) Serve(ctx context.Context) error {
 				return nil
 			}
 			if isTemporaryAcceptError(err) {
-				if !waitAcceptBackoff(ctx) {
+				backoff = nextAcceptBackoff(backoff)
+				if !waitAcceptBackoff(ctx, backoff) {
 					wg.Wait()
 					return nil
 				}
@@ -81,6 +84,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			wg.Wait()
 			return fmt.Errorf("accept TCP connection: %w", err)
 		}
+		backoff = 0
 
 		session := s.Metrics.Begin()
 		if slots != nil {
@@ -213,13 +217,34 @@ func localTCPPort(conn net.Conn) (int, error) {
 	return addr.Port, nil
 }
 
+// isTemporaryAcceptError reports accept failures the listener can recover
+// from. Running out of file descriptors or kernel buffers under load must
+// not end the accept loop: the port would stay closed after the load passed.
 func isTemporaryAcceptError(err error) bool {
 	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ENOBUFS) || errors.Is(err, syscall.ENOMEM)
 }
 
-func waitAcceptBackoff(ctx context.Context) bool {
-	timer := time.NewTimer(5 * time.Millisecond)
+const (
+	acceptBackoffMin = 5 * time.Millisecond
+	acceptBackoffMax = time.Second
+)
+
+// nextAcceptBackoff doubles the wait after each consecutive accept failure,
+// as net/http does, so a listener out of descriptors does not spin.
+func nextAcceptBackoff(current time.Duration) time.Duration {
+	if current <= 0 {
+		return acceptBackoffMin
+	}
+	return min(current*2, acceptBackoffMax)
+}
+
+func waitAcceptBackoff(ctx context.Context, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
