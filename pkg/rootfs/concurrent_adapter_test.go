@@ -213,28 +213,76 @@ func TestPythonFunctionAdapterSharedWorker(t *testing.T) {
 	exerciseSharedAdapter(t, a)
 }
 
-// A sync Python handler blocks its worker, so it keeps one request at a
-// time whatever the app asks for.
-func TestPythonFunctionAdapterSyncHandlerStaysExclusive(t *testing.T) {
+const pythonSyncSharedHandler = `import time
+
+def handler(event, ctx):
+    if event["path"] == "/stream":
+        def body():
+            for piece in ("a", "b", "c", "d"):
+                yield piece
+                time.sleep(0.15)
+        return {"statusCode": 200, "body": body()}
+    ms = int(event["query"].replace("ms=", "") or 0)
+    time.sleep(ms / 1000)
+    return {"statusCode": 200, "body": {"ms": ms}}
+`
+
+// A sync Python handler shares its worker on threads (ADR-1190). A cancel
+// cannot interrupt the thread: it is acknowledged once the handler returns,
+// the cancelled request sends nothing more, and a streamed body stops.
+func TestPythonFunctionAdapterSyncHandlerSharesOnThreads(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 is not installed")
 	}
 	dir := t.TempDir()
-	impl := "def handler(event, ctx):\n    return {\"statusCode\": 200, \"body\": \"ok\"}\n"
-	if err := os.WriteFile(filepath.Join(dir, ".faas-handler.py"), []byte(impl), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".faas-handler.py"), []byte(pythonSyncSharedHandler), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	adapter := filepath.Join(dir, "handler.py")
 	if err := os.WriteFile(adapter, []byte(pythonFunctionAdapter), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a, slots := startSharedAdapter(t, python, adapter, 8)
-	if slots != 1 {
-		t.Fatalf("sync handler advertised concurrency %d, want 1", slots)
+	a, slots := startSharedAdapter(t, python, adapter, 4)
+	if slots != 4 {
+		t.Fatalf("sync handler advertised concurrency %d, want 4", slots)
 	}
-	a.send(map[string]any{"method": "GET", "path": "/", "headers": map[string]string{}, "body_b64": ""})
-	if got := a.next(); got.ID != "" || got.Status != 200 {
-		t.Fatalf("exclusive answer = %+v", got)
+	started := time.Now()
+	a.request("1", "/sleep", "ms=600")
+	a.request("2", "/sleep", "ms=50")
+	if got := a.next(); got.ID != "2" || got.Status != 200 {
+		t.Fatalf("first answer = %+v, want the short request 2", got)
+	}
+	if got := a.next(); got.ID != "1" || got.Status != 200 {
+		t.Fatalf("second answer = %+v, want request 1", got)
+	}
+	if elapsed := time.Since(started); elapsed > 1500*time.Millisecond {
+		t.Fatalf("two concurrent sync requests took %s", elapsed)
+	}
+
+	cancelSent := time.Now()
+	a.request("3", "/sleep", "ms=400")
+	a.send(map[string]any{"__faas_cancel": "3"})
+	if got := a.next(); got.Cancelled != "3" {
+		t.Fatalf("cancel acknowledgement = %+v, want request 3 cancelled with no answer", got)
+	}
+	if waited := time.Since(cancelSent); waited < 300*time.Millisecond {
+		t.Fatalf("cancel acknowledged after %s, before the handler returned", waited)
+	}
+
+	a.request("4", "/stream", "")
+	if got := a.next(); got.ID != "4" || got.Frame != "head" {
+		t.Fatalf("stream start = %+v", got)
+	}
+	if got := a.next(); got.ID != "4" || got.Frame != "chunk" {
+		t.Fatalf("first chunk = %+v", got)
+	}
+	a.send(map[string]any{"__faas_cancel": "4"})
+	if got := a.next(); got.Cancelled != "4" {
+		t.Fatalf("after cancelling the stream = %+v, want only its acknowledgement", got)
+	}
+	a.request("5", "/sleep", "ms=0")
+	if got := a.next(); got.ID != "5" || got.Status != 200 {
+		t.Fatalf("after cancels = %+v, want request 5", got)
 	}
 }

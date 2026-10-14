@@ -215,12 +215,17 @@ The value can be up to your plan's per-instance concurrency (`gregale app
   local variables, not globals.
 - Node runs any handler this way. CPU-heavy handlers block the event loop
   for every request on the worker, so leave them at 1.
-- Python runs only `async def handler` concurrently, one asyncio task per
-  request. A plain `def handler` keeps one request per worker.
+- Python runs an `async def handler` as one asyncio task per request, and a
+  plain `def handler` on one thread per request. Threads share Python's
+  global interpreter lock, so this helps handlers that wait, not ones that
+  compute.
 - A request whose client goes away or that runs out of time is cancelled
-  without stopping the worker. Python cancels its task; Node drops its
-  output, but the promise runs until it settles. A worker that cannot
-  respond to a cancel within 5 seconds is restarted.
+  without stopping the worker. Python cancels an async handler's task. A
+  sync handler's thread cannot be stopped: its output is dropped, a
+  generator body stops at its next piece, and the slot frees when the
+  handler returns. Node drops its output, but the promise runs until it
+  settles. A worker that cannot respond to a cancel within 5 seconds is
+  restarted.
 - Go SDK functions keep one request per process. A `binary` function's
   handler can serve several by advertising them in its ready line, as the
   shared worker protocol in ADR-1190 describes.

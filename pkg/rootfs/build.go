@@ -1296,11 +1296,13 @@ for await (const line of lines) {
 const pythonFunctionAdapter = `# FAAS_PERSISTENT_PROTOCOL_V1
 import asyncio
 import base64
+import concurrent.futures
 import importlib.util
 import inspect
 import json
 import os
 import sys
+import threading
 import traceback
 
 class _Log:
@@ -1330,11 +1332,13 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 handler = getattr(module, "handler", None)
 if not callable(handler): raise RuntimeError("handler.py must define handler(event, ctx)")
-# An async handler serves FAAS_FUNCTION_CONCURRENCY requests at once when
-# the app sets function_concurrency (ADR-1190); requests and every response
-# line then carry the runner's __faas_id. A sync handler serves one.
+# A worker serves FAAS_FUNCTION_CONCURRENCY requests at once when the app
+# sets function_concurrency (ADR-1190); requests and every response line then
+# carry the runner's __faas_id. An async handler runs each request as a task;
+# a sync handler runs each on its own thread.
+handler_is_async = inspect.iscoroutinefunction(handler)
 concurrency = 1
-if os.environ.get("FAAS_PERSISTENT_WORKER") == "1" and inspect.iscoroutinefunction(handler):
+if os.environ.get("FAAS_PERSISTENT_WORKER") == "1":
     try:
         concurrency = min(max(int(os.environ.get("FAAS_FUNCTION_CONCURRENCY", "1")), 1), 256)
     except ValueError:
@@ -1482,9 +1486,14 @@ def _serve_lines():
         real_stdout.write(json.dumps(envelope) + "\n")
         real_stdout.flush()
 
+# Handler threads and the event loop share stdout; one line at a time.
+_stdout_lock = threading.Lock()
+
 def _emit_tagged(frame):
-    real_stdout.write(json.dumps(frame, separators=(",", ":")) + "\n")
-    real_stdout.flush()
+    line = json.dumps(frame, separators=(",", ":")) + "\n"
+    with _stdout_lock:
+        real_stdout.write(line)
+        real_stdout.flush()
 
 async def _serve_one(request, rid, tasks):
     # The id goes first so the runner routes the line without decoding it.
@@ -1512,6 +1521,59 @@ async def _serve_one(request, rid, tasks):
     finally:
         tasks.pop(rid, None)
 
+async def _await(awaitable):
+    return await awaitable
+
+def _serve_sync(request, rid, cancelled):
+    # Runs on a handler thread. Python cannot interrupt a thread, so a
+    # cancelled request's frames are dropped and a streamed body stops at
+    # its next piece; the request ends when the handler returns.
+    def emit(frame):
+        if not cancelled.is_set():
+            _emit_tagged({"__faas_id": rid, **frame})
+    invocation_id = ""
+    streaming = False
+    try:
+        event, invocation_id = _event(request)
+        result = handler(event, _Context(invocation_id))
+        if inspect.isawaitable(result):
+            result = asyncio.run_coroutine_threadsafe(_await(result), loop).result()
+        status, headers_out, response_body = _shape(result)
+        if _is_stream_body(response_body):
+            streaming = True
+            emit({"frame": "head", "status": status, "headers": headers_out})
+            if hasattr(response_body, "__aiter__"):
+                asyncio.run_coroutine_threadsafe(_drain_async(response_body, emit), loop).result()
+            else:
+                for piece in response_body:
+                    if cancelled.is_set():
+                        break
+                    _emit_chunk(piece, emit)
+            emit({"frame": "end"})
+            return
+        emit(_whole(status, headers_out, response_body))
+    except Exception as exc:
+        traceback.print_exc()
+        message = _error_message(exc)
+        emit({"frame": "error", "message": message} if streaming else _error_envelope(message, invocation_id))
+
+_threads = None
+
+def _start_threaded(request, rid, tasks):
+    cancelled = threading.Event()
+    work = loop.run_in_executor(_threads, _serve_sync, request, rid, cancelled)
+    work.add_done_callback(lambda _done: tasks.pop(rid, None))
+    return work, cancelled
+
+def _cancel_threaded(rid, entry):
+    # Acknowledged only once the handler's thread is free, so the runner
+    # never counts a slot a running handler still holds. A handler that
+    # never returns misses the acknowledgement deadline and the runner
+    # restarts the worker.
+    work, cancelled = entry
+    cancelled.set()
+    work.add_done_callback(lambda _done: _emit_tagged({"__faas_cancelled": rid}))
+
 # A shared worker runs each request as a task. A cancel cancels the task,
 # and every cancel is acknowledged so the runner knows the loop is turning.
 async def _serve_shared():
@@ -1531,15 +1593,23 @@ async def _serve_shared():
             continue
         cancel = request.get("__faas_cancel")
         if cancel is not None:
-            task = tasks.pop(cancel, None)
-            if task is not None:
-                task.cancel()
+            entry = tasks.pop(cancel, None)
+            if entry is not None and not handler_is_async:
+                _cancel_threaded(cancel, entry)
+                continue
+            if entry is not None:
+                entry.cancel()
             _emit_tagged({"__faas_cancelled": cancel})
             continue
         rid = str(request.get("__faas_id", ""))
-        tasks[rid] = loop.create_task(_serve_one(request, rid, tasks))
+        if handler_is_async:
+            tasks[rid] = loop.create_task(_serve_one(request, rid, tasks))
+        else:
+            tasks[rid] = _start_threaded(request, rid, tasks)
 
 if concurrency > 1:
+    if not handler_is_async:
+        _threads = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="faas-handler")
     loop.run_until_complete(_serve_shared())
 else:
     _serve_lines()

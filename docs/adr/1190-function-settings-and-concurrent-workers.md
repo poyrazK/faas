@@ -88,9 +88,15 @@ loop and Python's asyncio can wait on many requests in one process.
    (ADR-687) closes idle shared workers at once and busy ones when their
    last request leaves.
 
-6. **Runtimes.** Node multiplexes any handler. Python multiplexes only an
-   `async def` handler, one asyncio task per request with real
-   cancellation; a sync handler would block the loop, so it advertises one.
+6. **Runtimes.** Node multiplexes any handler. Python runs an `async def`
+   handler as one asyncio task per request, with real cancellation, and a
+   sync handler on a thread pool sized to the slots. A thread cannot be
+   interrupted, so a cancelled sync request's output is dropped, a generator
+   body stops at its next piece, and the cancel is acknowledged only when
+   the handler returns: the runner never counts a slot a running handler
+   still holds, and a handler stuck past the 5 s acknowledgement deadline
+   costs its worker, as every cancel did before this ADR. Threads share the
+   interpreter lock, so only handlers that wait gain.
    The setting is accepted on every function runtime: a handler that does
    not advertise slots keeps one request per process.
 
