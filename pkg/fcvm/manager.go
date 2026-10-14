@@ -2077,6 +2077,12 @@ type LivenessProbeConfig struct {
 	ConsecutiveFailures      int
 	CooldownSeconds          int
 	IdleResetOnDestroy       bool
+	// NotFoundIsAlive accepts a 404 from the plan-default probe path. It is
+	// set for an instance whose readiness contract is its TCP listener (a
+	// direct OCI image with no health path) and no liveness override: such
+	// an image never promised /healthz, and a 404 proves it serves HTTP, as
+	// deploy verification already accepts (H10-23).
+	NotFoundIsAlive bool
 }
 
 // LivenessRegistry owns the per-instance liveness-probe poll
@@ -2337,12 +2343,20 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		}
 	}
 	noHTTPContract := false
+	tcpReadiness := false
 	m.mu.Lock()
 	if inst := m.live[instance]; inst != nil {
 		cfg.ImageHealthcheckRequired = inst.ImageHealthcheckRequired
 		noHTTPContract = instanceHasNoHTTPContract(inst)
+		tcpReadiness = inst.HealthcheckPath == ""
 	}
 	m.mu.Unlock()
+	// On prod the default /healthz probe got 404 from nginx-unprivileged,
+	// parked its stable release as liveness_exhausted mid-canary and served
+	// 503s; a hang still fails the probe by timeout or refused connection.
+	if tcpReadiness && len(override) == 0 && !cfg.GRPC {
+		cfg.NotFoundIsAlive = true
+	}
 	// A declared image command is its liveness contract. Do not invent the
 	// plan-default /healthz endpoint for that image; explicit HTTP/gRPC
 	// liveness overrides remain additional independent probes.

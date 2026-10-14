@@ -330,6 +330,165 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/mcp/admissions/{id}:
+    get:
+      operationId: getMCPAdmissionReceipt
+      summary: Read a retained MCP admission receipt by evidence UUID
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Evidence UUID identifying the retained MCP admission receipt}
+      responses:
+        '200':
+          description: Account-owned receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPAdmissionEvidence'}
+        '404': {description: Receipt missing or owned by another account}
+  /v1/apps/{slug}/mcp-catalog-monitor:
+    parameters:
+      - {name: slug, in: path, required: true, schema: {type: string}, description: HTTP application whose catalog monitor is managed}
+    get:
+      operationId: getMCPCatalogMonitor
+      summary: Read opt-in catalog monitoring state and retained transitions
+      parameters:
+        - {name: role, in: query, schema: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$"}, description: Independent reviewed authorization view; omit for default}
+        - {name: all_roles, in: query, schema: {type: boolean, default: false}, description: App summary of all roles; cannot combine with role or evidence}
+        - {name: evidence, in: query, schema: {type: string, format: uuid}, description: Read one retained transition receipt}
+      responses:
+        '200':
+          description: Configured snapshot, or an exact receipt when evidence is supplied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/MCPCatalogMonitorSnapshot'}
+                  - {$ref: '#/components/schemas/MCPCatalogReceipt'}
+                  - {$ref: '#/components/schemas/MCPCatalogMonitorSummary'}
+        '404': {description: Monitor or evidence unavailable to this account}
+    put:
+      operationId: configureMCPCatalogMonitor
+      summary: Configure a reviewed role baseline and optional managed observer; secret binding also requires secrets-read scope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MCPCatalogMonitorConfigRequest'}
+      responses:
+        '200':
+          description: Monitor revision; current observation is reset until this revision reports
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPCatalogMonitorSnapshot'}
+        '400': {description: Invalid complete baseline or freshness limit}
+        '404': {description: App unavailable to this account}
+  /v1/deployments/{id}/mcp-admissions:
+    get:
+      operationId: listMCPAdmissionHistory
+      summary: Page retained MCP receipts newest first by audit sequence
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Deployment UUID whose admission receipts are listed}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 50, default: 50}, description: Maximum number of matching admission receipts to return}
+        - {name: cursor, in: query, schema: {type: string}, description: Continuation cursor from the previous page}
+        - {name: outcome, in: query, schema: {type: string, enum: [accepted, rejected]}, description: Filter receipts by the recorded admission outcome}
+      responses:
+        '200':
+          description: Retained receipts; an omitted next_cursor means the end of matching history
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPAdmissionHistoryResponse'}
+        '400': {description: Invalid UUID or pagination filter}
+        '404': {description: Deployment missing or owned by another account}
+  /v1/mcp-oauth-retirements:
+    get:
+      operationId: listMCPOAuthRetirements
+      summary: Read administrator-only OAuth retirement history including deleted applications
+      parameters:
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, maximum: 10000}, description: Bounded history page offset}
+      responses:
+        '200':
+          description: Up to fifty retirement records with sealed data omitted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPOAuthRetirementsResponse'}
+        '400': {description: Invalid offset}
+        '403': {description: Administrator access required}
+  /v1/apps/{slug}/mcp-catalog-monitor/oauth:
+    post:
+      operationId: mcpCatalogOAuth
+      summary: Begin, complete or disconnect guided OAuth for an observer role; requires deploy intent and secret-read permission
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}, description: Application owning the OAuth connection}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MCPCatalogOAuthRequest'}
+      responses:
+        '200':
+          description: Authorization URL or completed connection state without token values
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPCatalogOAuthResponse'}
+        '400': {description: Invalid connection request or unsuccessful authorization}
+        '403': {description: Missing connection permissions}
+        '404': {description: App or role unavailable to this account}
+        '409': {description: "Expired, consumed or superseded authorization state"}
+  /v1/mcp-oauth-retirements/{id}:
+    post:
+      operationId: recoverMCPOAuthRetirement
+      summary: Retry retirement or record provider-side manual revocation; administrator access and MFA policy apply
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Account-owned retirement identifier}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MCPOAuthRetirementAction'}
+      responses:
+        '200':
+          description: Updated public retirement status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPOAuthRetirement'}
+        '400': {description: Invalid recovery action or unavailable credentials}
+        '403': {description: Administrator access or MFA requirement not satisfied}
+        '404': {description: Retirement unavailable to this account}
+        '409': {description: "Retirement is leased, terminal or expired"}
+  /v1/mcp-connection-health:
+    get:
+      operationId: getMCPConnectionHealth
+      summary: Account-wide MCP connection health and recovery guidance; administrator access required
+      parameters:
+        - {name: app, in: query, schema: {type: string}, description: Optional owned application slug}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, maximum: 10000}, description: Issue page offset}
+      responses:
+        '200':
+          description: Connection health metadata without credential values
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPConnectionHealthSnapshot'}
+        '400': {description: Invalid page offset}
+        '403': {description: Administrator scope required for the account connection inventory}
+        '404': {description: Application unavailable to this account}
+  /v1/apps/{slug}/mcp-catalog-monitor/observations:
+    post:
+      operationId: reportMCPCatalogObservation
+      summary: Report an observed catalog or failed probe; requires metrics-write scope
+      parameters:
+        - {name: slug, in: path, required: true, schema: {type: string}, description: Application receiving the catalog observation}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MCPCatalogObservationRequest'}
+      responses:
+        '200':
+          description: Server-computed transition receipt; repeated unchanged observations reuse the receipt
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MCPCatalogReceipt'}
+        '400': {description: Invalid observation}
+        '404': {description: Monitor unavailable to this account}
+        '409': {description: Monitor disabled or baseline revision changed}
   /v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials:
     get:
       tags:
@@ -10628,6 +10787,10 @@ paths:
           in: query
           description: Optional bounded wait for active state, up to 10s.
           schema: { type: string, example: 5s }
+        - name: edge_rules_scope
+          in: query
+          description: Account scope covers all owned app rules, including wildcards and a conservative revision floor for unknown historical owners. Fleet scope includes all mutations.
+          schema: { type: string, enum: [app, account, fleet], default: app }
       responses:
         '200':
           description: Current application state; pending remains possible after wait expires.
@@ -23771,6 +23934,10 @@ paths:
         `invalid_traffic_percent`). The Σ invariant is asserted
         post-write as a defensive backstop (409
         `traffic_percent_sum_invalid`).
+        Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+        audit timeline. Accepted evidence commits with traffic; rejected evidence
+        is saved after rollback. Audit-storage failure returns 503
+        mcp_admission_evidence_unavailable.
         An optional expected_serving_deployment_id is checked under the
         same live-row locks before rebalance. A stale expectation returns
         409 `traffic_serving_changed` without changing traffic.
@@ -23823,6 +23990,9 @@ paths:
             `invalid_traffic_percent`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: "MCP traffic admission evidence could not be committed (mcp_admission_evidence_unavailable). Inspect traffic before retrying."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
 
   /v1/deployments/{id}/promote:
     parameters:
@@ -48972,6 +49142,371 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    MCPCatalogObserverOAuthConfig:
+      description: Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
+      type: object
+      required: [token_endpoint, client_id]
+      properties:
+        revocation_endpoint: {type: string, format: uri, maxLength: 512, description: Explicit HTTPS RFC 7009 revocation endpoint; omission requires manual provider revocation}
+        revocation_auth_method: {type: string, enum: [none, client_secret_basic, client_secret_post], description: Defaults to token authentication except Google none}
+        token_endpoint: {type: string, format: uri, maxLength: 512, description: Explicit public HTTPS token endpoint without query or fragment; redirects and private egress are refused}
+        client_id: {type: string, maxLength: 512}
+        refresh_token_secret_ref: {type: string, description: App secret containing the initial refresh token; rotation resets the connection}
+        client_secret_ref: {type: string, description: Optional app secret for OAuth client_secret_basic authentication}
+        guided: {type: boolean, description: Use browser authorization; mutually exclusive with an initial refresh secret}
+        authorization_endpoint: {type: string, format: uri, description: Explicit HTTPS browser authorization endpoint required for guided connections}
+        scopes: {type: array, maxItems: 16, items: {type: string, maxLength: 128}}
+        profile: {type: string, enum: [generic, google, oidc], description: Explicit provider behavior; Google requests offline consent and OIDC adds openid and offline_access}
+        token_auth_method: {type: string, enum: [none, client_secret_basic, client_secret_post], description: Explicit token authentication; defaults to public none or confidential basic except Google confidential post}
+        callback_port: {type: integer, minimum: 0, maximum: 65535, description: Guided loopback callback port; 0 chooses a dynamic port}
+        resource: {type: string, format: uri, maxLength: 512, description: Reviewed HTTPS MCP resource indicator sent unchanged in authorization, code exchange and renewal}
+        issuer: {type: string, format: uri, maxLength: 512, description: Reviewed provider issuer paired with discovery_url}
+        discovery_url: {type: string, format: uri, maxLength: 512, description: Explicit guarded metadata URL; endpoint mismatches and declared incompatibilities block new authorization}
+    MCPCatalogMonitorConfig:
+      description: Server-issued revision and retained settings for a configured MCP catalog role.
+      type: object
+      required: [enabled, revision, baseline, baseline_sha256, freshness_seconds]
+      properties:
+        observer: {$ref: '#/components/schemas/MCPCatalogObserverConfig'}
+        token_env: {type: string, maxLength: 128, description: Token environment reference selected by observers; no secret value is retained}
+        role: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$", default: default}
+        enabled: {type: boolean}
+        revision: {type: string, format: uuid}
+        baseline: {type: object, additionalProperties: true}
+        baseline_sha256: {type: string}
+        freshness_seconds: {type: integer, minimum: 15, maximum: 3600}
+    MCPCatalogOAuthRenewal:
+      description: Renewal recovery metadata. Private operation fields and sealed results are omitted from public responses.
+      type: object
+      required: [state, started_at]
+      properties:
+        outcome: {type: string, enum: [response_recorded, issuance_unknown]}
+        state: {type: string, enum: [pending, saved, installed, failed, reauthorization_required]}
+        started_at: {type: string, format: date-time}
+        private_id: {type: string, format: uuid, readOnly: true}
+        private_source_sha256: {type: string, readOnly: true}
+        private_lease_id: {type: string, format: uuid, readOnly: true}
+        private_result: {$ref: '#/components/schemas/MCPCatalogObserverOAuthStatus'}
+    MCPCatalogMonitorSummary:
+      description: App health and individual catalog views for every configured role.
+      type: object
+      required: [state, roles, signal]
+      properties:
+        state: {type: string, enum: [disabled, healthy, drift, unavailable]}
+        roles:
+          type: object
+          maxProperties: 16
+          additionalProperties: {$ref: '#/components/schemas/MCPCatalogMonitorSnapshot'}
+        signal: {$ref: '#/components/schemas/MCPCatalogMonitorSignal'}
+    MCPAdmissionHistoryResponse:
+      description: Account-owned admission receipts ordered by descending audit sequence with a continuation cursor.
+      type: object
+      required: [items, limit]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/MCPAdmissionEvidence'}
+        limit: {type: integer, minimum: 1, maximum: 50}
+        next_cursor: {type: string}
+    MCPConnectionHealthSnapshot:
+      type: object
+      description: Account-wide or app-filtered connection issues with complete counts independent of issue pagination. Incomplete inventory cannot prove alert recovery.
+      required: [observed_at, complete, counts, total_issues, items]
+      properties:
+        observed_at: {type: string, format: date-time}
+        complete: {type: boolean}
+        counts: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        total_issues: {type: integer, minimum: 0}
+        items: {type: array, items: {$ref: '#/components/schemas/MCPConnectionHealthIssue'}}
+        next_offset: {type: integer, minimum: 0, maximum: 10000}
+    MCPCatalogOAuthResponse:
+      description: Guided OAuth outcome; token and verifier values are never returned.
+      type: object
+      required: [revision, state]
+      properties:
+        revision: {type: string, format: uuid}
+        state: {type: string, enum: [authorization_pending, connected, disconnected, compatible, unsupported, unverified, unavailable]}
+        authorization_url: {type: string, format: uri}
+        callback_state: {type: string, description: One-time state to validate the local browser callback}
+        provider_revocation: {type: string, enum: [not_required, pending, provider_acknowledged, manual_required]}
+        checks: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/MCPCatalogOAuthCheck'}}
+    MCPCatalogMonitorSignal:
+      description: Freshness-aware catalog health and evidence links used in monitoring notifications.
+      type: object
+      required: [state, changed_count]
+      properties:
+        state: {type: string, enum: [disabled, healthy, drift, unavailable]}
+        role: {type: string}
+        checked_at: {type: string, format: date-time}
+        receipt_id: {type: string, format: uuid}
+        evidence_path: {type: string}
+        changed_count: {type: integer, minimum: 0}
+        unavailable_roles: {type: array, items: {type: string}}
+        drifted_roles: {type: array, items: {type: string}}
+        roles:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/MCPCatalogMonitorSignal'}
+    MCPCatalogReceipt:
+      description: Retained catalog transition with server-computed drift, hashes and capture time.
+      type: object
+      required: [id, revision, captured_at, state, baseline_sha256, changed_count, truncated]
+      properties:
+        role: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$", default: default}
+        id: {type: string, format: uuid}
+        revision: {type: string, format: uuid}
+        captured_at: {type: string, format: date-time}
+        state: {type: string, enum: [healthy, drift, unavailable]}
+        baseline_sha256: {type: string}
+        observed_sha256: {type: string}
+        changed_count: {type: integer, minimum: 0}
+        diff: {type: object, additionalProperties: true}
+        truncated: {type: boolean}
+    MCPCatalogMonitorConfigRequest:
+      description: Reviewed baseline and observer settings for one independently monitored MCP role.
+      type: object
+      required: [enabled, baseline, freshness_seconds]
+      properties:
+        observer: {$ref: '#/components/schemas/MCPCatalogObserverConfig'}
+        token_env: {type: string, maxLength: 128, description: Environment variable name only; credentials are never stored}
+        role: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$", default: default}
+        enabled: {type: boolean}
+        baseline: {type: object, additionalProperties: true, description: Reviewed format-2 MCP catalog contract}
+        freshness_seconds: {type: integer, minimum: 15, maximum: 3600, default: 90}
+    MCPPolicyConvergenceSnapshot:
+      description: "Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token enforcement is not attested. Correlates retained admission evidence when available."
+      type: object
+      required: [state, captured_at, desired_revision, serving_gateways, pending_gateways, stale_gateways, unconverged_gateways]
+      properties:
+        state: {type: string, enum: [active, pending, unverified, paused, unknown]}
+        captured_at: {type: string, format: date-time}
+        desired_revision: {type: integer, format: int64}
+        serving_gateways: {type: integer, format: int64}
+        pending_gateways: {type: integer, format: int64}
+        stale_gateways: {type: integer, format: int64}
+        unconverged_gateways: {type: integer, format: int64, description: "Distinct gateways with stale/missing/future reports or pending replay."}
+        deployment_id: {type: string, format: uuid}
+        admission_id: {type: string, format: uuid}
+        policy_status_path: {type: string}
+        admission_history_path: {type: string}
+
+    MCPCatalogOAuthRequest:
+      description: Account-authorized guided OAuth action bound to an exact role revision.
+      type: object
+      required: [action, role, revision]
+      properties:
+        action: {type: string, enum: [begin, complete, disconnect, check]}
+        role: {type: string}
+        revision: {type: string, format: uuid}
+        redirect_uri: {type: string, description: Begin only; HTTP IPv4 loopback callback with an explicit port and callback path}
+        state: {type: string, description: Complete only; one-time authorization state}
+        code: {type: string, description: Complete only; authorization code exchanged with sealed PKCE verifier}
+        denied: {type: boolean, description: Consume a denied authorization callback without a token exchange}
+    MCPCatalogOAuthRevocation:
+      description: Durable RFC 7009 progress; acknowledgement also covers tokens already invalid at the provider. Private fields are omitted from all public projections.
+      type: object
+      required: [id, state, attempts, next_attempt_at, refresh_acknowledged, access_acknowledged]
+      properties:
+        id: {type: string, format: uuid}
+        state: {type: string, enum: [pending, provider_acknowledged, manual_required]}
+        attempts: {type: integer, minimum: 0, maximum: 8}
+        next_attempt_at: {type: string, format: date-time}
+        failure_reason: {type: string, enum: [credential_unavailable, provider_unavailable]}
+        acknowledged_at: {type: string, format: date-time}
+        refresh_acknowledged: {type: boolean}
+        access_acknowledged: {type: boolean}
+        private_config: {allOf: [{$ref: '#/components/schemas/MCPCatalogObserverOAuthConfig'}], readOnly: true, description: Internal frozen binding omitted from responses}
+        private_client_ciphertext: {type: string, format: byte, readOnly: true, description: Internal sealed client credential captured at disconnect and omitted from responses}
+        private_ciphertext: {type: string, format: byte, readOnly: true, description: Internal sealed retired grant omitted from responses}
+        private_lease_id: {type: string, readOnly: true, description: Internal fence omitted from responses}
+        private_lease_until: {type: string, format: date-time, readOnly: true, description: Internal lease omitted from responses}
+    MCPCatalogObserverConfig:
+      description: Opt-in platform observer intent for one MCP role using its canonical app origin and an optional sealed secret reference.
+      type: object
+      required: [enabled, paused, interval_seconds, timeout_seconds, endpoint]
+      properties:
+        enabled: {type: boolean}
+        paused: {type: boolean}
+        interval_seconds: {type: integer, minimum: 30, maximum: 3600, default: 30}
+        timeout_seconds: {type: integer, minimum: 1, maximum: 30, default: 10}
+        endpoint: {type: string, maxLength: 512, default: /mcp}
+        secret_ref: {type: string, description: App default-scope secret named secret:NAME; its current value is loaded for each check}
+        oauth: {$ref: '#/components/schemas/MCPCatalogObserverOAuthConfig'}
+    MCPOAuthRetirement:
+      description: Account-owned grant retirement metadata surviving app deletion; sealed data is omitted from public responses.
+      type: object
+      required: [id, app_id, app_slug, role, reason, state, created_at, retain_until, revocation, allow_active_grant_revocation, history]
+      properties:
+        id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        app_slug: {type: string}
+        role: {type: string}
+        reason: {type: string, description: Retirement cause or unknown issuance outcome}
+        state: {type: string, enum: [awaiting_issuance, pending, held, installed, manual_required, provider_acknowledged, manually_acknowledged, expired]}
+        created_at: {type: string, format: date-time}
+        retain_until: {type: string, format: date-time, description: Seven-day maximum sealed credential retention deadline}
+        revocation: {$ref: '#/components/schemas/MCPCatalogOAuthRevocation'}
+        allow_active_grant_revocation: {type: boolean, description: Explicit operator authorization to retire a grant despite a matching active connection}
+        history: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/MCPOAuthRetirementEvent'}}
+    MCPCatalogOAuthEvent:
+      description: OAuth lifecycle metadata without token values or provider response bodies.
+      type: object
+      required: [id, at, kind]
+      properties:
+        id: {type: string, format: uuid}
+        at: {type: string, format: date-time}
+        kind: {type: string, enum: [connected, renewed, reauthorization_required, disconnected, revocation_acknowledged, revocation_manual_required, credentials_discarded]}
+    MCPOAuthRetirementEvent:
+      description: Bounded metadata-only retirement action history.
+      type: object
+      required: [at, action]
+      properties:
+        at: {type: string, format: date-time}
+        action: {type: string, maxLength: 64}
+    MCPOAuthRetirementsResponse:
+      description: Bounded administrator-only account retirement history.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/MCPOAuthRetirement'}}
+        next_offset: {type: integer, minimum: 0, maximum: 10000}
+    MCPAdmissionGateway:
+      description: Gateway replay metadata captured with a retained traffic admission decision.
+      type: object
+      required: [node_name, boot_id, revision, observed_at]
+      properties:
+        node_name: {type: string}
+        boot_id: {type: [string, "null"], format: uuid}
+        revision: {type: [integer, "null"], format: int64}
+        observed_at: {type: [string, "null"], format: date-time}
+
+    MCPCatalogOAuthFlow:
+      description: Internal sealed one-time authorization state omitted from public monitor projections.
+      type: object
+      required: [state_sha256, ciphertext, expires_at, consumed]
+      properties:
+        state_sha256: {type: string, readOnly: true}
+        ciphertext: {type: string, format: byte, readOnly: true}
+        expires_at: {type: string, format: date-time, readOnly: true}
+        consumed: {type: boolean, readOnly: true}
+    MCPCatalogMonitorSnapshot:
+      description: Configuration, latest observation and bounded transition history for a catalog monitor.
+      type: object
+      required: [config, history, state]
+      properties:
+        oauth_lifecycle: {$ref: '#/components/schemas/MCPCatalogOAuthLifecycle'}
+        observer_status: {$ref: '#/components/schemas/MCPCatalogObserverStatus'}
+        roles:
+          type: object
+          readOnly: true
+          maxProperties: 16
+          description: Additional role views when included; role-scoped reads omit this field. Use all_roles for aggregate state.
+          additionalProperties: {$ref: '#/components/schemas/MCPCatalogMonitorSnapshot'}
+        config: {$ref: '#/components/schemas/MCPCatalogMonitorConfig'}
+        checked_at: {type: string, format: date-time}
+        latest: {$ref: '#/components/schemas/MCPCatalogReceipt'}
+        history:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/MCPCatalogReceipt'}
+        state: {type: string, enum: [disabled, healthy, drift, unavailable]}
+    MCPAdmissionEvidence:
+      description: "Version 1 durable traffic admission snapshot in deployment audit data.mcp_admission. Accepted commits with traffic; rejected is saved after rollback. Existing deployment audit retention applies. This is historical admission evidence, not a lease or live authorization proof."
+      type: object
+      required: [version, id, deployment_id, traffic_percent, captured_at, outcome, expected_fingerprint, gateways]
+      properties:
+        version: {type: integer, enum: [1]}
+        id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        traffic_percent: {type: integer, minimum: 0, maximum: 100}
+        captured_at: {type: string, format: date-time}
+        outcome: {type: string, enum: [accepted, rejected]}
+        reason: {type: string, description: "Public rejection code, or traffic_update_failed for a later traffic failure. Raw errors are never stored."}
+        expected_fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
+        observed_fingerprint: {type: string, pattern: '^[0-9a-f]{64}$'}
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        observed_revision: {type: integer, format: int64, minimum: 0}
+        gateways:
+          type: array
+          items: {$ref: '#/components/schemas/MCPAdmissionGateway'}
+
+    MCPCatalogOAuthLifecycle:
+      description: Durable local connection state, provider revocation progress and bounded metadata audit history.
+      type: object
+      required: [local_state, history]
+      properties:
+        credential_state: {type: string, enum: [credential_changed, retirement_held, reconnect_required]}
+        local_state: {type: string, enum: [connected, disconnected, reauthorization_required]}
+        revocation: {$ref: '#/components/schemas/MCPCatalogOAuthRevocation'}
+        history: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/MCPCatalogOAuthEvent'}}
+    MCPCatalogObservationRequest:
+      description: Complete role catalog or an unavailable observation bound to its reviewed revision.
+      type: object
+      required: [revision, unavailable]
+      properties:
+        role: {type: string, pattern: "^[a-z][a-z0-9_-]{0,31}$", default: default}
+        revision: {type: string, format: uuid}
+        unavailable: {type: boolean}
+        observed: {type: object, additionalProperties: true, description: Complete observed format-2 contract; omit when unavailable is true}
+    MCPConnectionHealthIssue:
+      type: object
+      description: Actionable connection health metadata without sealed grants or provider responses.
+      required: [id, app_id, app_slug, role, kind, state, recovery_action, recovery_path]
+      properties:
+        id: {type: string}
+        app_id: {type: string, format: uuid}
+        app_slug: {type: string}
+        role: {type: string}
+        kind: {type: string, enum: [reauthorization_required, renewal_failed, retirement_expiring, issuance_unknown]}
+        state: {type: string}
+        app_deleted: {type: boolean}
+        retirement_id: {type: string, format: uuid}
+        expires_at: {type: string, format: date-time}
+        recovery_action: {type: string}
+        recovery_path: {type: string}
+    MCPOAuthRetirementAction:
+      description: Explicit retirement recovery; allowing active grant revocation may invalidate a replacement connection.
+      type: object
+      required: [action]
+      properties:
+        action: {type: string, enum: [retry, acknowledge_manual]}
+        allow_active_grant_revocation: {type: boolean}
+    MCPCatalogObserverStatus:
+      description: Managed observer scheduling and recovery metadata without credential values or raw source errors.
+      type: object
+      required: [state, consecutive_failures]
+      properties:
+        state: {type: string, enum: [scheduled, checking, degraded, overdue, paused, stopped]}
+        last_attempt_at: {type: string, format: date-time}
+        last_success_at: {type: string, format: date-time}
+        next_check_at: {type: string, format: date-time}
+        failure_reason: {type: string, enum: [credential_unavailable, source_unavailable, comparison_unavailable]}
+        consecutive_failures: {type: integer, minimum: 0, maximum: 16}
+        lease_id: {type: string, format: uuid, readOnly: true, description: Internal fencing metadata omitted from public monitor projections}
+        lease_until: {type: string, format: date-time}
+        oauth: {$ref: '#/components/schemas/MCPCatalogObserverOAuthStatus'}
+        oauth_renewal: {$ref: '#/components/schemas/MCPCatalogOAuthRenewal'}
+        oauth_flow: {$ref: '#/components/schemas/MCPCatalogOAuthFlow'}
+    MCPCatalogObserverOAuthStatus:
+      description: Public OAuth connection health; sealed credentials and source fingerprint are omitted from responses.
+      type: object
+      required: [state]
+      properties:
+        retirement_id: {type: string, format: uuid, readOnly: true, description: Internal issuance reservation identity omitted from public responses}
+        state: {type: string, enum: [connected, reauthorization_required]}
+        reauthorization_needed: {type: boolean, readOnly: true, description: Reconnect is required or credentials failed within fifteen minutes of expiry}
+        expires_at: {type: string, format: date-time}
+        last_renewal_at: {type: string, format: date-time}
+        ciphertext: {type: string, format: byte, readOnly: true, description: Internal sealed storage omitted from public responses}
+        source_sha256: {type: string, readOnly: true, description: Internal source fingerprint omitted from public responses}
+        granted_scopes: {type: array, maxItems: 16, items: {type: string}}
+    MCPCatalogOAuthCheck:
+      description: Public metadata compatibility result without source errors, provider response bodies or credentials.
+      type: object
+      required: [name, state]
+      properties:
+        name: {type: string}
+        state: {type: string, enum: [passed, failed, unverified]}
+        reason: {type: string, enum: [metadata_not_configured, metadata_unavailable, reviewed_endpoint_mismatch, capability_not_advertised, required_capability_not_supported, scope_not_advertised]}
     RealtimePublisherCredentialRequest:
       type: object
       required:
@@ -62639,6 +63174,7 @@ components:
       type: object
       required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, request_policy, edge_rules, cors_presets, response_cache, egress_allowlist, cpu_limit, scheduler_scaling]
       properties:
+        mcp_convergence: {$ref: '#/components/schemas/MCPPolicyConvergenceSnapshot'}
         app_id: { type: string }
         desired_revision: { type: integer, format: int64, minimum: 0, description: Latest desired control-plane revision for app-cache and deployment traffic policy. }
         state: { type: string, enum: [active, pending, unverified] }
@@ -62660,7 +63196,12 @@ components:
       type: object
       required: [desired_revision, state, serving_gateways, applied_gateways, pending_gateways, stale_gateways]
       properties:
-        scope: { type: string, enum: [app, account] }
+        legacy_fleet_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unknown historical ownership requires replay through this fleet-wide position; later known unrelated mutations do not raise it.
+        scope: { type: string, enum: [app, account, fleet] }
         desired_revision: { type: integer, format: int64, minimum: 0 }
         state: { type: string, enum: [active, pending, unverified] }
         serving_gateways: { type: integer, minimum: 0 }
@@ -67390,6 +67931,25 @@ components:
         expected_serving_deployment_id:
           type: string
           description: "Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the update returns 409 traffic_serving_changed without changing traffic."
+        expected_mcp_access_policy:
+          type: object
+          description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."
+          additionalProperties: false
+          required: [resource, fingerprint]
+          properties:
+            resource:
+              type: string
+              format: uri
+              description: "Reviewed HTTPS MCP endpoint without credentials, query or fragment."
+            account_revision:
+              type: integer
+              format: int64
+              minimum: 1
+              description: "Optional audited account edge-rule revision. Returns 409 mcp_account_revision_changed, mcp_gateway_evidence_unavailable, mcp_gateway_evidence_stale, or mcp_gateway_replay_pending when the transaction cannot admit promotion."
+            fingerprint:
+              type: string
+              pattern: '^[0-9a-f]{64}$'
+              description: "Version 1 SHA-256 fingerprint returned by gregale mcp access audit."
 
     AdvanceCanaryRequest:
       description: "Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step observed by the progression worker; APID derives the next traffic percentage and rejects stale observations."
@@ -73766,14 +74326,14 @@ components:
           example: "2026-08-27T14:23:19.482Z"
         kind:
           type: string
-          enum: [deploy.created, deploy.traffic_changed, deploy.rolled_back, deploy.rolled_forward, deploy.stuck, deploy.recovered]
-          description: "Closed-set event kind (migrations/00477 enforces the same CHECK on the deployments_audit table)."
+          enum: [deploy.created, deploy.traffic_changed, deploy.rolled_back, deploy.rolled_forward, deploy.stuck, deploy.recovered, deploy.mcp_admission, deploy.source_ref, deploy.local_tarball, deploy.health_probe_failed, deploy.health_recovered, deploy.removed, deploy.rollout_started, deploy.rollout_completed, deploy.rollout_aborted, deploy.canary_step_advanced, deploy.alert_rule_fired, deploy.scan_regressed, deploy.mcp_task_held, deploy.mcp_task_retry_requested, deploy.mcp_task_retry_started, deploy.mcp_task_retry_completed, deploy.mcp_task_recovered, deploy.mcp_task_hold_cancelled, deploy.worker_drain_started, deploy.worker_drain_completed]
+          description: "Deployment audit event kind. Includes the current deployment_audit CHECK values and retained legacy SDK spellings."
         actor:
           type: string
           description: "Service-account UUID or operator CLI sentinel (`operator:cli:recover_rollout`, `meterd:safedeploy`, `meterd:canary_progression`). Operators identify who did what from this column."
           example: "meterd:safedeploy"
         data:
-          description: "Verbatim jsonb payload at emit time (kind-specific shape — see description)."
+          description: "Verbatim jsonb payload at emit time. For deploy.mcp_admission, mcp_admission contains MCPAdmissionEvidence: a committed or rejected traffic decision with policy digests and gateway replay metadata. No private JWT actions or credentials are retained."
         account_id:
           type: string
           description: "Owning account UUID (cross-tenant IDOR posture)."
@@ -77619,6 +78179,8 @@ components:
             - mcp_tasks_oldest_age_seconds
             - mcp_tasks_metrics_stale
             - mcp_task_promotion_hold_age_seconds
+            - mcp_policy_unconverged_gateways
+            - mcp_policy_unverified
             - pre_auth_pressure
             - edge_validation_failures
             - edge_rejections
@@ -77717,7 +78279,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, edge_rule_hits, edge_rule_log_hits]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, edge_rule_hits, edge_rule_log_hits]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -77757,7 +78319,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, edge_rule_hits, edge_rule_log_hits]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, edge_rule_hits, edge_rule_log_hits]
         comparison: { type: string, enum: [gt, gte, lt, lte] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }

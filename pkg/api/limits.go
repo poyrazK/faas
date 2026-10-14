@@ -10930,3 +10930,75 @@ const MaxObjectChecksumValueBytes = 128
 const MaxObjectAttributesHeaderBytes = 128
 const MaxObjectStorageClassBytes = 64
 const MaxObjectAttributesSelections = 5
+
+// MCP catalog monitoring bounds retained transition evidence and request work.
+const (
+	MCPCatalogMonitorMaxRequestBytes         = 1 << 20
+	MCPCatalogMonitorHistoryLimit            = 32
+	MCPCatalogMonitorMaxChanges              = 128
+	MCPCatalogMonitorMaxDiffBytes            = 64 << 10
+	MCPCatalogMonitorDefaultFreshnessSeconds = 90
+	MCPCatalogMonitorMinFreshnessSeconds     = 15
+	MCPCatalogMonitorMaxFreshnessSeconds     = 3600
+)
+
+const MCPCatalogMonitorRoleLimit = 16
+
+const (
+	MCPCatalogObserverDefaultIntervalSeconds = 30
+	MCPCatalogObserverMinIntervalSeconds     = 30
+	MCPCatalogObserverMaxIntervalSeconds     = 3600
+	MCPCatalogObserverDefaultTimeoutSeconds  = 10
+	MCPCatalogObserverMaxTimeoutSeconds      = 30
+	MCPCatalogObserverPollSeconds            = 5
+	MCPCatalogObserverLeaseSeconds           = 45
+	MCPCatalogObserverConcurrency            = 4
+	MCPCatalogObserverMaxBackoffSeconds      = 600
+	MCPCatalogObserverMaxFailures            = 16
+	MCPCatalogObserverMaxEndpointBytes       = 512
+)
+
+// OAuth refresh work shares the managed observer lease and bounded transport.
+const (
+	MCPCatalogOAuthMaxClientIDBytes   = 512
+	MCPCatalogOAuthMaxTokenBytes      = 16384
+	MCPCatalogOAuthMaxResponseBytes   = 65536
+	MCPCatalogOAuthRefreshSkewSeconds = 60
+	MCPCatalogOAuthMaxExpirySeconds   = 31536000
+)
+
+const (
+	MCPCatalogOAuthFlowSeconds   = 300
+	MCPCatalogOAuthMaxScopes     = 16
+	MCPCatalogOAuthMaxScopeBytes = 128
+)
+
+const (
+	MCPCatalogOAuthMaxCallbackPort = 65535
+	MCPCatalogOAuthMaxChecks       = 8
+)
+
+const (
+	MCPCatalogOAuthMaxLifecycleHistory         = 64
+	MCPCatalogOAuthRevocationMaxAttempts       = 8
+	MCPCatalogOAuthRevocationMaxBackoffSeconds = 3600
+	MCPCatalogOAuthReminderSeconds             = 900
+)
+
+const (
+	MCPOAuthRetirementMaxOutstanding      = 64
+	MCPOAuthRetirementRetentionSeconds    = 7 * 24 * 3600
+	MCPOAuthRetirementMetadataSeconds     = 30 * 24 * 3600
+	MCPOAuthRetirementPageSize            = 50
+	MCPOAuthRetirementMaxOffset           = 10000
+	MCPOAuthRetirementHistoryLimit        = 32
+	MCPOAuthRetirementInstallGraceSeconds = 10
+	MCPOAuthRetirementHeldPollSeconds     = 60
+)
+
+const (
+	MCPConnectionHealthSourceLimit        = 4096
+	MCPConnectionHealthPageSize           = 50
+	MCPConnectionHealthMaxOffset          = 10000
+	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
+)

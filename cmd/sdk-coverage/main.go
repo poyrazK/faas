@@ -856,6 +856,16 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment}/route-policy":                       "GetAppsDeploymentRoutePolicySnapshot", // immutable gateway policy captured with a deployment
 	"PATCH /v1/apps/{slug}/deployments/{deployment}/openapi":                          "PatchAppsDeploymentOpenAPIDoc",        // manual upload; same store as cold-boot capture
 	"DELETE /v1/apps/{slug}/deployments/{deployment}/openapi":                         "DeleteAppsDeploymentOpenAPIDoc",       // wipe the captured doc; re-captures on next cold boot
+	// MCP admission evidence and independent catalog monitoring roles.
+	"GET /v1/mcp/admissions/{id}":                           "GetMCPAdmissionReceipt",
+	"GET /v1/deployments/{id}/mcp-admissions":               "ListMCPAdmissionHistory",
+	"GET /v1/apps/{slug}/mcp-catalog-monitor":               "GetMCPCatalogMonitor",
+	"PUT /v1/apps/{slug}/mcp-catalog-monitor":               "ConfigureMCPCatalogMonitor",
+	"GET /v1/mcp-connection-health":                         "GetMCPConnectionHealth",
+	"GET /v1/mcp-oauth-retirements":                         "ListMCPOAuthRetirements",
+	"POST /v1/mcp-oauth-retirements/{id}":                   "RecoverMCPOAuthRetirement",
+	"POST /v1/apps/{slug}/mcp-catalog-monitor/oauth":        "MCPCatalogOAuth",
+	"POST /v1/apps/{slug}/mcp-catalog-monitor/observations": "ReportMCPCatalogObservation",
 	// ADR-426: typed MCP hosting probes and task rollout operations.
 	"GET /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health": "ProbeMCPInstanceHealth",
 	"POST /v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe": "ProbeMCPInstanceProtocol",

@@ -68,6 +68,7 @@ type Querier interface {
 	AppRuntimeConfigChangedAtInScope(ctx context.Context, db DBTX, arg AppRuntimeConfigChangedAtInScopeParams) (pgtype.Timestamptz, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
+	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
 	AppendProfileGateRollbackAudit(ctx context.Context, db DBTX, arg AppendProfileGateRollbackAuditParams) (int64, error)
 	AppendRolloutRecoveryAudit(ctx context.Context, db DBTX, arg AppendRolloutRecoveryAuditParams) (int64, error)
 	AppendServiceRolloutBindingAudit(ctx context.Context, db DBTX, arg AppendServiceRolloutBindingAuditParams) (int64, error)
@@ -393,6 +394,7 @@ type Querier interface {
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
+	CountMCPOAuthRetirements(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountManagedPostgresCutoverTargetBindings(ctx context.Context, db DBTX, id string) (int64, error)
 	CountManagedPostgresHealth(ctx context.Context, db DBTX, arg CountManagedPostgresHealthParams) (CountManagedPostgresHealthRow, error)
 	CountManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1225,6 +1227,9 @@ type Querier interface {
 	GetLatestDeploymentRegistryVerification(ctx context.Context, db DBTX, arg GetLatestDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
 	GetLatestOwnedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestOwnedBuildExportPublicationParams) (BuildExportPublication, error)
 	GetLatestScopedBuildExportPublication(ctx context.Context, db DBTX, arg GetLatestScopedBuildExportPublicationParams) (BuildExportPublication, error)
+	GetMCPAdmissionReceipt(ctx context.Context, db DBTX, arg GetMCPAdmissionReceiptParams) ([]byte, error)
+	GetMCPCatalogMonitor(ctx context.Context, db DBTX, arg GetMCPCatalogMonitorParams) ([]byte, error)
+	GetMCPOAuthRetirementApp(ctx context.Context, db DBTX, arg GetMCPOAuthRetirementAppParams) (string, error)
 	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
 	GetManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresCustomerDatabaseParams) (ManagedPostgresDatabase, error)
@@ -1520,6 +1525,7 @@ type Querier interface {
 	InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error
 	InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
+	InsertMCPOAuthRetirement(ctx context.Context, db DBTX, arg InsertMCPOAuthRetirementParams) (int64, error)
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
@@ -1671,6 +1677,7 @@ type Querier interface {
 	InstallApplicationStandardScalarControls(ctx context.Context, db DBTX, arg InstallApplicationStandardScalarControlsParams) error
 	InstallApplicationStandardSigner(ctx context.Context, db DBTX, arg InstallApplicationStandardSignerParams) error
 	InstallAutomaticApplicationStandardIntent(ctx context.Context, db DBTX, arg InstallAutomaticApplicationStandardIntentParams) (int64, error)
+	InstallMCPOAuthRetirement(ctx context.Context, db DBTX, arg InstallMCPOAuthRetirementParams) (int64, error)
 	InstanceByID(ctx context.Context, db DBTX, id pgtype.UUID) (InstanceByIDRow, error)
 	// Live instances on a specific node — input to the arbiter's
 	// per-instance decision. Limited to states the arbiter can act on:
@@ -2025,6 +2032,9 @@ type Querier interface {
 	ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit int32) ([]ExclusiveWorkOperation, error)
 	ListDueInvocationRows(ctx context.Context, db DBTX, arg ListDueInvocationRowsParams) ([]Invocation, error)
 	ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error)
+	ListDueMCPCatalogOAuthRevocations(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueMCPCatalogOAuthRevocationsRow, error)
+	ListDueMCPCatalogObservers(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueMCPCatalogObserversRow, error)
+	ListDueMCPOAuthRetirements(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueMCPOAuthRetirementsRow, error)
 	ListDueManagedPostgresBindings(ctx context.Context, db DBTX, arg ListDueManagedPostgresBindingsParams) ([]ListDueManagedPostgresBindingsRow, error)
 	ListDueManagedPostgresCutovers(ctx context.Context, db DBTX, arg ListDueManagedPostgresCutoversParams) ([]ManagedPostgresCutover, error)
 	ListDueRouteMonitors(ctx context.Context, db DBTX, batchLimit int32) ([]ListDueRouteMonitorsRow, error)
@@ -2117,6 +2127,8 @@ type Querier interface {
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
+	ListMCPAdmissionHistory(ctx context.Context, db DBTX, arg ListMCPAdmissionHistoryParams) ([]ListMCPAdmissionHistoryRow, error)
+	ListMCPOAuthRetirements(ctx context.Context, db DBTX, arg ListMCPOAuthRetirementsParams) ([][]byte, error)
 	ListManagedPostgresAccountingCoverage(ctx context.Context, db DBTX, arg ListManagedPostgresAccountingCoverageParams) ([]ListManagedPostgresAccountingCoverageRow, error)
 	ListManagedPostgresCustomerDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error)
 	ListManagedPostgresCutoverCredentials(ctx context.Context, db DBTX, id string) ([]ManagedPostgresCutoverCredential, error)
@@ -2397,6 +2409,11 @@ type Querier interface {
 	LockLayerArtifactRetention(ctx context.Context, db DBTX, storageKey string) (LockLayerArtifactRetentionRow, error)
 	LockLegacyInvocationReceiptFence(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	LockLifecycleSuccessorProject(ctx context.Context, db DBTX, projectID string) (string, error)
+	LockMCPAccessPolicyAccount(ctx context.Context, db DBTX, accountID string) error
+	LockMCPCatalogMonitor(ctx context.Context, db DBTX, arg LockMCPCatalogMonitorParams) ([]byte, error)
+	LockMCPCatalogMonitorApp(ctx context.Context, db DBTX, arg LockMCPCatalogMonitorAppParams) (pgtype.UUID, error)
+	LockMCPOAuthRetirement(ctx context.Context, db DBTX, arg LockMCPOAuthRetirementParams) ([]byte, error)
+	LockMCPOAuthRetirementAccount(ctx context.Context, db DBTX, accountID string) error
 	LockManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg LockManagedPostgresCustomerDatabaseParams) (pgtype.UUID, error)
 	LockManagedPostgresCutoverAccount(ctx context.Context, db DBTX, accountID string) (string, error)
 	LockManagedPostgresCutoverAdmissionApp(ctx context.Context, db DBTX, appID string) (LockManagedPostgresCutoverAdmissionAppRow, error)
@@ -2539,6 +2556,13 @@ type Querier interface {
 	LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockWorkflowScheduleTargetRow, error)
 	LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, runID string) ([]WorkflowStep, error)
 	LookupCustomerOperationSubmission(ctx context.Context, db DBTX, arg LookupCustomerOperationSubmissionParams) (LookupCustomerOperationSubmissionRow, error)
+	MCPAdmissionEvidenceExists(ctx context.Context, db DBTX, arg MCPAdmissionEvidenceExistsParams) (bool, error)
+	MCPConnectionHealthBindings(ctx context.Context, db DBTX, arg MCPConnectionHealthBindingsParams) ([][]byte, error)
+	MCPConnectionHealthRetirements(ctx context.Context, db DBTX, arg MCPConnectionHealthRetirementsParams) ([][]byte, error)
+	MCPOAuthRetirementActiveBinding(ctx context.Context, db DBTX, arg MCPOAuthRetirementActiveBindingParams) (pgtype.Bool, error)
+	MCPOAuthRetirementBindingBusy(ctx context.Context, db DBTX, arg MCPOAuthRetirementBindingBusyParams) (bool, error)
+	MCPOAuthRetirementClientCiphertext(ctx context.Context, db DBTX, arg MCPOAuthRetirementClientCiphertextParams) ([]byte, error)
+	MCPOAuthRetirementFlowCurrent(ctx context.Context, db DBTX, arg MCPOAuthRetirementFlowCurrentParams) (bool, error)
 	ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error)
 	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (pgtype.UUID, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
@@ -2975,12 +2999,14 @@ type Querier interface {
 	// Patches for any other base deployment are obsolete once a newer build is
 	// live; expired patches are never served.
 	PruneDevSourcePatches(ctx context.Context, db DBTX, arg PruneDevSourcePatchesParams) (int64, error)
+	PruneEdgeRuleReplayHistory(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PruneEnvironmentGitOpsReports(ctx context.Context, db DBTX, arg PruneEnvironmentGitOpsReportsParams) error
 	PruneEventExecutionOutcomes(ctx context.Context, db DBTX, arg PruneEventExecutionOutcomesParams) (int64, error)
 	PruneEventExecutionRoots(ctx context.Context, db DBTX, arg PruneEventExecutionRootsParams) (int64, error)
 	PruneExpiredAppHealthHistory(ctx context.Context, db DBTX, arg PruneExpiredAppHealthHistoryParams) (int64, error)
 	PruneExpiredRuntimeUpgradeGatewayReceipts(ctx context.Context, db DBTX, arg PruneExpiredRuntimeUpgradeGatewayReceiptsParams) (int64, error)
 	PruneInvocationAttemptHistory(ctx context.Context, db DBTX, arg PruneInvocationAttemptHistoryParams) (int64, error)
+	PruneMCPOAuthRetirementMetadata(ctx context.Context, db DBTX) error
 	PruneProfileCanaryChecks(ctx context.Context, db DBTX, arg PruneProfileCanaryChecksParams) error
 	PruneProfileDeploymentChecks(ctx context.Context, db DBTX, arg PruneProfileDeploymentChecksParams) error
 	PruneProfilePeriodicMonitors(ctx context.Context, db DBTX, arg PruneProfilePeriodicMonitorsParams) error
@@ -3022,6 +3048,8 @@ type Querier interface {
 	PutEnvironmentSecretReferenceSuppression(ctx context.Context, db DBTX, arg PutEnvironmentSecretReferenceSuppressionParams) error
 	PutEnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg PutEnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error)
+	PutMCPCatalogMonitor(ctx context.Context, db DBTX, arg PutMCPCatalogMonitorParams) (int64, error)
+	PutMCPOAuthRetirement(ctx context.Context, db DBTX, arg PutMCPOAuthRetirementParams) (int64, error)
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	QueueApplicationStandardExceptionChange(ctx context.Context, db DBTX, arg QueueApplicationStandardExceptionChangeParams) (int64, error)
 	// This runs in the same transaction as the installed enrollment and target.
@@ -3075,6 +3103,7 @@ type Querier interface {
 	QueuedCustomerOperationJobTasks(ctx context.Context, db DBTX, pageLimit int32) ([]JobTask, error)
 	// An unqualified legacy row blocks the whole key; guessing could double-debit.
 	ReadAccountCreditConsumption(ctx context.Context, db DBTX, arg ReadAccountCreditConsumptionParams) (ReadAccountCreditConsumptionRow, error)
+	ReadAccountEdgeRulePolicyPosition(ctx context.Context, db DBTX, accountID pgtype.UUID) (ReadAccountEdgeRulePolicyPositionRow, error)
 	ReadActiveRouteMonitorIncident(ctx context.Context, db DBTX, arg ReadActiveRouteMonitorIncidentParams) ([]byte, error)
 	ReadAlertRollback(ctx context.Context, db DBTX, fireID pgtype.UUID) ([]byte, error)
 	ReadAlertRollbackFireFacts(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]byte, error)
@@ -3205,6 +3234,11 @@ type Querier interface {
 	ReadLifecycleTrafficCandidates(ctx context.Context, db DBTX, arg ReadLifecycleTrafficCandidatesParams) ([]string, error)
 	ReadLifecycleTrafficFences(ctx context.Context, db DBTX) ([]byte, error)
 	ReadLifecycleTrafficInputs(ctx context.Context, db DBTX, appID string) ([]byte, error)
+	ReadMCPAccessPolicyAppAccount(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)
+	ReadMCPAccessPolicyRules(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ReadMCPAccessPolicyRulesRow, error)
+	ReadMCPGatewayPromotionEvidence(ctx context.Context, db DBTX, accountID pgtype.UUID) (ReadMCPGatewayPromotionEvidenceRow, error)
+	ReadMCPOAuthRetirement(ctx context.Context, db DBTX, arg ReadMCPOAuthRetirementParams) ([]byte, error)
+	ReadMCPPolicyConvergenceSnapshot(ctx context.Context, db DBTX, arg ReadMCPPolicyConvergenceSnapshotParams) (ReadMCPPolicyConvergenceSnapshotRow, error)
 	ReadManagedPostgresCloneRestoreProof(ctx context.Context, db DBTX, arg ReadManagedPostgresCloneRestoreProofParams) (ManagedPostgresRestoreProof, error)
 	ReadManagedPostgresCreationReceipt(ctx context.Context, db DBTX, arg ReadManagedPostgresCreationReceiptParams) (ManagedPostgresCreationReceipt, error)
 	ReadManagedPostgresHealthSnapshots(ctx context.Context, db DBTX, arg ReadManagedPostgresHealthSnapshotsParams) ([]ReadManagedPostgresHealthSnapshotsRow, error)
