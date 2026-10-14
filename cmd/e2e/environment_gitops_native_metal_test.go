@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,7 +170,6 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 		pullEntered: pullEntered, releasePull: releasePull,
 	}
 	journey.run(t)
-
 }
 
 // A full-rootfs deployment still boots guest-init from drive0. Patch the
