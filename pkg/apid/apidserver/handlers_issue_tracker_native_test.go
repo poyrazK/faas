@@ -626,8 +626,16 @@ type nativeLinearLifecycleFake struct {
 	status        issuetracker.Status
 	reads, writes int
 	unsupported   bool
+	uncertain     bool
+	workflowErr   bool
 }
 
+func (p *nativeLinearLifecycleFake) VerifyLinearWorkflowState(_ context.Context, token, team, id, wanted string) error {
+	if token != "lin_api_secret" || team != p.status.TeamID || p.workflowErr {
+		return errors.New("workflow unavailable")
+	}
+	return nil
+}
 func (p *nativeLinearLifecycleFake) ReadStatus(_ context.Context, _ string, token string) (issuetracker.Status, error) {
 	p.reads++
 	if token != "lin_api_secret" {
@@ -649,6 +657,9 @@ func (p *nativeLinearLifecycleFake) SetStatus(_ context.Context, expected issuet
 		p.writes++
 		p.status.State = wanted
 		p.status.StateID = selected
+	}
+	if p.uncertain {
+		return issuetracker.Status{}, errors.New("unknown outcome")
 	}
 	return p.status, nil
 }
@@ -716,5 +727,82 @@ func TestNativeIssueLinearStatusPinsPreviewAndRequiresWorkflowSelection(t *testi
 	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connectionPath, api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 2}, nil), 200)
 	if w := e.Do(t, "GET", path, nil, nil); w.Code != 409 {
 		t.Fatal("disconnected provider read", w.Code)
+	}
+}
+
+// adr: 1218
+func TestNativeIssueLinearAutoSyncPersistsMappingsAndRecoversUncertainWrites(t *testing.T) {
+	e := apidserver.SetupPGHandler(t, api.PlanPro)
+	app := apidserver.SeedPGApp(t, e, "linear-auto-sync")
+	dep := apidserver.IssueSeedDeployment(t, e, app, 1)
+	fixed := apidserver.IssueSeedDeployment(t, e, app, 2)
+	reporterToken := apidserver.IssueCreateToken(t, e, app.Slug, dep)
+	reporter := map[string]string{"Authorization": "Bearer " + reporterToken.Token}
+	base := "/v1/apps/" + app.Slug
+	accepted := apidserver.IssueDecode[api.IssueEventResponse](t, e.Do(t, "POST", base+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "LinearAutoError", Message: "failed"}, reporter), 202)
+	issuePath := base + "/issues/" + accepted.IssueID
+	link := apidserver.IssueDecode[api.IssueTrackerLink](t, e.Do(t, "POST", issuePath+"/tracker-links", api.PutIssueTrackerLinkRequest{URL: "https://linear.app/acme/issue/PAY-42"}, nil), 200)
+	path := issuePath + "/tracker-links/" + link.ID
+	identity, _ := age.GenerateX25519Identity()
+	oldRecipient, oldIDs := *apidserver.SetSecretRecipient, *apidserver.MfaIdentities
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	*apidserver.MfaIdentities = func() []*age.X25519Identity { return []*age.X25519Identity{identity} }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = oldRecipient; *apidserver.MfaIdentities = oldIDs })
+	apidserver.IssueNativeSetLinearVerifier(e, &nativeLinearFake{})
+	conn := api.UpdateIssueTrackerLinearConnectionRequest{Connected: true, TeamID: uuid.NewString(), APIKey: "lin_api_secret"}
+	connPath := base + "/issue-tracker-linear-connection"
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connPath, conn, nil), 200)
+	provider := &nativeLinearLifecycleFake{status: issuetracker.Status{Provider: "linear", URL: link.URL, ID: uuid.NewString(), TeamID: conn.TeamID, StateID: uuid.NewString(), State: "open"}}
+	apidserver.IssueNativeSetClients(e, nil, provider)
+	preview := apidserver.IssueDecode[api.NativeLinearIssueTrackerStatus](t, e.Do(t, "GET", path+"/native-linear-status", nil, nil), 200)
+	policy := apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.Enabled || policy.Revision != 0 {
+		t.Fatal(policy)
+	}
+	in := api.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedLinearStatus: &preview, ExpectedIssueState: "open", LinearOpenStateID: provider.status.StateID, LinearResolvedStateID: uuid.NewString()}
+	if w := e.Do(t, "PUT", path+"/auto-sync", in, reporter); w.Code != 401 && w.Code != 403 {
+		t.Fatal("reporter delegated provider writes", w.Code)
+	}
+	provider.workflowErr = true
+	if w := e.Do(t, "PUT", path+"/auto-sync", in, nil); w.Code != 502 {
+		t.Fatal("invalid workflow enabled", w.Code, w.Body.String())
+	}
+	provider.workflowErr = false
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path+"/auto-sync", in, nil), 200)
+	if policy.Revision != 1 || policy.LinearResolvedStateID != in.LinearResolvedStateID || provider.writes != 0 {
+		t.Fatal(policy)
+	}
+	if w := e.Do(t, "PUT", path+"/auto-sync", in, nil); w.Code != 409 {
+		t.Fatal("stale policy replaced", w.Code)
+	}
+	apidserver.IssueDecode[api.Issue](t, e.Do(t, "POST", issuePath+"/actions", api.IssueActionRequest{Action: "resolve", FixedDeploymentID: fixed.ID}, nil), 200)
+	provider.uncertain = true
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.Outcome != "error" || policy.PendingState != "resolved" || provider.writes != 1 {
+		t.Fatal(policy, provider.writes)
+	}
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.Outcome != "applied" || policy.PendingState != "" || provider.writes != 1 {
+		t.Fatal("uncertain write repeated", policy, provider.writes)
+	}
+	conn.ExpectedRevision = 1
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connPath, conn, nil), 200)
+	if err := apidserver.IssueNativeAutoSyncDue(e, t.Context(), link.ID); err != nil {
+		t.Fatal(err)
+	}
+	apidserver.IssueNativeRunAutoSyncBatch(e, t.Context())
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "GET", path+"/auto-sync", nil, nil), 200)
+	if policy.Outcome != "conflict" || policy.NextCheckAt != nil || provider.writes != 1 {
+		t.Fatal("replacement connection retained delegation", policy)
+	}
+	apidserver.IssueDecode[api.IssueTrackerLinearConnection](t, e.Do(t, "PUT", connPath, api.UpdateIssueTrackerLinearConnectionRequest{ExpectedRevision: 2}, nil), 200)
+	policy = apidserver.IssueDecode[api.IssueTrackerAutoSync](t, e.Do(t, "PUT", path+"/auto-sync", api.UpdateIssueTrackerAutoSyncRequest{ExpectedRevision: policy.Revision}, nil), 200)
+	if policy.Enabled || policy.Outcome != "disabled" || policy.Revision != 2 {
+		t.Fatal("offline disable failed", policy)
 	}
 }

@@ -58304,6 +58304,8 @@ CREATE INDEX issue_tracker_links_page_idx ON public.issue_tracker_links(issue_id
 --
 
 CREATE TABLE public.issue_tracker_auto_sync (
+    linear_open_state_id text DEFAULT ''::text NOT NULL,
+    linear_resolved_state_id text DEFAULT ''::text NOT NULL,
     link_id uuid NOT NULL,
     app_id uuid NOT NULL,
     account_id uuid NOT NULL,
@@ -58323,6 +58325,7 @@ CREATE TABLE public.issue_tracker_auto_sync (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT issue_tracker_auto_sync_baseline_check CHECK ((jsonb_typeof(baseline) = 'object'::text)),
     CONSTRAINT issue_tracker_auto_sync_binding_fingerprint_check CHECK ((binding_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_tracker_auto_sync_linear_mapping_check CHECK ((((COALESCE((baseline ->> 'provider'::text), ''::text) = 'github'::text) AND (linear_open_state_id = ''::text) AND (linear_resolved_state_id = ''::text)) OR ((COALESCE((baseline ->> 'provider'::text), ''::text) = 'linear'::text) AND (linear_open_state_id ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'::text) AND (linear_resolved_state_id ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'::text) AND (linear_open_state_id <> '00000000-0000-0000-0000-000000000000'::text) AND (linear_resolved_state_id <> '00000000-0000-0000-0000-000000000000'::text) AND (linear_open_state_id <> linear_resolved_state_id)))),
     CONSTRAINT issue_tracker_auto_sync_outcome_check CHECK ((outcome = ANY (ARRAY['disabled'::text, 'matched'::text, 'pending'::text, 'applied'::text, 'error'::text, 'conflict'::text, 'blocked'::text]))),
     CONSTRAINT issue_tracker_auto_sync_pending_state_check CHECK ((pending_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
     CONSTRAINT issue_tracker_auto_sync_reason_check CHECK ((octet_length(reason) <= 128)),

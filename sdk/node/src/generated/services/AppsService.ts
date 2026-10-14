@@ -3106,7 +3106,7 @@ export class AppsService {
     });
   }
   /**
-   * Read an automatic native GitHub lifecycle policy.
+   * Read an automatic native tracker lifecycle policy.
    * Requires app read access and Issues entitlement. Unconfigured references return disabled with revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables an aligned policy.
    * @returns IssueTrackerAutoSync Opt-in policy and latest durable reconciliation outcome.
    * @throws ApiError
@@ -3125,7 +3125,7 @@ export class AppsService {
      */
     issueId: string,
     /**
-     * Stored GitHub reference whose automatic push policy is inspected or configured.
+     * Stored GitHub or Linear reference whose automatic push policy is inspected or configured.
      */
     linkId: string,
   }): CancelablePromise<IssueTrackerAutoSync> {
@@ -3151,8 +3151,8 @@ export class AppsService {
     });
   }
   /**
-   * Enable or disable future Gregale-to-GitHub lifecycle pushes.
-   * Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences competing policy changes. Enabling requires expected_status from a fresh native read and expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned repository binding. The background worker preserves uncertain pending writes and pauses on provider edits or unsupported states or changed groups/connections. Disabling does not require live GitHub access. A provider write already dispatched during disable cannot be recalled.
+   * Enable or disable future Gregale-to-tracker lifecycle pushes.
+   * Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences competing policy changes. Enabling requires either expected_status for GitHub or expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear, and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the connected team. Pins the canonical group and owned repository binding or Linear connection revision. The background worker preserves uncertain pending writes and pauses on provider edits or unsupported states or changed groups/connections. Disabling does not require live provider access. Linear pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-enable to resume. A provider write already dispatched during disable cannot be recalled.
    * @returns IssueTrackerAutoSync Persisted automatic push policy with its new configuration revision.
    * @throws ApiError
    */
@@ -3171,7 +3171,7 @@ export class AppsService {
      */
     issueId: string,
     /**
-     * Stored GitHub reference whose automatic push policy is inspected or configured.
+     * Stored GitHub or Linear reference whose automatic push policy is inspected or configured.
      */
     linkId: string,
     /**

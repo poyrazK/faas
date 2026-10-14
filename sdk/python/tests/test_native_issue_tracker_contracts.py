@@ -167,3 +167,48 @@ def test_native_linear_status_preserves_preview_scope_and_workflow_selection():
     assert update["method"] == "post"
     assert update["url"] == route
     assert update["json"] == request
+
+
+def test_linear_auto_sync_preserves_mapping_and_native_scope():
+    from faas_sdk.api.apps import update_issue_tracker_auto_sync
+    from faas_sdk.models.issue_tracker_auto_sync import IssueTrackerAutoSync
+    from faas_sdk.models.update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+
+    issue, link, opened, resolved = uuid4(), uuid4(), uuid4(), uuid4()
+    payload = {
+        "enabled": True,
+        "expected_revision": 3,
+        "expected_issue_state": "open",
+        "linear_open_state_id": str(opened),
+        "linear_resolved_state_id": str(resolved),
+        "expected_linear_status": {
+            "issue_id": str(issue),
+            "link_id": str(link),
+            "connection_revision": 7,
+            "group_fingerprint": "a" * 64,
+            "workspace_id": str(issue),
+            "team_id": str(issue),
+            "viewer_id": str(issue),
+            "status": {
+                "provider": "linear",
+                "url": "https://linear.app/acme/issue/PAY-42",
+                "id": str(issue),
+                "state": "open",
+            },
+        },
+    }
+    body = UpdateIssueTrackerAutoSyncRequest.from_dict(payload)
+    assert update_issue_tracker_auto_sync._get_kwargs("payments", issue, link, body=body)["json"] == payload
+    policy = IssueTrackerAutoSync.from_dict(
+        {
+            "link_id": str(link),
+            "source_issue_id": str(issue),
+            "enabled": True,
+            "revision": 4,
+            "outcome": "matched",
+            "linear_open_state_id": str(opened),
+            "linear_resolved_state_id": str(resolved),
+        }
+    )
+    assert policy.linear_open_state_id == opened
+    assert policy.linear_resolved_state_id == resolved

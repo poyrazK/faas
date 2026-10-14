@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Opt-in automatic Gregale-to-GitHub policy and latest durable worker outcome for a tracker reference.
+ * Opt-in automatic Gregale-to-GitHub or Linear policy and latest durable worker outcome for a tracker reference.
  */
 export type IssueTrackerAutoSync = {
   link_id: string;
@@ -17,5 +17,13 @@ export type IssueTrackerAutoSync = {
   reason?: string;
   last_checked_at?: string;
   next_check_at?: string;
+  /**
+   * Selected open workflow destination for Linear policies.
+   */
+  linear_open_state_id?: string;
+  /**
+   * Selected resolved workflow destination for Linear policies.
+   */
+  linear_resolved_state_id?: string;
 };
 

@@ -178,3 +178,27 @@ func TestIssueNativeLinearStatusSDKPreservesPreviewFences(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIssueNativeLinearAutoSyncSDKPreservesMappingsAndScope(t *testing.T) {
+	snapshot := faas.NativeLinearIssueTrackerStatus{IssueID: "issue", LinkID: "link", ConnectionRevision: 7, GroupFingerprint: "group", Status: faas.IssueTrackerProviderStatus{Provider: "linear", State: "open"}}
+	input := faas.UpdateIssueTrackerAutoSyncRequest{Enabled: true, ExpectedRevision: 3, ExpectedLinearStatus: &snapshot, ExpectedIssueState: "open", LinearOpenStateID: "open", LinearResolvedStateID: "resolved"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" || r.URL.Path != "/v1/apps/payments/issues/issue/tracker-links/link/auto-sync" {
+			t.Error("wrong operation")
+		}
+		var in faas.UpdateIssueTrackerAutoSyncRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedLinearStatus == nil || *in.ExpectedLinearStatus != snapshot || in.LinearOpenStateID != "open" || in.LinearResolvedStateID != "resolved" || in.ExpectedRevision != 3 {
+			t.Error("mapping or scope lost", err)
+		}
+		_ = json.NewEncoder(w).Encode(faas.IssueTrackerAutoSync{LinkID: "link", SourceIssueID: "issue", Enabled: true, Revision: 4, Outcome: "matched", LinearOpenStateID: "open", LinearResolvedStateID: "resolved"})
+	}))
+	defer server.Close()
+	client, err := faas.NewClient(server.URL, "fp_live_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := client.UpdateIssueTrackerAutoSync(t.Context(), "payments", "issue", "link", input)
+	if err != nil || out.LinearOpenStateID != "open" || out.LinearResolvedStateID != "resolved" {
+		t.Fatal(out, err)
+	}
+}

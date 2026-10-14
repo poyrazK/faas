@@ -4001,23 +4001,25 @@ type IssueSplitRule struct {
 }
 
 type IssueTrackerAutoSync struct {
-	LinkID             pgtype.UUID
-	AppID              pgtype.UUID
-	AccountID          pgtype.UUID
-	SourceIssueID      pgtype.UUID
-	Enabled            bool
-	Revision           int64
-	BindingFingerprint string
-	Baseline           []byte
-	SourceState        string
-	PendingState       string
-	Outcome            string
-	Reason             string
-	ClaimID            pgtype.UUID
-	ClaimUntil         pgtype.Timestamptz
-	LastCheckedAt      pgtype.Timestamptz
-	NextCheckAt        pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
+	LinearOpenStateID     string
+	LinearResolvedStateID string
+	LinkID                pgtype.UUID
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	SourceIssueID         pgtype.UUID
+	Enabled               bool
+	Revision              int64
+	BindingFingerprint    string
+	Baseline              []byte
+	SourceState           string
+	PendingState          string
+	Outcome               string
+	Reason                string
+	ClaimID               pgtype.UUID
+	ClaimUntil            pgtype.Timestamptz
+	LastCheckedAt         pgtype.Timestamptz
+	NextCheckAt           pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
 }
 
 type IssueTrackerLinearConnection struct {

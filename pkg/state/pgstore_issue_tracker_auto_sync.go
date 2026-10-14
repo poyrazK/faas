@@ -16,7 +16,7 @@ var ErrNoIssueTrackerAutoSyncWork = errors.New("no automatic tracker sync due")
 var ErrIssueTrackerAutoSyncClaimLost = errors.New("automatic tracker sync claim changed")
 
 func autoSyncRow(r sqlc.IssueTrackerAutoSync) (IssueTrackerAutoSyncRecord, error) {
-	out := IssueTrackerAutoSyncRecord{AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), BindingFingerprint: r.BindingFingerprint, ClaimID: issueID(r.ClaimID), ClaimUntil: r.ClaimUntil.Time, Policy: api.IssueTrackerAutoSync{LinkID: issueID(r.LinkID), Enabled: r.Enabled, Revision: r.Revision, SourceIssueID: issueID(r.SourceIssueID), SourceState: r.SourceState, PendingState: r.PendingState, Outcome: r.Outcome, Reason: r.Reason}}
+	out := IssueTrackerAutoSyncRecord{AppID: issueID(r.AppID), AccountID: issueID(r.AccountID), BindingFingerprint: r.BindingFingerprint, ClaimID: issueID(r.ClaimID), ClaimUntil: r.ClaimUntil.Time, Policy: api.IssueTrackerAutoSync{LinearOpenStateID: r.LinearOpenStateID, LinearResolvedStateID: r.LinearResolvedStateID, LinkID: issueID(r.LinkID), Enabled: r.Enabled, Revision: r.Revision, SourceIssueID: issueID(r.SourceIssueID), SourceState: r.SourceState, PendingState: r.PendingState, Outcome: r.Outcome, Reason: r.Reason}}
 	if err := json.Unmarshal(r.Baseline, &out.Baseline); err != nil {
 		return out, ErrInvalidArgument
 	}
@@ -103,7 +103,7 @@ func (s *PgStore) ConfigureIssueTrackerAutoSync(ctx context.Context, app, accoun
 		if e != nil {
 			return in, e
 		}
-		row, err = q.IssueTrackerAutoSyncEnable(ctx, tx, sqlc.IssueTrackerAutoSyncEnableParams{LinkID: issueUUID(in.Policy.LinkID), AppID: issueUUID(app), AccountID: issueUUID(account), SourceIssueID: root.ID, BindingFingerprint: in.BindingFingerprint, Baseline: data, SourceState: in.Policy.SourceState})
+		row, err = q.IssueTrackerAutoSyncEnable(ctx, tx, sqlc.IssueTrackerAutoSyncEnableParams{LinkID: issueUUID(in.Policy.LinkID), AppID: issueUUID(app), AccountID: issueUUID(account), SourceIssueID: root.ID, BindingFingerprint: in.BindingFingerprint, Baseline: data, SourceState: in.Policy.SourceState, LinearOpenStateID: in.Policy.LinearOpenStateID, LinearResolvedStateID: in.Policy.LinearResolvedStateID})
 	} else if revision > 0 {
 		row, err = q.IssueTrackerAutoSyncDisable(ctx, tx, issueUUID(in.Policy.LinkID))
 	} else {

@@ -28,7 +28,7 @@ T = TypeVar("T", bound="IssueTrackerAutoSync")
 
 @_attrs_define
 class IssueTrackerAutoSync:
-    """Opt-in automatic Gregale-to-GitHub policy and latest durable worker outcome for a tracker reference."""
+    """Opt-in automatic Gregale-to-GitHub or Linear policy and latest durable worker outcome for a tracker reference."""
 
     link_id: UUID
     enabled: bool
@@ -41,6 +41,10 @@ class IssueTrackerAutoSync:
     reason: str | Unset = UNSET
     last_checked_at: datetime.datetime | Unset = UNSET
     next_check_at: datetime.datetime | Unset = UNSET
+    linear_open_state_id: UUID | Unset = UNSET
+    """Selected open workflow destination for Linear policies."""
+    linear_resolved_state_id: UUID | Unset = UNSET
+    """Selected resolved workflow destination for Linear policies."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -76,6 +80,14 @@ class IssueTrackerAutoSync:
         if not isinstance(self.next_check_at, Unset):
             next_check_at = self.next_check_at.isoformat()
 
+        linear_open_state_id: str | Unset = UNSET
+        if not isinstance(self.linear_open_state_id, Unset):
+            linear_open_state_id = str(self.linear_open_state_id)
+
+        linear_resolved_state_id: str | Unset = UNSET
+        if not isinstance(self.linear_resolved_state_id, Unset):
+            linear_resolved_state_id = str(self.linear_resolved_state_id)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -99,6 +111,10 @@ class IssueTrackerAutoSync:
             field_dict["last_checked_at"] = last_checked_at
         if next_check_at is not UNSET:
             field_dict["next_check_at"] = next_check_at
+        if linear_open_state_id is not UNSET:
+            field_dict["linear_open_state_id"] = linear_open_state_id
+        if linear_resolved_state_id is not UNSET:
+            field_dict["linear_resolved_state_id"] = linear_resolved_state_id
 
         return field_dict
 
@@ -152,6 +168,20 @@ class IssueTrackerAutoSync:
         else:
             next_check_at = datetime.datetime.fromisoformat(_next_check_at)
 
+        _linear_open_state_id = d.pop("linear_open_state_id", UNSET)
+        linear_open_state_id: UUID | Unset
+        if isinstance(_linear_open_state_id, Unset):
+            linear_open_state_id = UNSET
+        else:
+            linear_open_state_id = UUID(_linear_open_state_id)
+
+        _linear_resolved_state_id = d.pop("linear_resolved_state_id", UNSET)
+        linear_resolved_state_id: UUID | Unset
+        if isinstance(_linear_resolved_state_id, Unset):
+            linear_resolved_state_id = UNSET
+        else:
+            linear_resolved_state_id = UUID(_linear_resolved_state_id)
+
         issue_tracker_auto_sync = cls(
             link_id=link_id,
             enabled=enabled,
@@ -164,6 +194,8 @@ class IssueTrackerAutoSync:
             reason=reason,
             last_checked_at=last_checked_at,
             next_check_at=next_check_at,
+            linear_open_state_id=linear_open_state_id,
+            linear_resolved_state_id=linear_resolved_state_id,
         )
 
         issue_tracker_auto_sync.additional_properties = d

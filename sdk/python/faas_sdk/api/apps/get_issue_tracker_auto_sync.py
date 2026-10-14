@@ -92,7 +92,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[IssueTrackerAutoSync | Problem]:
-    """Read an automatic native GitHub lifecycle policy.
+    """Read an automatic native tracker lifecycle policy.
 
      Requires app read access and Issues entitlement. Unconfigured references return disabled with
     revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables
@@ -131,7 +131,7 @@ def sync(
     *,
     client: AuthenticatedClient,
 ) -> IssueTrackerAutoSync | Problem | None:
-    """Read an automatic native GitHub lifecycle policy.
+    """Read an automatic native tracker lifecycle policy.
 
      Requires app read access and Issues entitlement. Unconfigured references return disabled with
     revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables
@@ -165,7 +165,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
 ) -> Response[IssueTrackerAutoSync | Problem]:
-    """Read an automatic native GitHub lifecycle policy.
+    """Read an automatic native tracker lifecycle policy.
 
      Requires app read access and Issues entitlement. Unconfigured references return disabled with
     revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables
@@ -202,7 +202,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient,
 ) -> IssueTrackerAutoSync | Problem | None:
-    """Read an automatic native GitHub lifecycle policy.
+    """Read an automatic native tracker lifecycle policy.
 
      Requires app read access and Issues entitlement. Unconfigured references return disabled with
     revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables

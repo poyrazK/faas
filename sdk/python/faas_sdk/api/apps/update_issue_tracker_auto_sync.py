@@ -110,14 +110,17 @@ def sync_detailed(
     client: AuthenticatedClient,
     body: UpdateIssueTrackerAutoSyncRequest,
 ) -> Response[Any | IssueTrackerAutoSync | Problem]:
-    """Enable or disable future Gregale-to-GitHub lifecycle pushes.
+    """Enable or disable future Gregale-to-tracker lifecycle pushes.
 
      Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences
-    competing policy changes. Enabling requires expected_status from a fresh native read and
-    expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned
-    repository binding. The background worker preserves uncertain pending writes and pauses on provider
-    edits or unsupported states or changed groups/connections. Disabling does not require live GitHub
-    access. A provider write already dispatched during disable cannot be recalled.
+    competing policy changes. Enabling requires either expected_status for GitHub or
+    expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear,
+    and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the
+    connected team. Pins the canonical group and owned repository binding or Linear connection revision.
+    The background worker preserves uncertain pending writes and pauses on provider edits or unsupported
+    states or changed groups/connections. Disabling does not require live provider access. Linear
+    pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-
+    enable to resume. A provider write already dispatched during disable cannot be recalled.
 
     Args:
         slug (str):
@@ -156,14 +159,17 @@ def sync(
     client: AuthenticatedClient,
     body: UpdateIssueTrackerAutoSyncRequest,
 ) -> Any | IssueTrackerAutoSync | Problem | None:
-    """Enable or disable future Gregale-to-GitHub lifecycle pushes.
+    """Enable or disable future Gregale-to-tracker lifecycle pushes.
 
      Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences
-    competing policy changes. Enabling requires expected_status from a fresh native read and
-    expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned
-    repository binding. The background worker preserves uncertain pending writes and pauses on provider
-    edits or unsupported states or changed groups/connections. Disabling does not require live GitHub
-    access. A provider write already dispatched during disable cannot be recalled.
+    competing policy changes. Enabling requires either expected_status for GitHub or
+    expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear,
+    and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the
+    connected team. Pins the canonical group and owned repository binding or Linear connection revision.
+    The background worker preserves uncertain pending writes and pauses on provider edits or unsupported
+    states or changed groups/connections. Disabling does not require live provider access. Linear
+    pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-
+    enable to resume. A provider write already dispatched during disable cannot be recalled.
 
     Args:
         slug (str):
@@ -197,14 +203,17 @@ async def asyncio_detailed(
     client: AuthenticatedClient,
     body: UpdateIssueTrackerAutoSyncRequest,
 ) -> Response[Any | IssueTrackerAutoSync | Problem]:
-    """Enable or disable future Gregale-to-GitHub lifecycle pushes.
+    """Enable or disable future Gregale-to-tracker lifecycle pushes.
 
      Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences
-    competing policy changes. Enabling requires expected_status from a fresh native read and
-    expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned
-    repository binding. The background worker preserves uncertain pending writes and pauses on provider
-    edits or unsupported states or changed groups/connections. Disabling does not require live GitHub
-    access. A provider write already dispatched during disable cannot be recalled.
+    competing policy changes. Enabling requires either expected_status for GitHub or
+    expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear,
+    and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the
+    connected team. Pins the canonical group and owned repository binding or Linear connection revision.
+    The background worker preserves uncertain pending writes and pauses on provider edits or unsupported
+    states or changed groups/connections. Disabling does not require live provider access. Linear
+    pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-
+    enable to resume. A provider write already dispatched during disable cannot be recalled.
 
     Args:
         slug (str):
@@ -241,14 +250,17 @@ async def asyncio(
     client: AuthenticatedClient,
     body: UpdateIssueTrackerAutoSyncRequest,
 ) -> Any | IssueTrackerAutoSync | Problem | None:
-    """Enable or disable future Gregale-to-GitHub lifecycle pushes.
+    """Enable or disable future Gregale-to-tracker lifecycle pushes.
 
      Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences
-    competing policy changes. Enabling requires expected_status from a fresh native read and
-    expected_issue_state; the two lifecycles must already match. Pins the canonical group and owned
-    repository binding. The background worker preserves uncertain pending writes and pauses on provider
-    edits or unsupported states or changed groups/connections. Disabling does not require live GitHub
-    access. A provider write already dispatched during disable cannot be recalled.
+    competing policy changes. Enabling requires either expected_status for GitHub or
+    expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear,
+    and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the
+    connected team. Pins the canonical group and owned repository binding or Linear connection revision.
+    The background worker preserves uncertain pending writes and pauses on provider edits or unsupported
+    states or changed groups/connections. Disabling does not require live provider access. Linear
+    pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-
+    enable to resume. A provider write already dispatched during disable cannot be recalled.
 
     Args:
         slug (str):

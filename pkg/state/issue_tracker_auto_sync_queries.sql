@@ -1,10 +1,10 @@
 -- name: IssueTrackerAutoSyncGet :one
 SELECT * FROM issue_tracker_auto_sync WHERE link_id=$1;
 -- name: IssueTrackerAutoSyncEnable :one
-INSERT INTO issue_tracker_auto_sync(link_id,app_id,account_id,source_issue_id,binding_fingerprint,baseline,source_state)
-VALUES($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO issue_tracker_auto_sync(link_id,app_id,account_id,source_issue_id,binding_fingerprint,baseline,source_state,linear_open_state_id,linear_resolved_state_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 ON CONFLICT(link_id) DO UPDATE SET app_id=excluded.app_id,account_id=excluded.account_id,enabled=true,revision=issue_tracker_auto_sync.revision+1,source_issue_id=excluded.source_issue_id,
- binding_fingerprint=excluded.binding_fingerprint,baseline=excluded.baseline,source_state=excluded.source_state,pending_state='',outcome='matched',reason='',claim_id=NULL,claim_until=NULL,next_check_at=now(),updated_at=now()
+ linear_open_state_id=excluded.linear_open_state_id,linear_resolved_state_id=excluded.linear_resolved_state_id, binding_fingerprint=excluded.binding_fingerprint,baseline=excluded.baseline,source_state=excluded.source_state,pending_state='',outcome='matched',reason='',claim_id=NULL,claim_until=NULL,next_check_at=now(),updated_at=now()
 RETURNING *;
 -- name: IssueTrackerAutoSyncDisable :one
 UPDATE issue_tracker_auto_sync SET enabled=false,revision=revision+1,outcome='disabled',reason='',pending_state='',claim_id=NULL,claim_until=NULL,updated_at=now() WHERE link_id=$1 RETURNING *;

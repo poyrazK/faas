@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -73,6 +75,14 @@ func (s *server) configureIssueTrackerAutoSync(r *http.Request, acct state.Accou
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(api.IssueTrackerRequestTimeoutSeconds)*time.Second)
 	defer cancel()
+	if in.ExpectedLinearStatus != nil {
+		provider := s.nativeTrackerProvider
+		if provider == nil {
+			provider = issuetracker.NewClient(nil)
+		}
+		service := issuetrackers.LinearService{Host: nativeLinearCreationHost{server: s, app: app, account: acct, issueID: r.PathValue("issue_id"), linkID: r.PathValue("link_id")}, Provider: provider}
+		return service.EnableAutoSync(ctx, store, r.PathValue("issue_id"), in)
+	}
 	service := s.issueTrackerServiceFor(app, acct, r.PathValue("issue_id"), r.PathValue("link_id"))
 	return service.EnableAutoSync(ctx, store, r.PathValue("issue_id"), in)
 }

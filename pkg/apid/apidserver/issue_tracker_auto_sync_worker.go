@@ -76,6 +76,10 @@ func (s *server) runIssueTrackerAutoSync(ctx context.Context, st state.IssueTrac
 	if provider == nil {
 		provider = issuetracker.NewClient(nil)
 	}
+	if row.Baseline.Provider == "linear" {
+		service := issuetrackers.LinearService{Host: nativeLinearCreationHost{server: s, app: app, account: account, issueID: row.Policy.SourceIssueID, linkID: row.Policy.LinkID}, Provider: provider}
+		return issuetrackers.LinearAutoSyncStep(ctx, service, st, row)
+	}
 	service := issuetrackers.Service{Host: nativeAutoSyncHost{nativeIssueTrackerHost{server: s, app: app, account: account, issueID: row.Policy.SourceIssueID, linkID: row.Policy.LinkID}}, Provider: provider}
 	return issuetrackers.AutoSyncStep(ctx, service, st, row)
 }

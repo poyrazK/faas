@@ -1126,5 +1126,51 @@ lifecycle, `linear_state_id`. Go exposes `GetNativeLinearIssueTrackerStatus` and
 `UpdateNativeLinearIssueTrackerStatus`; Node exposes matching `AppsService` methods,
 and Python exposes matching `faas_sdk.api.apps` operations. A provider write already
 dispatched cannot be recalled by disconnect or another edit; preview again after
-an unconfirmed outcome. OAuth and automatic Linear reconciliation remain separate
-work. See [ADR-1217](adr/1217-native-linear-lifecycle-sync.md).
+an unconfirmed outcome. OAuth and provider callbacks remain separate work. Automatic outbound Linear
+sync is described below. See [ADR-1217](adr/1217-native-linear-lifecycle-sync.md).
+
+
+## Automatic native Linear lifecycle sync
+
+Connect a Linear team and store a Linear reference first. Align the ticket with
+Gregale using explicit native sync, then select the open and completed workflows:
+
+```sh
+gregale issues tickets auto-sync --app payments --issue <ISSUE_UUID> \
+  --link <LINEAR_REFERENCE_UUID> --provider linear --enable \
+  --linear-open-state <OPEN_WORKFLOW_UUID> \
+  --linear-resolved-state <COMPLETED_WORKFLOW_UUID>
+# Inspect the policy and latest outcome:
+gregale issues tickets auto-sync --app payments --issue <ISSUE_UUID> \
+  --link <LINEAR_REFERENCE_UUID> --provider linear
+# Disable even when the Linear connection is disconnected:
+gregale issues tickets auto-sync --app payments --issue <ISSUE_UUID> \
+  --link <LINEAR_REFERENCE_UUID> --provider linear --disable
+```
+
+Both distinct workflow destinations must be active, in the connected team, and
+map to their selected lifecycle. Enabling verifies them without changing the
+ticket. Policies are disabled by default. The app owner needs Issues entitlement,
+deploy-write and session MFA. The worker pushes Gregale resolutions and reopenings
+using the selected workflow UUIDs; it never creates tickets or pulls resolutions.
+It uses the same bounded polling and outcome reporting as GitHub automatic sync.
+
+The policy pins the connection revision and issue group. Replacing a key,
+regrouping the issue, unsupported states or manual Linear edits pause the policy.
+A workflow edit with the same mapped lifecycle is still a conflict. Inspect and
+align before explicitly re-enabling. `linear_open_state_id` and
+`linear_resolved_state_id` expose the stored destinations in the policy response.
+
+An uncertain write retains `pending_state`. A later read of the exact selected
+workflow confirms it without repeating the write. If the original provider
+baseline remains, the worker reports `error` with
+`pending_outcome_unconfirmed` and keeps observing without redispatching. Inspect
+the ticket, explicitly align and re-enable if the outcome cannot be confirmed.
+A write already dispatched cannot be recalled by disable or disconnect.
+
+GET/PUT uses the existing tracker-reference `auto-sync` route and SDK methods.
+Enabling Linear supplies `enabled`, `expected_revision`, `expected_issue_state`,
+`expected_linear_status` from a fresh native Linear read, `linear_open_state_id`
+and `linear_resolved_state_id`. Omit the GitHub `expected_status` field. Disabling
+needs only `enabled: false` and the current `expected_revision`.
+See [ADR-1218](adr/1218-automatic-native-linear-lifecycle.md).

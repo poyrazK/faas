@@ -12,6 +12,15 @@ import (
 )
 
 func autoSyncFingerprint(p Prepared) string {
+	if p.Connection.Linear != nil {
+		data, _ := json.Marshal(struct {
+			Connection       Connection
+			GroupFingerprint string
+			Revision         int64
+		}{p.Connection, p.GroupFingerprint, p.Connection.Linear.Revision})
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:])
+	}
 	data, _ := json.Marshal(struct {
 		Connection       Connection
 		GroupFingerprint string
@@ -20,6 +29,9 @@ func autoSyncFingerprint(p Prepared) string {
 	return hex.EncodeToString(sum[:])
 }
 func (s Service) EnableAutoSync(ctx context.Context, store state.IssueTrackerAutoSyncStore, issue string, in api.UpdateIssueTrackerAutoSyncRequest) (api.IssueTrackerAutoSync, error) {
+	if in.ExpectedLinearStatus != nil || in.LinearOpenStateID != "" || in.LinearResolvedStateID != "" {
+		return api.IssueTrackerAutoSync{}, api.ErrValidation("Linear mappings require a Linear native snapshot")
+	}
 	if in.ExpectedStatus == nil || (in.ExpectedIssueState != "open" && in.ExpectedIssueState != "resolved") || in.ExpectedRevision < 0 {
 		return api.IssueTrackerAutoSync{}, api.ErrValidation("enabling requires a native snapshot, open/resolved source state and nonnegative revision")
 	}
@@ -69,7 +81,17 @@ func (h autoSyncHost) Prepare(ctx context.Context) (Prepared, error) {
 // The caller finishes the claimed record even after a canceled provider context.
 func AutoSyncStep(ctx context.Context, s Service, store state.IssueTrackerAutoSyncStore, r state.IssueTrackerAutoSyncRecord) state.IssueTrackerAutoSyncRecord {
 	s.Host = autoSyncHost{Host: s.Host, store: store, record: r}
-	p, err := s.prepare(ctx)
+	return autoSyncRun(ctx, s.prepare, func(ctx context.Context) (api.IssueTrackerProviderStatus, error) {
+		v, e := s.Read(ctx)
+		return v.Status, e
+	}, func(ctx context.Context, wanted string, expected api.IssueTrackerProviderStatus) (api.IssueTrackerProviderStatus, error) {
+		v, e := s.Push(ctx, api.UpdateNativeIssueTrackerStatusRequest{DesiredState: wanted, Expected: expected})
+		return v.Status, e
+	}, store, r)
+}
+
+func autoSyncRun(ctx context.Context, prepare func(context.Context) (Prepared, error), read func(context.Context) (api.IssueTrackerProviderStatus, error), push func(context.Context, string, api.IssueTrackerProviderStatus) (api.IssueTrackerProviderStatus, error), store state.IssueTrackerAutoSyncStore, r state.IssueTrackerAutoSyncRecord) state.IssueTrackerAutoSyncRecord {
+	p, err := prepare(ctx)
 	if err != nil {
 		return autoSyncFailure(r, err)
 	}
@@ -78,21 +100,24 @@ func AutoSyncStep(ctx context.Context, s Service, store state.IssueTrackerAutoSy
 		r.Policy.Reason = "source_state_unsupported"
 		return r
 	}
-	observed, err := s.Read(ctx)
+	observed, err := read(ctx)
 	if err != nil {
 		return autoSyncFailure(r, err)
 	}
 	pending := r.Baseline
 	pending.State = r.Policy.PendingState
-	if r.Policy.PendingState != "" && observed.Status == pending {
-		r.Baseline = observed.Status
+	if pending.Provider == "linear" && pending.State != "" {
+		pending.StateID = linearDestination(r.Policy, pending.State)
+	}
+	if r.Policy.PendingState != "" && observed == pending {
+		r.Baseline = observed
 		r.Policy.SourceState = pending.State
 		r.Policy.PendingState = ""
 		r.Policy.Outcome = "applied"
 		r.Policy.Reason = ""
 		return r
 	}
-	if observed.Status != r.Baseline {
+	if observed != r.Baseline {
 		r.Policy.Outcome = "conflict"
 		r.Policy.Reason = "provider_changed"
 		return r
@@ -102,7 +127,12 @@ func AutoSyncStep(ctx context.Context, s Service, store state.IssueTrackerAutoSy
 		r.Policy.Reason = "source_changed_after_dispatch"
 		return r
 	}
-	if p.Issue.State == observed.Status.State {
+	if r.Baseline.Provider == "linear" && r.Policy.PendingState != "" {
+		r.Policy.Outcome = "error"
+		r.Policy.Reason = "pending_outcome_unconfirmed"
+		return r
+	}
+	if p.Issue.State == observed.State {
 		r.Policy.SourceState = p.Issue.State
 		r.Policy.Outcome = "matched"
 		r.Policy.Reason = ""
@@ -112,11 +142,11 @@ func AutoSyncStep(ctx context.Context, s Service, store state.IssueTrackerAutoSy
 	if err != nil {
 		return autoSyncFailure(r, err)
 	}
-	out, err := s.Push(ctx, api.UpdateNativeIssueTrackerStatusRequest{DesiredState: p.Issue.State, Expected: observed.Status})
+	out, err := push(ctx, p.Issue.State, observed)
 	if err != nil {
 		return autoSyncFailure(r, err)
 	}
-	r.Baseline = out.Status
+	r.Baseline = out
 	r.Policy.SourceState = p.Issue.State
 	r.Policy.PendingState = ""
 	r.Policy.Outcome = "applied"

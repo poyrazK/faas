@@ -301,3 +301,55 @@ func TestIssueTicketNativeLinearUsesServerRecoveryWithoutLocalCredentials(t *tes
 		t.Fatal("GitHub accepted UUID-only recovery")
 	}
 }
+
+func TestIssueTicketLinearAutoSyncCLIRequiresMappingsAndDisablesOffline(t *testing.T) {
+	const issue = "33333333-3333-4333-8333-333333333333"
+	const link = "55555555-5555-4555-8555-555555555555"
+	const open = "11111111-1111-4111-8111-111111111111"
+	const resolved = "22222222-2222-4222-8222-222222222222"
+	observed := api.NativeLinearIssueTrackerStatus{IssueID: issue, LinkID: link, ConnectionRevision: 7, GroupFingerprint: strings.Repeat("a", 64), Status: api.IssueTrackerProviderStatus{Provider: "linear", State: "open"}}
+	writes, reads := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/native-linear-status") {
+			reads++
+			_ = json.NewEncoder(w).Encode(observed)
+			return
+		}
+		if r.URL.Path == "/v1/apps/payments/issues/"+issue {
+			_ = json.NewEncoder(w).Encode(api.IssueDetail{Issue: api.Issue{ID: issue, State: "open"}})
+			return
+		}
+		if !strings.HasSuffix(r.URL.Path, "/auto-sync") {
+			t.Error("wrong route", r.URL.Path)
+		}
+		if r.Method == "PUT" {
+			writes++
+			var in api.UpdateIssueTrackerAutoSyncRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedRevision != 3 {
+				t.Error("revision lost", err)
+			}
+			if in.Enabled && (in.ExpectedStatus != nil || in.ExpectedLinearStatus == nil || *in.ExpectedLinearStatus != observed || in.LinearOpenStateID != open || in.LinearResolvedStateID != resolved || in.ExpectedIssueState != "open") {
+				t.Error("Linear mapping or snapshot lost", in)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(api.IssueTrackerAutoSync{LinkID: link, SourceIssueID: issue, Revision: 3, Outcome: "disabled"})
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	old := osStdout
+	var out bytes.Buffer
+	osStdout = &out
+	t.Cleanup(func() { osStdout = old })
+	args := []string{"auto-sync", "--app", "payments", "--issue", issue, "--link", link, "--provider", "linear"}
+	if cmdIssueTickets(append(args, "--enable")) == 0 || reads != 0 || writes != 0 {
+		t.Fatal("missing mappings contacted provider")
+	}
+	if cmdIssueTickets(append(args, "--enable", "--linear-open-state", open, "--linear-resolved-state", resolved)) != 0 || writes != 1 || reads != 1 {
+		t.Fatal("Linear delegation failed")
+	}
+	if cmdIssueTickets(append(args, "--disable")) != 0 || writes != 2 || reads != 1 {
+		t.Fatal("offline disable read provider")
+	}
+}
