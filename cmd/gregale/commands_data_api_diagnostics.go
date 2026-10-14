@@ -586,16 +586,22 @@ func writeDataAPIDiagnostics(report dataAPIDiagnosticsReport) error {
 			return err
 		}
 	}
-	fmt.Fprintf(osStdout, "Query-shape coverage: %d shaped, %d unshaped data requests\n", report.ShapedRequests, report.UnshapedDataRequests)
+	if _, err := fmt.Fprintf(osStdout, "Query-shape coverage: %d shaped, %d unshaped data requests\n", report.ShapedRequests, report.UnshapedDataRequests); err != nil {
+		return err
+	}
 	for _, operation := range report.Operations {
 		if err := writeDataAPIDiagnosticStats(operation.Operation+" ("+operation.Kind+")", operation.Stats); err != nil {
 			return err
 		}
 	}
 	for _, shape := range report.QueryShapes {
-		fmt.Fprintf(osStdout, "%s %s shape=%s schema=%s requests=%d errors=%d\n", shape.Method, shape.Operation, shape.ShapeID, shape.Fingerprint, shape.Stats.Requests, shape.Stats.Errors)
+		if _, err := fmt.Fprintf(osStdout, "%s %s shape=%s schema=%s requests=%d errors=%d\n", shape.Method, shape.Operation, shape.ShapeID, shape.Fingerprint, shape.Stats.Requests, shape.Stats.Errors); err != nil {
+			return err
+		}
 		description, _ := json.Marshal(shape.Shape)
-		fmt.Fprintf(osStdout, "  Shape: %s; request IDs: %v\n", description, shape.RequestIDs)
+		if _, err := fmt.Fprintf(osStdout, "  Shape: %s; request IDs: %v\n", description, shape.RequestIDs); err != nil {
+			return err
+		}
 		if err := writeDataAPIDiagnosticStats("  Query shape", shape.Stats); err != nil {
 			return err
 		}

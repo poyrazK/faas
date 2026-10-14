@@ -57,7 +57,7 @@ func readDataAPIReleaseConfig(path string) (dataAPIReleaseConfig, dataAPIContrac
 	if err != nil {
 		return config, contract, errors.New("cannot read release config")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(f, 65537))
 	if err != nil || len(raw) > 65536 {
 		return config, contract, errors.New("release config exceeds 64 KiB")
@@ -155,13 +155,21 @@ func dataAPIReleaseArguments(config dataAPIReleaseConfig, dir string) [][]string
 	coverage := []string{"--json", "data-api", "verify", "coverage", "--schema", config.CurrentSchema, "--policy", config.CoveragePolicy, "--verification", filepath.Join(dir, "verification.json"), "--plans", filepath.Join(dir, "plans.json"), "--baseline-schema", config.Baseline, "--check"}
 	return [][]string{preview, verify, plans, coverage}
 }
-func runDataAPIRelease(ctx context.Context, config dataAPIReleaseConfig, contract dataAPIContract, runner dataAPIReleaseRunner) (dataAPIReleaseReport, error) {
-	report := dataAPIReleaseReport{Version: 1, Command: "data-api verify release", Status: "failed", Fingerprint: contract.Fingerprint, Cleanup: "passed", Steps: []dataAPIReleaseStep{{Name: "migrations", Status: "blocked"}, {Name: "verification", Status: "blocked"}, {Name: "query_budgets", Status: "blocked"}, {Name: "coverage", Status: "blocked"}}}
+func runDataAPIRelease(ctx context.Context, config dataAPIReleaseConfig, contract dataAPIContract, runner dataAPIReleaseRunner) (report dataAPIReleaseReport, runErr error) {
+	report = dataAPIReleaseReport{Version: 1, Command: "data-api verify release", Status: "failed", Fingerprint: contract.Fingerprint, Cleanup: "passed", Steps: []dataAPIReleaseStep{{Name: "migrations", Status: "blocked"}, {Name: "verification", Status: "blocked"}, {Name: "query_budgets", Status: "blocked"}, {Name: "coverage", Status: "blocked"}}}
 	dir, err := os.MkdirTemp("", "gregale-data-api-release-")
 	if err != nil {
 		return report, err
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			report.Cleanup = "failed"
+			report.Status = "failed"
+			if runErr == nil {
+				runErr = errors.New("release output cleanup failed")
+			}
+		}
+	}()
 	arguments := dataAPIReleaseArguments(config, dir)
 	commands := []string{"data-api migration preview", "data-api verify", "data-api explain", "data-api verify coverage"}
 	for i, args := range arguments {
@@ -275,17 +283,29 @@ func cmdDataAPIVerifyRelease(args []string) int {
 	report, err := runDataAPIRelease(ctx, config, contract, dataAPIReleaseProcess)
 	if jsonOutput {
 		raw, _ := json.Marshal(report)
-		fmt.Fprintln(osStdout, string(raw))
-	} else {
-		fmt.Fprintf(osStdout, "Data API release check: %s\n", report.Status)
-		for _, step := range report.Steps {
-			fmt.Fprintf(osStdout, "%s: %s", step.Name, step.Status)
-			if step.Error != "" {
-				fmt.Fprintf(osStdout, " — %s", step.Error)
-			}
-			fmt.Fprintln(osStdout)
+		if _, err := fmt.Fprintln(osStdout, string(raw)); err != nil {
+			return printErr("Output failed", err)
 		}
-		fmt.Fprintf(osStdout, "Cleanup: %s\n", report.Cleanup)
+	} else {
+		if _, err := fmt.Fprintf(osStdout, "Data API release check: %s\n", report.Status); err != nil {
+			return printErr("Output failed", err)
+		}
+		for _, step := range report.Steps {
+			if _, err := fmt.Fprintf(osStdout, "%s: %s", step.Name, step.Status); err != nil {
+				return printErr("Output failed", err)
+			}
+			if step.Error != "" {
+				if _, err := fmt.Fprintf(osStdout, " — %s", step.Error); err != nil {
+					return printErr("Output failed", err)
+				}
+			}
+			if _, err := fmt.Fprintln(osStdout); err != nil {
+				return printErr("Output failed", err)
+			}
+		}
+		if _, err := fmt.Fprintf(osStdout, "Cleanup: %s\n", report.Cleanup); err != nil {
+			return printErr("Output failed", err)
+		}
 	}
 	if err != nil || report.Status != "passed" {
 		return 1

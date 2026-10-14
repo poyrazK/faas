@@ -19,7 +19,7 @@ func verificationJSON(path string, target any, limit int64) error {
 	if err != nil {
 		return errors.New("cannot read regular input file")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(raw)) > limit {
 		return errors.New("input exceeds bounds")
@@ -46,9 +46,13 @@ func cmdDataAPIVerifyInit(args []string) int {
 	}
 	if jsonOutput {
 		raw, _ := json.Marshal(map[string]any{"command": "data-api verify init", "status": "needs_review", "output": *output})
-		fmt.Fprintln(osStdout, string(raw))
+		if _, err := fmt.Fprintln(osStdout, string(raw)); err != nil {
+			return printErr("Output failed", err)
+		}
 	} else {
-		fmt.Fprintf(osStdout, "Verification templates created in %s; review coverage.json and README.md before running checks.\n", *output)
+		if _, err := fmt.Fprintf(osStdout, "Verification templates created in %s; review coverage.json and README.md before running checks.\n", *output); err != nil {
+			return printErr("Output failed", err)
+		}
 	}
 	return 0
 }

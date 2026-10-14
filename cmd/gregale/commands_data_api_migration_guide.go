@@ -210,9 +210,7 @@ func dataAPIGuideRoot(path string) string {
 		return ""
 	}
 	name := strings.TrimPrefix(target.Path, "/rest/v1/")
-	if strings.HasPrefix(name, "rpc/") {
-		name = strings.TrimPrefix(name, "rpc/")
-	}
+	name = strings.TrimPrefix(name, "rpc/")
 	if name == "" || strings.Contains(name, "/") {
 		return ""
 	}
@@ -362,35 +360,57 @@ func cmdDataAPIMigrationGuide(args []string) int {
 	}
 	if jsonOutput {
 		raw, _ := json.Marshal(guide)
-		fmt.Fprintln(osStdout, string(raw))
+		if _, err := fmt.Fprintln(osStdout, string(raw)); err != nil {
+			return printErr("Output failed", err)
+		}
 	} else {
-		fmt.Fprintf(osStdout, "Data API migration guide: %s\n", guide.Status)
+		if _, err := fmt.Fprintf(osStdout, "Data API migration guide: %s\n", guide.Status); err != nil {
+			return printErr("Output failed", err)
+		}
 		for _, change := range guide.Changes {
-			fmt.Fprintf(osStdout, "%s: %s (breaking=%t)\n", change.Path, change.Reason, change.Breaking)
+			if _, err := fmt.Fprintf(osStdout, "%s: %s (breaking=%t)\n", change.Path, change.Reason, change.Breaking); err != nil {
+				return printErr("Output failed", err)
+			}
 			old, _ := json.Marshal(change.Before)
 			next, _ := json.Marshal(change.After)
-			fmt.Fprintf(osStdout, "  Before: %s\n  After: %s\n", old, next)
+			if _, err := fmt.Fprintf(osStdout, "  Before: %s\n  After: %s\n", old, next); err != nil {
+				return printErr("Output failed", err)
+			}
 			for _, action := range change.Actions {
-				fmt.Fprintf(osStdout, "  %s\n", action)
+				if _, err := fmt.Fprintf(osStdout, "  %s\n", action); err != nil {
+					return printErr("Output failed", err)
+				}
 			}
 			for _, example := range change.Examples {
-				fmt.Fprintf(osStdout, "  %s\n", example)
+				if _, err := fmt.Fprintf(osStdout, "  %s\n", example); err != nil {
+					return printErr("Output failed", err)
+				}
 			}
 		}
 		for _, consumer := range guide.Consumers {
-			fmt.Fprintf(osStdout, "Review %s %q: %d matching changes\n", consumer.Kind, consumer.Name, len(consumer.Changes))
+			if _, err := fmt.Fprintf(osStdout, "Review %s %q: %d matching changes\n", consumer.Kind, consumer.Name, len(consumer.Changes)); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 		for _, request := range guide.Requests {
-			fmt.Fprintf(osStdout, "Review saved request %q/%q (%s)\n", request.Scenario, request.Name, request.Relation)
+			if _, err := fmt.Fprintf(osStdout, "Review saved request %q/%q (%s)\n", request.Scenario, request.Name, request.Relation); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 		for _, review := range guide.Verification {
-			fmt.Fprintf(osStdout, "Verification %s: %s\n", review.Relation, review.Reason)
+			if _, err := fmt.Fprintf(osStdout, "Verification %s: %s\n", review.Relation, review.Reason); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 		for _, key := range []string{"declared_consumers", "saved_queries", "verification_mappings"} {
-			fmt.Fprintf(osStdout, "%s: %s\n", key, guide.Coverage[key])
+			if _, err := fmt.Fprintf(osStdout, "%s: %s\n", key, guide.Coverage[key]); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 		for _, note := range guide.Notes {
-			fmt.Fprintln(osStdout, note)
+			if _, err := fmt.Fprintln(osStdout, note); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 	}
 	return 0

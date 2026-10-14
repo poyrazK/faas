@@ -78,7 +78,7 @@ func coveragePolicy(path string) (dataAPICoveragePolicy, error) {
 	if err != nil {
 		return policy, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(f, 65537))
 	if err != nil || len(raw) > 65536 {
 		return policy, errors.New("policy exceeds 64 KiB")
@@ -308,15 +308,25 @@ func cmdDataAPIVerifyCoverage(args []string) int {
 	}
 	if jsonOutput {
 		raw, _ := json.Marshal(report)
-		fmt.Fprintln(osStdout, string(raw))
+		if _, err := fmt.Fprintln(osStdout, string(raw)); err != nil {
+			return printErr("Output failed", err)
+		}
 	} else {
-		fmt.Fprintf(osStdout, "Verification coverage: %s (%d missing requirements)\n", report.Status, report.Gaps)
+		if _, err := fmt.Fprintf(osStdout, "Verification coverage: %s (%d missing requirements)\n", report.Status, report.Gaps); err != nil {
+			return printErr("Output failed", err)
+		}
 		for _, relation := range report.Relations {
-			fmt.Fprintf(osStdout, "%s: verified %v; missing %v", relation.Relation, relation.Verified, relation.Missing)
-			if relation.New {
-				fmt.Fprint(osStdout, "; new relation")
+			if _, err := fmt.Fprintf(osStdout, "%s: verified %v; missing %v", relation.Relation, relation.Verified, relation.Missing); err != nil {
+				return printErr("Output failed", err)
 			}
-			fmt.Fprintln(osStdout)
+			if relation.New {
+				if _, err := fmt.Fprint(osStdout, "; new relation"); err != nil {
+					return printErr("Output failed", err)
+				}
+			}
+			if _, err := fmt.Fprintln(osStdout); err != nil {
+				return printErr("Output failed", err)
+			}
 		}
 	}
 	if *check && report.Gaps > 0 {

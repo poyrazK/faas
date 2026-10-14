@@ -31,9 +31,13 @@ func cmdDataAPITransaction(args []string) int {
 	}
 	if jsonOutput {
 		raw, _ := json.Marshal(map[string]any{"version": 1, "command": "data-api transaction init", "status": "needs_review", "function": "api." + *name, "output": *output})
-		fmt.Fprintln(osStdout, string(raw))
+		if _, err := fmt.Fprintln(osStdout, string(raw)); err != nil {
+			return printErr("Output failed", err)
+		}
 	} else {
-		fmt.Fprintf(osStdout, "Transaction package created in %s; review README.md and the migration before applying.\n", *output)
+		if _, err := fmt.Fprintf(osStdout, "Transaction package created in %s; review README.md and the migration before applying.\n", *output); err != nil {
+			return printErr("Output failed", err)
+		}
 	}
 	return 0
 }
