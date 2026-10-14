@@ -24,11 +24,13 @@ T = TypeVar("T", bound="OperationTimelineAttempt")
 class OperationTimelineAttempt:
     """One HTTP execution or workflow step attempt as read; a running attempt is not re-emitted when it ends."""
 
-    generation: int
     execution_id: UUID
     attempt: int
     outcome: OperationTimelineAttemptOutcome
     started_at: datetime.datetime
+    generation: int | Unset = UNSET
+    """Execution generation of an HTTP attempt. Step attempts omit it because recovery resumes the same workflow
+    run."""
     step: str | Unset = UNSET
     http_status: int | Unset = UNSET
     error: str | Unset = UNSET
@@ -39,8 +41,6 @@ class OperationTimelineAttempt:
     interleave."""
 
     def to_dict(self) -> dict[str, Any]:
-        generation = self.generation
-
         execution_id = str(self.execution_id)
 
         attempt = self.attempt
@@ -48,6 +48,8 @@ class OperationTimelineAttempt:
         outcome: str = self.outcome
 
         started_at = self.started_at.isoformat()
+
+        generation = self.generation
 
         step = self.step
 
@@ -71,13 +73,14 @@ class OperationTimelineAttempt:
 
         field_dict.update(
             {
-                "generation": generation,
                 "execution_id": execution_id,
                 "attempt": attempt,
                 "outcome": outcome,
                 "started_at": started_at,
             }
         )
+        if generation is not UNSET:
+            field_dict["generation"] = generation
         if step is not UNSET:
             field_dict["step"] = step
         if http_status is not UNSET:
@@ -98,8 +101,6 @@ class OperationTimelineAttempt:
         from ..models.operation_attempt_logs import OperationAttemptLogs
 
         d = dict(src_dict)
-        generation = d.pop("generation")
-
         execution_id = UUID(d.pop("execution_id"))
 
         attempt = d.pop("attempt")
@@ -107,6 +108,8 @@ class OperationTimelineAttempt:
         outcome = check_operation_timeline_attempt_outcome(d.pop("outcome"))
 
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
+
+        generation = d.pop("generation", UNSET)
 
         step = d.pop("step", UNSET)
 
@@ -136,11 +139,11 @@ class OperationTimelineAttempt:
             logs = OperationAttemptLogs.from_dict(_logs)
 
         operation_timeline_attempt = cls(
-            generation=generation,
             execution_id=execution_id,
             attempt=attempt,
             outcome=outcome,
             started_at=started_at,
+            generation=generation,
             step=step,
             http_status=http_status,
             error=error,
