@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -9,8 +10,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+type jobRunPreviewDefaults struct {
+	Path       string `json:"path"`
+	Saved      bool   `json:"saved"`
+	MatchesJob bool   `json:"matches_job"`
+	Applied    bool   `json:"applied"`
+}
+
 // This is a local plan: remote Job defaults and account limits are not fetched.
-func previewJobRun(name string, req api.CreateJobRunRequest, wait, collect bool, timeout, interval time.Duration, directory, defaultParent string, includes, excludes []string, waitReady bool, imageTimeout, imageInterval time.Duration) int {
+func previewJobRun(name string, req api.CreateJobRunRequest, wait, collect bool, timeout, interval time.Duration, directory, defaultParent string, includes, excludes []string, waitReady bool, imageTimeout, imageInterval time.Duration, sources map[string]string, localDefaults jobRunPreviewDefaults) int {
 	if !jobSlugPattern.MatchString(name) {
 		return printErr("Invalid Job name", fmt.Errorf("provide a valid Job name"))
 	}
@@ -59,6 +67,9 @@ func previewJobRun(name string, req api.CreateJobRunRequest, wait, collect bool,
 		}
 	}
 	receipt := struct {
+		Connection        previewConnection       `json:"connection"`
+		LocalDefaults     jobRunPreviewDefaults   `json:"local_defaults"`
+		SettingSources    map[string]string       `json:"setting_sources"`
 		WaitReady         bool                    `json:"wait_ready"`
 		ImageWaitTimeout  string                  `json:"image_wait_timeout,omitempty"`
 		ImagePollInterval string                  `json:"image_poll_interval,omitempty"`
@@ -77,6 +88,9 @@ func previewJobRun(name string, req api.CreateJobRunRequest, wait, collect bool,
 		Exclude           []string                `json:"exclude,omitempty"`
 		Note              string                  `json:"note"`
 	}{WaitReady: waitReady, DryRun: true, Job: name, TaskCount: taskCount, TaskCountSource: taskSource, Request: sanitized, ArgumentCount: argumentCount, Wait: wait, Collect: collect, OutputPattern: outputPattern, Include: includes, Exclude: excludes, Note: "Local preview only; remote Job defaults, manifest contents, readiness, and account limits are not checked. Environment values, argument values, and input references are redacted. No run submitted or files written."}
+	receipt.SettingSources = sources
+	receipt.Connection = configuredPreviewConnection()
+	receipt.LocalDefaults = localDefaults
 	if waitReady {
 		receipt.ImageWaitTimeout = imageTimeout.String()
 		receipt.ImagePollInterval = imageInterval.String()
@@ -89,6 +103,8 @@ func previewJobRun(name string, req api.CreateJobRunRequest, wait, collect bool,
 		return jsonOut(writeJSONSingle(receipt))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Job run preview: %s\n", name)
+	renderPreviewConnection(receipt.Connection)
+	_, _ = fmt.Fprintf(osStdout, "Local defaults file: %s\nDefaults saved: %t; match selected Job: %t; applied settings: %t\n", oneLine(localDefaults.Path), localDefaults.Saved, localDefaults.MatchesJob, localDefaults.Applied)
 	if taskSource == "input_manifest" {
 		_, _ = fmt.Fprintln(osStdout, "Tasks: determined by input manifest (not read)")
 	} else {
@@ -139,5 +155,71 @@ func previewJobRun(name string, req api.CreateJobRunRequest, wait, collect bool,
 		}
 	}
 	_, _ = fmt.Fprintln(osStdout, receipt.Note)
+	_, _ = fmt.Fprintln(osStdout, "Setting sources:")
+	for _, setting := range []struct{ key, label string }{
+		{"job", "Job"}, {"task_count", "Task count"}, {"collect_results", "Result collection"},
+		{"artifact_filters", "Artifact filters"}, {"wait_ready", "Image wait"}, {"wait", "Run wait"},
+		{"parallelism", "Parallelism"}, {"retries", "Retries"}, {"task_timeout", "Task timeout"},
+	} {
+		_, _ = fmt.Fprintf(osStdout, "  %s: %s\n", setting.label, jobRunSettingSourceLabel(sources[setting.key]))
+	}
 	return 0
+}
+
+// Capture sources at the same point defaults are applied, without re-reading
+// configuration or exposing input, environment, or argument values.
+func jobRunSettingSources(fs *flag.FlagSet, allArtifacts bool) map[string]string {
+	sources := map[string]string{
+		"job": "explicit_name", "task_count": "cli_default", "collect_results": "cli_default",
+		"artifact_filters": "cli_default", "wait_ready": "cli_default", "wait": "cli_default",
+		"parallelism": "remote_default_unread", "retries": "remote_default_unread", "task_timeout": "remote_default_unread",
+	}
+	fs.Visit(func(f *flag.Flag) {
+		key := map[string]string{"tasks": "task_count", "results": "collect_results", "out-dir": "collect_results", "include": "artifact_filters", "exclude": "artifact_filters", "wait-ready": "wait_ready", "wait": "wait"}[f.Name]
+		if key != "" {
+			sources[key] = "explicit_flag"
+		}
+	})
+	if allArtifacts {
+		sources["artifact_filters"] = "explicit_flag"
+	}
+	return sources
+}
+
+func finishJobRunSettingSources(sources map[string]string, req api.CreateJobRunRequest, results, outDirSet, collect bool) {
+	if len(req.Inputs) > 0 {
+		sources["task_count"] = "input_bindings"
+	}
+	if req.InputManifestURI != "" {
+		sources["task_count"] = "input_manifest_unread"
+	}
+	if req.Parallelism != nil {
+		sources["parallelism"] = "explicit_flag"
+	}
+	if req.RetryMax != nil {
+		sources["retries"] = "explicit_flag"
+	}
+	if req.TaskTimeoutSec != nil {
+		sources["task_timeout"] = "explicit_flag"
+	}
+	if results {
+		sources["wait"] = "implied_results"
+	}
+	if outDirSet {
+		sources["wait"] = "implied_output_directory"
+	}
+	if !collect {
+		sources["artifact_filters"] = "not_applicable"
+	}
+}
+
+func jobRunSettingSourceLabel(source string) string {
+	labels := map[string]string{
+		"explicit_name": "explicit Job name", "explicit_flag": "explicit flag",
+		"saved_defaults": "saved Job defaults", "cli_default": "CLI default",
+		"remote_default_unread": "remote Job default (not read)", "input_bindings": "explicit input bindings",
+		"input_manifest_unread": "input manifest (not read)", "implied_results": "implied by result collection",
+		"implied_output_directory": "implied by output directory", "not_applicable": "not collecting artifacts",
+	}
+	return labels[source]
 }

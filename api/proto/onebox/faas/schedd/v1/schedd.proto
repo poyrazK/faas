@@ -1041,6 +1041,9 @@ message InstanceTelemetry {
   // ADR-1151: vmmd holds the instance quiet-paused between requests. schedd's
   // quiet pause admission leaves its vCPUs out of the node's active vCPU.
   bool quiet_paused = 19;
+  // ADR-1151: vmmd holds the instance frozen (paused in place until schedd
+  // thaws or destroys it). Mirrors vmmd InstanceStats.frozen.
+  bool frozen = 20;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

@@ -759,6 +759,7 @@ func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.complete
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
 func (r *mfaTestEnv) Cookie() **http.Cookie   { return &r.cookie }
 func (r *mfaTestEnv) H() *http.Handler        { return &r.h }
+func (r *mfaTestEnv) Srv() **server           { return &r.srv }
 func (r *mfaTestEnv) Store() **state.MemStore { return &r.store }
 func (r mfaTestEnv) GenerateEnrolledAccount(p0 *testing.T) ([]string, string, *http.Cookie) {
 	return r.generateEnrolledAccount(p0)
@@ -909,8 +910,10 @@ func (r *server) CancelPendingWork(p0 http.ResponseWriter, p1 *http.Request, p2 
 func (r *server) CaptureProjectEnvironmentValues(p0 context.Context, p1 state.Account, p2 state.Project, p3 string) ([]state.App, state.ProjectEnvironmentCloneValuesSnapshot, error) {
 	return r.captureProjectEnvironmentValues(p0, p1, p2, p3)
 }
-func (r *server) CheckedRollbackSweep(p0 context.Context) error        { return r.checkedRollbackSweep(p0) }
-func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) { r.configureAIGateway(p0, p1) }
+func (r *server) CheckedRollbackSweep(p0 context.Context) error { return r.checkedRollbackSweep(p0) }
+func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) error {
+	return r.configureAIGateway(p0, p1)
+}
 func (r *server) ConfigureDurableEntities(p0 context.Context, p1 func(string) string) error {
 	return r.configureDurableEntities(p0, p1)
 }
@@ -1294,4 +1297,10 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+var ComposeDockerBuildContext = composeDockerBuildContext
+
+func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
+	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
 }

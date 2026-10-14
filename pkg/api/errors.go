@@ -791,6 +791,19 @@ const (
 	// unauthenticated developer app, a Dockerfile build, or a build plan the
 	// watch overlay does not understand.
 	CodeDevWatchUnsupported = "dev_watch_unsupported"
+	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
+	// freeze an instance whose traffic or lifecycle does not allow it (warm
+	// pool, job, app task, builder, private network member, pending waitUntil
+	// task). CodeInstanceBusy refuses a freeze while a forwarded request,
+	// stream or session is in flight; the guest keeps running.
+	// CodeFrozenInstanceRefused is vmmd's refusal to snapshot or migrate a
+	// frozen instance; schedd destroys it instead. CodeInstanceFrozen fails a
+	// forward to a frozen instance fast, so the gateway wakes it through
+	// schedd instead of waiting on a paused guest.
+	CodeInstanceNotFreezable  = "instance_not_freezable"
+	CodeInstanceBusy          = "instance_busy"
+	CodeFrozenInstanceRefused = "frozen_instance_refused"
+	CodeInstanceFrozen        = "instance_frozen"
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
@@ -1129,7 +1142,8 @@ const (
 	CodeTrafficPercentSumInvalid = "traffic_percent_sum_invalid"
 	// CodeTrafficServingChanged is a 409 when a conditional promotion's
 	// expected 100% serving deployment no longer serves the app.
-	CodeTrafficServingChanged = "traffic_serving_changed"
+	CodeTrafficServingChanged  = "traffic_serving_changed"
+	CodeMCPAccessPolicyChanged = "mcp_access_policy_changed"
 	// CodeTrafficChangeDuringCanary is a 409 when a generic traffic split
 	// would change the serving weights owned by an in-flight canary rollout.
 	CodeTrafficChangeDuringCanary = "traffic_change_during_canary"
@@ -1959,7 +1973,8 @@ func StatusForCode(code string) int {
 		return http.StatusGone
 	case CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
-		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable:
+		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable,
+		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled:
 		return http.StatusServiceUnavailable
@@ -2005,9 +2020,10 @@ func StatusForCode(code string) int {
 		CodeDeploymentCancelLiveForbidden, CodeDeploymentCancelNotCancellable,
 		CodeDeploymentReorderNotPending, CodeDebugReplayUnsupported,
 		CodeWildcardDomainTenantSurfaceOverlap, CodeOpenAPIPolicyStale,
-		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged:
+		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
+		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused:
 		return http.StatusConflict
-	case CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -5927,6 +5943,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
 			WithDocs(docsBase + "/plans#analytics")
 	}
+	if feature == "ai_gateway" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI gateway",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
+			WithDocs(docsBase + "/ai-gateway#plans")
+	}
 	if feature == "sync_invoke" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include synchronous invocation",
@@ -6634,3 +6656,32 @@ func ErrUDPListenerLimit(limit, observed int) *Problem {
 const CodeProfileInvestigationLimit = "profile_investigation_limit"
 
 const CodeProfileGateBlocked = "profile_gate_blocked"
+
+func ErrMCPAccessPolicyChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeMCPAccessPolicyChanged, "MCP access policy changed", "Stored MCP access policy changed after the audit. Audit again before retrying promotion; traffic was not changed.")
+}
+
+const (
+	CodeMCPAccountRevisionChanged     = "mcp_account_revision_changed"
+	CodeMCPGatewayEvidenceUnavailable = "mcp_gateway_evidence_unavailable"
+	CodeMCPGatewayEvidenceStale       = "mcp_gateway_evidence_stale"
+	CodeMCPGatewayReplayPending       = "mcp_gateway_replay_pending"
+)
+
+func ErrMCPGatewayPromotion(code string) *Problem {
+	return NewProblem(http.StatusConflict, code, "MCP gateway convergence condition failed", "Account policy or gateway evidence no longer satisfies the audited condition. Audit again before retrying; traffic was not changed.")
+}
+
+func IsMCPPromotionConditionFailure(code string) bool {
+	switch code {
+	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+		return true
+	}
+	return false
+}
+
+const CodeMCPAdmissionEvidenceUnavailable = "mcp_admission_evidence_unavailable"
+
+func ErrMCPAdmissionEvidenceUnavailable() *Problem {
+	return NewProblem(http.StatusServiceUnavailable, CodeMCPAdmissionEvidenceUnavailable, "MCP admission evidence unavailable", "Traffic admission evidence could not be committed. Inspect deployment traffic before retrying after audit storage recovers.")
+}

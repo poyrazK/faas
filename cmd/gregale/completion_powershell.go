@@ -78,7 +78,7 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "Register-ArgumentCompleter -Native -CommandName 'gregale' -ScriptBlock {")
 	_, _ = fmt.Fprintln(w, "  param($wordToComplete, $commandAst, $cursorPosition)")
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "  $tokens = $commandAst.ToString() -split '\\s+'")
+	_, _ = fmt.Fprintln(w, "  $tokens = @($commandAst.CommandElements | Where-Object { $_.Extent.StartOffset -lt $cursorPosition } | ForEach-Object { if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $_.Value } else { $_.Extent.Text } })")
 	_, _ = fmt.Fprintln(w, "  $previousToken = if ($tokens.Count -gt 1 -and $tokens[-1] -eq $wordToComplete) { $tokens[-2] } else { $tokens[-1] }")
 	_, _ = fmt.Fprintln(w, "  $contextTokens = @($tokens | Where-Object { $_ -ne '' })")
 	_, _ = fmt.Fprintln(w, "  if ($contextTokens.Count -gt 1 -and $contextTokens[-1] -eq $wordToComplete) { $contextTokens = @($contextTokens[0..($contextTokens.Count - 2)]) }")
@@ -106,6 +106,19 @@ func renderPowershellHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    return")
 	_, _ = fmt.Fprintln(w, "  }")
 
+	_, _ = io.WriteString(w, `  $localWords = @($normalizedContext | Select-Object -Skip 1) + @($wordToComplete)
+  $localNames = @(gregale @__gregaleProfileArgs completion local-names -- @localWords 2>$null)
+  if ($LASTEXITCODE -eq 0) {
+    foreach ($name in $localNames) {
+      if ($name -ne '') {
+        $completionText = $name
+        if ($name -match "[^a-zA-Z0-9_=./:-]") { $completionText = "'" + $name.Replace("'", "''") + "'" }
+        [System.Management.Automation.CompletionResult]::new($completionText, $name, 'ParameterValue', $name)
+      }
+    }
+    return
+  }
+`)
 	_, _ = io.WriteString(w, `  if ($normalizedContext.Count -gt 1 -and $normalizedContext[1] -eq 'secrets') {
     $secretWords = @($normalizedContext | Select-Object -Skip 1) + @($wordToComplete)
     $secretNames = @(gregale @__gregaleProfileArgs completion secret-keys -- @secretWords 2>$null)

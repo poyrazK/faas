@@ -112,7 +112,10 @@ import (
 // Metrics is the gatewayd-internal Prometheus bundle. Construct once per Handler via
 // NewMetrics and pass into NewHandlerWith.
 type Metrics struct {
-	registry *prometheus.Registry
+	mcpRequests *prometheus.CounterVec
+	mcpDuration *prometheus.HistogramVec
+	mcpActive   *prometheus.GaugeVec
+	registry    *prometheus.Registry
 
 	requests                    *prometheus.CounterVec
 	platformErrors              *prometheus.CounterVec
@@ -2050,6 +2053,7 @@ func NewMetrics() *Metrics {
 		Name: "gateway_route_lookup_stale_served_total",
 		Help: "Requests routed from the last-known-good route tier because the authoritative route lookup errored (ADR-190). Bounded by FAAS_GATEWAY_ROUTE_STALE_TTL; a sustained rate means Postgres is unreachable from this gateway.",
 	})
+	m.initMCPMetrics(reg)
 	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed)
 	return m
 }

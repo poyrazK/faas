@@ -15351,9 +15351,9 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
- sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.arg(action),sqlc.arg(webhook_url),
+ sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
  sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds))
 RETURNING *;
 
@@ -19975,3 +19975,42 @@ SELECT EXISTS (
       )
     )
 ) AS managed;
+
+-- name: InstanceLogsOwnedByApp :one
+-- Archived runtime logs are keyed by instance only. The instance row proves
+-- ownership while it exists; afterwards the app's billing rows for that
+-- instance in [from_minute, to_minute) do.
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = sqlc.arg(instance_id)::uuid
+          AND i.app_id = sqlc.arg(app_id)::uuid
+          AND a.account_id = sqlc.arg(account_id)::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = sqlc.arg(account_id)::uuid
+          AND u.app_id = sqlc.arg(app_id)::uuid
+          AND u.instance_id = sqlc.arg(instance_id)::uuid
+          AND u.minute >= sqlc.arg(from_minute)::timestamptz
+          AND u.minute < sqlc.arg(to_minute)::timestamptz
+    )
+)::boolean AS owned;
+
+-- name: JobTaskLogTarget :one
+-- ADR-1163: the job task a live log stream follows, scoped to the account
+-- and job name, with the node of its current instance (if any).
+SELECT t.status,
+       t.attempt,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = sqlc.arg(account_id)::uuid
+  AND j.name = sqlc.arg(job_name)::text
+  AND j.status <> 'deleted'
+  AND r.id = sqlc.arg(run_id)::uuid
+  AND t.task_index = sqlc.arg(task_index)::int;

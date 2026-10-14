@@ -165,3 +165,57 @@ func TestNodeFunctionAdapterExposesRawBodyB64(t *testing.T) {
 		t.Fatalf("event.body_b64 = %q (parsed %q), want the exact request bytes alongside the parsed body", got.BodyB64, got.Parsed)
 	}
 }
+
+// H10-20: the envelope carries Go's canonical header names, so an event
+// handler's headers["x-test"] was undefined on prod; Node apps read
+// lowercase names.
+func TestNodeFunctionAdapterHeadersIgnoreCase(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"type":"module"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler := `export async function handler(event) {
+  return {statusCode: 200, body: {lower: event.headers["x-test"], canonical: event.headers["X-Test"],
+    has: "x-faas-deadline-ms" in event.headers, keys: Object.keys(event.headers).sort()}};
+}`
+	if err := os.WriteFile(filepath.Join(dir, "handler.js"), []byte(handler), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	adapter := filepath.Join(dir, "adapter.mjs")
+	if err := os.WriteFile(adapter, []byte(nodeFunctionAdapter), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envelope, _ := json.Marshal(map[string]any{"method": "GET", "path": "/", "body_b64": "",
+		"headers": map[string]string{"X-Test": "one, two", "X-Faas-Deadline-Ms": "59999"}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, adapter)
+	cmd.Stdin = bytes.NewReader(append(envelope, '\n'))
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	var resp struct {
+		BodyB64 string `json:"body_b64"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &resp); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	body, _ := base64.StdEncoding.DecodeString(resp.BodyB64)
+	var got struct {
+		Lower, Canonical string
+		Has              bool
+		Keys             []string
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("handler body %q: %v", body, err)
+	}
+	if got.Lower != "one, two" || got.Canonical != "one, two" || !got.Has ||
+		strings.Join(got.Keys, ",") != "x-faas-deadline-ms,x-test" {
+		t.Fatalf("event.headers = %+v, want lowercase keys with case-insensitive reads", got)
+	}
+}

@@ -23,7 +23,8 @@ func TestResolveOCIUserAndGroup(t *testing.T) {
 	}{
 		{"server", Identity{1001, 2001}, false},
 		{"1001", Identity{1001, 2001}, false},
-		{"4001", Identity{4001, 4001}, false},
+		// A UID absent from passwd runs with GID 0, as under Docker (ADR-1239).
+		{"4001", Identity{4001, 0}, false},
 		{"server:readers", Identity{1001, 3001}, false},
 		{"1001:readers", Identity{1001, 3001}, false},
 		{"server:4001", Identity{1001, 4001}, false},
