@@ -448,11 +448,25 @@ func resolveScanSource(
 // — a single filepath.Ext() call only drops ".gz" and leaves ".tar"
 // in the slug, which customers typing "deploy fixture.tar.gz" would
 // not expect.
+// composeFileNames are the Compose files Gregale reads as a project, in
+// Compose's own lookup order.
+var composeFileNames = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+
+// composeFileIn returns the first Compose file at the root of dir, or "".
+func composeFileIn(dir string) string {
+	for _, file := range composeFileNames {
+		if info, err := os.Stat(filepath.Join(dir, file)); err == nil && info.Mode().IsRegular() {
+			return file
+		}
+	}
+	return ""
+}
+
 // composeProjectName returns the top-level `name:` of the compose file in
 // dir, or "" when there is none. Compose uses it as the project name, so
 // it is the project slug a redeploy from a renamed directory must keep.
 func composeProjectName(dir string) string {
-	for _, file := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+	for _, file := range composeFileNames {
 		raw, err := os.ReadFile(filepath.Join(dir, file))
 		if err != nil {
 			continue
