@@ -588,6 +588,19 @@ The first attempt was cut at 29.5 s: on single-box installs schedd's stats
 poller read only the empty capacity-stream cache, so the idle reaper never
 saw the in-flight request. The poller now reads vmmd `Stats` directly when
 schedd has no owner node.
+Async, queue, cron and replay invocations run for the function's request
+timeout too, at least 30 s (ADR-1180). Their leases cover the run, and long
+ones are delivered off the drain tick and the cron loop. vmmd's stream
+bridge waits for the guest's response headers as long as
+`X-Faas-Deadline-Ms` allows; a fixed 30 s wait cut every response that
+started after 30 s with a 502. Evidence, 2026-10-13 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionLongRequestMetal`, full
+daemon set, daemons at 74b9225c29 with the bridge, runner and test at
+6d2e493e3a): the Pro function with `request_timeout_s=120` streamed for
+36.0 s, answered a synchronous 40 s request once with HTTP 200 after 40.0 s,
+and completed a 40 s async invocation in 40.7 s on its first attempt. Both
+40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
+attempt of that async invocation got a 502 about 32 s in and was retried.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

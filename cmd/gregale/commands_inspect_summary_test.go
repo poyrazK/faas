@@ -382,3 +382,31 @@ func TestInspectRecommendations_ParkedAppPointsToWake(t *testing.T) {
 		}
 	}
 }
+
+// H10-7: with data placement off on the cluster, every inspect headline was
+// "Incomplete information … current health is not established".
+func TestInspectDataPlacementNotOfferedIsNotAReadFailure(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want string
+	}{
+		{api.CodeDataUpstreamsDisabled, "not enabled on this cluster"},
+		{api.CodePlanDataUpstreamsNotAllowed, "not included in this plan"},
+	} {
+		off, err := upstreamsNotOffered(&APIError{Problem: api.Problem{Code: tc.code}})
+		if err != nil || off != tc.want {
+			t.Fatalf("upstreamsNotOffered(%s) = %q, %v; want %q, nil", tc.code, off, err, tc.want)
+		}
+		in := inspectSummaryInputs{UpstreamsOff: off}
+		if got := inspectUnavailable(in); len(got) != 0 {
+			t.Fatalf("unavailable = %v, want none", got)
+		}
+		if data := inspectData(in); data.Available || data.NotOffered != tc.want {
+			t.Fatalf("inspectData = %+v, want not offered %q", data, tc.want)
+		}
+	}
+	readErr := &APIError{Problem: api.Problem{Code: api.CodeInternal}}
+	if off, err := upstreamsNotOffered(readErr); off != "" || err == nil {
+		t.Fatalf("a real read failure must stay an error; got %q, %v", off, err)
+	}
+}

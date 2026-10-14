@@ -8893,6 +8893,13 @@ WHERE id = sqlc.arg(id)::uuid AND operation_id IS NOT NULL
   AND state = 'dispatching' AND attempts = sqlc.arg(attempt)::integer
   AND lease_expires_at > now() AND deadline_at > now();
 
+-- name: RenewInvocationLease :execrows
+UPDATE invocations
+SET lease_expires_at = now() + sqlc.arg(lease_seconds)::integer * interval '1 second'
+WHERE id = sqlc.arg(id)::uuid AND operation_id IS NULL
+  AND state = 'dispatching' AND attempts = sqlc.arg(attempt)::integer
+  AND lease_expires_at > now();
+
 -- name: FeatureFlagRequestOutcomes :many
 WITH evidence AS MATERIALIZED (
  SELECT
@@ -20132,3 +20139,24 @@ FROM synthetic_check_runs WHERE check_id = sqlc.arg(check_id)::uuid AND started_
 
 -- name: PurgeSyntheticCheckRunsBefore :execrows
 DELETE FROM synthetic_check_runs WHERE started_at < sqlc.arg(before)::timestamptz;
+-- name: InstanceLogsOwnedByApp :one
+-- Archived runtime logs are keyed by instance only. The instance row proves
+-- ownership while it exists; afterwards the app's billing rows for that
+-- instance in [from_minute, to_minute) do.
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = sqlc.arg(instance_id)::uuid
+          AND i.app_id = sqlc.arg(app_id)::uuid
+          AND a.account_id = sqlc.arg(account_id)::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = sqlc.arg(account_id)::uuid
+          AND u.app_id = sqlc.arg(app_id)::uuid
+          AND u.instance_id = sqlc.arg(instance_id)::uuid
+          AND u.minute >= sqlc.arg(from_minute)::timestamptz
+          AND u.minute < sqlc.arg(to_minute)::timestamptz
+    )
+)::boolean AS owned;

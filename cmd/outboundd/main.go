@@ -202,7 +202,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.Metrics = outboundMetrics
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	handler.AIGatewayEnabled = cfg.AIGateway(os.Getenv)
-	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled)
+	if handler.AIGatewayRollout, err = cfg.AIGatewayRollout(os.Getenv); err != nil {
+		return fmt.Errorf("outboundd: %w", err)
+	}
+	log.Info("outbound AI gateway release gate", "enabled", handler.AIGatewayEnabled,
+		"rollout_accounts", len(handler.AIGatewayRollout), "rollout_limited", handler.AIGatewayRollout != nil)
 	// ADR-990: AI fallback routes are served on relay connections.
 	if handler.Routes, err = outbound.NewPostgresRouteResolver(pool); err != nil {
 		return err

@@ -1462,7 +1462,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureFeatureFlags(*cfg, deps.getenv); err != nil {
 		return err
 	}
-	srv.configureAIGateway(*cfg, deps.getenv)
+	if err := srv.configureAIGateway(*cfg, deps.getenv); err != nil {
+		return fmt.Errorf("apid: AI gateway: %w", err)
+	}
 	billingMode, err := billing.ModeFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid: billing mode: %w", err)
