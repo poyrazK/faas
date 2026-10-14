@@ -469,18 +469,80 @@ Findings:
    and `faas-tenant.slice` both have the default CPUWeight, so a node with
    busy tenants behaves like the "one core busy" row.
 
-Proposed, for the product owner to decide (nothing here is built):
+### In-path latency inside gatewayd-internal
+
+`TestEdgeWAFInlineLoad_E2E` (`cmd/e2e`, opt-in `FAAS_E2E_WAF_LOAD=1`)
+runs apid and the real gatewayd-internal against Postgres. Each of four
+preview apps has a `kind=waf` warn rule and a `kind=respond` rule on its
+host, so every request is checked in-path and then answered at the edge
+without waking a VM. The test reads `gateway_waf_inline_seconds` and the
+check outcomes from the daemon's `/metrics`, and the daemon's CPU time
+from `/proc`. Same node, 15 s per rate, variants interleaved and the
+baseline repeated.
+
+Other sessions' load rose from 4 to 13 during the run, so only 100 and 250
+requests per second are usable. At 500 and above, the gateway, the load
+generator, Postgres and other sessions saturated the node's 2 vCPUs, and
+requests queued for seconds.
+
+| Variant, at 100 req/s (250 req/s) | Gateway CPU per request | Check p50 | Check p95 | Skipped |
+|---|---|---|---|---|
+| no WAF rule | 1.13 ms (0.95) | — | — | — |
+| warn, as built | 5.5-5.8 ms (5.3) | 1.8-2.3 ms (1.9-2.5) | 4.4-7.4 ms (5.1-8.9) | 0-0.1% (1.1-3.1%) |
+| warn, bodiless requests not sampled | 3.0-3.1 ms (2.7-2.8) | 1.9-2.1 ms (2.5-2.7) | 4.4-5.0 ms (8.1-8.9) | 0% (0.2-0.4%) |
+| not sampled, GOGC=400 and GOMEMLIMIT=384MiB | 3.05 ms (2.7) | 2.2 ms (2.5) | 5.5 ms (7.8) | 0% (0%) |
+| not sampled, 1 check slot | 3.2 ms (3.0) | 2.2 ms (2.6) | 5.8 ms (8.3) | 10.2% (28.7%) |
+| not sampled, a core busy at equal weight | 3.2 ms (2.7) | 2.7 ms (3.7) | 8.9 ms (10.5) | 0.1% (1.1%) |
+| not sampled, a core busy at a quarter of the weight | 3.1 ms (2.8) | 2.6 ms (2.9) | 9.0 ms (9.3) | 0.1% (0.6%) |
+| as built, a core busy at equal weight | 5.8 ms (4.4) | 3.8 ms (4.1) | 13.5 ms (19.5) | 1.0% (13.9%) |
+
+No run warned on a benign request. The attacks that were not warned are in
+line with the skipped fraction.
+
+Findings:
+
+1. **Inside the daemon a check costs about 2 ms of CPU**, not the 1 ms of
+   the isolated benchmark: 3.0-3.1 ms per request with the check against
+   1.0-1.1 ms without. Its median is 1.8-2.3 ms and its p95 4.4-7.4 ms at
+   100 requests per second. No lever brought p95 under 2 ms on this node.
+2. **As built, warn and block also sample every clean request off-path**
+   with the full rule set. That costs another 2.5 ms of CPU per request,
+   45% of what a warn rule costs, mostly to re-read headers the in-path
+   check has just scored. With a busy core it turned 1.0% skipped checks
+   into 13.9% at 250 requests per second and timed requests out; without
+   it, 1.1%.
+
+   **Changed:** a warn or block rule no longer samples a request that has
+   no body when its in-path check ran clean. Requests with a body are
+   still sampled, and so are requests whose check was skipped or failed.
+   The cost is coverage. For bodiless requests under warn and block, the
+   rule families the in-path set leaves out (911, 920, 933, 934, 943 and
+   944, including Log4Shell in a header) are no longer reported. `observe`
+   still runs the full rule set on every request it samples.
+3. **GOGC=400 with GOMEMLIMIT=384MiB made no measurable difference** inside
+   the daemon. Its heap is larger than the benchmark's, so it already
+   collects less often per check. Not changed.
+4. **One check slot instead of two** skipped 10-29% of checks at 100-250
+   requests per second, with no latency gain. Not changed.
+5. **CPU weight could not be measured here.** Giving the gateway four times
+   the weight of a competing process changed little, because other
+   sessions' processes, at full weight, were most of the competition. On a
+   production node, `faas-cp-build.slice` (builder VMs) is a child of
+   `faas-cp.slice`. Raising that slice's weight would therefore also let
+   builds outrank tenants, which CLAUDE.md forbids. The lever would need a
+   gateway slice of its own.
+
+Proposed, for the product owner to decide (only finding 2 is built):
 
 1. `observe` at PL1 can leave preview: it adds no latency, it detects 98%
    of the corpus, and its false positives are known and documented.
-2. `warn` and `block` stay in preview until `gateway_waf_inline_seconds` is
-   measured inside gatewayd-internal on a production compute node
-   (n2-standard-4, 2 physical cores) with a synthetic `warn` rule on a test
-   app. The harness cannot reproduce the daemon's heap, its core count, or
-   tenant load.
-3. Levers to try first: GOGC or GOMEMLIMIT for gatewayd-internal; a
-   CPUWeight for `faas-cp.slice` above `faas-tenant.slice`, so busy tenants
-   do not delay in-path checks; and a slot count tied to physical cores.
-4. If p95 still exceeds 2 ms with those levers, restate the gate as p95 at
-   most 5 ms with at most 1% skipped at the expected per-node rate. A check
-   is still far cheaper than a wake, and the WAF fails open.
+2. `warn` and `block` stay in preview. The 2 ms target is not met on this
+   shared 2-vCPU node, with or without the levers, and this node cannot
+   give an uncontended number. Run `TestEdgeWAFInlineLoad_E2E` on an idle
+   production compute node (n2-standard-4) before deciding.
+3. If p95 is still above 2 ms there, restate the gate as p95 at most 5 ms
+   with at most 1% skipped at the expected per-node rate. A check is still
+   far cheaper than a wake, and the WAF fails open.
+4. On that node, also try a CPUWeight for gatewayd-internal above the
+   tenant slice, in a slice of its own so builder VMs keep their place
+   below tenants.

@@ -134,7 +134,8 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 	}
 	sample := newWAFSample(r, app, rule)
 	if rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock {
-		if detected := h.checkEdgeRuleWAFInline(rule, sample); detected {
+		outcome := h.checkEdgeRuleWAFInline(rule, sample)
+		if outcome == WAFInlineDetected {
 			if rule.Mode == api.EdgeWAFModeBlock {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
 					"blocked by edge rule "+rule.ID+" (kind=waf)"))
@@ -145,8 +146,20 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 			rec.installHeaderOps([]EdgeRuleHeaderOp{{Action: "set", Name: "X-WAF-Warning", Value: rule.ID}})
 			return false, nil
 		}
+		// The in-path check has scored the headers and URI. Without a body,
+		// an off-path sample would only add the rule families the in-path
+		// set leaves out, for a full-rule-set evaluation competing with
+		// in-path checks for the same CPUs (ADR-831 amendment 6). A skipped
+		// or failed check is still sampled.
+		if outcome == WAFInlineClean && !requestHasBody(r) {
+			return false, nil
+		}
 	}
 	return false, h.sampleEdgeRuleWAF(r, rule, sample)
+}
+
+func requestHasBody(r *http.Request) bool {
+	return r.Body != nil && r.Body != http.NoBody && r.ContentLength != 0
 }
 
 func (h *Handler) matchEdgeRuleWAF(r *http.Request, app App) *EdgeRuleWAFResolved {
@@ -189,11 +202,12 @@ func newWAFSample(r *http.Request, app App, rule *EdgeRuleWAFResolved) WAFSample
 	return sample
 }
 
-// checkEdgeRuleWAFInline runs the in-path check and reports a detection. A
-// skipped or failed check reports none: the WAF fails open.
-func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSample) bool {
+// checkEdgeRuleWAFInline runs the in-path check and returns its outcome, or
+// "" when no checker is wired. Only WAFInlineDetected acts on the request: a
+// skipped or failed check fails open.
+func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSample) string {
 	if h.wafInline == nil {
-		return false
+		return ""
 	}
 	res := h.wafInline.CheckInline(sample)
 	outcome := res.Outcome
@@ -210,7 +224,7 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 		}
 	}
 	h.metrics.ObserveWAFInline(sample.AppID, outcome, res.Seconds)
-	return res.Outcome == WAFInlineDetected
+	return res.Outcome
 }
 
 // sampleEdgeRuleWAF wraps r.Body to record the inspected prefix and returns
