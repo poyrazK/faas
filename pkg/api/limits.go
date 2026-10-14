@@ -374,6 +374,19 @@ const (
 	RealtimeUsageReportMaxAge       = 24 * time.Hour
 	RealtimeUsageReadMaxRows        = 10_000
 )
+
+// Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
+// takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
+// timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the
+// ceiling is the plan's MaxAsyncInvocationDeadlineSeconds. A lease stops
+// adding messages once their payloads and headers would pass
+// QueueLeaseMaxResponseBytes, but always returns at least one. A lease that
+// finds nothing waits up to QueueLeaseMaxWaitSeconds for a message.
+const QueueLeaseMaxMessages = 100
+const QueueLeaseMaxReceipts = 100
+const QueueLeaseDefaultVisibilitySeconds = 30
+const QueueLeaseMaxResponseBytes = 8 << 20
+const QueueLeaseMaxWaitSeconds = 20
 const QueueBindingRetryMaxBaseSeconds = 3600
 const QueueBindingRetryMaxSeconds = 86400
 
@@ -437,6 +450,10 @@ const EnvironmentGitOpsReportIdleInterval = 5 * time.Second
 // Bound completed report history while retaining recent diagnostic evidence.
 const EnvironmentGitOpsReportRetention = 7 * 24 * time.Hour
 const EnvironmentGitOpsReportRunsMaxPerSource = 1000
+
+// Bounded, value-free customer notification payloads and durable deduplication.
+const EnvironmentGitOpsNotificationDetailsMax = 100
+const EnvironmentGitOpsNotificationStateBytes = 2048
 
 // Qualification is separately leased from intent reconciliation. An expired
 // executor cannot publish evidence for a later attempt.
@@ -862,6 +879,12 @@ const (
 	OutboundAIReplayOutputTextMaxBytes      = 4 << 10
 	OutboundAIReplayCallTimeoutSeconds      = 120
 	OutboundAIReplayInterruptedAfterMinutes = 15
+	// Settlement (ADR-1120): the attempts at one call's settlement and the
+	// deadline of each, and how long a settled call's key is kept so a
+	// retried settlement cannot count the call twice.
+	OutboundAISettlementAttempts              = 3
+	OutboundAISettlementAttemptTimeoutSeconds = 5
+	OutboundAISettlementKeyRetentionMinutes   = 60
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -1498,9 +1521,67 @@ type EventStorageLimits struct {
 	RetainedBytes  int64 `json:"retained_bytes"`
 }
 
+// ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1320).
+// Ceilings tighten the operator safety policy (ObjectStoragePolicy) and are
+// the plan's hard stop; allowances are usage included in the plan and removed
+// before month-close pricing. A zero field changes nothing: the operator
+// policy applies unchanged and no usage is included.
+type ObjectStoragePlanLimits struct {
+	MaxAccountBytes       int64
+	MaxMonthlyRequests    int64
+	MaxMonthlyEgressBytes int64
+	// IncludedBytes is average stored bytes over a billing month of
+	// ObjectStorageBillingHoursPerMonth hours.
+	IncludedBytes       int64
+	IncludedRequests    int64
+	IncludedEgressBytes int64
+}
+
+// ObjectStorageBillingHoursPerMonth is the conventional month used to price
+// stored byte-hours as GiB-months and to convert IncludedBytes.
+const ObjectStorageBillingHoursPerMonth int64 = 730
+
+// Policy returns the operator safety policy tightened by the plan's ceilings.
+// The tighter positive value wins; a zero plan ceiling keeps the operator's.
+// No bucket may exceed the account, so the bucket cap follows a tighter
+// account ceiling and a valid operator policy stays valid.
+func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePolicy {
+	p.MaxAccountBytes = tighterObjectStorageLimit(p.MaxAccountBytes, l.MaxAccountBytes)
+	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
+	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
+	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	return p
+}
+
+// Allowance returns the plan's included usage in month-close billing units.
+func (l ObjectStoragePlanLimits) Allowance() ObjectStorageAllowance {
+	storedByteHours := MaxObjectStoragePolicyValue
+	if l.IncludedBytes <= MaxObjectStoragePolicyValue/ObjectStorageBillingHoursPerMonth {
+		storedByteHours = max(l.IncludedBytes, 0) * ObjectStorageBillingHoursPerMonth
+	}
+	return ObjectStorageAllowance{
+		StoredByteHours: storedByteHours,
+		Requests:        min(max(l.IncludedRequests, 0), MaxObjectStoragePolicyValue),
+		EgressBytes:     min(max(l.IncludedEgressBytes, 0), MaxObjectStoragePolicyValue),
+	}
+}
+
+func tighterObjectStorageLimit(operator, plan int64) int64 {
+	if plan <= 0 {
+		return operator
+	}
+	if operator <= 0 {
+		return plan
+	}
+	return min(operator, plan)
+}
+
 type Limits struct {
-	Profiling       ProfilingLimits
-	EventStorage    EventStorageLimits
+	Profiling    ProfilingLimits
+	EventStorage EventStorageLimits
+	// ObjectStorage is the plan's object-storage ceilings and allowances
+	// (ADR-1320). Every plan currently leaves it zero.
+	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	Operations      OperationPlanLimits
 	Plan            Plan
@@ -4721,6 +4802,14 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
+	// in memory after its idle timeout before schedd parks it. 10 min gave
+	// the same capacity as 1 h in the ADR's simulation while holding fewer
+	// resident VMs.
+	FrozenTTLSeconds = 600
+	// FrozenMaxPerNode caps a node's frozen instances: each holds a
+	// Firecracker process, a jail uid and a network namespace.
+	FrozenMaxPerNode = 1000
 	// SnapshotVMOverheadMB is temporary host-side headroom applied only while
 	// Firecracker creates a full snapshot. The snapshot operation allocates
 	// bookkeeping and copy-on-write pages in the host process in addition to
@@ -5467,6 +5556,13 @@ const (
 	// TCP session. TCP ingress is long-lived, so this is a safety ceiling for a
 	// runaway connection rather than an HTTP request-body limit.
 	RawTCPStreamMaxBytes int64 = 1 * 1024 * 1024 * 1024
+
+	// RawTCPLookupCacheTTL is how long the public TCP edge reuses a listener's
+	// route-by-port, TLS domain and live-deployment lookups across new
+	// connections, so a connection flood does not cost every query per
+	// connection. The app and listener-intent reads, which reject a stale
+	// route, and instance selection are never cached.
+	RawTCPLookupCacheTTL = time.Second
 
 	// Post-response tail (issue #667 / ADR-078).
 	//
@@ -10293,6 +10389,57 @@ const (
 	DataAPIDiagnosticsMaxRecords = 100000
 )
 
+// Application Auth bounds (ADR-1190). AuthStatementTimeoutMS is the auth
+// login's default statement timeout; release-task migrations may raise it
+// for their own session. It is a runaway-query guard, not a plan quota.
+// The auth template's config.mjs mirrors the runtime values;
+// TestAuthTemplateRuntimeBounds keeps them aligned.
+const (
+	AuthStatementTimeoutMS = 30000
+	// AuthAccessTokenTTLSeconds bounds how long a signed-out or banned
+	// session's access token still passes edge-only JWT checks.
+	AuthAccessTokenTTLSeconds = 600
+	// AuthMaxPoolConnections caps GoTrue's direct (unpooled) connections
+	// per instance.
+	AuthMaxPoolConnections = 4
+	// AuthMaxRequestBytes bounds request bodies the front proxies to GoTrue.
+	AuthMaxRequestBytes = 1 << 20
+	// AuthMaxRedirectURLs bounds GOTRUE_URI_ALLOW_LIST entries.
+	AuthMaxRedirectURLs = 50
+	// AuthMigrationStatementTimeoutMS replaces the login default for the
+	// release task's GoTrue migrations, which may rewrite large user tables.
+	AuthMigrationStatementTimeoutMS = 600000
+	// AuthFrontPoolConnections caps the front's /authz/v1 connections.
+	AuthFrontPoolConnections = 2
+	// AuthAuthzBodyBytes bounds /authz/v1 request bodies; AuthAuthzConfigBytes
+	// bounds the declarative AUTH_AUTHZ roles and policies document.
+	AuthAuthzBodyBytes   = 64 << 10
+	AuthAuthzConfigBytes = 64 << 10
+	// AuthInvitationTTLSeconds is the default invitation lifetime;
+	// gregale_auth.invite accepts 300 s to AuthMaxInvitationTTLSeconds.
+	AuthInvitationTTLSeconds    = 7 * 24 * 3600
+	AuthMaxInvitationTTLSeconds = 14 * 24 * 3600
+	// AuthMaxOrganizationsPerUser and AuthMaxPendingInvitationsPerOrg bound
+	// what one end user can create in the customer's database.
+	AuthMaxOrganizationsPerUser     = 100
+	AuthMaxPendingInvitationsPerOrg = 500
+	// AuthEmailTimeoutMs bounds one provider request; AuthHookBodyBytes
+	// bounds GoTrue's send-email hook payload; AuthEmailAPIKeyMaxBytes
+	// bounds the sealed provider key.
+	AuthEmailTimeoutMs      = 10000
+	AuthHookBodyBytes       = 256 << 10
+	AuthEmailAPIKeyMaxBytes = 512
+	// AuthStorageURLSeconds is the lifetime of an object URL the Auth app
+	// signs after authorize() allows the read or write.
+	AuthStorageURLSeconds = 60
+	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
+	// the most users one import request creates.
+	AuthAdminBodyBytes = 1 << 20
+	AuthImportBatch    = 100
+	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
+	AuthImportFileMaxBytes = 256 << 20
+)
+
 // A compatibility receipt is short-lived authorization for captured declarations.
 const RouteLifecycleApprovalTTL = time.Hour
 
@@ -10773,7 +10920,13 @@ const (
 	WorkflowRecoveryPolicyReviewsMax         = 1000
 	WorkflowRecoveryPolicyJobsPerPoll        = 5
 	WorkflowRecoveryPolicyPollBatch          = 10
+	WorkflowInitialManualCompletionPollBatch = WorkflowRecoveryPolicyPollBatch
 	WorkflowRecoveryPolicyPollInterval       = time.Minute
+	WorkflowInitialObservationMaxBackoff     = 30 * time.Minute
+	WorkflowInitialObservationMaxAttempts    = 32
+	WorkflowAutomaticPollingMaxBackoff       = WorkflowInitialObservationMaxBackoff
+	WorkflowAutomaticPollingMaxAttempts      = WorkflowInitialObservationMaxAttempts
+	WorkflowRecoveryPollingAlertAttempts     = 3
 )
 
 // Active condition summaries bound context retention and displayed groups.
@@ -10855,6 +11008,12 @@ const (
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
 
+// WorkflowInitialRecoveryReviewLifetime bounds first-recovery approval freshness.
+const WorkflowInitialRecoveryReviewLifetime = EventRecoveryJobLifetime
+
+// WorkflowRecoveryOverviewItemsMax bounds retained issue and manual review samples.
+const WorkflowRecoveryOverviewItemsMax = 100
+
 // Checklist watches are durable within a readiness subscription; polling rotates a bounded sample.
 const OperationWorkflowPlaybookEvidenceWatchesPerSubscriptionMax = 20
 const OperationWorkflowPlaybookEvidenceWatchesPerPassMax = 5
@@ -10868,3 +11027,75 @@ const MaxObjectChecksumValueBytes = 128
 const MaxObjectAttributesHeaderBytes = 128
 const MaxObjectStorageClassBytes = 64
 const MaxObjectAttributesSelections = 5
+
+// MCP catalog monitoring bounds retained transition evidence and request work.
+const (
+	MCPCatalogMonitorMaxRequestBytes         = 1 << 20
+	MCPCatalogMonitorHistoryLimit            = 32
+	MCPCatalogMonitorMaxChanges              = 128
+	MCPCatalogMonitorMaxDiffBytes            = 64 << 10
+	MCPCatalogMonitorDefaultFreshnessSeconds = 90
+	MCPCatalogMonitorMinFreshnessSeconds     = 15
+	MCPCatalogMonitorMaxFreshnessSeconds     = 3600
+)
+
+const MCPCatalogMonitorRoleLimit = 16
+
+const (
+	MCPCatalogObserverDefaultIntervalSeconds = 30
+	MCPCatalogObserverMinIntervalSeconds     = 30
+	MCPCatalogObserverMaxIntervalSeconds     = 3600
+	MCPCatalogObserverDefaultTimeoutSeconds  = 10
+	MCPCatalogObserverMaxTimeoutSeconds      = 30
+	MCPCatalogObserverPollSeconds            = 5
+	MCPCatalogObserverLeaseSeconds           = 45
+	MCPCatalogObserverConcurrency            = 4
+	MCPCatalogObserverMaxBackoffSeconds      = 600
+	MCPCatalogObserverMaxFailures            = 16
+	MCPCatalogObserverMaxEndpointBytes       = 512
+)
+
+// OAuth refresh work shares the managed observer lease and bounded transport.
+const (
+	MCPCatalogOAuthMaxClientIDBytes   = 512
+	MCPCatalogOAuthMaxTokenBytes      = 16384
+	MCPCatalogOAuthMaxResponseBytes   = 65536
+	MCPCatalogOAuthRefreshSkewSeconds = 60
+	MCPCatalogOAuthMaxExpirySeconds   = 31536000
+)
+
+const (
+	MCPCatalogOAuthFlowSeconds   = 300
+	MCPCatalogOAuthMaxScopes     = 16
+	MCPCatalogOAuthMaxScopeBytes = 128
+)
+
+const (
+	MCPCatalogOAuthMaxCallbackPort = 65535
+	MCPCatalogOAuthMaxChecks       = 8
+)
+
+const (
+	MCPCatalogOAuthMaxLifecycleHistory         = 64
+	MCPCatalogOAuthRevocationMaxAttempts       = 8
+	MCPCatalogOAuthRevocationMaxBackoffSeconds = 3600
+	MCPCatalogOAuthReminderSeconds             = 900
+)
+
+const (
+	MCPOAuthRetirementMaxOutstanding      = 64
+	MCPOAuthRetirementRetentionSeconds    = 7 * 24 * 3600
+	MCPOAuthRetirementMetadataSeconds     = 30 * 24 * 3600
+	MCPOAuthRetirementPageSize            = 50
+	MCPOAuthRetirementMaxOffset           = 10000
+	MCPOAuthRetirementHistoryLimit        = 32
+	MCPOAuthRetirementInstallGraceSeconds = 10
+	MCPOAuthRetirementHeldPollSeconds     = 60
+)
+
+const (
+	MCPConnectionHealthSourceLimit        = 4096
+	MCPConnectionHealthPageSize           = 50
+	MCPConnectionHealthMaxOffset          = 10000
+	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
+)

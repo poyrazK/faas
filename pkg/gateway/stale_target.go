@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 )
 
 // staleTargetSignal is request-local state shared by the handler and the
@@ -13,7 +16,10 @@ import (
 // signal deliberately lives in context rather than in an HTTP header so the
 // internal decision can never leak to a customer response.
 type staleTargetSignal struct {
-	stale   atomic.Bool
+	stale atomic.Bool
+	// frozen marks a target vmmd refused because its guest is frozen
+	// (ADR-1151): idle, not dead, and thawed by schedd under the same ID.
+	frozen  atomic.Bool
 	claimed sync.Once
 	onStale func()
 }
@@ -46,6 +52,18 @@ func markStaleTarget(ctx context.Context) {
 			}
 		})
 	}
+}
+
+// markStaleTargetErr marks the attempt's target stale from a forward error.
+// When vmmd refused the forward because the guest is frozen, the target is
+// flagged frozen first so the handler withdraws it without quarantine.
+func markStaleTargetErr(ctx context.Context, err error) {
+	if signal, ok := ctx.Value(staleTargetSignalKey{}).(*staleTargetSignal); ok && signal != nil {
+		if p, ok := grpcerr.FromStatus(err); ok && p != nil && p.Code == api.CodeInstanceFrozen {
+			signal.frozen.Store(true)
+		}
+	}
+	markStaleTarget(ctx)
 }
 
 func staleTargetDetected(ctx context.Context) bool {

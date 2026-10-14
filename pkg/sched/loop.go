@@ -2642,9 +2642,13 @@ func (l *Loop) runReaper(ctx context.Context) {
 	idleParkByEnvironment := map[string]InstanceInfo{}
 	cooldownHeldByApp := map[string]struct{}{}
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
-		if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
-			l.log.Warn("reaper: idle park", "instance", id, "err", err)
-			continue
+		// ADR-1151: an eligible instance freezes in place instead of
+		// parking; anything else parks as before.
+		if !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
+			if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
+				l.log.Warn("reaper: idle park", "instance", id, "err", err)
+				continue
+			}
 		}
 		if instance, ok := instanceInfoByID[id]; ok {
 			idleParkByEnvironment[reaperEnvironmentKey(instance)] = instance
@@ -2720,6 +2724,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		l.runReaperAggressive(ctx, apps, snapshot, instanceToApp, cooldownHeldByApp, now)
 	}
 
+	l.parkExpiredFrozen(ctx, snapshot, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range SelectEvictions(resident, now, snapshot) {
 		if err := l.engine.Evict(ctx, id); err != nil {
@@ -2879,6 +2884,10 @@ func (l *Loop) drainSupersededReaperRows(ctx context.Context, snapshot []Instanc
 func reaperInstanceState(s state.State) bool {
 	switch s {
 	case state.StateRunning, state.StateWaking, state.StateColdBooting, state.StateSnapshotting, state.StateWarm:
+		return true
+	case state.StateFrozen:
+		// ReapIdle skips frozen rows; the reaper parks them after FrozenTTL
+		// and memory-pressure eviction takes them first (ADR-1151).
 		return true
 	case state.StateDraining:
 		// A durable runtime-config refresh owns this row until route and

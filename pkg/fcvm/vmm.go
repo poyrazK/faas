@@ -402,21 +402,47 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
-			continue
-		}
-		// The guest serial console's tty turns every '\n' into "\r\n"
-		// (ONLCR); the '\r' is the console's, not the app's, and reached the
-		// logs API, drains and log search on every line (production-us
-		// hunt #9, H9-108). An app's own trailing '\r' survives.
-		if n := len(line); n >= 2 && line[n-2] == '\r' {
-			line = append(line[:n-2], '\n')
-		}
-		if _, err := w.ring.Write("stdout", line); err != nil {
+		if err := w.commitLocked(line); err != nil {
 			return len(p), err
 		}
 	}
+	// A guest that never writes '\n' must not grow vmmd's memory: drop an
+	// over-long partial line, as the ring itself does past the same cap.
+	if len(w.pending) > logbuf.MaxPartialLineBytes {
+		w.pending = nil
+	}
 	return len(p), nil
+}
+
+// Flush commits a final line that has no trailing newline, such as a
+// command's last `printf` before it exits. startJailer calls it once
+// Firecracker has exited so the line reaches the ring before the job's
+// output is captured or archived.
+func (w *customerConsoleWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) == 0 {
+		return nil
+	}
+	line := append(w.pending, '\n')
+	w.pending = nil
+	return w.commitLocked(line)
+}
+
+// commitLocked filters one complete line and writes it to the ring.
+func (w *customerConsoleWriter) commitLocked(line []byte) error {
+	if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+		return nil
+	}
+	// The guest serial console's tty turns every '\n' into "\r\n"
+	// (ONLCR); the '\r' is the console's, not the app's, and reached the
+	// logs API, drains and log search on every line (production-us
+	// hunt #9, H9-108). An app's own trailing '\r' survives.
+	if n := len(line); n >= 2 && line[n-2] == '\r' {
+		line = append(line[:n-2], '\n')
+	}
+	_, err := w.ring.Write("stdout", line)
+	return err
 }
 
 // guestInitStageLine matches guest-init's internal boot-progress markers
@@ -436,6 +462,10 @@ var guestInitPlatformMessages = []string{
 	"workload identity proxy ", "event publish proxy ", "outbound relay ",
 	"stateless advisory", "trace bridge ", "tail events proxy ", "vsock ",
 	"sidecar ", "healthcheck: ", "WatchOOM",
+	// Job exit/cancel delivery over vsock: "INFO job-exit shipped ... attempt=1"
+	// ended every job task log, its attempt being the vsock retry rather than
+	// the task attempt the log header names (hunt #10).
+	"job-exit ", "job cancel ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05
@@ -476,7 +506,13 @@ func benignGuestKernelLine(line []byte) bool {
 			text = strings.TrimSpace(text[end+1:])
 		}
 	}
-	return text == "PCI: Fatal: No config space access function found"
+	switch text {
+	case "PCI: Fatal: No config space access function found",
+		// Every job task and stopped VM halts without ACPI power-off.
+		"reboot: Power off not available: System halted instead":
+		return true
+	}
+	return false
 }
 
 // stripFirecrackerTimestamp drops the wall-clock token Firecracker's logger
@@ -534,6 +570,8 @@ func firecrackerControlLine(line []byte) bool {
 	for _, marker := range []string{
 		"running firecracker",
 		"listening on api socket",
+		"vmm is stopping",
+		"killing vcpu threads",
 		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
@@ -544,6 +582,12 @@ func firecrackerControlLine(line []byte) bool {
 		"kick entropy ",
 		"kick block ",
 		"kick vsock",
+		"kick pmem ",
+		// Restore's per-device kicks: "[Vsock:vsock] notifying tx queue",
+		// "[Balloon:balloon] notifying queues", "[Vsock:vsock] signaling
+		// event queue" (hunt #10, every wake of an rc.257 app).
+		"] notifying ",
+		"] signaling ",
 		"development preview",
 		"vmm action took",
 		"api server",
@@ -5156,12 +5200,14 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		consoleFile = f
 	}
 	stdout := io.Discard
+	var consoleWriter *customerConsoleWriter
 	if ring != nil {
 		// Stream FC's stdout (kernel printk + guest /dev/console writers)
 		// into the per-instance ring. stderr stays discarded — FC only
 		// writes there on configuration errors and operators inspect those
 		// via systemctl logs, not the per-app tail.
-		stdout = &customerConsoleWriter{ring: ring}
+		consoleWriter = &customerConsoleWriter{ring: ring}
+		stdout = consoleWriter
 	}
 	if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
@@ -5220,6 +5266,11 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			} // Process exit is confirmed, including signal exits.
 		} else {
 			state, waitErr = cmd.Process.Wait()
+		}
+		if consoleWriter != nil {
+			// cmd.Wait has drained stdout; after Process.Wait a late write
+			// still arrives, just as its own line.
+			_ = consoleWriter.Flush()
 		}
 		if consoleFile != nil {
 			_ = consoleFile.Close()

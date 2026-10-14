@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -63,19 +64,20 @@ func TestParseImageRunArgsFollowsDockerSemantics(t *testing.T) {
 	}
 }
 
-// adr: 1161
-func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
+// imageRunServer fakes the API behind `gregale run --image`; stream writes
+// the live-output response.
+func imageRunServer(t *testing.T, pulls *[]string, stream func(http.ResponseWriter)) *httptest.Server {
+	t.Helper()
 	var mu sync.Mutex
-	var pulls []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "POST /v1/image-runs":
 			var req api.CreateImageRunRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			mu.Lock()
-			pulls = append(pulls, req.Pull)
-			first := len(pulls) == 1
+			*pulls = append(*pulls, req.Pull)
+			first := len(*pulls) == 1
 			mu.Unlock()
 			if first {
 				w.WriteHeader(http.StatusAccepted)
@@ -95,24 +97,83 @@ func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
 			_, _ = w.Write([]byte(`{"tasks":[{"run_id":"run-1","task_index":0,"status":"dead_letter","exit_code":3}]}`))
 		case "GET /v1/jobs/ir-0123/runs/run-1/tasks/0/logs":
 			_, _ = w.Write([]byte(`{"task_status":"dead_letter","log_content":"hello from alpine\n","truncated":false,"max_bytes":1048576}`))
+		case "GET /v1/jobs/ir-0123/runs/run-1/tasks/0/logs/stream":
+			stream(w)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer srv.Close()
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "test-token")
-	out, _, restore := swapIO(t)
-	defer restore()
-	if got := cmdRunImage([]string{"--image", "alpine", "--pull", "always", "sh", "-c", "exit 3"}); got != 3 {
-		t.Fatalf("exit = %d, want the task's exit code 3", got)
+}
+
+func sseLog(seq int, stream, line string) string {
+	return fmt.Sprintf("event: log\ndata: {\"seq\":%d,\"instance\":\"inst-1\",\"stream\":%q,\"line\":%q,\"written_at\":\"2026-10-14T00:00:00Z\"}\n\n", seq, stream, line)
+}
+
+// adr: 1161
+// adr: 1163
+func TestCmdRunImagePullsThenPrintsOutputAndExitCode(t *testing.T) {
+	cases := map[string]struct {
+		stream     func(http.ResponseWriter)
+		wantOut    string
+		wantErr    string
+		wantNotErr string
+	}{
+		"live output streams once": {
+			stream: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(w, ":\n\n"+sseLog(1, "stdout", "hello live")+sseLog(2, "stderr", "warn live")+"event: end\ndata: {\"reason\":\"task_finished\"}\n\n")
+			},
+			wantOut: "hello live\n", wantErr: "warn live", wantNotErr: "incomplete",
+		},
+		"server without the stream prints stored output": {
+			stream: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"code":"not_found","title":"Not found","status":404}`))
+			},
+			wantOut: "hello from alpine\n", wantNotErr: "incomplete",
+		},
+		"interrupted stream warns instead of repeating output": {
+			stream: func(w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = fmt.Fprint(w, sseLog(1, "stdout", "partial"))
+			},
+			wantOut: "partial\n", wantErr: "live output was incomplete",
+		},
 	}
-	if out.String() != "hello from alpine\n" {
-		t.Fatalf("stdout = %q", out.String())
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var pulls []string
+			srv := imageRunServer(t, &pulls, tc.stream)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			out, readErr, restore := swapIO(t)
+			defer restore()
+			if got := cmdRunImage([]string{"--image", "alpine", "--pull", "always", "sh", "-c", "exit 3"}); got != 3 {
+				t.Fatalf("exit = %d, want the task's exit code 3", got)
+			}
+			stderr := readErr()
+			if out.String() != tc.wantOut || !strings.Contains(stderr, tc.wantErr) ||
+				(tc.wantNotErr != "" && strings.Contains(stderr, tc.wantNotErr)) {
+				t.Fatalf("stdout = %q stderr = %q", out.String(), stderr)
+			}
+			if !reflect.DeepEqual(pulls, []string{"always", "missing"}) {
+				t.Fatalf("pull policies = %q; only the first request may re-queue the image", pulls)
+			}
+		})
 	}
-	if !reflect.DeepEqual(pulls, []string{"always", "missing"}) {
-		t.Fatalf("pull policies = %q; only the first request may re-queue the image", pulls)
+}
+
+// adr: 1163
+func TestSplitJobLogFollow(t *testing.T) {
+	rest, follow := splitJobLogFollow([]string{"nightly", "latest", "0", "-f"})
+	if !follow || !reflect.DeepEqual(rest, []string{"nightly", "latest", "0"}) {
+		t.Fatalf("split = %q, %v", rest, follow)
+	}
+	if _, follow := splitJobLogFollow([]string{"nightly", "--max-bytes", "10"}); follow {
+		t.Fatal("follow set without the flag")
 	}
 }
 

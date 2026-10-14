@@ -79,7 +79,7 @@ func (*objectStorageBillingStatusProvider) ObjectStorageLineItemPolicy() (billin
 	}, true
 }
 
-func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord) error {
+func (*objectStorageBillingStatusProvider) PublishObjectStorageLineItem(context.Context, state.ObjectStorageBillingRecord, int64) error {
 	return nil
 }
 

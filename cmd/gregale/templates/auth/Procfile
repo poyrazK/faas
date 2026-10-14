@@ -1,0 +1,2 @@
+release: node migrate.mjs
+web: node server.mjs

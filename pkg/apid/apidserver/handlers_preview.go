@@ -90,6 +90,7 @@ func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct 
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		s.log.ErrorContext(r.Context(), "destroy preview: set torn_down", "app", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("set preview torn_down"))
 		return
 	}
@@ -99,6 +100,7 @@ func (s *server) destroyPreviewApp(w http.ResponseWriter, r *http.Request, acct 
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		s.log.ErrorContext(r.Context(), "destroy preview: soft delete", "app", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("soft delete preview"))
 		return
 	}

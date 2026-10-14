@@ -3770,6 +3770,22 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 -- refactor. Go-side composition of the two PR-A queries above is the
 -- chosen workaround (cheap, no parser gymnastics).
 
+-- name: RequestTelemetryErrorsByRoute :many
+-- Per-route represented request and server-error (HTTP 5xx) counts for one
+-- deployment and window, weighted by the publisher's collapsed-row count.
+-- The regression detector compares the error share of the current and the
+-- previous deployment (ADR-127 amendment: error-rate regressions). Same
+-- index as RequestTelemetryBaselineP95ByRoute.
+SELECT route,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests,
+       COALESCE(SUM(GREATEST(count, 1)::bigint) FILTER (WHERE status >= 500), 0)::bigint AS error_requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+GROUP BY route;
+
 -- name: UpsertRegressionObservation :exec
 -- Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 -- route) — the cron upserts on this triple so the table grows at most
@@ -3779,20 +3795,33 @@ ORDER BY g.dimension ASC, g.method ASC, b.bucket_start ASC;
 -- (or a dismissal expires). The webhook trigger uses that timestamp as
 -- the detection transition's idempotency key. last_detected_at is
 -- refreshed on every pass and backs the dashboard's since filter.
+--
+-- A latency-only observation that gains the error signal reopens: a route
+-- that starts failing is a new incident even when its slowness was already
+-- acknowledged or dismissed, so state returns to active with a new
+-- first_detected_at (and therefore a new webhook transition). In ON CONFLICT
+-- DO UPDATE, debug_regression_observations.* is the row before this update.
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency,
+    kind, error_rate_pct, error_rate_base_pct, error_count
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now(), $8::jsonb
+    $7, 'active', now(), now(), $8::jsonb,
+    $9, $10, $11, $12
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- kind and error rates describe the latest pass that saw the regression.
+    kind                = EXCLUDED.kind,
+    error_rate_pct      = EXCLUDED.error_rate_pct,
+    error_rate_base_pct = EXCLUDED.error_rate_base_pct,
+    error_count         = EXCLUDED.error_count,
     -- Keep the last known suspect when a pass could not compute one.
     suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
@@ -3800,11 +3829,15 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
           OR (debug_regression_observations.state = 'dismissed'
               AND (debug_regression_observations.dismissed_until IS NULL
                    OR debug_regression_observations.dismissed_until <= now()))
+          OR (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors'))
         THEN EXCLUDED.last_detected_at
         ELSE debug_regression_observations.first_detected_at
     END,
     last_detected_at  = EXCLUDED.last_detected_at,
     state             = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN 'active'
         WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
         WHEN debug_regression_observations.state = 'dismissed'
              AND debug_regression_observations.dismissed_until IS NOT NULL
@@ -3812,10 +3845,14 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
         ELSE 'active'
     END,
     acknowledged_at   = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN NULL
         WHEN debug_regression_observations.state = 'acknowledged' THEN debug_regression_observations.acknowledged_at
         ELSE NULL
     END,
     dismissed_until   = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN NULL
         WHEN debug_regression_observations.state = 'dismissed'
              AND debug_regression_observations.dismissed_until IS NOT NULL
              AND debug_regression_observations.dismissed_until > now()
@@ -3830,7 +3867,8 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -3839,9 +3877,11 @@ WHERE app_id = $1
 -- name: ListActiveRegressionsByApp :many
 -- Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 -- `since` is an interval (e.g. '1 hour') clamped handler-side to the
--- plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
--- DESC, last_detected_at DESC matches the dashboard render order
--- (worst regression at the top, then most-recently-reconfirmed).
+-- plan's DebugTelemetryRetentionDays cap. Observations that include the
+-- error signal come first (an errors-only row stores regression_factor
+-- 1.00, which would otherwise always sort it last), then regression_factor
+-- DESC, last_detected_at DESC: the dashboard render order (worst regression
+-- at the top, then most-recently-reconfirmed).
 -- Uses debug_regression_observations_app_idx (00436).
 SELECT deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
@@ -3852,13 +3892,14 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
   AND state <> 'resolved'
   AND (state <> 'dismissed' OR dismissed_until IS NULL OR dismissed_until <= now())
-ORDER BY regression_factor DESC, last_detected_at DESC;
+ORDER BY (kind <> 'latency') DESC, regression_factor DESC, last_detected_at DESC;
 
 -- name: ApplyRegressionAction :one
 -- Change only the debugger workflow state for one app-scoped observation.
@@ -3881,7 +3922,8 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency;
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count;
 
 -- name: ResolveStaleRegressionObservations :many
 -- A detector pass that no longer sees a regression resolves the previous
@@ -3895,7 +3937,8 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency;
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count;
 
 -- name: ListDeploymentsForCompare :many
 -- Backs the dashboard compare panel's two `<select>` dropdowns: "pick
@@ -4660,6 +4703,9 @@ ORDER BY node_id, is_origin DESC;
 
 -- name: ObjectUsageLockAccount :one
 SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
+
+-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -15387,9 +15433,9 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
- sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.arg(action),sqlc.arg(webhook_url),
+ sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
  sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds))
 RETURNING *;
 
@@ -20012,6 +20058,21 @@ SELECT EXISTS (
     )
 ) AS managed;
 
+-- name: WriteEnvironmentGitNotificationState :exec
+UPDATE environment_git_sources SET notification_state = sqlc.arg(notification_state)::jsonb
+WHERE id = sqlc.arg(source_id)::uuid AND NOT detached;
+
+-- name: EnqueueEnvironmentGitNotification :exec
+INSERT INTO app_webhook_deliveries
+    (source_event_id, webhook_id, account_id, event, payload, created_at, updated_at, next_attempt_at)
+SELECT sqlc.arg(event_id)::uuid, h.id, h.account_id, 'environment.gitops.changed',
+       sqlc.arg(payload)::jsonb, sqlc.arg(now_at)::timestamptz, sqlc.arg(now_at)::timestamptz, sqlc.arg(now_at)::timestamptz
+FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
+WHERE h.account_id = sqlc.arg(account_id)::uuid AND h.scope = 'account' AND h.enabled
+  AND 'environment.gitops.changed' = ANY(h.event_filter)
+  AND a.status = 'active' AND a.abuse_hold_at IS NULL
+ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING;
+
 -- name: InstanceLogsOwnedByApp :one
 -- Archived runtime logs are keyed by instance only. The instance row proves
 -- ownership while it exists; afterwards the app's billing rows for that
@@ -20033,3 +20094,20 @@ SELECT (
           AND u.minute < sqlc.arg(to_minute)::timestamptz
     )
 )::boolean AS owned;
+
+-- name: JobTaskLogTarget :one
+-- ADR-1163: the job task a live log stream follows, scoped to the account
+-- and job name, with the node of its current instance (if any).
+SELECT t.status,
+       t.attempt,
+       coalesce(t.instance_id::text, '')::text AS instance_id,
+       coalesce(i.node_id::text, '')::text AS node_id
+FROM jobs j
+JOIN job_runs r ON r.job_id = j.id AND r.account_id = j.account_id
+JOIN job_tasks t ON t.run_id = r.id
+LEFT JOIN instances i ON i.id = t.instance_id
+WHERE j.account_id = sqlc.arg(account_id)::uuid
+  AND j.name = sqlc.arg(job_name)::text
+  AND j.status <> 'deleted'
+  AND r.id = sqlc.arg(run_id)::uuid
+  AND t.task_index = sqlc.arg(task_index)::int;

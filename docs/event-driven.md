@@ -1109,7 +1109,8 @@ CloudEvents format must read that extension instead of the previous invalid
 
 
 An API key with `events:publish` can publish and send to an app inbox;
-`queues:send` permits queue sends. Existing `deploy:write` keys continue to
+`queues:send` permits queue sends, and `queues:consume` permits
+[pull leases](queue-pull-leases.md). Existing `deploy:write` keys continue to
 work on these routes.
 
 For a versioned event contract, register an immutable Draft 2020-12 JSON

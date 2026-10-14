@@ -34,9 +34,21 @@ use the local schedd Unix socket by default.
 
 After convergence, verify the daemon log contains `raw TCP ingress enabled`,
 then create a listener through `gregale apps tcp <slug> add --name <name> --guest-port <port>` (or the API) and test
-the allocated port from an allowed source. If an enabled listener cannot bind
-at daemon startup, the daemon now fails startup and logs the port error. Do not
-set `0.0.0.0/0` in staging.
+the allocated port from an allowed source. If an enabled listener cannot bind,
+the daemon logs the port error and retries it on every refresh (2 s by
+default). Other listeners and the HTTP edge keep serving, so a single port held
+by another process, including the previous gateway during a restart, no longer
+fails startup. Do not set `0.0.0.0/0` in staging.
+
+The nftables role reserves 40000–49999 from the kernel's ephemeral port range
+(`net.ipv4.ip_local_reserved_ports`, `/etc/sysctl.d/91-faas-reserved-ports.conf`).
+The default ephemeral range overlaps it, so without the reservation an outbound
+connection or DNS query on the host can hold a listener's port. The same applies
+to raw UDP listeners.
+
+A listener whose accept loop stops (for example after the gateway runs out of
+file descriptors) is rebound on the next refresh. Descriptor and buffer
+exhaustion is retried with backoff instead of stopping the loop.
 
 The public gateway publishes TCP runtime telemetry on its existing `/metrics`
 endpoint. The `gatewayd_public_tcp_active_sessions` gauge shows current load,
@@ -86,6 +98,12 @@ Admission also re-reads durable listener intent. A stale cached route cannot ope
 a new session after disable or a change to its public port, guest port, app,
 account or protocol. Reconciliation still closes already established sessions
 when the listener changes.
+
+To keep connection floods off Postgres, the edge reuses a listener's
+route-by-port, TLS domain and live-deployment lookups for up to one second
+(`RawTCPLookupCacheTTL`). The app and listener-intent reads and instance
+selection are never cached, so the guarantees above are unchanged; a domain or
+traffic-weight change can take up to one second to reach new sessions.
 
 TLS termination is opt-in per listener. Set `FAAS_TCPD_TLS_CERT_DIR` (Ansible:
 `faas_tcpd_tls_cert_dir`) to an absolute directory, preferably beneath `/etc/faas`.

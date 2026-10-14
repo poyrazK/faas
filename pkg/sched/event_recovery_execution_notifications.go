@@ -13,6 +13,7 @@ func (l *Loop) runEventRecoveryExecutionNotifications(ctx context.Context, now t
 	l.observeWorkflowRecoveryFailures(ctx, now)
 	l.runWorkflowRecoveryPolicies(ctx, now)
 	l.runWorkflowRecoveryAutomaticPolicies(ctx, now)
+	l.runWorkflowInitialManualCompletions(ctx, now)
 	l.runWorkflowRecoveryAutomaticBlockedNotifications(ctx, now)
 	l.runWorkflowRecoveryHealthAlerts(ctx, now)
 	l.runWorkflowRecoveryReviewNotifications(ctx, now)
@@ -116,6 +117,26 @@ func (l *Loop) runWorkflowRecoveryAutomaticPolicies(ctx context.Context, now tim
 		if err != nil {
 			if l.log != nil {
 				l.log.Warn("sched: automatic recovery policy execution failed", "err", err)
+			}
+			return
+		}
+		if !worked {
+			return
+		}
+	}
+}
+
+// Manual monitoring has its own allowance and cannot consume automatic work.
+func (l *Loop) runWorkflowInitialManualCompletions(ctx context.Context, now time.Time) {
+	store, ok := l.engine.store.(state.WorkflowInitialManualCompletionStore)
+	if !ok {
+		return
+	}
+	for i := 0; i < api.WorkflowInitialManualCompletionPollBatch; i++ {
+		worked, err := store.ProcessNextWorkflowInitialManualCompletion(ctx, now)
+		if err != nil {
+			if l.log != nil {
+				l.log.Warn("sched: manual initial recovery observation failed", "err", err)
 			}
 			return
 		}

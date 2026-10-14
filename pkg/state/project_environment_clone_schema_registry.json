@@ -176,6 +176,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "edge_rule_id",
       "enabled",
       "event_subscription_id",
       "failure_source",
@@ -2187,7 +2188,11 @@
       "app_id",
       "deployment_id",
       "dismissed_until",
+      "error_count",
+      "error_rate_base_pct",
+      "error_rate_pct",
       "first_detected_at",
+      "kind",
       "last_detected_at",
       "p95_base_ms",
       "p95_ms",
@@ -2658,6 +2663,7 @@
     "columns": [
       "app_id",
       "command",
+      "host",
       "updated_at"
     ],
     "kind": "operational"
@@ -2701,6 +2707,7 @@
   {
     "table": "edge_rule_change_log",
     "columns": [
+      "account_ids",
       "app_id",
       "created_at",
       "id",
@@ -2904,6 +2911,7 @@
       "intent_version",
       "manifest_path",
       "mode",
+      "notification_state",
       "project_id",
       "provider",
       "prune",
@@ -4365,6 +4373,18 @@
       "parent_invocation_id",
       "replay_created_at",
       "replay_invocation_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_queue_lease_receipts",
+    "columns": [
+      "attempt",
+      "invocation_id",
+      "issued_at",
+      "lease_expires_at",
+      "replay_generation",
+      "token_hash"
     ],
     "kind": "operational"
   },
@@ -6013,6 +6033,30 @@
     "kind": "operational"
   },
   {
+    "table": "mcp_catalog_monitors",
+    "columns": [
+      "account_id",
+      "app_id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_oauth_retirements",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_sha256",
+      "created_at",
+      "id",
+      "next_attempt_at",
+      "payload",
+      "retain_until",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "meter_gateway_usage_events",
     "columns": [
       "event_id",
@@ -6485,6 +6529,9 @@
       "egress_millicents_per_gib",
       "finalized_at",
       "id",
+      "included_egress_bytes",
+      "included_requests",
+      "included_stored_byte_hours",
       "period_end",
       "period_start",
       "provider_cost_millicents",
@@ -7191,6 +7238,15 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "outbound_ai_settlements",
+    "columns": [
+      "integration_id",
+      "lease_id",
+      "settled_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_usage_daily",
@@ -10586,6 +10642,22 @@
     "kind": "operational"
   },
   {
+    "table": "workflow_initial_recovery_reviews",
+    "columns": [
+      "app_id",
+      "completion_next_observe_at",
+      "expires_at",
+      "failure_id",
+      "id",
+      "job_id",
+      "policy_version",
+      "prepared_at",
+      "review",
+      "submitted_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "workflow_operation_effects",
     "columns": [
       "account_id",
@@ -10672,7 +10744,10 @@
       "automatic_failures",
       "automatic_pause_reason",
       "automatic_paused_at",
+      "automatic_poll_failure",
+      "automatic_poll_notification",
       "enabled",
+      "initial_failure_cursor",
       "job_cursor",
       "last_evaluated_at",
       "next_evaluate_at",

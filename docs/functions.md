@@ -40,6 +40,14 @@ An idle function parks after 30 seconds by default on every plan; set
 `gregale app APP --idle SECONDS` to keep it warm longer (see
 [scale-to-zero](cold-wake.md#when-an-instance-parks)).
 
+Between requests a function's VM may be paused: once nothing has been in
+flight for 2 seconds, its vCPUs stop until the next request, which resumes
+them in under a millisecond. Timers and intervals in your code do not run
+while it is paused, as on AWS Lambda; finish background work with
+`waitUntil()` ([Node](runtimes/node24.md)) before the request ends. At the
+idle timeout a function may be [frozen](cold-wake.md#frozen-instances)
+instead of parked.
+
 Use `gregale invoke APP` for a smoke request and `gregale invocations get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
 

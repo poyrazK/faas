@@ -1197,6 +1197,10 @@ export class DeploymentsService {
    * `invalid_traffic_percent`). The Σ invariant is asserted
    * post-write as a defensive backstop (409
    * `traffic_percent_sum_invalid`).
+   * Guarded MCP requests retain deploy.mcp_admission evidence in the deployment
+   * audit timeline. Accepted evidence commits with traffic; rejected evidence
+   * is saved after rollback. Audit-storage failure returns 503
+   * mcp_admission_evidence_unavailable.
    * An optional expected_serving_deployment_id is checked under the
    * same live-row locks before rebalance. A stale expectation returns
    * 409 `traffic_serving_changed` without changing traffic.
@@ -1255,6 +1259,7 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+        503: `MCP traffic admission evidence could not be committed (mcp_admission_evidence_unavailable). Inspect traffic before retrying.`,
       },
     });
   }

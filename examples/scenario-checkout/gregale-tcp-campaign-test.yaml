@@ -44,8 +44,8 @@ scenarios:
           connection_leaks: {path: /connections, within: 1s, sustain: 1s, max_extra: 2}
           duration: 8s
           streams:
-            - {name: dependency, requests: [dependency-probe], rate: 5, vus: 2}
-            - {name: health, requests: [health], rate: 5, vus: 2}
+            - {name: dependency, requests: [dependency-probe], rate: 5, vus: 4}
+            - {name: health, requests: [health], rate: 5, vus: 4}
           thresholds: {error_rate: 1}
           fault_campaign:
             order: declared

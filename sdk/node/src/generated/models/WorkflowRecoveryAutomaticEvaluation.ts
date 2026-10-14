@@ -7,7 +7,7 @@
  */
 export type WorkflowRecoveryAutomaticEvaluation = {
   evaluated_at: string;
-  reason: 'hourly_budget' | 'cooldown' | 'execution_quota' | 'evidence_unknown' | 'outstanding_retry' | 'admission_wait' | 'execution_wait' | 'retry_running' | 'inspection_error' | 'child_created' | 'result_recorded' | 'suppressed';
+  reason: 'hourly_budget' | 'cooldown' | 'execution_quota' | 'evidence_unknown' | 'outstanding_retry' | 'admission_wait' | 'execution_wait' | 'retry_running' | 'inspection_error' | 'child_created' | 'result_recorded' | 'suppressed' | 'hourly_execution_budget' | 'execution_cooldown' | 'outstanding_recovery' | 'recovery_running' | 'terminal_outcome_not_saved' | 'job_paused' | 'automatic_paused' | 'expired' | 'policy_changed' | 'policy_disabled' | 'changed';
   waiting_since?: string;
 };
 

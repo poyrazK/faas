@@ -74,14 +74,19 @@ func (q *Queries) GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetD
 }
 
 const getDevWatchSetting = `-- name: GetDevWatchSetting :one
-SELECT command FROM dev_watch_settings WHERE app_id = $1::uuid
+SELECT command, host FROM dev_watch_settings WHERE app_id = $1::uuid
 `
 
-func (q *Queries) GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error) {
+type GetDevWatchSettingRow struct {
+	Command string
+	Host    string
+}
+
+func (q *Queries) GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (GetDevWatchSettingRow, error) {
 	row := db.QueryRow(ctx, getDevWatchSetting, appID)
-	var command string
-	err := row.Scan(&command)
-	return command, err
+	var i GetDevWatchSettingRow
+	err := row.Scan(&i.Command, &i.Host)
+	return i, err
 }
 
 const insertDevSourcePatch = `-- name: InsertDevSourcePatch :one
@@ -291,18 +296,19 @@ func (q *Queries) UpsertDevSourceManifest(ctx context.Context, db DBTX, arg Upse
 }
 
 const upsertDevWatchSetting = `-- name: UpsertDevWatchSetting :exec
-INSERT INTO dev_watch_settings (app_id, command)
-VALUES ($1::uuid, $2::text)
-ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, updated_at = now()
+INSERT INTO dev_watch_settings (app_id, command, host)
+VALUES ($1::uuid, $2::text, $3::text)
+ON CONFLICT (app_id) DO UPDATE SET command = EXCLUDED.command, host = EXCLUDED.host, updated_at = now()
 `
 
 type UpsertDevWatchSettingParams struct {
 	AppID   pgtype.UUID
 	Command string
+	Host    string
 }
 
-// ADR-1170: a developer environment's watch-mode command.
+// ADR-1170: a developer environment's watch-mode command and public hostname.
 func (q *Queries) UpsertDevWatchSetting(ctx context.Context, db DBTX, arg UpsertDevWatchSettingParams) error {
-	_, err := db.Exec(ctx, upsertDevWatchSetting, arg.AppID, arg.Command)
+	_, err := db.Exec(ctx, upsertDevWatchSetting, arg.AppID, arg.Command, arg.Host)
 	return err
 }

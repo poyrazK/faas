@@ -18,6 +18,11 @@ import (
 // aggregate cache budget counts allocated disk bytes so sparse holes do not
 // evict unrelated artifacts. Readers see exactly the original bytes.
 func copyArtifactContext(ctx context.Context, dst *os.File, src io.Reader, key string) (int64, error) {
+	// An extent-encoded remote artifact (ADR-1135) writes its data extents
+	// directly, without producing or scanning the zeros in between.
+	if s, ok := src.(sparseWriterTo); ok {
+		return s.WriteSparseTo(ctx, dst)
+	}
 	if !isSparseArtifactKey(key) {
 		return copyContext(ctx, dst, src)
 	}

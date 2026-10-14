@@ -1,11 +1,17 @@
 from typing import Literal
 
-WorkflowRecoveryAutomaticBlockedNotificationReason = Literal["evidence_unknown"]
+WorkflowRecoveryAutomaticBlockedNotificationReason = Literal[
+    "blocker_cleared", "evidence_unknown", "execution_quota", "job_paused", "terminal_outcome_not_saved"
+]
 
 WORKFLOW_RECOVERY_AUTOMATIC_BLOCKED_NOTIFICATION_REASON_VALUES: set[
     WorkflowRecoveryAutomaticBlockedNotificationReason
 ] = {
+    "blocker_cleared",
     "evidence_unknown",
+    "execution_quota",
+    "job_paused",
+    "terminal_outcome_not_saved",
 }
 
 
