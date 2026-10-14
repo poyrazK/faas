@@ -73,7 +73,7 @@ type Config struct {
 	// a spec's restore window.
 	MaxRestoreWindowSeconds int64
 	// CredentialKey derives each credential's password and SCRAM salt
-	// (at least 32 bytes, from the variable secret_env.credential_key names).
+	// (at least 32 bytes, from the variable secret_env["credential-key"] names).
 	// Issuing the same identity again yields the same login, which the
 	// provider contract requires, while no password is ever stored.
 	CredentialKey []byte

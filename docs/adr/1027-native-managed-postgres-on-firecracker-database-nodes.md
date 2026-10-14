@@ -559,7 +559,7 @@ with apid's client certificate and writes verifiers through `pkg/dbcreds`.
   re-issuing an identity must return the same login, and qualification
   checks it.
   - The password and the SCRAM salt are keyed HMACs of (database, identity,
-    access) under a driver key (`secret_env.credential_key`, at least 32
+    access) under a driver key (`secret_env["credential-key"]`, at least 32
     bytes, sealed in apid's env). A re-issue is therefore byte-identical:
     the same password and the same verifier, so pgproxyd's cached verifier
     never goes stale.
@@ -822,6 +822,37 @@ tenant seams hold.
 **Out of scope here:** app VMs also write an unbounded console file under
 `/var/log/faas`, a pre-existing compute-node issue.
 
+### Qualification and the default backend (phase 6)
+
+- `managed-postgres-qualify` knows the native driver. `--check-config`,
+  `--verify` and the rollout check describe the backend from its
+  configuration (`firecracker.DescribeFactory`): real capabilities and
+  fingerprint, without schedd, the control-plane database or the credential
+  key; anything that would reach a database fails `Unavailable`. A live run
+  builds the real provider and needs
+  `FAAS_MANAGED_POSTGRES_QUALIFY_NATIVE_DATABASE_URL` (the control-plane
+  database pgproxyd reads role verifiers from) plus the credential key;
+  without the URL it refuses before touching anything. The durable
+  lifecycle injects the same lost-acknowledgement faults into native
+  `Provision` and `IssueCredentials` as into Neon's.
+- Fixed on the way: the driver read its key from
+  `secret_env.credential_key`, a name the registry's key rule
+  (`[a-z][a-z0-9-]*`) rejects, so no native backend configuration could
+  load. It is `credential-key`.
+- Making native the default is configuration, not code: point the region's
+  `defaults` entry at the native backend, keep the Neon backend configured
+  so existing databases keep resolving, and approve the native backend with
+  its own qualification artifact (approvals bind to the default backend's
+  fingerprint). The gate has one default per region and canary accounts
+  only filter who may provision, so the switch moves every new database in
+  the region at once.
+- **Blocker: the production class.** Scale is entitled to `production`;
+  native offers development and burstable, because production here means a
+  standby VM on a second node (see Durability), which is not built. The
+  preflight reports `plan_entitlement_unsupported` for a native default.
+  Offering production as a larger shape without the standby would quietly
+  give Scale databases up to 60 s of loss on node failure; not done.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives
@@ -853,10 +884,10 @@ intervals at a constant per-second rate, or hourly counts:
 Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
 
 ```json
-{"id": "native-eu", "driver": "firecracker", "region": "eu-central",
+{"id": "native-eu", "driver": "firecracker", "region": "eu-central", "namespace": "native",
  "settings": {"host_suffix": "db.gregale.dev", "schedd_target": "unix:///run/faas/schedd.sock",
               "max_restore_window_seconds": "604800"},
- "secret_env": {"credential_key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"}}
+ "secret_env": {"credential-key": "FAAS_MANAGED_POSTGRES_NATIVE_CREDENTIAL_KEY"}}
 ```
 
 ## Phasing
@@ -867,8 +898,9 @@ Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
 3. Metering and guardrails.
 4. Density and wake: spares, admission ceiling, wake-storm queueing, classes.
 5. Operations: volume moves, node evacuation, node-loss restore, majors 14–18.
-6. Qualification: security review, `QualifyProvider` pass, then default for
-   new databases and a migration path off Neon.
+6. Qualification: security review, `QualifyProvider` pass, the production
+   class (standby on a second node), then default for new databases and a
+   migration path off Neon.
 
 Development may use a nested-virtualization VM; acceptance runs only on
 native x86_64 KVM database nodes.

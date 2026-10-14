@@ -8,6 +8,7 @@ import (
 	"crypto/pbkdf2"
 	"crypto/sha256"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -885,5 +886,32 @@ func TestUpdateResizesClassAndStorage(t *testing.T) {
 		if _, err := p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: bad, Generation: 5}); !errors.Is(err, managedpostgres.ErrUnsupported) {
 			t.Errorf("%s = %v, want ErrUnsupported", name, err)
 		}
+	}
+}
+
+// A described backend has the real backend's capabilities but reaches
+// nothing: approval tooling can read it without schedd, a database or the
+// credential key.
+func TestDescribeFactoryReadsCapabilitiesAndReachesNothing(t *testing.T) {
+	backend := managedpostgres.BackendConfig{Region: "eu-central", Settings: map[string]string{settingHostSuffix: "db.gregale.test", settingMaxRestore: "86400"}}
+	described, err := DescribeFactory()(backend, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, _, _ := newTestProvider(t)
+	cfg, err := ParseConfig(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real.cfg = cfg
+	if !reflect.DeepEqual(described.Capabilities(), real.Capabilities()) {
+		t.Fatalf("described %+v, real %+v", described.Capabilities(), real.Capabilities())
+	}
+	ctx := context.Background()
+	if _, err := described.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: devSpec()}); !errors.Is(err, managedpostgres.ErrUnavailable) {
+		t.Fatalf("provision through a described backend = %v, want ErrUnavailable", err)
+	}
+	if _, err := described.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "k", Access: managedpostgres.CredentialReadWrite}); err == nil {
+		t.Fatal("a described backend issued credentials")
 	}
 }

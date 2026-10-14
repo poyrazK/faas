@@ -9,7 +9,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/guestqualification"
-	"github.com/onebox-faas/faas/pkg/managedpostgres/neon"
 )
 
 func runVerificationArguments(args []string, getenv func(string) string, output, errorOutput io.Writer) int {
@@ -63,7 +62,7 @@ func runVerifyRollout(getenv func(string) string, approvalPath, guestPath, runti
 		return 2
 	}
 	artifact, approvalErr := readQualificationArtifact(approvalPath)
-	registry, registryErr := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": neon.New})
+	registry, registryErr := managedpostgres.Load(getenv, describeFactories())
 	accounts, accountErr := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
 	if registryErr != nil || registry == nil || accountErr != nil {
 		_, _ = fmt.Fprintln(errorOutput, "managed postgres qualification configuration is unavailable")
