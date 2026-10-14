@@ -5060,6 +5060,9 @@ func cmdDomains(args []string) int {
 		if err != nil {
 			return printErr("Not logged in", err)
 		}
+		if detail, unavailable := customDomainsRuntimeUnavailable(context.Background(), client); unavailable {
+			return printErr("Custom domains are unavailable", errors.New(detail))
+		}
 		d, err := client.CreateDomain(context.Background(), api.CreateCustomDomainRequest{Domain: *domain, AppID: *slug, Environment: *environment})
 		if err != nil {
 			return printErr("Could not add domain", err)
