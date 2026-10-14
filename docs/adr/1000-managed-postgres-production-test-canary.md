@@ -81,3 +81,10 @@ expiry without restarting; existing resources must still be drained. An API-only
 component hotfix can apply this gate from the deployed release source, with an
 independently recorded checksum, source patch and rollback, when the operator
 explicitly requests immediate activation instead of the signed fleet workflow.
+
+A resource created and provider-confirmed deleted in the same unfinished usage
+window owes no completed window yet, just like a live resource created in that
+window. This grace requires known identity, confirmed shutdown after creation,
+and nonfuture lifecycle timestamps. At the window boundary, missing coverage
+blocks admission again. Closed history and the final correction requirements
+remain mandatory; repeated tests must account for provider settlement delays.
