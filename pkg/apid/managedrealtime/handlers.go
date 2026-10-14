@@ -197,6 +197,10 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 	if err != nil {
 		return err
 	}
+	accountMaxConnections, err := s.realtimeAccountConnectionLimit(ctx, row.AccountID)
+	if err != nil {
+		return err
+	}
 	authMode := row.AuthMode
 	if authMode == "" {
 		if len(authToken) > 0 {
@@ -222,7 +226,24 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		MaxConnections:   row.MaxConnections,
 		MaxMessageBytes:  row.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
+
+		AccountMaxConnections: accountMaxConnections,
 	})
+}
+
+// realtimeAccountConnectionLimit is the account's plan allowance of concurrent
+// realtime connections (ADR-1238). Plan changes reach realtimed with the next
+// endpoint reconcile.
+func (s *Service) realtimeAccountConnectionLimit(ctx context.Context, accountID string) (int, error) {
+	acct, err := s.Host.Store().AccountByID(ctx, accountID)
+	if err != nil {
+		return 0, fmt.Errorf("realtime account %s plan: %w", accountID, err)
+	}
+	limits, ok := api.RealtimeLimitsFor(acct.Plan)
+	if !ok {
+		return 0, fmt.Errorf("realtime account %s: unknown plan %q", accountID, acct.Plan)
+	}
+	return limits.ConnectionsPerAccount, nil
 }
 
 func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) ([]byte, error) {

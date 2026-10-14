@@ -67,6 +67,11 @@ type StatsCollector struct {
 	usageDroppedHours   *prometheus.Desc
 	usageHeldHours      *prometheus.Desc
 
+	connectionLimitRefusals *prometheus.Desc
+	connectionSyncFailures  *prometheus.Desc
+	connectionSyncs         *prometheus.Desc
+	connectionSyncedAt      *prometheus.Desc
+
 	currentConnections              *prometheus.Desc
 	currentResumeSubscriptions      *prometheus.Desc
 	resumeHistoryReads              *prometheus.Desc
@@ -228,6 +233,10 @@ func NewStatsCollector(manager *Manager) prometheus.Collector {
 		usageReportFailures:             prometheus.NewDesc(subsystem+"_usage_report_failures_total", "Usage report passes that failed and will be retried.", nil, nil),
 		usageDroppedHours:               prometheus.NewDesc(subsystem+"_usage_dropped_hours_total", "Completed usage hours discarded undelivered after the report age limit.", nil, nil),
 		usageHeldHours:                  prometheus.NewDesc(subsystem+"_usage_held_hours", "Usage hours held in memory: the current hour plus completed hours not yet delivered.", nil, nil),
+		connectionLimitRefusals:         prometheus.NewDesc(subsystem+"_connection_limit_refusals_total", "Connections refused by a plan fair-use limit (ADR-1238): scope=account is the plan allowance across the fleet, account_node the per-node share.", []string{"scope"}, nil),
+		connectionSyncFailures:          prometheus.NewDesc(subsystem+"_connection_sync_failures_total", "Failed exchanges of per-account connection counts with apid.", nil, nil),
+		connectionSyncs:                 prometheus.NewDesc(subsystem+"_connection_syncs_total", "Successful exchanges of per-account connection counts with apid.", nil, nil),
+		connectionSyncedAt:              prometheus.NewDesc(subsystem+"_connection_sync_last_success_timestamp_seconds", "Last successful connection-count exchange with apid; zero before the first. Older than 30 s means accounts are capped on local counts only.", nil, nil),
 	}
 }
 
@@ -255,6 +264,11 @@ func (c *StatsCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.usageReportFailures, prometheus.CounterValue, float64(stats.UsageReportFailures))
 	ch <- prometheus.MustNewConstMetric(c.usageDroppedHours, prometheus.CounterValue, float64(stats.UsageDroppedHours))
 	ch <- prometheus.MustNewConstMetric(c.usageHeldHours, prometheus.GaugeValue, float64(stats.UsageHeldHours))
+	ch <- prometheus.MustNewConstMetric(c.connectionLimitRefusals, prometheus.CounterValue, float64(stats.AccountLimitRefusals), "account")
+	ch <- prometheus.MustNewConstMetric(c.connectionLimitRefusals, prometheus.CounterValue, float64(stats.AccountNodeLimitRefusals), "account_node")
+	ch <- prometheus.MustNewConstMetric(c.connectionSyncFailures, prometheus.CounterValue, float64(stats.ConnectionSyncFailures))
+	ch <- prometheus.MustNewConstMetric(c.connectionSyncs, prometheus.CounterValue, float64(stats.ConnectionSyncs))
+	ch <- prometheus.MustNewConstMetric(c.connectionSyncedAt, prometheus.GaugeValue, float64(stats.ConnectionSyncedAtUnix))
 	ch <- prometheus.MustNewConstMetric(c.currentConnections, prometheus.GaugeValue, float64(stats.CurrentConnections))
 	ch <- prometheus.MustNewConstMetric(c.currentResumeSubscriptions, prometheus.GaugeValue, float64(stats.CurrentResumeSubscriptions))
 	for result := resumeHistoryReadResult(0); result < resumeHistoryReadResultCount; result++ {
@@ -355,5 +369,9 @@ func (c *StatsCollector) descs() []*prometheus.Desc {
 		c.usageReportFailures,
 		c.usageDroppedHours,
 		c.usageHeldHours,
+		c.connectionLimitRefusals,
+		c.connectionSyncFailures,
+		c.connectionSyncs,
+		c.connectionSyncedAt,
 	}
 }

@@ -35,7 +35,7 @@ const (
 	// admission, so an open managed connection never pins an application VM.
 	ManagedPathPrefix = "/__gregale/realtime/"
 
-	defaultMaxConnections     = 10_000
+	defaultMaxConnections     = api.RealtimeNodeConnectionsDefault
 	defaultMaxMessageSize     = 1 << 20 // 1 MiB
 	defaultOutboundQueue      = 64
 	defaultOutboundQueueBytes = 4 << 20 // 4 MiB per connection, including an in-flight write
@@ -196,6 +196,9 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+	// AccountMaxConnections is the account's plan allowance of concurrent
+	// connections across the fleet (ADR-1238). Zero enforces no account limit.
+	AccountMaxConnections int
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -268,6 +271,12 @@ type Config struct {
 	UsageReportFailure  func(error)
 	// usageClock replaces time.Now in usage tests.
 	usageClock func() time.Time
+	// ConnectionSync shares per-account connection counts with the other
+	// nodes so plan connection limits hold fleet-wide (ADR-1238). Nil
+	// enforces them against this node's connections only.
+	ConnectionSync         ConnectionSyncer
+	ConnectionSyncInterval time.Duration
+	ConnectionSyncFailure  func(error)
 }
 
 func (c Config) withDefaults() Config {
@@ -309,6 +318,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.UsageReportInterval <= 0 {
 		c.UsageReportInterval = api.RealtimeUsageReportInterval
+	}
+	if c.ConnectionSyncInterval <= 0 {
+		c.ConnectionSyncInterval = api.RealtimeConnectionSyncInterval
 	}
 	if c.PresenceLeaseRenewInterval <= 0 {
 		c.PresenceLeaseRenewInterval = 15 * time.Second
@@ -405,6 +417,11 @@ type Stats struct {
 	UsageReportFailures                uint64  `json:"usage_report_failures"`
 	UsageDroppedHours                  uint64  `json:"usage_dropped_hours"`
 	UsageHeldHours                     uint64  `json:"usage_held_hours"`
+	AccountLimitRefusals               uint64  `json:"account_limit_refusals"`
+	AccountNodeLimitRefusals           uint64  `json:"account_node_limit_refusals"`
+	ConnectionSyncFailures             uint64  `json:"connection_sync_failures"`
+	ConnectionSyncs                    uint64  `json:"connection_syncs"`
+	ConnectionSyncedAtUnix             int64   `json:"connection_synced_at_unix"`
 }
 
 type connection struct {
@@ -472,6 +489,8 @@ type endpointState struct {
 	revoked  atomic.Bool
 	// usage is shared across policy refreshes like reserved (ADR-1238).
 	usage *usageCounters
+	// account counts the endpoint's account's connections on this node.
+	account *accountConnections
 }
 
 // Manager is the owner of managed realtime sockets for one process/node.
@@ -509,6 +528,14 @@ type Manager struct {
 	closed                  atomic.Bool
 
 	upgrader websocket.Upgrader
+
+	// accounts maps account ID to *accountConnections (ADR-1238 fair use).
+	accounts               sync.Map
+	connectionSyncedAt     atomic.Int64
+	connectionSyncFailures atomic.Uint64
+	connectionSyncs        atomic.Uint64
+	accountLimitRefusals   atomic.Uint64
+	accountNodeRefusals    atomic.Uint64
 
 	// usage records per-endpoint usage when Config.UsageReporter is set.
 	usage               *usageRecorder
@@ -569,6 +596,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		},
 	}
 	m.startUsageRecorder()
+	m.startConnectionSync()
 	return m
 }
 
@@ -685,7 +713,7 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 			return err
 		}
 	}
-	state := &endpointState{reserved: new(atomic.Int64), usage: new(usageCounters)}
+	state := &endpointState{reserved: new(atomic.Int64), usage: new(usageCounters), account: m.accountFor(e.AccountID)}
 	state.config.Store(&e)
 	m.endpoints.Store(e.ID, state)
 	return nil
@@ -930,9 +958,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if endpoint.CheckOrigin != nil {
 		upgrader.CheckOrigin = endpoint.CheckOrigin
 	}
-	if !m.tryReserve(state) {
+	if refusal, ok := m.tryReserve(state); !ok {
 		m.rejectedConnections.Add(1)
-		http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
+		refuseConnection(w, refusal)
 		return
 	}
 	defer m.release(state)
@@ -959,34 +987,63 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m.runConnection(r.Context(), conn)
 }
 
-func (m *Manager) tryReserve(state *endpointState) bool {
+// tryReserve admits one connection against the node, endpoint and account
+// limits. A refusal with a scope is an account fair-use limit (ADR-1238); the
+// caller answers it with the problem the refusal describes.
+func (m *Manager) tryReserve(state *endpointState) (connectionRefusal, bool) {
 	if state.revoked.Load() {
-		return false
+		return connectionRefusal{}, false
 	}
 	for {
 		current := m.reserved.Load()
 		if current >= int64(m.cfg.MaxConnections) {
-			return false
+			return connectionRefusal{}, false
 		}
 		if m.reserved.CompareAndSwap(current, current+1) {
 			for {
 				endpointCurrent := state.reserved.Load()
 				if state.revoked.Load() || endpointCurrent >= int64(state.config.Load().MaxConnections) {
 					m.reserved.Add(-1)
-					return false
+					return connectionRefusal{}, false
 				}
 				if state.reserved.CompareAndSwap(endpointCurrent, endpointCurrent+1) {
+					if refusal, ok := m.reserveAccount(state); !ok {
+						state.reserved.Add(-1)
+						m.reserved.Add(-1)
+						m.countRefusal(refusal)
+						return refusal, false
+					}
 					state.usage.observeConnections(endpointCurrent + 1)
-					return true
+					return connectionRefusal{}, true
 				}
 			}
 		}
 	}
 }
 
+func (m *Manager) countRefusal(r connectionRefusal) {
+	switch r.scope {
+	case api.RealtimeConnectionLimitAccount:
+		m.accountLimitRefusals.Add(1)
+	case api.RealtimeConnectionLimitAccountNode:
+		m.accountNodeRefusals.Add(1)
+	}
+}
+
+// refuseConnection answers a refused reservation: an account limit as an RFC
+// 7807 problem with the limit and observed count, anything else as before.
+func refuseConnection(w http.ResponseWriter, r connectionRefusal) {
+	if r.scope != "" {
+		api.WriteProblem(w, r.problem())
+		return
+	}
+	http.Error(w, "realtime connection limit reached", http.StatusTooManyRequests)
+}
+
 func (m *Manager) release(state *endpointState) {
 	m.reserved.Add(-1)
 	state.reserved.Add(-1)
+	state.account.local.Add(-1)
 }
 
 func normalizeOrigin(raw string) (string, error) {
@@ -2073,6 +2130,11 @@ func (m *Manager) Stats() Stats {
 		UsageReports:                  m.usageReports.Load(),
 		UsageReportFailures:           m.usageReportFailures.Load(),
 		UsageDroppedHours:             m.usageDroppedHours.Load(),
+		AccountLimitRefusals:          m.accountLimitRefusals.Load(),
+		AccountNodeLimitRefusals:      m.accountNodeRefusals.Load(),
+		ConnectionSyncFailures:        m.connectionSyncFailures.Load(),
+		ConnectionSyncs:               m.connectionSyncs.Load(),
+		ConnectionSyncedAtUnix:        m.connectionSyncedAt.Load() / int64(time.Second),
 		UsageHeldHours:                uint64(maxInt64(m.usageHeldHours.Load(), 0)),
 	}
 	if provider, ok := m.hooks.(interface{ OutboxStats() CallbackOutboxStats }); ok {

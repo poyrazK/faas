@@ -513,7 +513,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_REALTIME_HISTORY_TLS_CERT_PATH", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_HISTORY_TLS_KEY_PATH", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_MAX_AGE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
-	{Name: "FAAS_REALTIME_MAX_CONNECTIONS", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
+	{Name: "FAAS_REALTIME_MAX_CONNECTIONS", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "6000", Note: "node connection cap sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1238); raise only with MemoryMax"},
 	{Name: "FAAS_REALTIME_MAX_MESSAGE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault, Default: "4194304", Note: "per-connection outbound payload budget, including a frame being written"},

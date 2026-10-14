@@ -13,8 +13,8 @@ import (
 	usagesqlc "github.com/onebox-faas/faas/pkg/state/realtimebulk/sqlc"
 )
 
-// ADR-1238 step 2: realtime usage is recorded per endpoint, node and hour. It
-// is not billed and no limit reads it yet.
+// ADR-1238: realtime usage is recorded per endpoint, node and hour to review
+// the fair-use limits. Realtime is free; nothing bills from it.
 
 // RealtimeUsageMinutes is the number of per-minute peaks in one hourly row.
 const RealtimeUsageMinutes = 60

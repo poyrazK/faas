@@ -138,7 +138,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if !m.tryReserve(node) {
+	if refusal, ok := m.tryReserve(node); !ok {
+		if refusal.scope != "" {
+			api.WriteProblem(w, refusal.problem())
+			return
+		}
 		http.Error(w, "connection limit reached", http.StatusTooManyRequests)
 		return
 	}

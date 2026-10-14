@@ -361,7 +361,7 @@ const (
 // invocation plus wake and queueing margin.
 const RealtimeTriggerMinLeaseSeconds = 120
 
-// Realtime usage recording (ADR-1238 step 2: recorded, not billed). Each
+// Realtime usage recording (ADR-1238: recorded, never billed). Each
 // realtimed process reports its cumulative per-endpoint usage for the current
 // UTC hour once per RealtimeUsageReportInterval, in reports of at most
 // RealtimeUsageReportMaxEndpoints endpoints. It keeps completed hours it could

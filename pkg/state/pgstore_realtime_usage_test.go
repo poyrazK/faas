@@ -72,7 +72,7 @@ func TestPgStoreRealtimeUsageRecordsAndAggregatesFleetHours(t *testing.T) {
 	}
 	got := usage[1]
 	want := state.RealtimeUsageHour{EndpointID: endpoint.ID, AppID: appID, Hour: hour,
-		PeakConnections: 7, // minute 1: node A 5 + node B 2
+		PeakConnections:   7, // minute 1: node A 5 + node B 2
 		ConnectionSeconds: 210, DeliveredMessages: 21, DeliveredBytes: 2100, ReceivedMessages: 2, ReceivedBytes: 20}
 	if got != want {
 		t.Fatalf("current hour = %+v, want %+v", got, want)

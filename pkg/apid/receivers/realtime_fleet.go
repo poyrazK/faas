@@ -59,6 +59,7 @@ type realtimeFleetReceiver struct {
 	router       RealtimeEphemeralRouter
 	registerPush PushRegistrar
 	usage        state.RealtimeUsageStore
+	connections  state.RealtimeConnectionSyncStore
 }
 
 type realtimeFleetPresenceRequest struct {
@@ -111,6 +112,7 @@ type realtimeFleetServer interface {
 	RelayEphemeral(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	DirectMessageOperation(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	ReportUsage(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+	SyncConnections(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 }
 
 func (r *realtimeFleetReceiver) PresenceOperation(ctx context.Context, envelope *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
@@ -428,6 +430,9 @@ var realtimeFleetServiceDesc = grpc.ServiceDesc{
 		realtimeFleetUnaryHandler("ReportUsage", func(server realtimeFleetServer, ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 			return server.ReportUsage(ctx, req)
 		}),
+		realtimeFleetUnaryHandler("SyncConnections", func(server realtimeFleetServer, ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+			return server.SyncConnections(ctx, req)
+		}),
 	},
 }
 
@@ -442,5 +447,6 @@ func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 	inbox, _ := store.(state.ManagedRealtimeInboxStore)
 	router, _ := owner.(RealtimeEphemeralRouter)
 	usage, _ := store.(state.RealtimeUsageStore)
-	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage})
+	connections, _ := store.(state.RealtimeConnectionSyncStore)
+	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections})
 }

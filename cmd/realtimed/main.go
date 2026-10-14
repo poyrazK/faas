@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -93,6 +94,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var routeReporter realtime.ManagedRealtimeChannelRouteReporter
 	var fleetClient realtime.ManagedRealtimeFleetClient
 	var usageReporter realtime.UsageReporter
+	var connectionSync realtime.ConnectionSyncer
 	if resumePreview || accessPreview || ticketPreview || usageEnabled {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
@@ -119,9 +121,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if usageEnabled {
 			usageReporter = reader
 		}
+		connectionSync = reader
 	}
 	manager := realtime.NewManager(realtime.Config{
-		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
+		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", api.RealtimeNodeConnectionsDefault),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
 		OutboundQueueBytes:   int64(envInt("FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", 4<<20)),
@@ -146,6 +149,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
 		},
 		UsageReporter: usageReporter,
+		// Plan connection limits hold fleet-wide whenever apid is reachable;
+		// without it they hold per node (ADR-1238).
+		ConnectionSync: connectionSync,
+		ConnectionSyncFailure: func(err error) {
+			log.Warn("realtimed: connection count sync failed; account limits use local counts until it recovers", "err", err)
+		},
 		UsageReportFailure: func(err error) {
 			log.Warn("realtimed: usage report failed; the hour is kept and retried", "err", err)
 		},
