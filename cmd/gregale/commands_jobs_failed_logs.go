@@ -15,34 +15,53 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func splitJobFailedLogsFlag(args []string) ([]string, bool, error) {
+func splitJobLogsStateFlags(args []string) ([]string, bool, bool, bool, error) {
 	remaining := []string{}
-	found, enabled := false, false
+	found := map[string]bool{}
+	failedOnly, unsuccessfulOnly := false, false
 	for _, arg := range args {
-		if arg == "--failed-only" || arg == "-failed-only" || strings.HasPrefix(arg, "--failed-only=") || strings.HasPrefix(arg, "-failed-only=") {
-			if found {
-				return nil, false, fmt.Errorf("--failed-only may be supplied only once")
+		option, value, inline := strings.Cut(arg, "=")
+		if option == "--failed-only" || option == "-failed-only" || option == "--unsuccessful-only" || option == "-unsuccessful-only" {
+			option = "--" + strings.TrimLeft(option, "-")
+			if found[option] {
+				return nil, false, false, false, fmt.Errorf("%s may be supplied only once", option)
 			}
-			found = true
-			enabled = true
-			if strings.Contains(arg, "=") {
-				value, err := strconv.ParseBool(arg[strings.IndexByte(arg, '=')+1:])
+			found[option] = true
+			enabled := true
+			if inline {
+				parsed, err := strconv.ParseBool(value)
 				if err != nil {
-					return nil, false, fmt.Errorf("--failed-only requires a boolean value")
+					return nil, false, false, false, fmt.Errorf("%s requires a boolean value", option)
 				}
-				enabled = value
+				enabled = parsed
+			}
+			if option == "--failed-only" {
+				failedOnly = enabled
+			} else {
+				unsuccessfulOnly = enabled
 			}
 		} else {
 			remaining = append(remaining, arg)
 		}
 	}
-	return remaining, enabled, nil
+	if failedOnly && unsuccessfulOnly {
+		return nil, false, false, false, errors.New("use --failed-only or --unsuccessful-only separately")
+	}
+	return remaining, failedOnly, unsuccessfulOnly, len(found) > 0, nil
 }
 
 func cmdJobsFailedLogs(args []string) int {
+	return cmdJobsFilteredLogs(args, false)
+}
+
+func cmdJobsFilteredLogs(args []string, unsuccessfulOnly bool) int {
+	flagName, description := "--failed-only", "failed, timed-out, or out-of-memory"
+	if unsuccessfulOnly {
+		flagName, description = "--unsuccessful-only", "failed, timed-out, out-of-memory, or cancelled"
+	}
 	positionals, maxBytes, _, ok := parseJobsLogsArgs(args)
 	if !ok || len(positionals) > 2 {
-		return printErr("Invalid failed logs arguments", fmt.Errorf("use jobs logs [JOB] [RUN_ID|latest] --failed-only [--max-bytes N]; --task, positional task indexes, and --attempt cannot be combined with --failed-only"))
+		return printErr("Invalid failed logs arguments", fmt.Errorf("use jobs logs [JOB] [RUN_ID|latest] %s [--max-bytes N]; --task, positional task indexes, and --attempt cannot be combined with %s", flagName, flagName))
 	}
 	name, ref := "", "latest"
 	if len(positionals) > 0 {
@@ -52,9 +71,9 @@ func cmdJobsFailedLogs(args []string) int {
 		ref = positionals[1]
 	}
 	if name == "" {
-		d, path, err := readJobDefaults()
+		d, path, err := readJobDefaultsForCommand([]string{"jobs", "logs", "my-job", flagName})
 		if err != nil {
-			return printErr("Could not read Job defaults", err)
+			return printJobDefaultsSelectionError("Could not read Job defaults", err)
 		}
 		name = d.Job
 		if !jsonOutput {
@@ -95,14 +114,23 @@ func cmdJobsFailedLogs(args []string) int {
 	if run.ID != id || run.JobID != job.ID || run.AccountID != job.AccountID {
 		return printErr("Invalid Job run", fmt.Errorf("server returned another run, Job, or account"))
 	}
-	tasks, err := collectJobTaskPagesContext(ctx, client, name, id, 200, 0, true)
+	tasks, err := collectJobTaskPagesContext(ctx, client, name, id, 200, 0, !unsuccessfulOnly)
 	if err != nil {
 		return printErr("Could not inspect failed tasks", err)
 	}
-	summary := failedJobLogsSummary{Type: "summary", Job: name, RunID: id, Found: len(tasks), NotAttempted: len(tasks), Unavailable: []failedJobLogUnavailable{}}
+	if unsuccessfulOnly {
+		filtered := make([]api.JobTaskResponse, 0)
+		for _, task := range tasks {
+			if jobTaskRetryStatus(task.Status) {
+				filtered = append(filtered, task)
+			}
+		}
+		tasks = filtered
+	}
+	summary := failedJobLogsSummary{Type: "summary", Job: name, RunID: id, Found: len(tasks), NotAttempted: len(tasks), Unavailable: []failedJobLogUnavailable{}, Unsuccessful: unsuccessfulOnly}
 	if len(tasks) == 0 {
 		if !jsonOutput {
-			_, _ = fmt.Fprintf(osStdout, "No failed, timed-out, or out-of-memory tasks recorded for Job %s run %s.\n", name, id)
+			_, _ = fmt.Fprintf(osStdout, "No %s tasks recorded for Job %s run %s.\n", description, name, id)
 		}
 		return renderFailedJobLogsSummary(summary)
 	}
@@ -131,7 +159,7 @@ func cmdJobsFailedLogs(args []string) int {
 		readCancel()
 		if err != nil {
 			summary.NotAttempted--
-			retry := fmt.Sprintf("%s jobs logs %s %s --task %d --max-bytes %d", recoveryCLI(), recoveryArgument(name), recoveryArgument(id), task.TaskIndex, maxBytes)
+			retry := savedNameSuggestionCommand([]string{"jobs", "logs", name, id, "--task", strconv.Itoa(task.TaskIndex), "--max-bytes", strconv.Itoa(maxBytes)})
 			summary.Unavailable = append(summary.Unavailable, failedJobLogUnavailable{TaskIndex: task.TaskIndex, RetryCommand: retry, Error: redactErrorText(err.Error())})
 			if firstFailure == nil {
 				var apiErr *APIError
@@ -195,6 +223,7 @@ type failedJobLogUnavailable struct {
 }
 
 type failedJobLogsSummary struct {
+	Unsuccessful bool                      `json:"-"`
 	Type         string                    `json:"type"`
 	Job          string                    `json:"job"`
 	RunID        string                    `json:"run_id"`
@@ -210,7 +239,11 @@ func renderFailedJobLogsSummary(summary failedJobLogsSummary) int {
 	if jsonOutput {
 		return jsonOut(writeJSONSingle(summary))
 	}
-	_, _ = fmt.Fprintf(osStdout, "\nFailed-task log summary: %d found; %d logs read; %d empty; %d truncated; %d unavailable; %d not attempted.\n", summary.Found, summary.Read, summary.Empty, summary.Truncated, len(summary.Unavailable), summary.NotAttempted)
+	heading := "Failed-task"
+	if summary.Unsuccessful {
+		heading = "Unsuccessful-task"
+	}
+	_, _ = fmt.Fprintf(osStdout, "\n%s log summary: %d found; %d logs read; %d empty; %d truncated; %d unavailable; %d not attempted.\n", heading, summary.Found, summary.Read, summary.Empty, summary.Truncated, len(summary.Unavailable), summary.NotAttempted)
 	for _, task := range summary.Unavailable {
 		_, _ = fmt.Fprintf(osStdout, "Task %d logs unavailable: %s\nRetry reading task %d logs (POSIX shells):\n  %s\n", task.TaskIndex, oneLine(task.Error), task.TaskIndex, task.RetryCommand)
 	}

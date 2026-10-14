@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
+	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -37,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/preflight"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -74,7 +76,8 @@ type server struct {
 	appEvents                              appevents.Service // ADR-977; Host wired in newServer
 	featureFlagsEnabled                    bool
 	aiGatewayEnabled                       bool
-	outboundAI                             outboundai.Service // ADR-977; Host wired in newServer
+	aiGatewayRollout                       outbound.AIGatewayRollout // ADR-998
+	outboundAI                             outboundai.Service        // ADR-977; Host wired in newServer
 	flagsWorkloadVerifier                  *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
 	totp                          *totpGuard
@@ -109,6 +112,8 @@ type server struct {
 	routeProbes routeProbeSender
 	// edgeRules is the edge rules surface (ADR-977); Host wired in newServer.
 	edgeRules edgerules.Service
+	// queueLeases is the pull-lease surface (ADR-1140); Host wired in newServer.
+	queueLeases queueleases.Service
 	// invocationCompletion multiplexes the durable invocation_done
 	// notification stream for synchronous invoke waiters. Nil keeps the
 	// legacy per-request LISTEN path for tests and degraded boot.
@@ -1221,6 +1226,7 @@ func newServerWithDeps(
 	s.object.Host = objectHost{s}
 	s.operation.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
+	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
 	s.realtime.AuthLimiter = s.apiAuthLimiter
 	s.realtime.DrainWake = make(chan struct{}, 1)
@@ -3123,6 +3129,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/commit-sources/{source}/events/{event}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCommitReceipt))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/receive", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.queueReceive))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/{id}/ack", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.queueAck))))))
+	// ADR-1140 pull leases: API key with queues:consume, or a gregale:queues
+	// workload token from a live instance of the app.
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/{queue}/leases", s.queueLeaseRoute(s.queueLeases.Lease))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/{queue}/leases:ack", s.queueLeaseRoute(s.queueLeases.Ack))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/{queue}/leases:nack", s.queueLeaseRoute(s.queueLeases.Nack))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/{queue}/leases:extend", s.queueLeaseRoute(s.queueLeases.Extend))
 	// Issue #394 — queue introspection. Read-only endpoints under
 	// the same mount family. No lease is acquired; no row is mutated.
 	mux.HandleFunc("GET /v1/apps/{slug}/queues/state", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.queueState))))

@@ -8,15 +8,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/jobresult"
 )
 
-func renderJobTasksWithArtifacts(name, runID string, tasks []api.JobTaskResponse, manifests map[int]jobresult.Manifest, offset int, failedOnly bool, includes, excludes []string) int {
+func renderJobTasksWithArtifacts(name, runID string, tasks []api.JobTaskResponse, manifests map[int]jobresult.Manifest, offset int, statusFilter string, includes, excludes []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Job: %s; run: %s; task artifacts starting at offset %d\n", name, runID, offset)
 	if len(includes) > 0 || len(excludes) > 0 {
 		_, _ = fmt.Fprintln(osStdout, "Artifact counts and listing/download commands use the same "+jobArtifactFilterDescription(excludes)+".")
 	}
 	if len(tasks) == 0 {
 		qualifier := ""
-		if failedOnly {
-			qualifier = " matching failed, timeout, or oom states"
+		if statusFilter != "" {
+			qualifier = " matching " + statusFilter
 		}
 		description := "recorded artifacts"
 		if len(includes) > 0 || len(excludes) > 0 {

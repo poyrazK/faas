@@ -1112,6 +1112,18 @@ const emit = (frame) => process.stdout.write(JSON.stringify(frame) + "\n");
 const toBuffer = (piece) => Buffer.isBuffer(piece) ? piece
   : piece instanceof Uint8Array ? Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength)
   : Buffer.from(String(piece));
+// Event handlers read headers as Node does (req.headers["x-api-key"]), but
+// the envelope carries Go's canonical names ("X-Api-Key"), so every
+// lowercase read was undefined (hunt #10, H10-20). Keys are lowercase and
+// lookups ignore case, so canonical-case reads keep working.
+function caseInsensitiveHeaders(raw) {
+  const lower = {};
+  for (const [key, value] of Object.entries(raw || {})) lower[key.toLowerCase()] = value;
+  return new Proxy(lower, {
+    get: (target, prop) => typeof prop === "string" ? target[prop.toLowerCase()] : target[prop],
+    has: (target, prop) => typeof prop === "string" ? prop.toLowerCase() in target : prop in target,
+  });
+}
 const emitWhole = (status, headers, bytes) => emit({ status, headers, body_b64: bytes.toString("base64") });
 const emitHead = (status, headers) => { streaming = true; emit({ frame: "head", status, headers }); };
 const emitChunk = (bytes) => { if (bytes.length > 0) emit({ frame: "chunk", body_b64: bytes.toString("base64") }); };
@@ -1191,7 +1203,7 @@ for await (const line of lines) {
     const event = {
       method: env.method || "POST",
       path: env.path || "/",
-      headers,
+      headers: caseInsensitiveHeaders(headers),
       query: env.query || "",
       body,
       // Spec §4.9: the exact request bytes. body is parsed JSON when the
@@ -1366,6 +1378,15 @@ for line in sys.stdin:
         headers = env.get("headers") or {}
         invocation_id = headers.get("x-faas-invocation-id", headers.get("X-Faas-Invocation-Id", ""))
 
+        class _Headers(dict):
+            # Lowercase keys, case-insensitive lookups: the envelope carries
+            # Go's canonical names, so headers["x-api-key"] missed (H10-20).
+            def __init__(self, raw):
+                super().__init__((str(k).lower(), v) for k, v in raw.items())
+            def __getitem__(self, key): return super().__getitem__(str(key).lower())
+            def __contains__(self, key): return super().__contains__(str(key).lower())
+            def get(self, key, default=None): return super().get(str(key).lower(), default)
+
         class _Context:
             log = _Log()
             def __init__(self, invocation): self.invocation_id = invocation
@@ -1373,7 +1394,7 @@ for line in sys.stdin:
         event = {
             "method": env.get("method") or "POST",
             "path": env.get("path") or "/",
-            "headers": headers,
+            "headers": _Headers(headers),
             "query": env.get("query") or "",
             "body": body,
             "body_b64": body_b64,

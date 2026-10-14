@@ -378,6 +378,18 @@ status codes.
 >   - outboundd refuses AI integrations (`503 outbound_ai_gateway_disabled`) and routes.
 >
 > See [ADR-991](../adr/991-ai-gateway-hard-caps-providers-visibility.md#release-gate).
+>
+> **Preview rollout (ADR-998).** With the gate on, the AI gateway serves
+> accounts whose plan includes it (Hobby, Pro, Scale).
+>
+> - During the preview, `ai_gateway_accounts` in both daemons (or
+>   `FAAS_AI_GATEWAY_ACCOUNTS`, comma-separated) limits it to listed accounts.
+> - Other accounts get `403 outbound_ai_gateway_unavailable`.
+> - A Free account gets `402 plan_feature_gated` from apid and `403` from
+>   outboundd.
+>
+> The rollout steps, alerts and rollback are in the
+> [AI gateway runbook](../runbooks/FaasAIGateway.md).
 
 An integration in front of an LLM provider can declare `ai_provider`. Use
 `openai` for OpenAI and any provider that speaks its wire format, or
@@ -430,7 +442,8 @@ below).
 
 Usage comes from the provider's own response:
 
-- JSON responses up to 1 MiB are parsed; larger ones count as unknown usage.
+- JSON responses up to 1 MiB are parsed; for larger ones, such as base64
+  images, usage is read from the last 64 KiB (ADR-997).
 - Streaming OpenAI chat completions include usage only when the request sets
   `"stream_options": {"include_usage": true}`. Without it, the call counts as
   unknown usage.

@@ -272,9 +272,10 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	// Workers are kept in this order, so the tail is stopped first: settled
 	// before booting, busy before idle, then oldest first.
 	now := e.now()
+	leases := e.workerQueueLeases(ctx, app.ID, len(plan.workers) > plan.desired)
 	busy := make(map[string]int, len(plan.workers))
 	for _, ins := range plan.workers {
-		busy[ins.ID] = e.workerBusyRank(ins, now)
+		busy[ins.ID] = e.workerBusyRank(ins, now, leases)
 	}
 	sort.SliceStable(plan.workers, func(i, j int) bool {
 		left, right := workerStatePreference(plan.workers[i]), workerStatePreference(plan.workers[j])
