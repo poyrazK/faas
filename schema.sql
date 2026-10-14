@@ -25875,6 +25875,17 @@ CREATE TABLE public.outbound_ai_routes (
 
 
 --
+-- Name: outbound_ai_settlements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_settlements (
+    lease_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    settled_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: outbound_ai_usage_daily; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36122,6 +36133,14 @@ ALTER TABLE ONLY public.outbound_ai_routes
 
 
 --
+-- Name: outbound_ai_settlements outbound_ai_settlements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_settlements
+    ADD CONSTRAINT outbound_ai_settlements_pkey PRIMARY KEY (lease_id);
+
+
+--
 -- Name: outbound_ai_usage_daily outbound_ai_usage_daily_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43881,6 +43900,13 @@ CREATE INDEX outbound_ai_request_log_recent_idx ON public.outbound_ai_request_lo
 --
 
 CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_route_targets USING btree (integration_id);
+
+
+--
+-- Name: outbound_ai_settlements_settled_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_settlements_settled_at_idx ON public.outbound_ai_settlements USING btree (settled_at);
 
 
 --
@@ -55453,6 +55479,14 @@ ALTER TABLE ONLY public.outbound_ai_route_targets
 
 ALTER TABLE ONLY public.outbound_ai_routes
     ADD CONSTRAINT outbound_ai_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_settlements outbound_ai_settlements_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_settlements
+    ADD CONSTRAINT outbound_ai_settlements_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --

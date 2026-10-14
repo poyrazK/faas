@@ -844,6 +844,12 @@ const (
 	OutboundAIReplayOutputTextMaxBytes      = 4 << 10
 	OutboundAIReplayCallTimeoutSeconds      = 120
 	OutboundAIReplayInterruptedAfterMinutes = 15
+	// Settlement (ADR-1120): the attempts at one call's settlement and the
+	// deadline of each, and how long a settled call's key is kept so a
+	// retried settlement cannot count the call twice.
+	OutboundAISettlementAttempts              = 3
+	OutboundAISettlementAttemptTimeoutSeconds = 5
+	OutboundAISettlementKeyRetentionMinutes   = 60
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
