@@ -1,4 +1,4 @@
--- ADR-1155 webhook-submitted customer Operations.
+-- ADR-1158 webhook-submitted customer Operations.
 
 -- name: GetOperationWebhookBinding :one
 SELECT * FROM customer_operation_webhook_bindings WHERE endpoint_id = $1;

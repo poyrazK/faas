@@ -221,7 +221,7 @@ func (s *PgStore) AdmitOperation(ctx context.Context, admission OperationAdmissi
 }
 
 // admitOperationTx admits or replays one submission inside the caller's
-// transaction, so another durable receipt can commit with it (ADR-1155).
+// transaction, so another durable receipt can commit with it (ADR-1158).
 // A replay performs no writes; the caller decides whether to commit.
 func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, definition, tenant pgtype.UUID, admission OperationAdmission, hint OperationDefinition) (Operation, bool, error) {
 	q := sqlc.New()

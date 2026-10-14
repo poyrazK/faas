@@ -56,7 +56,7 @@ const getOperationWebhookBinding = `-- name: GetOperationWebhookBinding :one
 SELECT endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version, created_at, updated_at FROM customer_operation_webhook_bindings WHERE endpoint_id = $1
 `
 
-// ADR-1155 webhook-submitted customer Operations.
+// ADR-1158 webhook-submitted customer Operations.
 func (q *Queries) GetOperationWebhookBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (CustomerOperationWebhookBinding, error) {
 	row := db.QueryRow(ctx, getOperationWebhookBinding, endpointID)
 	var i CustomerOperationWebhookBinding

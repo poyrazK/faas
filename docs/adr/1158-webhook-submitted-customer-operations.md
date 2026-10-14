@@ -1,4 +1,4 @@
-# ADR-1155 · Webhook-submitted customer Operations
+# ADR-1158 · Webhook-submitted customer Operations
 
 - **Status:** accepted for implementation; admission stays behind the ADR-521 preview gate
 - **Date:** 2026-10-13

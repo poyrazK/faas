@@ -1,4 +1,4 @@
-// adr: 1155
+// adr: 1158
 package state
 
 import (
@@ -76,7 +76,7 @@ type WebhookOperationReceipt struct {
 	Duplicate   bool
 }
 
-// OperationWebhookStore persists ADR-1155 bindings and admits exactly one
+// OperationWebhookStore persists ADR-1158 bindings and admits exactly one
 // operation per provider event, independently of later rebinding.
 type OperationWebhookStore interface {
 	SaveOperationWebhookBinding(context.Context, OperationWebhookBindingOptions) (OperationWebhookBinding, error)
@@ -230,7 +230,7 @@ func operationWebhookReceiptFromSQL(row sqlc.CustomerOperationWebhookReceipt) (W
 }
 
 // AdmitWebhookOperation commits the webhook receipt with the operation's own
-// admission, idempotency receipt and initial event (ADR-521, ADR-1155).
+// admission, idempotency receipt and initial event (ADR-521, ADR-1158).
 func (s *PgStore) AdmitWebhookOperation(ctx context.Context, in WebhookOperationAdmission) (WebhookOperationReceipt, error) {
 	if err := validateWebhookOperationAdmission(in); err != nil {
 		return WebhookOperationReceipt{}, err

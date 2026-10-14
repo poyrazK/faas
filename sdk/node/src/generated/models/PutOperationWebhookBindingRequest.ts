@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Bind a verified provider endpoint to a customer operation with revision control (ADR-1155).
+ * Bind a verified provider endpoint to a customer operation with revision control (ADR-1158).
  */
 export type PutOperationWebhookBindingRequest = {
   expected_version: number;

@@ -1,4 +1,4 @@
-// ADR-1155: a provider event admits exactly one customer operation, owned by
+// ADR-1158: a provider event admits exactly one customer operation, owned by
 // the authenticated binding, independently of later rebinding.
 package acceptance_test
 

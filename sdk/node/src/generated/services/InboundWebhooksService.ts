@@ -372,7 +372,7 @@ export class InboundWebhooksService {
     });
   }
   /**
-   * Route a verified endpoint to a customer operation (ADR-1155).
+   * Route a verified endpoint to a customer operation (ADR-1158).
    * One binding per endpoint, owned by the same app. The platform tenant is
    * the operation owner; it must be active and linked to the app through an
    * active tenant surface, and it is never derived from provider payload.
@@ -597,7 +597,7 @@ export class InboundWebhooksService {
    * fanout work. Paused, unpublished or type-unmatched events are durably ignored;
    * content filters are evaluated by the scheduler. Provider retries return the
    * original receipt; changed content for the same event ID returns 409.
-   * An operation-bound endpoint (ADR-1155) admits one customer operation per
+   * An operation-bound endpoint (ADR-1158) admits one customer operation per
    * provider event, owned by the binding's platform tenant, with input
    * {webhook: {endpoint, provider, event_id, event_type}, payload}. Closed
    * preview admission or an unavailable operation returns 503 with

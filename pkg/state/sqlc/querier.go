@@ -1185,7 +1185,7 @@ type Querier interface {
 	// first-use auto-create path (PR-A) and the dashboard's Refine
 	// form (PR-C).
 	GetOIDCTrustPolicy(ctx context.Context, db DBTX, arg GetOIDCTrustPolicyParams) (GetOIDCTrustPolicyRow, error)
-	// ADR-1155 webhook-submitted customer Operations.
+	// ADR-1158 webhook-submitted customer Operations.
 	GetOperationWebhookBinding(ctx context.Context, db DBTX, endpointID pgtype.UUID) (CustomerOperationWebhookBinding, error)
 	GetOperationWebhookReceipt(ctx context.Context, db DBTX, arg GetOperationWebhookReceiptParams) (CustomerOperationWebhookReceipt, error)
 	GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error)

@@ -1,6 +1,6 @@
 package apidserver_test
 
-// ADR-1155: a verified inbound webhook bound to a customer operation admits
+// ADR-1158: a verified inbound webhook bound to a customer operation admits
 // exactly one operation per provider event, owned by the bound customer.
 
 import (
