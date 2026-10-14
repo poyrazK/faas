@@ -1677,6 +1677,7 @@ type Querier interface {
 	// Gateway hydration keeps each required readiness source independent so one
 	// recovered probe cannot override another probe that is still unready.
 	LatestInstanceReadinessBySource(ctx context.Context, db DBTX, instanceIds []string) ([]LatestInstanceReadinessBySourceRow, error)
+	LatestOOMProfileCapture(ctx context.Context, db DBTX, arg LatestOOMProfileCaptureParams) ([]byte, error)
 	// Most recently serving first (serving_ended_at, migration
 	// 20261004234807528); rows superseded before it fall back to created_at.
 	// A live 0% deployment that served before (a release demoted by `traffic
@@ -3626,10 +3627,12 @@ type Querier interface {
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
+	StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (string, error)
 	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowRunParams) error
 	StartCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowStepParams) ([]byte, error)
+	StartProfileCapture(ctx context.Context, db DBTX, arg StartProfileCaptureParams) (int64, error)
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
 	StopManagedPostgresDrainInstance(ctx context.Context, db DBTX, arg StopManagedPostgresDrainInstanceParams) (int64, error)
 	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error

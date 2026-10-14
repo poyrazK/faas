@@ -84,6 +84,46 @@ func TestCmdDebugCaptureQueuesPollsAndPrints(t *testing.T) {
 	}
 }
 
+func TestCmdDebugCaptureDiff(t *testing.T) {
+	const id, base = "11111111-1111-4111-8111-111111111111", "33333333-3333-4333-8333-333333333333"
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/apps/my-app/profiles/captures/"+id+"/diff" {
+			http.NotFound(w, r)
+			return
+		}
+		query = r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(api.ProfileCaptureDiff{Kind: "heap", Unit: "bytes", BaselineTotal: 1 << 20, CandidateTotal: 5 << 20, Delta: 4 << 20,
+			Functions: []api.ProfileCaptureFunctionDelta{{Name: "leakyCache", File: "cache.go", Line: 12, Baseline: 1 << 20, Candidate: 5 << 20, Delta: 4 << 20}, {Name: "trim", Baseline: 2048, Delta: -2048}},
+			Warnings:  []string{"The captures come from different deployments; code changes can move cost between functions."}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test")
+	stdout, _, restore := swapIO(t)
+	defer restore()
+	oldJSON := jsonOutput
+	jsonOutput = false
+	defer func() { jsonOutput = oldJSON }()
+
+	if code := cmdDebugCaptureDiff([]string{"my-app", id, "--base", base, "--type", "heap"}); code != 0 {
+		t.Fatalf("cmdDebugCaptureDiff() = %d", code)
+	}
+	if query != "base="+base+"&kind=heap" {
+		t.Fatalf("query = %q", query)
+	}
+	for _, want := range []string{"HEAP: 1.00 MiB → 5.00 MiB (+4.00 MiB)", "Note: The captures come from different deployments", "+4.00 MiB\t1.00 MiB\t5.00 MiB\tleakyCache\tcache.go:12", "-2.0 KiB"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, stdout.String())
+		}
+	}
+	for _, args := range [][]string{{"my-app", id}, {"my-app", "--base", base}} {
+		if code := cmdDebugCaptureDiff(args); code == 0 {
+			t.Fatalf("cmdDebugCaptureDiff(%v) succeeded", args)
+		}
+	}
+}
+
 func TestCmdDebugCaptureRejectsInvalidRequests(t *testing.T) {
 	_, _, restore := swapIO(t)
 	defer restore()

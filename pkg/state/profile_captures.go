@@ -28,6 +28,12 @@ type ProfileCaptureBlob struct {
 	Profile   []byte
 }
 
+// ProfileCaptureOOM is the OOM kill linked to a capture (ADR-1155).
+type ProfileCaptureOOM struct {
+	KilledAt       time.Time
+	PeakMB, PlanMB int
+}
+
 // ClaimedProfileCapture is a queued capture schedd now owns.
 type ClaimedProfileCapture struct {
 	ID        string
@@ -41,6 +47,9 @@ type ProfileCaptureStore interface {
 	GetProfileCapture(ctx context.Context, accountID, appID, id string) (api.ProfileCapture, error)
 	ListProfileCaptures(ctx context.Context, accountID, appID string) ([]api.ProfileCapture, error)
 	ProfileCaptureBlobs(ctx context.Context, accountID, appID, id string) ([]ProfileCaptureBlob, error)
+	// LatestOOMProfileCapture returns the deployment's newest ready capture
+	// linked to an OOM kill, or ErrNotFound.
+	LatestOOMProfileCapture(ctx context.Context, accountID, appID, deploymentID string) (api.ProfileCapture, error)
 }
 
 type ProfileCaptureQueue interface {
@@ -51,6 +60,13 @@ type ProfileCaptureQueue interface {
 	FinishProfileCapture(ctx context.Context, id string, result api.ProfileCapture, blobs []ProfileCaptureBlob, now time.Time) error
 	// ExpireProfileCaptures fails interrupted captures and deletes expired ones.
 	ExpireProfileCaptures(ctx context.Context, now time.Time) (int64, error)
+	// StartProfileCapture records the instance a capturing row runs on, so
+	// an OOM kill during the window can find it.
+	StartProfileCapture(ctx context.Context, id, instanceID, deploymentID string) error
+	// StampProfileCaptureOOM links an OOM kill to the newest heap capture
+	// started on that instance since `since`, returning its id or
+	// ErrNotFound. Re-stamping the same kill is idempotent.
+	StampProfileCaptureOOM(ctx context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error)
 	// QueueAutomaticProfileCapture queues a platform-triggered capture under
 	// the same quota and single-active rules as CreateProfileCapture, plus a
 	// per-app minimum interval for c.Trigger.
@@ -92,7 +108,7 @@ func profileCaptureResultDoc(r api.ProfileCapture) ([]byte, error) {
 		profiles = []api.ProfileCaptureProfile{}
 	}
 	return json.Marshal(map[string]any{"instance_id": r.InstanceID, "deployment_id": r.DeploymentID,
-		"processes": r.Processes, "dropped": r.Dropped, "reason": r.Reason, "profiles": profiles})
+		"processes": r.Processes, "dropped": r.Dropped, "reason": r.Reason, "partial": r.Partial, "profiles": profiles})
 }
 
 func validProfileCaptureFinish(result api.ProfileCapture, blobs []ProfileCaptureBlob) error {

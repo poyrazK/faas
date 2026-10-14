@@ -40,14 +40,16 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
     def _kinds(config):
         return config.get("kinds") or ["cpu"]
 
-    def _upload_heap(endpoint, epoch, started_ns, stop=False):
+    def _upload_heap(endpoint, epoch, started_ns, stop=False, checkpoint=False):
         import _gregale_heap
         body = _gregale_heap.snapshot_pprof(started_ns, stop)
         if not body:
             return
         name = "gregale{gregale_epoch=" + epoch + ",gregale_process=" + str(os.getpid()) + "}"
-        query = urllib.parse.urlencode({"kind": "heap", "name": name, "from": started_ns // 10**9,
-                                        "until": time.time_ns() // 10**9})
+        params = {"kind": "heap", "name": name, "from": started_ns // 10**9, "until": time.time_ns() // 10**9}
+        if checkpoint:
+            params["checkpoint"] = "1"
+        query = urllib.parse.urlencode(params)
         req = urllib.request.Request(endpoint + "/ingest?" + query, data=body, method="POST",
                                      headers={"Content-Type": "application/octet-stream"})
         try:
@@ -105,11 +107,17 @@ if os.getenv("FAAS_PROFILING_ENABLED") == "1":
             kinds = _kinds(config)
             _state["epoch"] = config["epoch"]
             if config.get("capture"):
-                _state["capture"] = {"epoch": config["epoch"]}
+                _state["capture"] = {"epoch": config["epoch"], "checkpoint_at": time.time_ns()}
             if "cpu" in kinds:
                 _start_cpu(endpoint, config)
             if "heap" in kinds:
                 _start_heap()
+        elif (_state["heap"] and capture is not None and config.get("capture") and same_epoch
+              and config.get("checkpoint_seconds", 0) > 0
+              and time.time_ns() - capture["checkpoint_at"] >= config["checkpoint_seconds"] * 10**9):
+            # Interim heap for an OOM kill that would end the window early.
+            capture["checkpoint_at"] = time.time_ns()
+            _upload_heap(endpoint, _state["epoch"], _state["heap_from"], checkpoint=True)
         elif _state["heap"] and capture is None and time.time_ns() - _state["heap_from"] >= config["window_seconds"] * 10**9:
             # Continuous heap: report traced live allocations once per window.
             started, _state["heap_from"] = _state["heap_from"], time.time_ns()

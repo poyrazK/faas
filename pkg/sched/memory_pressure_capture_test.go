@@ -73,3 +73,61 @@ func TestQueueMemoryPressureCapture(t *testing.T) {
 		t.Fatalf("unknown instance err = %v", err)
 	}
 }
+
+func TestLinkOOMProfileCapture(t *testing.T) {
+	ctx := t.Context()
+	mem := state.NewMemStore()
+	acct, err := mem.CreateAccount(ctx, "oom-link@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := mem.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "oom-link", RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(t, mem, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	now := time.Now().UTC()
+	capture := api.ProfileCapture{ID: "11111111-1111-4111-8111-111111111111", Kinds: []string{api.ProfileKindHeap}, DurationSeconds: 10,
+		Trigger: api.ProfileCaptureTriggerMemoryPressure, CreatedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(api.ProfileCaptureRetention)}
+	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mem.ClaimProfileCapture(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.StartProfileCapture(ctx, capture.ID, "instance-1", "deployment-1"); err != nil {
+		t.Fatal(err)
+	}
+	e.linkOOMProfileCapture(ctx, app.ID, "instance-2", now, 263, 256) // another instance: no link
+	e.linkOOMProfileCapture(ctx, app.ID, "instance-1", now, 263, 256)
+	got, err := mem.GetProfileCapture(ctx, acct.ID, app.ID, capture.ID)
+	if err != nil || got.OOMKilledAt == nil || !got.OOMKilledAt.Equal(now) || got.OOMPeakMB != 263 || got.OOMPlanMB != 256 {
+		t.Fatalf("linked capture = %+v %v", got, err)
+	}
+}
+
+func TestProfileCaptureRequestCheckpoints(t *testing.T) {
+	claimed := func(trigger string, seconds int, kinds ...string) state.ClaimedProfileCapture {
+		return state.ClaimedProfileCapture{ID: "11111111-1111-4111-8111-111111111111", Capture: api.ProfileCapture{Trigger: trigger, DurationSeconds: seconds, Kinds: kinds}}
+	}
+	for _, tc := range []struct {
+		name string
+		c    state.ClaimedProfileCapture
+		want int64
+	}{
+		{"memory pressure heap", claimed(api.ProfileCaptureTriggerMemoryPressure, 10, api.ProfileKindHeap), api.ProfileCaptureCheckpointInterval.Milliseconds()},
+		{"manual heap", claimed(api.ProfileCaptureTriggerManual, 10, api.ProfileKindHeap), 0},
+		{"memory pressure cpu", claimed(api.ProfileCaptureTriggerMemoryPressure, 10, api.ProfileKindCPU), 0},
+		{"window shorter than the interval", claimed(api.ProfileCaptureTriggerMemoryPressure, 2, api.ProfileKindHeap), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := profileCaptureRequest(tc.c)
+			if req.CheckpointMillis != tc.want || req.CaptureID != "11111111111141118111111111111111" {
+				t.Fatalf("request = %+v", req)
+			}
+			if err := req.Validate(); err != nil {
+				t.Fatalf("request invalid: %v", err)
+			}
+		})
+	}
+}

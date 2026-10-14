@@ -31,6 +31,8 @@ type control struct {
 	WindowSeconds int      `json:"window_seconds"`
 	Kinds         []string `json:"kinds,omitempty"`
 	Capture       bool     `json:"capture,omitempty"`
+	// CheckpointSeconds asks a capture for interim heap profiles.
+	CheckpointSeconds int `json:"checkpoint_seconds,omitempty"`
 }
 
 func (c control) wants(kind string) bool {
@@ -63,11 +65,12 @@ func Start(ctx context.Context) {
 // window is one collection interval. Heap profiles are read at its end;
 // Go's heap profile is always sampled, so it reports the live heap.
 type window struct {
-	epoch string
-	from  time.Time
-	span  time.Duration
-	cpu   bool
-	heap  bool
+	epoch      string
+	from       time.Time
+	span       time.Duration
+	cpu        bool
+	heap       bool
+	checkpoint time.Time
 }
 
 func run(ctx context.Context, endpoint string) {
@@ -94,12 +97,12 @@ func run(ctx context.Context, endpoint string) {
 		}
 		until := time.Now()
 		if w.cpu {
-			_ = uploadKind(ctx, client, endpoint, api.ProfileKindCPU, w.epoch, w.from, until, buffer.Bytes(), report)
+			_ = uploadKind(ctx, client, endpoint, api.ProfileKindCPU, w.epoch, w.from, until, buffer.Bytes(), false, report)
 		}
 		if w.heap {
 			var heap bytes.Buffer
 			if err := pprof.Lookup("heap").WriteTo(&heap, 0); err == nil {
-				_ = uploadKind(ctx, client, endpoint, api.ProfileKindHeap, w.epoch, w.from, until, heap.Bytes())
+				_ = uploadKind(ctx, client, endpoint, api.ProfileKindHeap, w.epoch, w.from, until, heap.Bytes(), false)
 			}
 		}
 		buffer.Reset()
@@ -138,6 +141,7 @@ func run(ctx context.Context, endpoint string) {
 			}
 		} else if cfg.Enabled && active == nil && cfg.Epoch != "" && !(cfg.Capture && cfg.Epoch == finished) {
 			w := &window{epoch: cfg.Epoch, from: time.Now(), span: time.Duration(cfg.WindowSeconds) * time.Second, heap: cfg.wants(api.ProfileKindHeap)}
+			w.checkpoint = w.from
 			buffer.Reset()
 			if cfg.wants(api.ProfileKindCPU) {
 				if err := pprof.StartCPUProfile(&buffer); err == nil {
@@ -147,6 +151,15 @@ func run(ctx context.Context, endpoint string) {
 			}
 			if w.cpu || w.heap {
 				active = w
+			}
+		}
+		if w := active; w != nil && w.heap && cfg.Capture && cfg.Epoch == w.epoch && cfg.CheckpointSeconds > 0 &&
+			time.Since(w.checkpoint) >= time.Duration(cfg.CheckpointSeconds)*time.Second {
+			// Interim heap for an OOM kill that would end the window early.
+			w.checkpoint = time.Now()
+			var heap bytes.Buffer
+			if err := pprof.Lookup("heap").WriteTo(&heap, 0); err == nil {
+				_ = uploadKind(ctx, client, endpoint, api.ProfileKindHeap, w.epoch, w.from, w.checkpoint, heap.Bytes(), true)
 			}
 		}
 		delay = api.ProfileControlPollInterval
@@ -177,10 +190,13 @@ func readControl(ctx context.Context, client *http.Client, endpoint, pid string)
 	return cfg, err
 }
 
-func uploadKind(ctx context.Context, client *http.Client, endpoint, kind, epoch string, from, until time.Time, body []byte, reports ...*profileproto.RouteRequestReport) error {
+func uploadKind(ctx context.Context, client *http.Client, endpoint, kind, epoch string, from, until time.Time, body []byte, checkpoint bool, reports ...*profileproto.RouteRequestReport) error {
 	query := url.Values{"name": {"gregale{gregale_epoch=" + strconv.Quote(epoch) + ",gregale_process=" + strconv.Itoa(os.Getpid()) + "}"}, "from": {strconv.FormatInt(from.Unix(), 10)}, "until": {strconv.FormatInt(until.Unix(), 10)}}
 	if kind != api.ProfileKindCPU {
 		query.Set("kind", kind)
+	}
+	if checkpoint {
+		query.Set("checkpoint", "1")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/ingest?"+query.Encode(), bytes.NewReader(body))
 	if err != nil {

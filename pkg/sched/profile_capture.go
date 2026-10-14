@@ -34,7 +34,9 @@ type profileCaptureRouter interface {
 
 // CaptureAppProfile runs a capture on the requested RUNNING instance or,
 // when instanceID is empty, on the app's earliest-started RUNNING instance.
-func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string, req profileproto.CaptureRequest) (ProfileCaptureOutcome, error) {
+// started, when set, runs once the instance is chosen and before the guest
+// is contacted, so the capture row names its instance while it runs.
+func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string, req profileproto.CaptureRequest, started func(instanceID, deploymentID string)) (ProfileCaptureOutcome, error) {
 	if e.store == nil || e.vmm == nil {
 		return ProfileCaptureOutcome{}, errors.New("sched: CaptureAppProfile requires a store and vmm router")
 	}
@@ -50,9 +52,12 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 	if !ok {
 		return ProfileCaptureOutcome{}, ErrNoRunningInstance
 	}
+	if started != nil {
+		started(target.ID, target.DeploymentID)
+	}
 	result, err := router.CaptureProfile(ctx, target.NodeID, target.ID, req)
 	if err != nil {
-		return ProfileCaptureOutcome{}, err
+		return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID}, err
 	}
 	return ProfileCaptureOutcome{InstanceID: target.ID, DeploymentID: target.DeploymentID, Result: result}, nil
 }
@@ -111,6 +116,25 @@ func (e *Engine) QueueMemoryPressureCapture(ctx context.Context, instanceID stri
 	return true, "", nil
 }
 
+// linkOOMProfileCapture links an OOM kill to the newest heap capture started
+// on the killed instance (ADR-1155), so the capture reads as "the heap before
+// the kill". Best effort: the kill is handled either way.
+func (e *Engine) linkOOMProfileCapture(ctx context.Context, appID, instanceID string, killedAt time.Time, peakMB, planMB int) {
+	queue, ok := e.store.(state.ProfileCaptureQueue)
+	if !ok || appID == "" {
+		return
+	}
+	oom := state.ProfileCaptureOOM{KilledAt: killedAt, PeakMB: peakMB, PlanMB: planMB}
+	id, err := queue.StampProfileCaptureOOM(ctx, appID, instanceID, oom, killedAt.Add(-api.ProfileCaptureOOMLinkWindow))
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+	case err != nil:
+		e.log.Warn("sched: workload_oom: link profile capture", "instance", instanceID, "err", err)
+	default:
+		e.log.Info("sched: workload_oom: linked heap capture", "instance", instanceID, "capture_id", id)
+	}
+}
+
 func pickProfileInstance(rows []state.Instance, instanceID string) (state.Instance, bool) {
 	var running []state.Instance
 	for _, ins := range rows {
@@ -152,11 +176,11 @@ func (r *VMMRouter) CaptureProfile(ctx context.Context, nodeID, instance string,
 // CaptureProfile calls vmmd's CaptureProfile. gRPC status codes are returned
 // unchanged so schedd can relay NotFound/FailedPrecondition to apid.
 func (c *VMMClient) CaptureProfile(ctx context.Context, instance string, req profileproto.CaptureRequest) (profileproto.CaptureResult, error) {
-	resp, err := c.cli.CaptureProfile(ctx, &vmmdpb.CaptureProfileRequest{Instance: instance, CaptureId: req.CaptureID, Kinds: req.Kinds, DurationMs: req.DurationMillis})
+	resp, err := c.cli.CaptureProfile(ctx, &vmmdpb.CaptureProfileRequest{Instance: instance, CaptureId: req.CaptureID, Kinds: req.Kinds, DurationMs: req.DurationMillis, CheckpointMs: req.CheckpointMillis})
 	if err != nil {
 		return profileproto.CaptureResult{}, err
 	}
-	out := profileproto.CaptureResult{Processes: int(resp.GetProcesses()), Dropped: int(resp.GetDropped()), Reason: resp.GetReason()}
+	out := profileproto.CaptureResult{Processes: int(resp.GetProcesses()), Dropped: int(resp.GetDropped()), Reason: resp.GetReason(), Partial: resp.GetPartial()}
 	for _, p := range resp.GetProfiles() {
 		out.Profiles = append(out.Profiles, profileproto.CapturedProfile{Kind: p.GetKind(), ProcessID: p.GetProcessId(), Profile: p.GetProfile(), FromUnixNano: p.GetFromUnixNano(), UntilUnixNano: p.GetUntilUnixNano()})
 	}

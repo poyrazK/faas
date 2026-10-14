@@ -14467,6 +14467,33 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/profiles/captures/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Candidate capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: diffProfileCaptures
+      summary: Compare one capture kind with an earlier capture of the same app.
+      description: Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+      parameters:
+        - { name: base, in: query, required: true, description: Baseline capture id of the same app., schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: false, description: 'cpu or heap; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap] } }
+      responses:
+        '200':
+          description: Differential view in the kind's unit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureDiff' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -80606,6 +80633,10 @@ components:
         dropped: { type: integer, description: Profiles discarded by the reply bounds. }
         reason: { type: string }
         profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
+        partial: { type: boolean, description: The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill. }
+        oom_killed_at: { type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture. }
+        oom_peak_mb: { type: integer, description: Memory in use when the instance was OOM-killed. }
+        oom_plan_mb: { type: integer, description: The instance's plan memory limit. }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
@@ -80649,6 +80680,46 @@ components:
         flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
         empty: { type: boolean }
         source: { $ref: '#/components/schemas/ProfileSource' }
+    ProfileCaptureDiff:
+      description: One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled.
+      type: object
+      required: [baseline, candidate, kind, unit, baseline_total, candidate_total, delta, functions, flamegraph, warnings]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileCapture' }
+        candidate: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap] }
+        unit: { type: string, enum: [nanoseconds, bytes] }
+        baseline_total: { type: integer, format: int64 }
+        candidate_total: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunctionDelta' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStackDelta' }
+        warnings: { type: array, items: { type: string } }
+    ProfileCaptureFunctionDelta:
+      description: One function's self cost in both captures; named functions aggregate across lines.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+    ProfileCaptureStackDelta:
+      description: One call path in both captures.
+      type: object
+      required: [name, baseline, candidate, delta, children]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStackDelta' } }
     ProfileHeapResponse:
       description: Continuous live heap near query.end (ADR-1155).
       type: object

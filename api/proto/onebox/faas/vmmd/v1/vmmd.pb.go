@@ -4811,11 +4811,14 @@ func (*UpdateAppCPULimitAck) Descriptor() ([]byte, []int) {
 // capture_id is 32 lowercase hex characters; kinds are "cpu" and/or "heap";
 // duration_ms is bounded by pkg/api ProfileCaptureMin/MaxDuration.
 type CaptureProfileRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Instance      string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
-	CaptureId     string                 `protobuf:"bytes,2,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
-	Kinds         []string               `protobuf:"bytes,3,rep,name=kinds,proto3" json:"kinds,omitempty"`
-	DurationMs    int64                  `protobuf:"varint,4,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Instance   string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
+	CaptureId  string                 `protobuf:"bytes,2,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
+	Kinds      []string               `protobuf:"bytes,3,rep,name=kinds,proto3" json:"kinds,omitempty"`
+	DurationMs int64                  `protobuf:"varint,4,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// checkpoint_ms asks heap collectors for interim profiles so an OOM kill
+	// mid-window still returns the last heap before it; zero disables them.
+	CheckpointMs  int64 `protobuf:"varint,5,opt,name=checkpoint_ms,json=checkpointMs,proto3" json:"checkpoint_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4874,6 +4877,13 @@ func (x *CaptureProfileRequest) GetKinds() []string {
 func (x *CaptureProfileRequest) GetDurationMs() int64 {
 	if x != nil {
 		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *CaptureProfileRequest) GetCheckpointMs() int64 {
+	if x != nil {
+		return x.CheckpointMs
 	}
 	return 0
 }
@@ -4960,11 +4970,14 @@ func (x *CapturedProfile) GetUntilUnixNano() int64 {
 // collectors that polled during the window; zero means nothing in the VM is
 // instrumented. dropped counts profiles discarded by the reply bounds.
 type CaptureProfileResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Profiles      []*CapturedProfile     `protobuf:"bytes,1,rep,name=profiles,proto3" json:"profiles,omitempty"`
-	Processes     int32                  `protobuf:"varint,2,opt,name=processes,proto3" json:"processes,omitempty"`
-	Dropped       int32                  `protobuf:"varint,3,opt,name=dropped,proto3" json:"dropped,omitempty"`
-	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Profiles  []*CapturedProfile     `protobuf:"bytes,1,rep,name=profiles,proto3" json:"profiles,omitempty"`
+	Processes int32                  `protobuf:"varint,2,opt,name=processes,proto3" json:"processes,omitempty"`
+	Dropped   int32                  `protobuf:"varint,3,opt,name=dropped,proto3" json:"dropped,omitempty"`
+	Reason    string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	// partial marks a window that ended early (the workload was OOM-killed);
+	// heap profiles from processes that could not flush are checkpoints.
+	Partial       bool `protobuf:"varint,5,opt,name=partial,proto3" json:"partial,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5025,6 +5038,13 @@ func (x *CaptureProfileResponse) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *CaptureProfileResponse) GetPartial() bool {
+	if x != nil {
+		return x.Partial
+	}
+	return false
 }
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
@@ -11488,26 +11508,28 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12%\n" +
 	"\x0ecpu_millicores\x18\x02 \x01(\x05R\rcpuMillicores\x12\x1a\n" +
 	"\brevision\x18\x03 \x01(\x03R\brevision\"\x16\n" +
-	"\x14UpdateAppCPULimitAck\"\x89\x01\n" +
+	"\x14UpdateAppCPULimitAck\"\xae\x01\n" +
 	"\x15CaptureProfileRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
 	"capture_id\x18\x02 \x01(\tR\tcaptureId\x12\x14\n" +
 	"\x05kinds\x18\x03 \x03(\tR\x05kinds\x12\x1f\n" +
 	"\vduration_ms\x18\x04 \x01(\x03R\n" +
-	"durationMs\"\xac\x01\n" +
+	"durationMs\x12#\n" +
+	"\rcheckpoint_ms\x18\x05 \x01(\x03R\fcheckpointMs\"\xac\x01\n" +
 	"\x0fCapturedProfile\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x1d\n" +
 	"\n" +
 	"process_id\x18\x02 \x01(\tR\tprocessId\x12\x18\n" +
 	"\aprofile\x18\x03 \x01(\fR\aprofile\x12$\n" +
 	"\x0efrom_unix_nano\x18\x04 \x01(\x03R\ffromUnixNano\x12&\n" +
-	"\x0funtil_unix_nano\x18\x05 \x01(\x03R\runtilUnixNano\"\xaa\x01\n" +
+	"\x0funtil_unix_nano\x18\x05 \x01(\x03R\runtilUnixNano\"\xc4\x01\n" +
 	"\x16CaptureProfileResponse\x12@\n" +
 	"\bprofiles\x18\x01 \x03(\v2$.onebox.faas.vmmd.v1.CapturedProfileR\bprofiles\x12\x1c\n" +
 	"\tprocesses\x18\x02 \x01(\x05R\tprocesses\x12\x18\n" +
 	"\adropped\x18\x03 \x01(\x05R\adropped\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reason\"y\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x18\n" +
+	"\apartial\x18\x05 \x01(\bR\apartial\"y\n" +
 	"\x1aUpdateEgressCircuitRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12D\n" +
 	"\bcircuits\x18\x02 \x03(\v2(.onebox.faas.vmmd.v1.EgressCircuitTargetR\bcircuits\"=\n" +

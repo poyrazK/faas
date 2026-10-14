@@ -68,6 +68,7 @@ func serve(svc *profilecapture.Service, acct state.Account, method, target, body
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", wrap(svc.Get))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", wrap(svc.View))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", wrap(svc.Download))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", wrap(svc.Diff))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(method, target, strings.NewReader(body)))
 	return rec

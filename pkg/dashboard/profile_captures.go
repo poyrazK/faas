@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -25,6 +26,90 @@ type ProfileCapturePage struct {
 	Capture api.ProfileCapture
 	Kinds   []ProfileCaptureKindView
 	Refresh bool
+	// Compare lists earlier ready captures the page can be diffed against.
+	Compare []ProfileCaptureCompareOption
+}
+
+// ProfileCaptureCompareOption is one capture in the compare picker.
+type ProfileCaptureCompareOption struct {
+	ID, Label string
+}
+
+// ProfileCaptureCompareOptions labels comparable captures for the picker.
+func ProfileCaptureCompareOptions(captures []api.ProfileCapture) []ProfileCaptureCompareOption {
+	out := make([]ProfileCaptureCompareOption, 0, len(captures))
+	for _, c := range captures {
+		label := c.CreatedAt.UTC().Format("2006-01-02 15:04Z") + " · " + strings.Join(c.Kinds, "+") + fmt.Sprintf(" · %ds", c.DurationSeconds)
+		if c.Trigger == api.ProfileCaptureTriggerMemoryPressure {
+			label += " · memory pressure"
+		}
+		if c.OOMKilledAt != nil {
+			label += " · OOM-killed after"
+		}
+		out = append(out, ProfileCaptureCompareOption{ID: c.ID, Label: label})
+	}
+	return out
+}
+
+// ProfileCaptureDiffURL is the dashboard comparison of capture id against base.
+func ProfileCaptureDiffURL(slug, id, base, kind string) string {
+	q := url.Values{"base": {base}}
+	if kind != "" {
+		q.Set("kind", kind)
+	}
+	return ProfileCaptureURL(slug, id) + "/diff?" + q.Encode()
+}
+
+// ProfileCaptureDiffPage renders a capture comparison. Flamegraph is
+// serialized into the page for the inline differential renderer.
+type ProfileCaptureDiffPage struct {
+	AppSlug        string
+	Diff           api.ProfileCaptureDiff
+	BaselineURL    string
+	CandidateURL   string
+	BaselineTotal  string
+	CandidateTotal string
+	Delta          string
+	Rows           []ProfileCaptureDiffRow
+	Flamegraph     *api.ProfileCaptureStackDelta
+	Error          string
+}
+
+type ProfileCaptureDiffRow struct {
+	Name, Location, Baseline, Candidate, Delta string
+	Grew                                       bool
+	SourceURL                                  string
+}
+
+// BuildProfileCaptureDiff summarizes a comparison for the diff page.
+func BuildProfileCaptureDiff(slug string, d api.ProfileCaptureDiff) ProfileCaptureDiffPage {
+	out := ProfileCaptureDiffPage{AppSlug: slug, Diff: d, BaselineURL: ProfileCaptureURL(slug, d.Baseline.ID), CandidateURL: ProfileCaptureURL(slug, d.Candidate.ID),
+		BaselineTotal: FormatProfileAmount(d.BaselineTotal, d.Unit), CandidateTotal: FormatProfileAmount(d.CandidateTotal, d.Unit),
+		Delta: FormatProfileDelta(d.Delta, d.Unit), Flamegraph: d.Flamegraph}
+	for i, f := range d.Functions {
+		if i >= ProfileCaptureTopFunctions {
+			break
+		}
+		location := f.File
+		if f.Line > 0 {
+			location = fmt.Sprintf("%s:%d", f.File, f.Line)
+		}
+		row := ProfileCaptureDiffRow{Name: f.Name, Location: location, Baseline: FormatProfileAmount(f.Baseline, d.Unit),
+			Candidate: FormatProfileAmount(f.Candidate, d.Unit), Delta: FormatProfileDelta(f.Delta, d.Unit), Grew: f.Delta > 0}
+		if f.Source != nil {
+			row.SourceURL = f.Source.URL
+		}
+		out.Rows = append(out.Rows, row)
+	}
+	return out
+}
+
+// FormatProfileDelta is FormatProfileAmount with an explicit sign.
+func FormatProfileDelta(v int64, unit string) string {
+	if v < 0 {
+		return "−" + FormatProfileAmount(-v, unit)
+	}
+	return "+" + FormatProfileAmount(v, unit)
 }
 
 // ProfileCaptureKindView is one kind's table and flamegraph. Flamegraph and

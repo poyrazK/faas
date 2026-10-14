@@ -21,10 +21,10 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
     req.end();
   });
   const kinds = config => (config.kinds && config.kinds.length ? config.kinds : ['cpu']);
-  const upload = (kind, tag, from, body) => {
+  const upload = (kind, tag, from, body, checkpoint = false) => {
     const name = 'gregale{gregale_epoch=' + tag + ',gregale_process=' + process.pid + '}';
     const query = '?kind=' + kind + '&name=' + encodeURIComponent(name) +
-      '&from=' + Math.floor(from / 1000) + '&until=' + Math.floor(Date.now() / 1000);
+      '&from=' + Math.floor(from / 1000) + '&until=' + Math.floor(Date.now() / 1000) + (checkpoint ? '&checkpoint=1' : '');
     return request('/ingest' + query, 'POST', body).catch(() => {});
   };
   // Heap: V8's sampling heap profiler reports allocations sampled since it
@@ -55,7 +55,7 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
   function startCapture(config) {
     pprof = pprof || require('@datadog/pprof');
     const want = kinds(config);
-    capture = {epoch: config.epoch, from: Date.now(), cpu: want.includes('cpu'), heap: want.includes('heap')};
+    capture = {epoch: config.epoch, from: Date.now(), checkpointAt: Date.now(), cpu: want.includes('cpu'), heap: want.includes('heap')};
     if (capture.cpu) {
       // Same options as @pyroscope/nodejs's wall profiler: CPU time
       // collection requires sample contexts.
@@ -101,6 +101,11 @@ if (process.env.FAAS_PROFILING_ENABLED === '1') {
           profiler.startWallProfiling(); running = true;
         }
         if (want.includes('heap')) startHeap();
+      } else if (capture && capture.heap && heapRunning && config.capture && config.epoch === capture.epoch &&
+                 config.checkpoint_seconds > 0 && Date.now() - capture.checkpointAt >= config.checkpoint_seconds * 1000) {
+        // Interim heap for an OOM kill that would end the window early.
+        capture.checkpointAt = Date.now();
+        await upload('heap', capture.epoch, capture.from, await pprof.encode(pprof.heap.profile()), true);
       } else if (heapRunning && !capture && Date.now() - heapFrom >= config.window_seconds * 1000) {
         // Continuous heap: report the live heap once per window.
         const from = heapFrom; heapFrom = Date.now();

@@ -52,6 +52,26 @@ RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id
 UPDATE profile_captures SET status = sqlc.arg(status)::text, capture = capture || sqlc.arg(result)::jsonb, completed_at = sqlc.arg(now)::timestamptz
 WHERE id = sqlc.arg(id)::text::uuid AND status = 'capturing';
 
+-- name: StartProfileCapture :execrows
+UPDATE profile_captures SET capture = capture || jsonb_build_object('instance_id', sqlc.arg(instance_id)::text, 'deployment_id', sqlc.arg(deployment_id)::text)
+WHERE id = sqlc.arg(id)::text::uuid AND status = 'capturing';
+
+-- name: StampProfileCaptureOOM :one
+UPDATE profile_captures SET capture = capture || jsonb_build_object('oom_killed_at', sqlc.arg(killed_at)::timestamptz, 'oom_peak_mb', sqlc.arg(peak_mb)::int, 'oom_plan_mb', sqlc.arg(plan_mb)::int)
+WHERE id = (SELECT q.id FROM profile_captures q
+    WHERE q.app_id = sqlc.arg(app_id)::text::uuid AND q.capture->>'instance_id' = sqlc.arg(instance_id)::text
+      AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= sqlc.arg(since)::timestamptz
+    ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
+RETURNING id::text AS id;
+
+-- name: LatestOOMProfileCapture :one
+SELECT (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
+FROM profile_captures p JOIN apps a ON a.id = p.app_id
+WHERE p.app_id = sqlc.arg(app_id)::text::uuid AND p.account_id = sqlc.arg(account_id)::text::uuid
+  AND a.account_id = p.account_id AND a.status <> 'deleted' AND p.status = 'ready'
+  AND p.capture->>'deployment_id' = sqlc.arg(deployment_id)::text AND p.capture->>'oom_killed_at' IS NOT NULL
+ORDER BY p.created_at DESC, p.id LIMIT 1;
+
 -- name: InsertProfileCaptureData :exec
 INSERT INTO profile_capture_data (capture_id, seq, kind, process_id, profile)
 VALUES (sqlc.arg(capture_id)::text::uuid, sqlc.arg(seq)::smallint, sqlc.arg(kind)::text, sqlc.arg(process_id)::text, sqlc.arg(profile)::bytea);

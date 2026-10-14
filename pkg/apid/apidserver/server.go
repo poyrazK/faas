@@ -3056,6 +3056,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Get))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.View))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Download))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Diff))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on
@@ -3994,6 +3995,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDownloadProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/diff", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptureDiff))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileInvestigation))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations/{id}/check", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCheckProfileRegression))))
 	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))

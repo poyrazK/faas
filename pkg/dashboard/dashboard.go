@@ -1674,6 +1674,9 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
+	// OOMCaptureURL links an OOM-failed deployment to the heap capture taken
+	// before the kill (ADR-1155); empty when none exists.
+	OOMCaptureURL               string
 	ProfileCheck                *api.ProfileDeploymentCheck
 	CanaryProfileSignal         *api.CanaryProfileSignal
 	CanaryProfileTraffic        *ProfileTrafficView

@@ -10137,6 +10137,18 @@ List or show on-demand profile captures
 | `--output <DIR>` | write merged .pb.gz pprof files |  |
 | `--top <N>` | functions to print per kind |  |
 
+### debug capture-diff
+
+Compare a profile capture with an earlier one to see what grew
+
+`gregale debug capture-diff [--base <ID>] [--type <KIND>] [--top <N>] <slug> <capture-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--base <ID>` | baseline capture id of the same app |  |
+| `--type <KIND>` | cpu or heap (default: shared kind, heap first) |  |
+| `--top <N>` | functions to print |  |
+
 ### debug dependencies
 
 Show observed dependency latency and regressions

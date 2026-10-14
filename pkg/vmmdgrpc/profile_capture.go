@@ -23,7 +23,7 @@ func (s *Server) CaptureProfile(ctx context.Context, req *vmmdpb.CaptureProfileR
 	const op = "CaptureProfile"
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), err) }()
-	capture := profileproto.CaptureRequest{CaptureID: req.GetCaptureId(), Kinds: req.GetKinds(), DurationMillis: req.GetDurationMs()}
+	capture := profileproto.CaptureRequest{CaptureID: req.GetCaptureId(), Kinds: req.GetKinds(), DurationMillis: req.GetDurationMs(), CheckpointMillis: req.GetCheckpointMs()}
 	if req.GetInstance() == "" {
 		return nil, status.Error(codes.InvalidArgument, "instance is required")
 	}
@@ -57,7 +57,7 @@ func profileCaptureStatus(err error) error {
 }
 
 func profileCaptureResponse(result profileproto.CaptureResult) *vmmdpb.CaptureProfileResponse {
-	out := &vmmdpb.CaptureProfileResponse{Processes: int32(result.Processes), Dropped: int32(result.Dropped), Reason: result.Reason}
+	out := &vmmdpb.CaptureProfileResponse{Processes: int32(result.Processes), Dropped: int32(result.Dropped), Reason: result.Reason, Partial: result.Partial}
 	for _, p := range result.Profiles {
 		out.Profiles = append(out.Profiles, &vmmdpb.CapturedProfile{Kind: p.Kind, ProcessId: p.ProcessID, Profile: p.Profile, FromUnixNano: p.FromUnixNano, UntilUnixNano: p.UntilUnixNano})
 	}

@@ -45,6 +45,18 @@ func (c *Client) GetProfileCaptureView(ctx context.Context, slug, id, kind strin
 	return out, err
 }
 
+// DiffProfileCaptures compares one kind of capture id with the app's capture
+// base; an empty kind lets the server pick a kind both collected.
+func (c *Client) DiffProfileCaptures(ctx context.Context, slug, id, base, kind string) (ProfileCaptureDiff, error) {
+	var out ProfileCaptureDiff
+	query := url.Values{"base": {base}}
+	if kind != "" {
+		query.Set("kind", kind)
+	}
+	err := c.do(ctx, "GET", profileCapturePath(slug)+"/"+url.PathEscape(id)+"/diff?"+query.Encode(), nil, &out)
+	return out, err
+}
+
 // DownloadProfileCapture returns the merged gzip pprof profile of one kind.
 func (c *Client) DownloadProfileCapture(ctx context.Context, slug, id, kind string) ([]byte, error) {
 	var out []byte

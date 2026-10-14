@@ -9,7 +9,12 @@ body {font-family:system-ui,sans-serif;max-width:1180px;margin:auto;padding:1.5r
 <p>Status: <strong>{{$c.Status}}</strong>{{if $d.Refresh}} — this page refreshes until the capture finishes.{{end}}</p>
 <p class="muted">{{range $i, $k := $c.Kinds}}{{if $i}} + {{end}}{{$k}}{{end}} for {{$c.DurationSeconds}}s · started {{$c.CreatedAt.Format "2006-01-02 15:04:05Z07:00"}}{{with $c.InstanceID}} · instance <code>{{.}}</code>{{end}}{{with $c.DeploymentID}} · deployment <code>{{.}}</code>{{end}}{{if $c.InstanceID}} · {{$c.Processes}} instrumented process(es){{end}}</p>
 {{if eq $c.Trigger "memory_pressure"}}<p class="notice">Captured automatically because the instance was running out of memory: {{$c.TriggerDetail}}. Node and Python heap captures show memory allocated during the capture that was still live at its end.</p>{{end}}
+{{with $c.OOMKilledAt}}<p class="notice" role="alert">This instance was OOM-killed at {{.Format "2006-01-02 15:04:05Z07:00"}}{{if $c.OOMPeakMB}}, peaking at {{$c.OOMPeakMB}} MB of its {{$c.OOMPlanMB}} MB plan{{end}}. The heap profile below shows memory retained before the kill.</p>{{end}}
 {{with $c.Reason}}<p class="notice">{{.}}</p>{{end}}
+{{if $d.Compare}}<form method="get" action="/dashboard/apps/{{$d.AppSlug}}/profiles/captures/{{$c.ID}}/diff" aria-label="Compare captures">
+<label>Compare with <select name="base">{{range $d.Compare}}<option value="{{.ID}}">{{.Label}}</option>{{end}}</select></label>
+<label>Kind <select name="kind">{{range $c.Kinds}}<option value="{{.}}"{{if eq . "heap"}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+<button type="submit">Compare</button> <span class="muted">Shows which call paths grew or shrank since the earlier capture.</span></form>{{end}}
 {{range $d.Kinds}}
 <section aria-label="{{.Kind}} profile"><h2>{{.Kind}}: {{.Total}}</h2>
 {{if .Error}}<p class="notice">{{.Error}}</p>{{else if .Empty}}<p>No samples were captured.</p>{{else}}

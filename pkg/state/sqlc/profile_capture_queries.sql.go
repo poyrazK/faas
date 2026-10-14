@@ -198,6 +198,28 @@ func (q *Queries) InsertProfileCaptureData(ctx context.Context, db DBTX, arg Ins
 	return err
 }
 
+const latestOOMProfileCapture = `-- name: LatestOOMProfileCapture :one
+SELECT (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
+FROM profile_captures p JOIN apps a ON a.id = p.app_id
+WHERE p.app_id = $1::text::uuid AND p.account_id = $2::text::uuid
+  AND a.account_id = p.account_id AND a.status <> 'deleted' AND p.status = 'ready'
+  AND p.capture->>'deployment_id' = $3::text AND p.capture->>'oom_killed_at' IS NOT NULL
+ORDER BY p.created_at DESC, p.id LIMIT 1
+`
+
+type LatestOOMProfileCaptureParams struct {
+	AppID        string
+	AccountID    string
+	DeploymentID string
+}
+
+func (q *Queries) LatestOOMProfileCapture(ctx context.Context, db DBTX, arg LatestOOMProfileCaptureParams) ([]byte, error) {
+	row := db.QueryRow(ctx, latestOOMProfileCapture, arg.AppID, arg.AccountID, arg.DeploymentID)
+	var capture []byte
+	err := row.Scan(&capture)
+	return capture, err
+}
+
 const listProfileCaptureData = `-- name: ListProfileCaptureData :many
 SELECT d.kind, d.process_id, d.profile FROM profile_capture_data d
 JOIN profile_captures p ON p.id = d.capture_id JOIN apps a ON a.id = p.app_id
@@ -311,4 +333,55 @@ func (q *Queries) ReadProfileCapture(ctx context.Context, db DBTX, arg ReadProfi
 	var capture []byte
 	err := row.Scan(&capture)
 	return capture, err
+}
+
+const stampProfileCaptureOOM = `-- name: StampProfileCaptureOOM :one
+UPDATE profile_captures SET capture = capture || jsonb_build_object('oom_killed_at', $1::timestamptz, 'oom_peak_mb', $2::int, 'oom_plan_mb', $3::int)
+WHERE id = (SELECT q.id FROM profile_captures q
+    WHERE q.app_id = $4::text::uuid AND q.capture->>'instance_id' = $5::text
+      AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= $6::timestamptz
+    ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
+RETURNING id::text AS id
+`
+
+type StampProfileCaptureOOMParams struct {
+	KilledAt   pgtype.Timestamptz
+	PeakMb     int32
+	PlanMb     int32
+	AppID      string
+	InstanceID string
+	Since      pgtype.Timestamptz
+}
+
+func (q *Queries) StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (string, error) {
+	row := db.QueryRow(ctx, stampProfileCaptureOOM,
+		arg.KilledAt,
+		arg.PeakMb,
+		arg.PlanMb,
+		arg.AppID,
+		arg.InstanceID,
+		arg.Since,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
+const startProfileCapture = `-- name: StartProfileCapture :execrows
+UPDATE profile_captures SET capture = capture || jsonb_build_object('instance_id', $1::text, 'deployment_id', $2::text)
+WHERE id = $3::text::uuid AND status = 'capturing'
+`
+
+type StartProfileCaptureParams struct {
+	InstanceID   string
+	DeploymentID string
+	ID           string
+}
+
+func (q *Queries) StartProfileCapture(ctx context.Context, db DBTX, arg StartProfileCaptureParams) (int64, error) {
+	result, err := db.Exec(ctx, startProfileCapture, arg.InstanceID, arg.DeploymentID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

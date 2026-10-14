@@ -210,6 +210,128 @@ func TestProfileCaptureReplyFraming(t *testing.T) {
 	}
 }
 
+func ingestCheckpoint(h http.Handler, epoch, pid, kind, body string) int {
+	q := url.Values{"name": {"gregale{gregale_epoch=" + epoch + ",gregale_process=" + pid + "}"}, "kind": {kind}, "checkpoint": {"1"}}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/ingest?"+q.Encode(), strings.NewReader(body)))
+	return w.Code
+}
+
+func TestCaptureInterruptedByOOMReturnsCheckpoints(t *testing.T) {
+	b := newProfileBridge(nil, func(context.Context, profileproto.Upload) error { return nil })
+	h := b.handler()
+	req := captureRequest("heap")
+	req.DurationMillis, req.CheckpointMillis = 10_000, 2_000
+	var waits []time.Duration
+	var released <-chan struct{}
+	result, ack := b.runCapture(req, func(d time.Duration) {
+		waits = append(waits, d)
+		if len(waits) != 1 {
+			return
+		}
+		c := pollControl(t, h, "7")
+		_ = pollControl(t, h, "8")
+		if c.CheckpointSeconds != 2 || !c.Capture {
+			t.Fatalf("collectors not asked for checkpoints: %+v", c)
+		}
+		for _, up := range []struct{ pid, kind, body string }{{"7", "heap", "ckpt-7-a"}, {"7", "heap", "ckpt-7-b"}, {"8", "heap", "ckpt-8"}} {
+			if code := ingestCheckpoint(h, c.Epoch, up.pid, up.kind, up.body); code != http.StatusNoContent {
+				t.Fatalf("checkpoint %s rejected: %d", up.body, code)
+			}
+		}
+		if code := ingestCheckpoint(h, c.Epoch, "7", "cpu", "cpu"); code != http.StatusBadRequest {
+			t.Fatalf("CPU checkpoint accepted: %d", code)
+		}
+		if ingest(h, c.Epoch, "8", "heap", "final-8") != http.StatusNoContent {
+			t.Fatal("final heap rejected")
+		}
+		// Process 7 is OOM-killed: guest-init interrupts the capture.
+		released = b.interruptCapture(captureInterruptedOOM)
+		select {
+		case <-released:
+			t.Fatal("OOM report released before the capture replied")
+		default:
+		}
+	})
+	if ack != profileproto.CaptureAckOK || len(waits) != 2 || waits[1] != api.ProfileCaptureInterruptGrace {
+		t.Fatalf("ack=%d waits=%v", ack, waits)
+	}
+	if !result.Partial || result.Reason != captureInterruptedOOM || len(result.Profiles) != 2 {
+		t.Fatalf("interrupted result = %+v", result)
+	}
+	got := map[string]string{}
+	for _, p := range result.Profiles {
+		got[p.ProcessID] = string(p.Profile)
+	}
+	if got["8"] != "final-8" || got["7"] != "ckpt-7-b" {
+		t.Fatalf("final profiles must win over checkpoints and the latest checkpoint must win: %v", got)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-released:
+		t.Fatal("released before the reply was written")
+	default:
+	}
+	b.markReplied()
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("reply did not release the OOM report")
+	}
+	select {
+	case <-b.interruptCapture(captureInterruptedOOM):
+	default:
+		t.Fatal("idle bridge held the OOM report")
+	}
+}
+
+func TestCaptureCheckpointBounds(t *testing.T) {
+	b := newProfileBridge(nil, func(context.Context, profileproto.Upload) error { return nil })
+	h := b.handler()
+	if code := ingestCheckpoint(h, b.control.Epoch, "7", "heap", "x"); code != http.StatusConflict {
+		t.Fatalf("checkpoint without a capture = %d", code)
+	}
+	plain := captureRequest("heap")
+	plain.DurationMillis = 5_000
+	result, _ := b.runCapture(plain, func(time.Duration) {
+		if c := pollControl(t, h, "7"); c.Enabled && ingestCheckpoint(h, c.Epoch, "7", "heap", "x") != http.StatusConflict {
+			t.Fatal("checkpoint accepted for a capture that did not ask for them")
+		}
+	})
+	if result.Partial {
+		t.Fatalf("capture without checkpoints marked partial: %+v", result)
+	}
+	req := captureRequest("heap")
+	req.DurationMillis, req.CheckpointMillis = 5_000, 1_000
+	big := strings.Repeat("x", profileproto.CaptureMaxProfileBytes/2+1)
+	result, _ = b.runCapture(req, func(time.Duration) {
+		c := pollControl(t, h, "7")
+		if !c.Enabled {
+			return
+		}
+		_ = ingestCheckpoint(h, c.Epoch, "7", "heap", big)
+		_ = ingestCheckpoint(h, c.Epoch, "8", "heap", big) // over the shared budget: dropped
+		_ = ingestCheckpoint(h, c.Epoch, "7", "heap", "small")
+	})
+	if len(result.Profiles) != 1 || string(result.Profiles[0].Profile) != "small" || !result.Partial || !strings.Contains(result.Reason, "last checkpoint") {
+		t.Fatalf("checkpoint budget not enforced: %d profiles, %+v", len(result.Profiles), result.Reason)
+	}
+}
+
+func TestCaptureWaitStopsEarly(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	start := time.Now()
+	if !captureWait(nil, time.Hour, stop) || time.Since(start) > time.Second {
+		t.Fatal("interrupted wait did not return")
+	}
+	if captureWait(nil, time.Millisecond, nil) {
+		t.Fatal("timer reported an interruption")
+	}
+}
+
 func TestOnDemandProfileEnvStampsDormantCollectors(t *testing.T) {
 	out := profileEnvAtPaths([]string{"A=1"}, nil, true, "/managed/node.cjs", "/managed/python", func(string) bool { return true })
 	text := strings.Join(out, "\n")

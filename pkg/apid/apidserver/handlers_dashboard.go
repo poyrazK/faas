@@ -2890,6 +2890,9 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
 	}
+	if dep.ErrorCode == api.CodeAppRuntimeOOM {
+		data.OOMCaptureURL = s.oomProfileCaptureURL(r.Context(), acct, app, dep)
+	}
 	// Keep the dashboard's failure explanation aligned with the API/CLI
 	// projection: the persisted profile is the source of truth for the
 	// inferred runtime, start command, port, and health path. This remains

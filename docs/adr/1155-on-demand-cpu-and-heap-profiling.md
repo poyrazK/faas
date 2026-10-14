@@ -126,6 +126,44 @@ collection window before `end`, since merged snapshots add up.
 - Custom images still need an instrumented runtime; their captures finish
   `ready` with zero processes and an explanatory reason.
 
+## Amendment: captures that outlive an OOM kill, and capture comparison
+
+**OOM kills.** The automatic memory-pressure capture exists to show the heap
+before an OOM kill, but a fast leak reaches the kill inside the 10 s window,
+and schedd destroys the instance as soon as guest-init reports it. Three
+changes keep that heap:
+
+1. schedd asks automatic heap captures for checkpoints
+   (`checkpoint_ms` = `ProfileCaptureCheckpointInterval`, 2 s). Collectors
+   post interim heap profiles with `?checkpoint=1`; the bridge keeps the
+   latest per process within the reply's byte budget, so a guest already
+   short on memory holds at most one reply's worth.
+2. guest-init's OOM listener interrupts a running capture before it emits the
+   workload-OOM event and waits until the reply is written to the host,
+   bounded by `ProfileCaptureOOMFlushTimeout` (3 s). Processes without a
+   final profile contribute their last checkpoint; the reply is marked
+   `partial`.
+3. schedd records the instance on the capture row when it starts it, and its
+   workload-OOM path merges `oom_killed_at`, `oom_peak_mb` and `oom_plan_mb`
+   into the newest heap capture started on that instance within
+   `ProfileCaptureOOMLinkWindow` (15 min). The fields live in the capture
+   document, so no migration is needed; re-stamping on a redelivered OOM
+   report is idempotent.
+
+Checkpoints are limited to automatic captures: they cost a heap snapshot per
+interval (noticeable for Python's `tracemalloc`) and manual captures of a
+healthy instance do not need them.
+
+**Comparison.** `GET /v1/apps/{slug}/profiles/captures/{id}/diff?base=&kind=`
+merges both captures of one kind and returns every call path and function
+with both values and the difference. Named frames pair by name and file so
+moved lines do not split a path. Values are not rescaled: Node and Python
+heap values cover each window, and Go's are the process's live heap, so no
+single normalization is right for all runtimes; differing durations and
+deployments are reported as warnings instead. The dashboard renders the
+difference as a flamegraph whose width is the sum of both captures, which
+keeps children inside their parents.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

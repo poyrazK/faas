@@ -9248,6 +9248,7 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 			PlanMB:       planMB,
 		})
 	}
+	e.linkOOMProfileCapture(ctx, appID, instanceID, now, peakMB, planMB)
 
 	// RUNNING → STOPPED — state transition without a
 	// second audit row. UpdateInstanceStateToTerminal

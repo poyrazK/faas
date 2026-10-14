@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -22,6 +23,10 @@ func copyProfileCapture(c api.ProfileCapture) api.ProfileCapture {
 	if c.CompletedAt != nil {
 		t := *c.CompletedAt
 		c.CompletedAt = &t
+	}
+	if c.OOMKilledAt != nil {
+		t := *c.OOMKilledAt
+		c.OOMKilledAt = &t
 	}
 	return c
 }
@@ -162,7 +167,7 @@ func (m *MemStore) FinishProfileCapture(_ context.Context, id string, result api
 	}
 	c := &row.capture
 	c.Status, c.InstanceID, c.DeploymentID = result.Status, result.InstanceID, result.DeploymentID
-	c.Processes, c.Dropped, c.Reason = result.Processes, result.Dropped, result.Reason
+	c.Processes, c.Dropped, c.Reason, c.Partial = result.Processes, result.Dropped, result.Reason, result.Partial
 	c.Profiles = append([]api.ProfileCaptureProfile{}, result.Profiles...)
 	completed := now
 	c.CompletedAt = &completed
@@ -171,6 +176,61 @@ func (m *MemStore) FinishProfileCapture(_ context.Context, id string, result api
 		row.blobs = append(row.blobs, ProfileCaptureBlob{Kind: b.Kind, ProcessID: b.ProcessID, Profile: append([]byte(nil), b.Profile...)})
 	}
 	return nil
+}
+
+func (m *MemStore) StartProfileCapture(_ context.Context, id, instanceID, deploymentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.profileCaptures[id]
+	if !ok || row.capture.Status != api.ProfileCaptureCapturing {
+		return ErrNotFound
+	}
+	row.capture.InstanceID, row.capture.DeploymentID = instanceID, deploymentID
+	return nil
+}
+
+func (m *MemStore) StampProfileCaptureOOM(_ context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var newest *memProfileCapture
+	for _, row := range m.profileCaptures {
+		c := row.capture
+		if c.AppID != appID || c.InstanceID != instanceID || c.CreatedAt.Before(since) || !slices.Contains(c.Kinds, api.ProfileKindHeap) {
+			continue
+		}
+		if newest == nil || c.CreatedAt.After(newest.capture.CreatedAt) || c.CreatedAt.Equal(newest.capture.CreatedAt) && c.ID < newest.capture.ID {
+			newest = row
+		}
+	}
+	if newest == nil {
+		return "", ErrNotFound
+	}
+	killed := oom.KilledAt
+	newest.capture.OOMKilledAt, newest.capture.OOMPeakMB, newest.capture.OOMPlanMB = &killed, oom.PeakMB, oom.PlanMB
+	return newest.capture.ID, nil
+}
+
+func (m *MemStore) LatestOOMProfileCapture(_ context.Context, accountID, appID, deploymentID string) (api.ProfileCapture, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.profileInvestigationOwnedLocked(accountID, appID) {
+		return api.ProfileCapture{}, ErrNotFound
+	}
+	var newest *api.ProfileCapture
+	for _, row := range m.profileCaptures {
+		c := row.capture
+		if row.accountID != accountID || c.AppID != appID || c.DeploymentID != deploymentID || c.Status != api.ProfileCaptureReady || c.OOMKilledAt == nil {
+			continue
+		}
+		if newest == nil || c.CreatedAt.After(newest.CreatedAt) || c.CreatedAt.Equal(newest.CreatedAt) && c.ID < newest.ID {
+			copied := copyProfileCapture(c)
+			newest = &copied
+		}
+	}
+	if newest == nil {
+		return api.ProfileCapture{}, ErrNotFound
+	}
+	return *newest, nil
 }
 
 func (m *MemStore) ExpireProfileCaptures(_ context.Context, now time.Time) (int64, error) {

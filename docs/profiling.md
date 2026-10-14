@@ -263,7 +263,7 @@ What a heap capture shows depends on the runtime:
   end (`tracemalloc`). Tracing slows allocation-heavy code while it runs.
 
 Memory that is allocated during a capture and still held at its end is the
-shape of a leak. Repeat a capture later and compare the top functions.
+shape of a leak. Repeat a capture later and compare the two.
 
 The dashboard capture page shows a flamegraph per kind (click a frame to zoom,
 search by function name) and links frames to the deployment's recorded GitHub
@@ -281,11 +281,45 @@ per hour and none while another capture of the app is running; they count
 toward the account's hourly capture limit. Reclaimable file cache does not
 count as used memory, so file-heavy workloads are not mistaken for leaks.
 
+### When the workload is OOM-killed
+
+A fast leak can exhaust the plan's memory before a 10-second capture ends.
+Automatic captures therefore ask the collectors for an interim heap profile
+every 2 seconds. When the workload is OOM-killed during the window, guest-init
+ends the capture at once and returns the last of those checkpoints before it
+reports the kill, so the heap from just before the kill survives the instance.
+Such captures are `partial` and explain why in `reason`.
+
+Gregale then links the kill to the newest heap capture started on that
+instance in the previous 15 minutes: the capture shows `oom_killed_at`,
+`oom_peak_mb` and `oom_plan_mb`, the dashboard capture page and list mark it
+"OOM-killed after", and the deployment's `app_runtime_oom` explanation links
+to it as **Heap profile before the OOM kill**.
+
+### Compare two captures
+
+A single heap capture shows where memory is held; two captures show what grew.
+Compare a capture with an earlier one of the same app:
+
+```sh
+gregale debug capture-diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
+```
+
+The output lists functions by growth with their value in both captures. On the
+dashboard, a ready capture has a **Compare with** picker; the comparison page
+shows a differential flamegraph, where a frame's width is its cost in both
+captures together, red frames grew and blue frames shrank. CPU captures
+compare the same way. Values are not rescaled: Node and Python heap values
+cover each capture's own window, so compare captures of equal duration, and
+expect code changes to move cost between functions when the captures come
+from different deployments. Both cases add a note to the comparison.
+
 The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
 `kinds`, `duration_seconds` and `instance_id`; poll
 `GET /v1/apps/{slug}/profiles/captures/{id}` until `status` is `ready` or
 `failed`, then read `GET …/captures/{id}/view?kind=cpu|heap` or download
-`GET …/captures/{id}/pprof?kind=cpu|heap`. A ready capture with zero
+`GET …/captures/{id}/pprof?kind=cpu|heap`. Compare two ready captures with
+`GET …/captures/{id}/diff?base={earlier-id}&kind=cpu|heap`. A ready capture with zero
 `processes` means the instance has no collector: a custom image without an
 instrumented runtime, or a Go app that does not call `guestprofiling.Start`.
 

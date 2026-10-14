@@ -80,3 +80,104 @@ func TestFormatProfileAmount(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileCaptureOOMAndCompareRender(t *testing.T) {
+	now := time.Date(2026, 10, 14, 9, 30, 0, 0, time.UTC)
+	killed := now.Add(8 * time.Second)
+	capture := api.ProfileCapture{ID: "11111111-1111-1111-1111-111111111111", Status: api.ProfileCaptureReady, Kinds: []string{"heap"}, DurationSeconds: 10,
+		Trigger: api.ProfileCaptureTriggerMemoryPressure, Partial: true, OOMKilledAt: &killed, OOMPeakMB: 263, OOMPlanMB: 256, CreatedAt: now}
+	earlier := api.ProfileCapture{ID: "33333333-3333-3333-3333-333333333333", Status: api.ProfileCaptureReady, Kinds: []string{"cpu", "heap"}, DurationSeconds: 10, CreatedAt: now.Add(-time.Hour)}
+	page := ProfileCapturePage{AppSlug: "profile-app", Capture: capture, Compare: ProfileCaptureCompareOptions([]api.ProfileCapture{earlier})}
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture", Data: page}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"OOM-killed at 2026-10-14 09:30:08Z", "peaking at 263 MB of its 256 MB plan",
+		`action="/dashboard/apps/profile-app/profiles/captures/` + capture.ID + `/diff"`, `value="` + earlier.ID + `"`, "2026-10-14 08:30Z · cpu&#43;heap · 10s"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("capture page missing %q", want)
+		}
+	}
+
+	panel := ProfileCapturesView{AppSlug: "profile-app", CSRF: "tok", MaxDuration: 60, Captures: []api.ProfileCapture{capture}}
+	rec = httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profiles", Data: struct {
+		RouteView       *ProfileRouteView
+		CanaryFinding   any
+		AppSlug         string
+		Deployments     []struct{ ID, CommitSHA string }
+		Query, Baseline api.ProfileQuery
+		Profile         *api.ProfileResponse
+		Compare         *api.ProfileCompareResponse
+		Error           string
+		Investigations  *ProfileInvestigationsView
+		Automatic       *ProfileDeploymentChecksView
+		CPUChart        *ProfileCPUChart
+		Captures        *ProfileCapturesView
+	}{AppSlug: "profile-app", Captures: &panel}}); err != nil {
+		t.Fatal(err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "(ended early)") || !strings.Contains(body, "OOM-killed after") {
+		t.Fatal("capture panel lacks the partial and OOM markers")
+	}
+}
+
+func TestDeploymentOOMLinksHeapCapture(t *testing.T) {
+	data := DeploymentDetailData{App: AppListItem{Slug: "profile-app"}, OOMCaptureURL: ProfileCaptureURL("profile-app", "11111111-1111-1111-1111-111111111111")}
+	data.Deployment.ErrorCode = api.CodeAppRuntimeOOM
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "deployment_detail", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `href="/dashboard/apps/profile-app/profiles/captures/11111111-1111-1111-1111-111111111111"`) ||
+		!strings.Contains(body, "Heap profile before the OOM kill") {
+		t.Fatal("OOM explanation lacks the heap capture link")
+	}
+	data.OOMCaptureURL = ""
+	rec = httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "deployment_detail", Data: data}); err != nil || strings.Contains(rec.Body.String(), "Heap profile before the OOM kill") {
+		t.Fatalf("link rendered without a capture: %v", err)
+	}
+}
+
+func TestProfileCaptureDiffRender(t *testing.T) {
+	now := time.Date(2026, 10, 14, 9, 30, 0, 0, time.UTC)
+	diff := api.ProfileCaptureDiff{
+		Baseline:  api.ProfileCapture{ID: "33333333-3333-3333-3333-333333333333", DurationSeconds: 10, CreatedAt: now.Add(-time.Hour)},
+		Candidate: api.ProfileCapture{ID: "11111111-1111-1111-1111-111111111111", DurationSeconds: 10, CreatedAt: now, Trigger: api.ProfileCaptureTriggerMemoryPressure},
+		Kind:      "heap", Unit: "bytes", BaselineTotal: 1 << 20, CandidateTotal: 5 << 20, Delta: 4 << 20,
+		Functions: []api.ProfileCaptureFunctionDelta{{Name: "<script>grow", File: "app.js", Line: 4, Baseline: 1 << 20, Candidate: 5 << 20, Delta: 4 << 20}, {Name: "trim", Baseline: 2048, Delta: -2048}},
+		Flamegraph: &api.ProfileCaptureStackDelta{Name: "all", Baseline: 1 << 20, Candidate: 5 << 20, Delta: 4 << 20, Children: []*api.ProfileCaptureStackDelta{
+			{Name: "<script>grow", Baseline: 1 << 20, Candidate: 5 << 20, Delta: 4 << 20, Children: []*api.ProfileCaptureStackDelta{}}}},
+		Warnings: []string{"The captures come from different deployments; code changes can move cost between functions."},
+	}
+	page := BuildProfileCaptureDiff("profile-app", diff)
+	if page.Delta != "+4.00 MiB" || len(page.Rows) != 2 || !page.Rows[0].Grew || page.Rows[1].Delta != "−2.0 KiB" || page.Rows[1].Grew {
+		t.Fatalf("diff page = %+v", page)
+	}
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture_diff", Data: page}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<script>grow") || strings.Contains(body, `"<script>grow"`) {
+		t.Fatal("function symbol was not escaped")
+	}
+	for _, want := range []string{"&#43;4.00 MiB", "1.00 MiB", "5.00 MiB", "different deployments", `id="diff-flamegraph"`, `"delta":4194304`,
+		`href="/dashboard/apps/profile-app/profiles/captures/` + diff.Baseline.ID + `"`, "memory pressure"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("diff page missing %q", want)
+		}
+	}
+	rec = httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "n", Page{Body: "app_profile_capture_diff", Data: ProfileCaptureDiffPage{AppSlug: "profile-app", Error: "base must name another capture of this app"}}); err != nil {
+		t.Fatal(err)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "base must name another capture") || strings.Contains(body, `id="diff-flamegraph"`) {
+		t.Fatal("error page renders a comparison")
+	}
+	if got := ProfileCaptureDiffURL("profile-app", "id", "base-id", "heap"); got != "/dashboard/apps/profile-app/profiles/captures/id/diff?base=base-id&kind=heap" {
+		t.Fatalf("diff URL = %q", got)
+	}
+}

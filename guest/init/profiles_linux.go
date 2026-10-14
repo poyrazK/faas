@@ -38,6 +38,9 @@ type profileControl struct {
 	// Capture marks an on-demand window. Collectors stop at the window end
 	// rather than starting the next continuous window.
 	Capture bool `json:"capture,omitempty"`
+	// CheckpointSeconds asks heap collectors in a capture for interim
+	// profiles (?checkpoint=1) so an OOM kill still leaves the last heap.
+	CheckpointSeconds int `json:"checkpoint_seconds,omitempty"`
 }
 
 // profileCapture is one armed on-demand window (ADR-1155).
@@ -49,15 +52,33 @@ type profileCapture struct {
 	dropped   int
 	processes map[string]bool
 	aborted   string
+	// checkpoints holds the latest interim heap profile per process, used
+	// for processes that never deliver a final one (OOM-killed).
+	checkpoints     map[string]profileproto.CapturedProfile
+	checkpointBytes int
+	// stop ends the window early; stopReason explains it in the reply.
+	stop       chan struct{}
+	stopReason string
+	// replied closes once the reply has been written to the host.
+	replied     chan struct{}
+	repliedOnce sync.Once
+}
+
+func (c *profileCapture) markReplied() {
+	if c != nil && c.replied != nil {
+		c.repliedOnce.Do(func() { close(c.replied) })
+	}
 }
 
 type profileBridge struct {
 	mu sync.Mutex
 	// base is the deployment's continuous configuration. Enabled is false
 	// for a dormant on-demand bridge.
-	base      profileControl
-	control   profileControl
-	capture   *profileCapture
+	base    profileControl
+	control profileControl
+	capture *profileCapture
+	// finished is the last capture whose reply may still be in flight.
+	finished  *profileCapture
 	processes map[string]time.Time
 	acks      map[string]string
 	slots     chan struct{}
@@ -179,6 +200,11 @@ func (b *profileBridge) ingestHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown profile kind", http.StatusBadRequest)
 		return
 	}
+	checkpoint := r.URL.Query().Get("checkpoint") == "1"
+	if checkpoint && kind != api.ProfileKindHeap {
+		http.Error(w, "only heap profiles have checkpoints", http.StatusBadRequest)
+		return
+	}
 	match := profileEpochLabel.FindStringSubmatch(r.URL.Query().Get("name"))
 	b.mu.Lock()
 	epoch := b.control.Epoch
@@ -206,11 +232,40 @@ func (b *profileBridge) ingestHandler(w http.ResponseWriter, r *http.Request) {
 	if match := profileProcessLabel.FindStringSubmatch(r.URL.Query().Get("name")); len(match) == 2 {
 		upload.ProcessID = match[1]
 	}
+	if checkpoint {
+		if !b.acceptCheckpoint(epoch, upload) {
+			http.Error(w, "no capture is collecting checkpoints", http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err := b.accept(ctx, epoch, upload); err != nil {
 		http.Error(w, "profile collection unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// acceptCheckpoint keeps the latest interim heap profile per process for the
+// running capture. Checkpoints share the reply's byte budget, so a guest
+// already short on memory never holds more than one reply's worth.
+func (b *profileBridge) acceptCheckpoint(epoch string, upload profileproto.Upload) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	c := b.capture
+	if c == nil || c.epoch != epoch || c.request.Checkpoint() == 0 || !c.request.WantsKind(api.ProfileKindHeap) {
+		return false
+	}
+	key := api.ProfileKindHeap + "/" + upload.ProcessID
+	previous := len(c.checkpoints[key].Profile)
+	if len(c.checkpoints) >= api.ProfileMaxProcesses && previous == 0 || c.checkpointBytes-previous+len(upload.Profile) > profileproto.CaptureMaxProfileBytes {
+		return true // keep the earlier checkpoint; the upload itself was valid
+	}
+	c.checkpoints[key] = profileproto.CapturedProfile{Kind: api.ProfileKindHeap, ProcessID: upload.ProcessID, Profile: append([]byte(nil), upload.Profile...),
+		FromUnixNano: upload.FromUnixNano, UntilUnixNano: upload.UntilUnixNano}
+	c.checkpointBytes += len(upload.Profile) - previous
+	return true
 }
 
 // accept routes one upload. Uploads in a capture epoch are retained for the

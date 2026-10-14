@@ -71,6 +71,7 @@ func cmdDebug(args []string) int {
 		_, _ = fmt.Fprintln(os.Stderr, "  profiles          CPU profiles and deployment comparison")
 		_, _ = fmt.Fprintln(os.Stderr, "  capture           capture CPU or heap profiles from a running instance now")
 		_, _ = fmt.Fprintln(os.Stderr, "  captures          list or show on-demand profile captures")
+		_, _ = fmt.Fprintln(os.Stderr, "  capture-diff      compare a capture with an earlier one to see what grew")
 		_, _ = fmt.Fprintln(os.Stderr, "  dependencies      show historical dependency latency and regressions")
 		return 0
 	}
@@ -83,6 +84,8 @@ func cmdDebug(args []string) int {
 		return cmdDebugCapture(args[1:])
 	case "captures":
 		return cmdDebugCaptures(args[1:])
+	case "capture-diff":
+		return cmdDebugCaptureDiff(args[1:])
 	case "coverage":
 		return cmdDebugCoverage(args[1:])
 	case "dependencies":

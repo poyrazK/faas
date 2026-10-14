@@ -183,6 +183,21 @@ const (
 	ProfileCaptureAutomaticDuration            = 10 * time.Second
 	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
 	ProfileCaptureAutomaticMinInterval = time.Hour
+	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
+	// automatic capture, so an OOM kill mid-window still leaves the last
+	// heap before the kill.
+	ProfileCaptureCheckpointInterval = 2 * time.Second
+	// ProfileCaptureInterruptGrace replaces the final-flush grace when a
+	// capture ends early because the workload was OOM-killed.
+	ProfileCaptureInterruptGrace = 500 * time.Millisecond
+	// ProfileCaptureOOMFlushTimeout bounds how long guest-init holds an OOM
+	// report while an interrupted capture returns its profiles.
+	ProfileCaptureOOMFlushTimeout = 3 * time.Second
+	// ProfileCaptureOOMLinkWindow is how recent a heap capture on the killed
+	// instance must be for the OOM kill to be linked to it.
+	ProfileCaptureOOMLinkWindow = 15 * time.Minute
+	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
+	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
 	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
 	ProfileCaptureMaxConcurrentPerScheduler = 4
 	// ProfileCaptureMaxListed bounds GET /profiles/captures.

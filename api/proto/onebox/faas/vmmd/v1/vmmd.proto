@@ -1587,6 +1587,9 @@ message CaptureProfileRequest {
   string capture_id = 2;
   repeated string kinds = 3;
   int64 duration_ms = 4;
+  // checkpoint_ms asks heap collectors for interim profiles so an OOM kill
+  // mid-window still returns the last heap before it; zero disables them.
+  int64 checkpoint_ms = 5;
 }
 
 // CapturedProfile is one guest collector's contribution: an unparsed gzip
@@ -1607,6 +1610,9 @@ message CaptureProfileResponse {
   int32 processes = 2;
   int32 dropped = 3;
   string reason = 4;
+  // partial marks a window that ended early (the workload was OOM-killed);
+  // heap profiles from processes that could not flush are checkpoints.
+  bool partial = 5;
 }
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to

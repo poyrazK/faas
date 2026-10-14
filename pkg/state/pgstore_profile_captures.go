@@ -165,6 +165,34 @@ func (s *PgStore) FinishProfileCapture(ctx context.Context, id string, result ap
 	return nil
 }
 
+func (s *PgStore) StartProfileCapture(ctx context.Context, id, instanceID, deploymentID string) error {
+	n, err := sqlc.New().StartProfileCapture(ctx, s.pool, sqlc.StartProfileCaptureParams{InstanceID: instanceID, DeploymentID: deploymentID, ID: id})
+	if err != nil {
+		return fmt.Errorf("start profile capture: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PgStore) StampProfileCaptureOOM(ctx context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error) {
+	id, err := sqlc.New().StampProfileCaptureOOM(ctx, s.pool, sqlc.StampProfileCaptureOOMParams{KilledAt: pgtypeFromTime(oom.KilledAt),
+		PeakMb: int32(oom.PeakMB), PlanMb: int32(oom.PlanMB), AppID: appID, InstanceID: instanceID, Since: pgtypeFromTime(since)})
+	if err != nil {
+		return "", routePolicyReadError(err)
+	}
+	return id, nil
+}
+
+func (s *PgStore) LatestOOMProfileCapture(ctx context.Context, accountID, appID, deploymentID string) (api.ProfileCapture, error) {
+	body, err := sqlc.New().LatestOOMProfileCapture(ctx, s.pool, sqlc.LatestOOMProfileCaptureParams{AppID: appID, AccountID: accountID, DeploymentID: deploymentID})
+	if err != nil {
+		return api.ProfileCapture{}, routePolicyReadError(err)
+	}
+	return decodeProfileCapture(body)
+}
+
 func (s *PgStore) ExpireProfileCaptures(ctx context.Context, now time.Time) (int64, error) {
 	q := sqlc.New()
 	failed, err := q.FailStaleProfileCaptures(ctx, s.pool, sqlc.FailStaleProfileCapturesParams{Now: pgtypeFromTime(now), Reason: profileCaptureInterruptedReason,

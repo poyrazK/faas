@@ -70,10 +70,15 @@ func (l *Loop) drainProfileCaptures(ctx context.Context) {
 }
 
 func (l *Loop) runProfileCapture(ctx context.Context, queue state.ProfileCaptureQueue, c state.ClaimedProfileCapture) {
-	req := profileproto.CaptureRequest{CaptureID: strings.ReplaceAll(c.ID, "-", ""), Kinds: c.Capture.Kinds,
-		DurationMillis: int64(c.Capture.DurationSeconds) * 1000}
+	req := profileCaptureRequest(c)
 	callCtx, cancel := context.WithTimeout(ctx, req.Duration()+api.ProfileCaptureGrace+30*time.Second)
-	out, err := l.engine.CaptureAppProfile(callCtx, c.AppID, c.Capture.RequestedInstanceID, req)
+	out, err := l.engine.CaptureAppProfile(callCtx, c.AppID, c.Capture.RequestedInstanceID, req, func(instanceID, deploymentID string) {
+		// Recording the instance up front lets an OOM kill during the window
+		// find this capture (ADR-1155).
+		if serr := queue.StartProfileCapture(context.WithoutCancel(ctx), c.ID, instanceID, deploymentID); serr != nil {
+			l.log.Warn("sched: profile_capture: record instance failed", "capture_id", c.ID, "err", serr)
+		}
+	})
 	cancel()
 	result, blobs := profileCaptureOutcome(out, err)
 	if ferr := queue.FinishProfileCapture(context.WithoutCancel(ctx), c.ID, result, blobs, time.Now()); ferr != nil {
@@ -84,6 +89,17 @@ func (l *Loop) runProfileCapture(ctx context.Context, queue state.ProfileCapture
 		"instance_id", result.InstanceID, "profiles", len(blobs), "processes", result.Processes)
 }
 
+// profileCaptureRequest builds the guest request. Automatic memory-pressure
+// captures ask for heap checkpoints because an OOM kill may end the window.
+func profileCaptureRequest(c state.ClaimedProfileCapture) profileproto.CaptureRequest {
+	req := profileproto.CaptureRequest{CaptureID: strings.ReplaceAll(c.ID, "-", ""), Kinds: c.Capture.Kinds,
+		DurationMillis: int64(c.Capture.DurationSeconds) * 1000}
+	if c.Capture.Trigger == api.ProfileCaptureTriggerMemoryPressure && req.WantsKind(api.ProfileKindHeap) && req.Duration() > api.ProfileCaptureCheckpointInterval {
+		req.CheckpointMillis = api.ProfileCaptureCheckpointInterval.Milliseconds()
+	}
+	return req
+}
+
 // profileCaptureOutcome maps a capture to its terminal record. A capture
 // that reached the guest but found no instrumented process is still ready:
 // its reason explains the empty result.
@@ -92,7 +108,7 @@ func profileCaptureOutcome(out ProfileCaptureOutcome, err error) (api.ProfileCap
 		return api.ProfileCapture{Status: api.ProfileCaptureFailed, InstanceID: out.InstanceID, DeploymentID: out.DeploymentID, Reason: profileCaptureFailureReason(err)}, nil
 	}
 	result := api.ProfileCapture{Status: api.ProfileCaptureReady, InstanceID: out.InstanceID, DeploymentID: out.DeploymentID,
-		Processes: out.Result.Processes, Dropped: out.Result.Dropped, Reason: out.Result.Reason, Profiles: []api.ProfileCaptureProfile{}}
+		Processes: out.Result.Processes, Dropped: out.Result.Dropped, Reason: out.Result.Reason, Partial: out.Result.Partial, Profiles: []api.ProfileCaptureProfile{}}
 	blobs := make([]state.ProfileCaptureBlob, 0, len(out.Result.Profiles))
 	for _, p := range out.Result.Profiles {
 		blobs = append(blobs, state.ProfileCaptureBlob{Kind: p.Kind, ProcessID: p.ProcessID, Profile: p.Profile})

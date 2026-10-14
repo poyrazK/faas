@@ -136,10 +136,85 @@ func printProfileCapture(c api.ProfileCapture) int {
 	if err == nil && c.Reason != "" {
 		_, err = fmt.Fprintln(osStdout, c.Reason)
 	}
+	if err == nil && c.OOMKilledAt != nil {
+		_, err = fmt.Fprintf(osStdout, "The instance was OOM-killed at %s (%d MB of a %d MB plan); the heap profile shows memory retained before the kill.\n", c.OOMKilledAt.Format(time.RFC3339), c.OOMPeakMB, c.OOMPlanMB)
+	}
 	if err != nil {
 		return printErr("Could not write capture", err)
 	}
 	return 0
+}
+
+const profileCaptureDiffUsage = "usage: gregale debug capture-diff <slug> <capture-id> --base <capture-id> [--type cpu|heap] [--top N]"
+
+// cmdDebugCaptureDiff compares a capture with an earlier one (ADR-1155).
+func cmdDebugCaptureDiff(args []string) int {
+	fs := newFlagSet("debug capture-diff", flag.ContinueOnError)
+	base := fs.String("base", "", "baseline capture id of the same app")
+	kind := fs.String("type", "", "cpu or heap; default a kind both captures collected, preferring heap")
+	top := fs.Int("top", 15, "functions to print")
+	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"base": true, "type": true, "top": true})
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 2 || *base == "" {
+		PrintUsage(osStderr, profileCaptureDiffUsage, debugCmdDocsTopic)
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	diff, err := client.DiffProfileCaptures(context.Background(), positional[0], positional[1], *base, *kind)
+	if err != nil {
+		return printErr("Could not compare profile captures", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(diff))
+	}
+	if err := printProfileCaptureDiff(diff, *top); err != nil {
+		return printErr("Could not write comparison", err)
+	}
+	return 0
+}
+
+func printProfileCaptureDiff(d api.ProfileCaptureDiff, top int) error {
+	if _, err := fmt.Fprintf(osStdout, "%s: %s → %s (%s)\n", strings.ToUpper(d.Kind), profileCaptureAmount(d.BaselineTotal, d.Unit),
+		profileCaptureAmount(d.CandidateTotal, d.Unit), profileCaptureDelta(d.Delta, d.Unit)); err != nil {
+		return err
+	}
+	for _, w := range d.Warnings {
+		if _, err := fmt.Fprintln(osStdout, "Note: "+w); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(osStdout, "CHANGE\tBASELINE\tCANDIDATE\tFUNCTION\tLOCATION"); err != nil {
+		return err
+	}
+	for i, f := range d.Functions {
+		if i >= top {
+			break
+		}
+		location := f.File
+		if f.Line > 0 {
+			location = fmt.Sprintf("%s:%d", f.File, f.Line)
+		}
+		if f.Source != nil {
+			location = f.Source.URL
+		}
+		if _, err := fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", profileCaptureDelta(f.Delta, d.Unit), profileCaptureAmount(f.Baseline, d.Unit),
+			profileCaptureAmount(f.Candidate, d.Unit), f.Name, location); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func profileCaptureDelta(v int64, unit string) string {
+	if v < 0 {
+		return "-" + profileCaptureAmount(-v, unit)
+	}
+	return "+" + profileCaptureAmount(v, unit)
 }
 
 // showProfileCapture prints a finished capture's top functions per kind and

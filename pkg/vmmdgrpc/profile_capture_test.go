@@ -32,14 +32,17 @@ func TestCaptureProfileHoldsActivityAndMapsResult(t *testing.T) {
 		if n, _ := tracker.Inflight(instance); n != 1 {
 			t.Errorf("capture not counted as in-flight activity: %d", n)
 		}
-		return profileproto.CaptureResult{Profiles: []profileproto.CapturedProfile{{Kind: req.Kinds[0], ProcessID: "4", Profile: []byte("p"), FromUnixNano: 1, UntilUnixNano: 2}}, Processes: 1, Reason: "r"}, nil
+		if req.CheckpointMillis != 1000 {
+			t.Errorf("checkpoint interval not forwarded: %d", req.CheckpointMillis)
+		}
+		return profileproto.CaptureResult{Profiles: []profileproto.CapturedProfile{{Kind: req.Kinds[0], ProcessID: "4", Profile: []byte("p"), FromUnixNano: 1, UntilUnixNano: 2}}, Processes: 1, Reason: "r", Partial: true}, nil
 	}
-	req := &vmmdpb.CaptureProfileRequest{Instance: "i-1", CaptureId: strings.Repeat("ab", 16), Kinds: []string{"heap"}, DurationMs: 2000}
+	req := &vmmdpb.CaptureProfileRequest{Instance: "i-1", CaptureId: strings.Repeat("ab", 16), Kinds: []string{"heap"}, DurationMs: 2000, CheckpointMs: 1000}
 	resp, err := srv.CaptureProfile(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.GetProfiles()) != 1 || resp.GetProfiles()[0].GetKind() != "heap" || string(resp.GetProfiles()[0].GetProfile()) != "p" || resp.GetProcesses() != 1 || resp.GetReason() != "r" {
+	if len(resp.GetProfiles()) != 1 || resp.GetProfiles()[0].GetKind() != "heap" || string(resp.GetProfiles()[0].GetProfile()) != "p" || resp.GetProcesses() != 1 || resp.GetReason() != "r" || !resp.GetPartial() {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	if n, _ := tracker.Inflight("i-1"); n != 0 {

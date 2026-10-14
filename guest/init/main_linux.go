@@ -656,6 +656,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 			defer oomCancel()
 			werr := WatchOOM(oomCtx, mainLeaf, ramMB,
 				func(peakMB, pMB int) {
+					// ADR-1155: the host destroys the instance on this report,
+					// so a running capture first returns its heap checkpoints.
+					flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout)
 					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
 						slog.Default().Warn("EmitWorkloadOOM failed",
 							"peak_mb", peakMB, "plan_mb", pMB, "err", eerr)

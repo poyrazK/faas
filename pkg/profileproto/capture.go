@@ -50,6 +50,10 @@ type CaptureRequest struct {
 	CaptureID      string   `json:"capture_id"`
 	Kinds          []string `json:"kinds"`
 	DurationMillis int64    `json:"duration_millis"`
+	// CheckpointMillis asks heap collectors for interim profiles at this
+	// interval so an OOM kill mid-window leaves the last heap before it.
+	// Zero disables checkpoints.
+	CheckpointMillis int64 `json:"checkpoint_millis,omitempty"`
 }
 
 // CapturedProfile is one collector's contribution. Profile is a gzip or raw
@@ -70,6 +74,9 @@ type CaptureResult struct {
 	Processes int               `json:"processes"`
 	Dropped   int               `json:"dropped,omitempty"`
 	Reason    string            `json:"reason,omitempty"`
+	// Partial marks a window that ended early; heap profiles from processes
+	// that could not flush are their last checkpoints.
+	Partial bool `json:"partial,omitempty"`
 }
 
 func ValidKind(kind string) bool { return api.ValidProfileKind(kind) }
@@ -89,6 +96,9 @@ func (r CaptureRequest) Validate() error {
 	if len(r.Kinds) == 0 || len(r.Kinds) > 2 {
 		return fmt.Errorf("capture needs one or two profile kinds")
 	}
+	if c := r.Checkpoint(); c != 0 && (c < time.Second || c >= r.Duration()) {
+		return fmt.Errorf("capture checkpoint interval must be at least 1s and shorter than the window")
+	}
 	seen := map[string]bool{}
 	for _, kind := range r.Kinds {
 		if !ValidKind(kind) || seen[kind] {
@@ -97,6 +107,11 @@ func (r CaptureRequest) Validate() error {
 		seen[kind] = true
 	}
 	return nil
+}
+
+// Checkpoint returns the interim heap profile interval; zero disables it.
+func (r CaptureRequest) Checkpoint() time.Duration {
+	return time.Duration(r.CheckpointMillis) * time.Millisecond
 }
 
 // WantsKind reports whether kind was requested.

@@ -163,19 +163,25 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 // Owned loads the capture named by the {id} path value, collapsing
 // malformed, missing and other apps' captures to the same 404.
 func (s *Service) Owned(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, store state.ProfileCaptureStore) (api.ProfileCapture, bool) {
-	id := r.PathValue("id")
-	if _, err := uuid.Parse(id); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist"))
-		return api.ProfileCapture{}, false
-	}
-	capture, err := store.GetProfileCapture(r.Context(), acct.ID, app.ID, id)
-	if errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist"))
-		return capture, false
-	}
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile capture is unavailable"))
+	capture, problem := load(r.Context(), acct, app, store, r.PathValue("id"))
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return capture, false
 	}
 	return capture, true
+}
+
+func load(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, id string) (api.ProfileCapture, *api.Problem) {
+	notFound := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist")
+	if _, err := uuid.Parse(id); err != nil {
+		return api.ProfileCapture{}, notFound
+	}
+	capture, err := store.GetProfileCapture(ctx, acct.ID, app.ID, id)
+	if errors.Is(err, state.ErrNotFound) {
+		return capture, notFound
+	}
+	if err != nil {
+		return capture, api.ErrCapacity("profile capture is unavailable")
+	}
+	return capture, nil
 }

@@ -86,9 +86,18 @@ type ProfileCapture struct {
 	Dropped       int                     `json:"dropped,omitempty"`
 	Reason        string                  `json:"reason,omitempty"`
 	Profiles      []ProfileCaptureProfile `json:"profiles"`
-	CreatedAt     time.Time               `json:"created_at"`
-	CompletedAt   *time.Time              `json:"completed_at,omitempty"`
-	ExpiresAt     time.Time               `json:"expires_at"`
+	// Partial marks a capture that ended early, normally because the
+	// workload was OOM-killed; its heap profiles are the last checkpoints.
+	Partial bool `json:"partial,omitempty"`
+	// OOMKilledAt is set when the captured instance was OOM-killed within
+	// ProfileCaptureOOMLinkWindow of the capture: the heap profile shows
+	// memory retained before the kill. Peak and plan are in MB.
+	OOMKilledAt *time.Time `json:"oom_killed_at,omitempty"`
+	OOMPeakMB   int        `json:"oom_peak_mb,omitempty"`
+	OOMPlanMB   int        `json:"oom_plan_mb,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ExpiresAt   time.Time  `json:"expires_at"`
 }
 
 // Done reports whether the capture reached a terminal status.
@@ -143,4 +152,46 @@ type ProfileCaptureView struct {
 	// Source is the capture deployment's recorded Git provenance; function
 	// and frame Source links use its commit.
 	Source *ProfileSource `json:"source,omitempty"`
+}
+
+// ProfileCaptureDiff compares one kind between two ready captures of an app
+// (ADR-1155). Values keep the view's unit and are not rescaled: Node and
+// Python heap values cover each capture's own window, so captures of
+// different durations carry a warning rather than a silent adjustment.
+type ProfileCaptureDiff struct {
+	Baseline       ProfileCapture                `json:"baseline"`
+	Candidate      ProfileCapture                `json:"candidate"`
+	Kind           string                        `json:"kind"`
+	Unit           string                        `json:"unit"`
+	BaselineTotal  int64                         `json:"baseline_total"`
+	CandidateTotal int64                         `json:"candidate_total"`
+	Delta          int64                         `json:"delta"`
+	Functions      []ProfileCaptureFunctionDelta `json:"functions"`
+	Flamegraph     *ProfileCaptureStackDelta     `json:"flamegraph"`
+	Warnings       []string                      `json:"warnings"`
+}
+
+// ProfileCaptureFunctionDelta is one function's self cost in both captures,
+// ordered by growth. Named functions aggregate across lines.
+type ProfileCaptureFunctionDelta struct {
+	Name      string                 `json:"name"`
+	File      string                 `json:"file,omitempty"`
+	Line      int64                  `json:"line,omitempty"`
+	Source    *ProfileSourceLocation `json:"source,omitempty"`
+	Baseline  int64                  `json:"baseline"`
+	Candidate int64                  `json:"candidate"`
+	Delta     int64                  `json:"delta"`
+}
+
+// ProfileCaptureStackDelta is one call path in both captures. Source comes
+// from the candidate's deployment when the frame exists there.
+type ProfileCaptureStackDelta struct {
+	Name      string                      `json:"name"`
+	File      string                      `json:"file,omitempty"`
+	Line      int64                       `json:"line,omitempty"`
+	Source    *ProfileSourceLocation      `json:"source,omitempty"`
+	Baseline  int64                       `json:"baseline"`
+	Candidate int64                       `json:"candidate"`
+	Delta     int64                       `json:"delta"`
+	Children  []*ProfileCaptureStackDelta `json:"children"`
 }

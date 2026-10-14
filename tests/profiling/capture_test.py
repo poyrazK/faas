@@ -89,6 +89,35 @@ class CaptureTests(unittest.TestCase):
         self.assertIn(b"inuse_space", raw)
         self.assertIn(b"Cache.grow", raw, "allocation site lost its function name")
 
+    def test_capture_checkpoints_heap(self):
+        dormant = dict(Bridge.control)
+        self.addCleanup(lambda: setattr(Bridge, "control", dormant))
+        self.addCleanup(lambda: (setattr(Bridge, "polls", []), setattr(Bridge, "uploads", [])))
+        Bridge.polls, Bridge.uploads = [], []
+        Bridge.control = {"enabled": True, "suspended": False, "epoch": "e" * 32, "window_seconds": 4,
+                          "kinds": ["heap"], "capture": True, "checkpoint_seconds": 1}
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Bridge)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory, "app.py")
+            app.write_text(APP)
+            env = dict(os.environ, FAAS_PROFILING_ENABLED="1",
+                       FAAS_PROFILING_ENDPOINT="http://127.0.0.1:%d" % server.server_address[1],
+                       PYTHONPATH=str(ROOT / "guest/profiling/python"))
+            proc = subprocess.Popen([sys.executable, str(app)], env=env)
+            self.addCleanup(proc.kill)
+            time.sleep(3.5)
+            # The process dies mid-window like an OOM kill: only checkpoints remain.
+            proc.kill()
+            proc.wait()
+        checkpoints = [(q, b) for q, b in Bridge.uploads if q.get("checkpoint") == ["1"]]
+        self.assertGreaterEqual(len(checkpoints), 2, "expected about one checkpoint per second")
+        self.assertEqual(len(checkpoints), len(Bridge.uploads), "a killed process must not have sent a final heap")
+        query, body = checkpoints[-1]
+        self.assertEqual(query["kind"], ["heap"])
+        self.assertIn(b"Cache.grow", gzip.decompress(body))
+
 
 if __name__ == "__main__":
     unittest.main()

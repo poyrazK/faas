@@ -13,41 +13,51 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// merged loads a ready capture and merges one kind across its processes.
+// requestKind resolves ?kind= for a capture, defaulting to its first kind.
+func requestKind(r *http.Request, capture api.ProfileCapture) string {
+	if kind := r.URL.Query().Get("kind"); kind != "" {
+		return kind
+	}
+	if len(capture.Kinds) > 0 {
+		return capture.Kinds[0]
+	}
+	return ""
+}
+
+// mergeKind merges one kind of a ready capture across its processes.
 // Parsing happens here, outside vmmd and schedd, with the same bounds as
 // continuous profile queries.
-func (s *Service) merged(w http.ResponseWriter, r *http.Request, acct state.Account) (api.ProfileCapture, string, *profile.Profile, bool) {
-	app, store, ok := s.Target(w, r, acct)
-	if !ok {
-		return api.ProfileCapture{}, "", nil, false
-	}
-	capture, ok := s.Owned(w, r, acct, app, store)
-	if !ok {
-		return capture, "", nil, false
-	}
-	kind := r.URL.Query().Get("kind")
-	if kind == "" && len(capture.Kinds) > 0 {
-		kind = capture.Kinds[0]
-	}
+func mergeKind(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (*profile.Profile, *api.Problem) {
 	if !slices.Contains(capture.Kinds, kind) {
-		api.WriteProblem(w, api.ErrValidation("kind must be one of the capture's kinds"))
-		return capture, "", nil, false
+		return nil, api.ErrValidation("kind must be one of the capture's kinds")
 	}
 	if capture.Status != api.ProfileCaptureReady {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Capture not ready", fmt.Sprintf("profile capture is %s", capture.Status)))
-		return capture, "", nil, false
+		return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Capture not ready", fmt.Sprintf("profile capture is %s", capture.Status))
 	}
-	blobs, err := store.ProfileCaptureBlobs(r.Context(), acct.ID, app.ID, capture.ID)
+	blobs, err := store.ProfileCaptureBlobs(ctx, acct.ID, app.ID, capture.ID)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile capture data is unavailable"))
-		return capture, "", nil, false
+		return nil, api.ErrCapacity("profile capture data is unavailable")
 	}
 	merged, _, err := profiling.MergeCapture(KindProfiles(blobs, kind), kind)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile capture could not be merged"))
-		return capture, "", nil, false
+		return nil, api.ErrCapacity("profile capture could not be merged")
 	}
-	return capture, kind, merged, true
+	return merged, nil
+}
+
+// KindView is one kind of a ready capture as a source-linked view.
+func (s *Service) KindView(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (api.ProfileCaptureView, *api.Problem) {
+	merged, problem := mergeKind(ctx, acct, app, store, capture, kind)
+	if problem != nil {
+		return api.ProfileCaptureView{}, problem
+	}
+	view, err := profiling.CaptureView(merged, kind)
+	if err != nil {
+		return view, api.ErrCapacity("profile exceeds supported view bounds; download the pprof file instead")
+	}
+	view.Capture = capture
+	s.LinkSources(ctx, acct, capture, &view)
+	return view, nil
 }
 
 // KindProfiles returns the raw per-process profiles of one kind.
@@ -63,17 +73,19 @@ func KindProfiles(blobs []state.ProfileCaptureBlob, kind string) [][]byte {
 
 // View handles GET /v1/apps/{slug}/profiles/captures/{id}/view.
 func (s *Service) View(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	capture, kind, merged, ok := s.merged(w, r, acct)
+	app, store, ok := s.Target(w, r, acct)
 	if !ok {
 		return
 	}
-	view, err := profiling.CaptureView(merged, kind)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("profile exceeds supported view bounds; download the pprof file instead"))
+	capture, ok := s.Owned(w, r, acct, app, store)
+	if !ok {
 		return
 	}
-	view.Capture = capture
-	s.LinkSources(r.Context(), acct, capture, &view)
+	view, problem := s.KindView(r.Context(), acct, app, store, capture, requestKind(r, capture))
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	httpkit.WriteJSON(w, http.StatusOK, view)
 }
 
@@ -99,8 +111,18 @@ func (s *Service) LinkSources(ctx context.Context, acct state.Account, capture a
 // Download handles GET /v1/apps/{slug}/profiles/captures/{id}/pprof: the
 // merged profile as gzip pprof for go tool pprof, speedscope or Pyroscope.
 func (s *Service) Download(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	capture, kind, merged, ok := s.merged(w, r, acct)
+	app, store, ok := s.Target(w, r, acct)
 	if !ok {
+		return
+	}
+	capture, ok := s.Owned(w, r, acct, app, store)
+	if !ok {
+		return
+	}
+	kind := requestKind(r, capture)
+	merged, problem := mergeKind(r.Context(), acct, app, store, capture, kind)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if merged == nil {

@@ -74,6 +74,45 @@ func TestGoCollectorCaptureUploadsHeapOnce(t *testing.T) {
 	}
 }
 
+func TestGoCollectorCheckpointsHeapDuringCapture(t *testing.T) {
+	retainHeap()
+	var mu sync.Mutex
+	checkpoints, finals := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/control":
+			_ = json.NewEncoder(w).Encode(control{Enabled: true, Epoch: "44444444444444444444444444444444", WindowSeconds: 3, Kinds: []string{"heap"}, Capture: true, CheckpointSeconds: 1})
+		case "/ingest":
+			_, _ = io.Copy(io.Discard, r.Body)
+			mu.Lock()
+			if r.URL.Query().Get("kind") != "heap" {
+				t.Errorf("unexpected kind %q", r.URL.Query().Get("kind"))
+			}
+			if r.URL.Query().Get("checkpoint") == "1" {
+				checkpoints++
+			} else {
+				finals++
+			}
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); run(ctx, server.URL) }()
+	time.Sleep(3600 * time.Millisecond)
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	// A 3s window with 1s checkpoints sends about two interim heaps before
+	// the final one.
+	if checkpoints < 1 || checkpoints > 3 || finals != 1 {
+		t.Fatalf("checkpoints=%d finals=%d", checkpoints, finals)
+	}
+}
+
 func TestGoCollectorDormantPollsSlowly(t *testing.T) {
 	var mu sync.Mutex
 	polls := 0
