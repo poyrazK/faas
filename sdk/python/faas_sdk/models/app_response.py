@@ -109,7 +109,7 @@ class AppResponse:
     """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
     function_concurrency: int | Unset = UNSET
     """Requests one Node or Python function worker serves at once (ADR-1190). 0 or 1 keeps one request per worker;
-    the plan's concurrency_per_vm bound caps it. Python multiplexes only async handlers. Takes effect on the next
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
     deploy."""
     deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
     """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from

@@ -153,7 +153,7 @@ class AppManifest:
     """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
     function_concurrency: int | None | Unset = UNSET
     """Requests one Node or Python function worker serves at once (ADR-1190). 0 or 1 keeps one request per worker;
-    the plan's concurrency_per_vm bound caps it. Python multiplexes only async handlers. Takes effect on the next
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
     deploy."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
