@@ -1,4 +1,4 @@
--- ADR-1155: an inbound webhook endpoint can start customer Operations.
+-- ADR-1158: an inbound webhook endpoint can start customer Operations.
 -- +goose Up
 CREATE SEQUENCE IF NOT EXISTS customer_operation_webhook_binding_revision_seq;
 
@@ -56,11 +56,6 @@ BEGIN
            OR EXISTS (SELECT 1 FROM customer_operation_webhook_bindings WHERE endpoint_id = endpoint) THEN
             RAISE EXCEPTION 'endpoint already has a callback or operation binding' USING ERRCODE = '23505';
         END IF;
-    ELSIF TG_TABLE_NAME = 'customer_operation_webhook_bindings' THEN
-        IF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint)
-           OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = endpoint) THEN
-            RAISE EXCEPTION 'endpoint already has another delivery mode' USING ERRCODE = '23505';
-        END IF;
     ELSIF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = endpoint) THEN
         RAISE EXCEPTION 'endpoint already starts an automation' USING ERRCODE = '23505';
     ELSIF TG_TABLE_NAME = 'exclusive_work_trigger_bindings'
@@ -70,14 +65,27 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+-- The binding table has its own guard function so the ADR-212 migration can
+-- still roll back and drop the shared one.
+CREATE OR REPLACE FUNCTION guard_customer_operation_webhook_routing() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM 1 FROM inbound_webhook_endpoints WHERE id = NEW.endpoint_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM workflow_webhook_bindings WHERE endpoint_id = NEW.endpoint_id)
+       OR EXISTS (SELECT 1 FROM exclusive_work_trigger_bindings WHERE source = 'inbound_webhook' AND trigger_id = NEW.endpoint_id) THEN
+        RAISE EXCEPTION 'endpoint already has another delivery mode' USING ERRCODE = '23505';
+    END IF;
+    RETURN NEW;
+END;
+$$;
 DROP TRIGGER IF EXISTS customer_operation_webhook_routing_guard ON customer_operation_webhook_bindings;
 CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE ON customer_operation_webhook_bindings
-FOR EACH ROW EXECUTE FUNCTION guard_workflow_webhook_routing();
+FOR EACH ROW EXECUTE FUNCTION guard_customer_operation_webhook_routing();
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS customer_operation_webhook_routing_guard ON customer_operation_webhook_bindings;
+DROP FUNCTION IF EXISTS guard_customer_operation_webhook_routing();
 CREATE OR REPLACE FUNCTION guard_workflow_webhook_routing() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE endpoint uuid;
 BEGIN
