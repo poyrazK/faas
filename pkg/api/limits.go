@@ -5389,6 +5389,13 @@ const (
 	// runaway connection rather than an HTTP request-body limit.
 	RawTCPStreamMaxBytes int64 = 1 * 1024 * 1024 * 1024
 
+	// RawTCPLookupCacheTTL is how long the public TCP edge reuses a listener's
+	// route-by-port, TLS domain and live-deployment lookups across new
+	// connections, so a connection flood does not cost every query per
+	// connection. The app and listener-intent reads, which reject a stale
+	// route, and instance selection are never cached.
+	RawTCPLookupCacheTTL = time.Second
+
 	// Post-response tail (issue #667 / ADR-078).
 	//
 	// TailCapMax is a structural constant applied uniformly across
