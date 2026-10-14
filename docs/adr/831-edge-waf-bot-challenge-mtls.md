@@ -352,3 +352,156 @@ Detections are now ADR-964 security events:
   recorded, through the request's match context, so matched requests pay no
   extra GeoIP lookup.
 - Retention and plan windows are ADR-964's (7 days; read window by plan).
+
+## Amendment 6: preview gate evidence (2026-10-14)
+
+Amendment 4 set two conditions for leaving preview: a false-positive review
+and the in-path p95 under production-like load. Production traffic is too
+thin for the review, so this amendment replays the CRS regression corpus
+and a corpus of legitimate requests, and measures in-path latency on
+`gregale-internal-test-1`. (Amendment 5, WAF detections as security
+events, is proposed separately.)
+
+### Detection: the CRS regression corpus
+
+`TestCRSRegressionCorpus` (opt-in, `FAAS_WAF_FTW_DIR`) replays the go-ftw
+corpus of CRS v4.25.0 (318 rule files). 4,621 single-stage tests replay;
+53 are skipped (multi-stage, or raw and encoded requests the gateway's
+HTTP server would reject first). Each test is checked two ways: did its
+own rule fire (go-ftw's pass criterion), and did the request reach the
+anomaly threshold of 5.
+
+| Configuration | Attack tests | Own rule fired | Detected at 5 | Near-miss tests where the rule fired |
+|---|---|---|---|---|
+| sampled, PL1 | 2,056 | 99.4% | 97.9% | 2 of 539 |
+| sampled, PL2 | 3,103 | 99.6% | 98.2% | 2 of 781 |
+| in-path, PL1 (URI and header tests of its rule files) | 529 | 100% | 100% | 1 of 129 |
+
+- At PL1 every attack family (913, 921, 922, 930-934, 941-944) is detected
+  at 100%. Only protocol enforcement (920) is lower, 75 of 119: most 920
+  rules score 2 or 3 points and need a second rule to reach the threshold.
+- The 12 tests whose own rule did not fire cover CRS settings that are off
+  by default (UTF-8 validation 920250, argument count and length limits
+  920360-920410), a request without a Host header (920280), and an HTTP/0.9
+  request line (920430). The gateway never forwards the last two.
+- The near-miss failures (920181-1, 921140-1) expect Apache to rewrite or
+  reject the request before CRS sees it, which the harness does not do.
+
+### False positives: legitimate traffic
+
+`TestBenignCorpus` runs in `make test`. It has 38 legitimate requests. 32
+are ordinary traffic: browser page loads, REST calls with every method,
+OAuth callbacks, Stripe and GitHub webhooks, GraphQL, form posts with
+apostrophes, NDJSON, binary uploads, plain-text logs, and a body without a
+Content-Type. 6 carry code-like content (a docs search for SQL, CMS rich
+text). At PL1 the
+test pins the exact rules that flag each request, so a CRS upgrade that
+adds or removes a false positive fails the test.
+
+CRS's defaults assume a website, and at PL1 they scored ordinary API
+traffic as critical:
+
+- every PUT, PATCH and DELETE (911100: only GET, HEAD, POST and OPTIONS are
+  allowed);
+- every body that is not form, multipart, XML or JSON, such as text/plain,
+  octet-stream, NDJSON or `application/merge-patch+json` (920420);
+- every body without a Content-Type (920340 and 920640), which is what
+  Python's `requests.post(url, data=json.dumps(...))` sends;
+- any multi-line body of another type without `=` (921150, CR/LF in an
+  argument name). CRS parses such a body as URL-encoded so its other rules
+  still see it, which makes the whole body one argument name.
+
+The sampled engine now allows GET, HEAD, POST, OPTIONS, PUT, PATCH and
+DELETE. It drops 920340, 920420 and 920640; 920470 still flags a
+malformed Content-Type header. It also re-declares 921150 on query argument
+names only, under the same ID, so `exclude_rule_ids` and the `rule_id`
+metric label are unchanged. The in-path rule set loads none of 911 or 920
+and never sees a body, so it is unchanged.
+
+Known false positives that remain at PL1:
+
+| Request | Sampled (headers and body) | In-path (headers and URI) |
+|---|---|---|
+| GraphQL query in the URL | 942190 | 942190 |
+| GraphQL POST body | 932235, 942290 | — |
+| Prose with SQL keywords after a semicolon | 942350 | — |
+| Docs search for `SELECT * FROM users WHERE id = 1` | 942100 | 942100 |
+| CMS rich text (HTML) | 941160 | — |
+| SQL snippet in a JSON field | 942100 | — |
+
+At PL2, 20 of the 38 requests are flagged. They include apostrophes in a
+search (932240), any URL in a parameter such as an OAuth callback
+(931130), filter syntax (942131) and a postal address (942200). The table
+and its exclusions are in `docs/security.md`.
+
+### In-path latency under load
+
+`TestInlineLoad` (opt-in, `FAAS_WAF_INLINE_LOAD=1`) calls `CheckInline` on
+one goroutine per request, as gatewayd-internal does. Requests arrive as a
+Poisson process spread over 10 apps, 5% of them attacks, with the shipped
+2 slots and per-app budget. It reports the times
+`gateway_waf_inline_seconds` records, and process CPU per check.
+
+The node was `gregale-internal-test-1`: 2 vCPUs (one physical core, Xeon
+2.8 GHz), Go 1.26.9, GOMAXPROCS 2 unless noted, 10-20 s per rate, two
+passes. Other sessions kept its load average at 3-3.6 throughout; it was
+not idle as in amendment 3. Ranges cover both passes, which differed by
+up to 2x.
+
+| Run | Rate (req/s) | p50 | p95 | p99 | CPU per check | Skipped |
+|---|---|---|---|---|---|---|
+| near-sequential | 50 | 0.97-0.99 ms | 2.70-2.85 ms | 3.9-4.1 ms | 1.4 ms | 0-0.1% |
+| default | 100 | 1.6-2.0 ms | 11.6-13.1 ms | 21-46 ms | 2.0 ms | 2.2-5.2% |
+| default | 250 | 1.5-2.5 ms | 10.3-11.2 ms | 17-24 ms | 1.7-1.9 ms | 6.6-11.2% |
+| default | 500 | 1.3-1.5 ms | 4.6-6.3 ms | 7.6-11.3 ms | 1.7-1.8 ms | 3.4-9.2% |
+| default | 1000 | 1.3-1.8 ms | 5.1-9.9 ms | 9.1-23 ms | 1.8 ms | 18.7-46.4% |
+| default | 2000 | 2.6-2.8 ms | 9.3-14.3 ms | 17.7-24 ms | 1.9 ms | 72-78% |
+| one core busy in another process | 100-2000 | 3.0-4.8 ms | 14.5-18.3 ms | 25-31 ms | 1.9-2.0 ms | 5.8-82.9% |
+| GOMAXPROCS=1 | 100 / 500 | 0.88 / 0.90 ms | 2.56 / 3.37 ms | 3.9 / 7.2 ms | 1.24 / 1.31 ms | 0 / 3.8% |
+| GOGC=400 | 100 / 500 / 1000 | 1.42 / 1.13 / 1.27 ms | 6.48 / 4.04 / 3.75 ms | 10.9 / 6.5 / 5.6 ms | 1.5-1.7 ms | 0.5 / 1.5 / 8.6% |
+
+No benign request was flagged in any run. Skipped checks let the request
+through unchecked, attacks included: at 1000 requests per second, 273 of
+495 and 411 of 498 attacks were detected.
+
+Findings:
+
+1. **The 2 ms p95 gate is not met on this node.** The check still costs
+   about 1 ms (p50 0.88-0.99 ms when checks rarely overlap, as in amendment
+   3). But p95 is 2.6-2.9 ms even at 50 requests per second, and 4.6-14 ms
+   at 100-2000. The check is pure CPU, so its wall time absorbs every wait
+   for a CPU: other processes, the other hyperthread, and Go's garbage
+   collector.
+2. **Two concurrent checks share one physical core here.** With GOMAXPROCS
+   2 a check costs 1.7-2.0 ms of CPU; with 1, 1.24-1.31 ms. On a 2-vCPU
+   node the two slots are hyperthread siblings.
+3. **GC is a large part of the tail.** With the default GOGC the harness
+   collected every 130-200 checks. GOGC=400 cut collections 4-5x, and
+   p95 at 500-1000 requests per second fell to 3.75-4.0 ms. gatewayd-internal
+   runs with the default GOGC under `MemoryMax=512M`. Its heap is larger
+   than the harness's, so its collection rate per check has to be measured
+   in the daemon itself.
+4. **Fail-open starts well below amendment 4's estimate.** Skips appear at
+   100 requests per second whenever tail latency keeps both slots busy, and
+   reach 19-46% at 1000 (65% with a busy core). The effective ceiling on
+   this node is a few hundred checked requests per second per node, not
+   about 500 per app.
+5. **Tenant CPU competes with the gateway as an equal.** `faas-cp.slice`
+   and `faas-tenant.slice` both have the default CPUWeight, so a node with
+   busy tenants behaves like the "one core busy" row.
+
+Proposed, for the product owner to decide (nothing here is built):
+
+1. `observe` at PL1 can leave preview: it adds no latency, it detects 98%
+   of the corpus, and its false positives are known and documented.
+2. `warn` and `block` stay in preview until `gateway_waf_inline_seconds` is
+   measured inside gatewayd-internal on a production compute node
+   (n2-standard-4, 2 physical cores) with a synthetic `warn` rule on a test
+   app. The harness cannot reproduce the daemon's heap, its core count, or
+   tenant load.
+3. Levers to try first: GOGC or GOMEMLIMIT for gatewayd-internal; a
+   CPUWeight for `faas-cp.slice` above `faas-tenant.slice`, so busy tenants
+   do not delay in-path checks; and a slot count tied to physical cores.
+4. If p95 still exceeds 2 ms with those levers, restate the gate as p95 at
+   most 5 ms with at most 1% skipped at the expected per-node rate. A check
+   is still far cheaper than a wake, and the WAF fails open.
