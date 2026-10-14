@@ -7831,6 +7831,16 @@ func renderDeployFailure(d api.DeploymentResponse) int {
 		}
 		if lifted := mapFailureProblem(problem); lifted != "" {
 			PrintFail(os.Stderr, "%s", lifted)
+			// The catalog copy says the crash output "is in the error
+			// detail" but never showed it; on prod the real cause
+			// ("Error: X is not set", nginx's [emerg] line) was only
+			// reachable through a second command (H10-21).
+			if excerpt := startupCrashExcerpt(d.Error); len(excerpt) > 0 {
+				_, _ = fmt.Fprintln(os.Stderr, "  last output from your app:")
+				for _, line := range excerpt {
+					_, _ = fmt.Fprintf(os.Stderr, "    %s\n", line)
+				}
+			}
 			if d.Error == "infra" {
 				return 3
 			}
@@ -7865,6 +7875,40 @@ func notListeningWithinDeadline(p *api.Problem) {
 	p.Hint = fmt.Sprintf("nothing listened on :%s within the %s startup deadline", port, deadline)
 	p.Why = fmt.Sprintf("every readiness probe to :%s was refused until the %s startup deadline ran out: the app is either slow to start or never binds that port", port, deadline)
 	p.Fix = fmt.Sprintf("• if the app is slow to start, raise the deadline (`gregale deploy --startup-deadline-s N`; now %s) or listen before doing warm-up work\n%s", deadline, p.Fix)
+}
+
+// startupCrashExcerpt returns up to eight lines of a startup crash's workload
+// output, starting at its last error-looking line ("Error: …", nginx
+// "[emerg]", a Python traceback, a Go panic), or the last eight lines when
+// none matches. It returns nil for other failures.
+func startupCrashExcerpt(detail string) []string {
+	const marker = "exited before becoming ready): "
+	i := strings.Index(detail, marker)
+	if i < 0 {
+		return nil
+	}
+	var lines []string
+	for _, line := range strings.Split(detail[i+len(marker):], "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "guest-init: ") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	start := len(lines) - 8
+	for j := len(lines) - 1; j >= 0; j-- {
+		l := lines[j]
+		if strings.Contains(l, "Error:") || strings.Contains(l, "[emerg]") || strings.HasPrefix(l, "Traceback ") ||
+			strings.HasPrefix(l, "panic:") || strings.Contains(l, "Exception") || strings.HasPrefix(l, "fatal error:") {
+			start = j
+			break
+		}
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := min(start+8, len(lines))
+	return lines[start:end]
 }
 
 // mapFailureMessage returns the user-facing copy for one of the four

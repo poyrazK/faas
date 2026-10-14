@@ -3682,7 +3682,7 @@ Export a partial FOCUS 1.4 invoice projection
 
 Inspect profiling gates, advance canary stages, or simulate a preset
 
-`gregale canary [<subcommand>] <slug>`
+`gregale canary [<subcommand>]`
 
 ### canary gate
 

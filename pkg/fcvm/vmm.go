@@ -570,6 +570,8 @@ func firecrackerControlLine(line []byte) bool {
 	for _, marker := range []string{
 		"running firecracker",
 		"listening on api socket",
+		"vmm is stopping",
+		"killing vcpu threads",
 		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
@@ -580,6 +582,12 @@ func firecrackerControlLine(line []byte) bool {
 		"kick entropy ",
 		"kick block ",
 		"kick vsock",
+		"kick pmem ",
+		// Restore's per-device kicks: "[Vsock:vsock] notifying tx queue",
+		// "[Balloon:balloon] notifying queues", "[Vsock:vsock] signaling
+		// event queue" (hunt #10, every wake of an rc.257 app).
+		"] notifying ",
+		"] signaling ",
 		"development preview",
 		"vmm action took",
 		"api server",
