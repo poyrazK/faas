@@ -136,7 +136,19 @@ Two tiers built on the same Firecracker pause, with different owners.
   warm-pool promotion generalised: config-fence check, ledger re-admission,
   vmmd `Thaw` (resume and restart probes), `PublishOwnedInstanceRuntime`
   (FROZEN → RUNNING compare-and-set), route publication. No resume hook
-  (ADR-906 decision 5).
+  (ADR-906 decision 5), except for an app that declares `after_restore`.
+  (Amended 2026-10-15: such an app reconnects its clients after sleeping, so
+  the thaw runs the resume hook and its callback. `ThawInstance` carries
+  `run_after_restore`; a vmmd that does not confirm it in
+  `after_restore_ran` fails the thaw, and the request restores from the
+  snapshot, whose restore runs the hook.)
+- Service calls (amended 2026-10-15): the internal HTTP and TCP service
+  proxies treat vmmd's `instance_frozen` refusal like the public gateway:
+  the replica leaves the proxy's endpoint cache without a circuit-breaker
+  failure, the target is woken (which thaws it), and the call is retried
+  once on the thawed replica. vmmd refuses before it dials the guest, so
+  the retry sits outside the caller's retry policy; a request body that
+  cannot be replayed is not retried.
 - Bounds: `FrozenTTL` (10 min), then park. Under memory pressure (ADR-909
   eviction) frozen instances go first, least recently used, before any
   running one. `FrozenMaxPerNode` caps Firecracker processes and jail uids.
