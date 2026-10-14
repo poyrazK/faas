@@ -299,7 +299,8 @@ happens to a detection:
 
 Request bodies are never blocked: checking them costs tens to hundreds of
 milliseconds, so they are inspected off the request path, and only a sample
-of them under load. To reject bad bodies, declare their shape with a
+of them under load. In `warn` and `block`, a request without a body is
+checked in-path only; it is not also sampled. To reject bad bodies, declare their shape with a
 `kind=validate` rule. Checks on headers and the URL take about 1 ms of CPU
 per matched request, and can add several milliseconds when the node is busy.
 When your app's check budget (roughly 500 requests per second) or the node's
