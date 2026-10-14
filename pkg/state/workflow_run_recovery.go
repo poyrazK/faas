@@ -25,7 +25,7 @@ func workflowRunRecoveryCandidates(ctx context.Context, q *sqlc.Queries, db sqlc
 	}
 	rows := make([]sqlc.EventRecoveryCandidatesRow, 0, len(req.WorkflowRuns.Runs))
 	for _, t := range req.WorkflowRuns.Runs {
-		row, err := q.WorkflowRunRecoveryCandidate(ctx, db, sqlc.WorkflowRunRecoveryCandidateParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), RunID: mustPgUUID(t.RunID), WorkflowName: req.WorkflowRuns.Name, ExpectedResumeCount: int32(t.ExpectedResumeCount)})
+		row, err := q.WorkflowRunRecoveryCandidate(ctx, db, sqlc.WorkflowRunRecoveryCandidateParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), RunID: mustPgUUID(t.RunID), WorkflowName: req.WorkflowRuns.Name, FailureEvidenceID: t.FailureEvidenceID, ObservedAt: pgtypeFromTime(time.Now().UTC()), RetainedAfter: pgtypeFromTime(time.Now().UTC().Add(-api.WorkflowRecoveryFailureRetention)), ExpectedResumeCount: int32(t.ExpectedResumeCount)})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrEventRecoveryChanged
 		}
@@ -53,6 +53,9 @@ func (m *MemStore) workflowRunRecoveryCandidatesLocked(account, app string, req 
 	for _, t := range req.WorkflowRuns.Runs {
 		run, ok := m.workflowRuns[t.RunID]
 		if !ok || !sameMemUUID(run.AppID, app) || run.WorkflowName != req.WorkflowRuns.Name || run.ResumeCount != t.ExpectedResumeCount || run.Status != WorkflowRunStatusFailed && run.Status != WorkflowRunStatusDead {
+			return nil, ErrEventRecoveryChanged
+		}
+		if t.FailureEvidenceID != "" && !m.initialFailureMatchesLocked(app, req.WorkflowRuns.Name, t, run.Status, time.Now().UTC()) {
 			return nil, ErrEventRecoveryChanged
 		}
 		if parent != nil && !workflowRecoveryRetryTargetMatches(parent, t, time.Now().UTC()) {
@@ -87,6 +90,11 @@ func workflowRunRecoveryOutcome(err error) (string, string, error) {
 	}
 }
 func processWorkflowRunRecoveryTx(ctx context.Context, tx pgx.Tx, job sqlc.EventRecoveryJob, item sqlc.EventRecoveryItem, selection api.EventRecoveryRequest) (string, string, error) {
+	if reason, err := initialReviewJobAdmissionTx(ctx, sqlc.New(), tx, uuidString(job.ID), time.Now().UTC()); err != nil {
+		return "", "", err
+	} else if reason != "" {
+		return "skipped", initialReviewSkipReason(reason), nil
+	}
 	var target api.WorkflowRunRecoveryTarget
 	if err := json.Unmarshal(item.ExpectedProgress, &target); err != nil {
 		return "", "", fmt.Errorf("decode workflow recovery target: %w", err)
@@ -112,6 +120,11 @@ func processWorkflowRunRecoveryTx(ctx context.Context, tx pgx.Tx, job sqlc.Event
 	return workflowRunRecoveryOutcome(err)
 }
 func (m *MemStore) processWorkflowRunRecoveryLocked(job *memEventRecoveryJob, item *memEventRecoveryItem) (string, string, error) {
+	if reason, err := m.initialReviewJobAdmissionLocked(job, time.Now().UTC()); err != nil {
+		return "", "", err
+	} else if reason != "" {
+		return "skipped", initialReviewSkipReason(reason), nil
+	}
 	owned, ok := m.eventSubscriptionAppLocked(job.Job.AppID)
 	if !ok || !sameMemUUID(owned.AccountID, job.AccountID) {
 		return "skipped", "target_unavailable", nil
@@ -121,6 +134,13 @@ func (m *MemStore) processWorkflowRunRecoveryLocked(job *memEventRecoveryJob, it
 		return "skipped", "changed", nil
 	}
 	if item.ExpectedResumeCount == nil {
+		return "skipped", "changed", nil
+	}
+	var target api.WorkflowRunRecoveryTarget
+	if err := json.Unmarshal(item.ExpectedProgress, &target); err != nil {
+		return "", "", fmt.Errorf("decode initial recovery evidence: %w", err)
+	}
+	if target.FailureEvidenceID != "" && !m.initialFailureMatchesLocked(owned.ID, run.WorkflowName, target, run.Status, time.Now().UTC()) {
 		return "skipped", "changed", nil
 	}
 	_, _, _, err := m.resumeWorkflowRunLocked(WorkflowResumeOptions{RunID: run.ID, AppID: owned.ID, AccountID: owned.AccountID, ExpectedResumeCount: *item.ExpectedResumeCount}, false)

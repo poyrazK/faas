@@ -37,13 +37,20 @@ func TestHexIPToString_IPv4(t *testing.T) {
 	}
 }
 
+// The kernel prints IPv6 addresses as four host-order (little-endian)
+// words. Every address used to collapse to "::1", so a server on every
+// interface ("::", Node's default) was reported as loopback, and the
+// unbracketed "::1:5173" defeated the host's app_loopback_bound check.
 func TestHexIPToString_IPv6(t *testing.T) {
-	// IPv6 (16 hex chars) collapses to "::1" in the conservative
-	// implementation — we only need the first listener, the host
-	// re-derives anyway. Pin the literal so the host-side parser
-	// stays in sync if we ever expand this.
-	if got := hexIPToString("00000000000000000000000000000001"); got != "::1" {
-		t.Errorf("hexIPToString(ipv6-loopback) = %q, want %q", got, "::1")
+	for _, tc := range []struct{ in, want string }{
+		{"00000000000000000000000001000000", "::1"},
+		{"00000000000000000000000000000000", "::"},
+		{"0000000000000000FFFF00000100007F", "127.0.0.1"}, // v4-mapped loopback
+		{"000080FE00000000FF005450B6AD1DFE", "fe80::5054:ff:fe1d:adb6"},
+	} {
+		if got := hexIPToString(tc.in); got != tc.want {
+			t.Errorf("hexIPToString(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -155,6 +162,23 @@ func TestScanListeningFile_MatchOwnedInode(t *testing.T) {
 	}
 	if !strings.Contains(addr, ":80") {
 		t.Errorf("addr = %q, want contains :80", addr)
+	}
+}
+
+// A tcp6 listener reports a bracketed address the host can split, so a
+// development server on [::1] (Vite's default) is named app_loopback_bound.
+func TestScanListeningFile_IPv6Loopback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "net_tcp6")
+	content := strings.Join([]string{
+		"  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+		" 0: 00000000000000000000000001000000:1435 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 4242 1 0000000000000000 100 0 0 10 0",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, addr, ok := scanListeningFile(path, map[uint64]struct{}{4242: {}})
+	if !ok || port != 5173 || addr != "[::1]:5173" {
+		t.Fatalf("scanListeningFile = %d %q %t, want 5173 [::1]:5173", port, addr, ok)
 	}
 }
 

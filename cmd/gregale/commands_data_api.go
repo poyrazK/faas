@@ -118,11 +118,16 @@ func cmdDataAPICreate(args []string) int {
 	audience := fs.String("audience", "", "required application JWT audience")
 	origins := fs.String("origins", "", "comma-separated allowed browser origins")
 	resume := fs.Bool("resume", false, "resume configuration and deployment of an existing app")
+	authApp := fs.String("auth", "", "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)")
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || *schema != "api" || api.ValidateScope(*scope) != nil || !dataAPIHTTPS(*issuer) || !dataAPIHTTPS(*jwks) || strings.TrimSpace(*audience) == "" {
-		PrintUsage(os.Stderr, "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--scope SCOPE] [--origins ORIGINS]", "data-api")
+	explicitIssuer := dataAPIHTTPS(*issuer) && dataAPIHTTPS(*jwks) && strings.TrimSpace(*audience) != ""
+	if *authApp != "" && (*issuer != "" || *jwks != "" || *audience != "") {
+		return printErr("Invalid flags", errors.New("--auth replaces --issuer, --jwks-url and --audience; pass one or the other"))
+	}
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || *schema != "api" || api.ValidateScope(*scope) != nil || (*authApp == "" && !explicitIssuer) {
+		PrintUsage(os.Stderr, "usage: gregale data-api create NAME --database DATABASE (--auth AUTH_APP | --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE) [--scope SCOPE] [--origins ORIGINS]", "data-api")
 		return 1
 	}
 	for _, origin := range strings.Split(*origins, ",") {
@@ -135,6 +140,13 @@ func cmdDataAPICreate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
+	if *authApp != "" {
+		resolved, err := resolveAuthIssuer(ctx, client, *authApp)
+		if err != nil {
+			return printErr("Could not resolve the Auth app", err)
+		}
+		*issuer, *jwks, *audience = resolved.Issuer, resolved.JWKSURL, resolved.Audience
+	}
 	db, err := resolveManagedPostgresDatabase(ctx, client, *database)
 	if err != nil {
 		return printErr("Could not resolve PostgreSQL database", err)

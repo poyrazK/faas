@@ -12,14 +12,19 @@ import (
 // into the row so changing the operator's pricing configuration cannot change
 // an already-finalized period.
 type ObjectStorageBillingRecord struct {
-	ID                           string
-	AccountID                    string
-	PeriodStart                  time.Time
-	PeriodEnd                    time.Time
-	Currency                     string
-	StoredByteHours              int64
-	RequestCount                 int64
-	EgressBytes                  int64
+	ID              string
+	AccountID       string
+	PeriodStart     time.Time
+	PeriodEnd       time.Time
+	Currency        string
+	StoredByteHours int64
+	RequestCount    int64
+	EgressBytes     int64
+	// Included* are the plan allowance removed before pricing (ADR-1320),
+	// copied into the row like the rates so the charge stays auditable.
+	IncludedStoredByteHours      int64
+	IncludedRequests             int64
+	IncludedEgressBytes          int64
 	ProviderCostMillicents       int64
 	StorageMillicentsPerGiBMonth int64
 	RequestsMillicentsPerMillion int64
@@ -104,6 +109,7 @@ func (r ObjectStorageBillingRecord) valid() bool {
 	}
 	for _, v := range []int64{
 		r.StoredByteHours, r.RequestCount, r.EgressBytes, r.ProviderCostMillicents,
+		r.IncludedStoredByteHours, r.IncludedRequests, r.IncludedEgressBytes,
 		r.StorageMillicentsPerGiBMonth, r.RequestsMillicentsPerMillion, r.EgressMillicentsPerGiB,
 		r.StorageMillicents, r.RequestsMillicents, r.EgressMillicents, r.TotalMillicents,
 	} {

@@ -60,6 +60,7 @@ type Provider struct {
 	maxStorageBytes        int64
 	maxRestoreWindow       int64
 	dataAPIEnabled         bool
+	authEnabled            bool
 	credentialPollInterval time.Duration
 	roles                  credentialRoleManager
 	historicalPoints       historicalPointReader
@@ -97,6 +98,7 @@ func New(config managedpostgres.BackendConfig, getenv func(string) string) (mana
 	}
 	p := newProvider(config.Region, config.Namespace, apiKey, baseURL, client, parsed)
 	p.dataAPIEnabled = config.DataAPIEnabled
+	p.authEnabled = config.AuthEnabled
 	return p, nil
 }
 

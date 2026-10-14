@@ -154,3 +154,58 @@ func TestWorkflowRecoveryAutomaticBlockedScheduler(t *testing.T) {
 		}
 	}
 }
+
+type isolatedRecoverySchedulerStore struct {
+	*recoveryPolicySchedulerStore
+	manual, automatic           int
+	manualError, automaticError bool
+	manualWork, automaticWork   bool
+}
+
+func (s *isolatedRecoverySchedulerStore) ProcessNextWorkflowInitialManualCompletion(context.Context, time.Time) (bool, error) {
+	s.manual++
+	if s.manualError {
+		return false, errors.New("manual observation unavailable")
+	}
+	return s.manualWork, nil
+}
+func (s *isolatedRecoverySchedulerStore) ProcessNextWorkflowRecoveryAutomaticPolicy(context.Context, time.Time) (bool, error) {
+	s.automatic++
+	if s.automaticError {
+		return false, errors.New("automatic execution unavailable")
+	}
+	return s.automaticWork, nil
+}
+
+// adr: 1278
+func TestWorkflowRecoverySchedulerIndependentBatches(t *testing.T) {
+	cases := []struct {
+		name                                                   string
+		manualError, automaticError, manualWork, automaticWork bool
+	}{
+		{name: "sustained_backlogs", manualWork: true, automaticWork: true},
+		{name: "manual_failure", manualError: true, automaticWork: true},
+		{name: "automatic_failure", automaticError: true, manualWork: true},
+		{name: "manual_idle", automaticWork: true},
+		{name: "automatic_idle", manualWork: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &isolatedRecoverySchedulerStore{recoveryPolicySchedulerStore: &recoveryPolicySchedulerStore{MemStore: state.NewMemStore()}, manualError: tc.manualError, automaticError: tc.automaticError, manualWork: tc.manualWork, automaticWork: tc.automaticWork}
+			l := &Loop{engine: &Engine{store: statetest.NewMem(s)}}
+			manualPerPass, automaticPerPass := 1, 1
+			if tc.manualWork {
+				manualPerPass = api.WorkflowInitialManualCompletionPollBatch
+			}
+			if tc.automaticWork {
+				automaticPerPass = api.WorkflowRecoveryPolicyPollBatch
+			}
+			for pass := 1; pass <= 3; pass++ {
+				l.runEventRecoveryExecutionNotifications(context.Background(), time.Now().UTC())
+				if s.manual != pass*manualPerPass || s.automatic != pass*automaticPerPass || s.completion != pass {
+					t.Fatalf("pass %d manual=%d automatic=%d downstream=%d", pass, s.manual, s.automatic, s.completion)
+				}
+			}
+		})
+	}
+}

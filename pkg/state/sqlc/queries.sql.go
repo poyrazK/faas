@@ -1770,7 +1770,8 @@ WHERE app_id = $1
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count
 `
 
 type ApplyRegressionActionParams struct {
@@ -1809,6 +1810,10 @@ func (q *Queries) ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyR
 		&i.DismissedUntil,
 		&i.ResolvedAt,
 		&i.SuspectedDependency,
+		&i.Kind,
+		&i.ErrorRatePct,
+		&i.ErrorRateBasePct,
+		&i.ErrorCount,
 	)
 	return i, err
 }
@@ -9254,7 +9259,7 @@ WHERE p.account_id = $10::uuid AND p.id = $11::uuid
        AND p.install_id = $2::bigint)
     OR ($9::text = 'gitlab' AND EXISTS (
        SELECT 1 FROM gitlab_oauth_connections c WHERE c.account_id = p.account_id)))
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state
 `
 
 type CreateEnvironmentGitSourceParams struct {
@@ -9315,6 +9320,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -12226,6 +12232,35 @@ func (q *Queries) EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg
 	return err
 }
 
+const enqueueEnvironmentGitNotification = `-- name: EnqueueEnvironmentGitNotification :exec
+INSERT INTO app_webhook_deliveries
+    (source_event_id, webhook_id, account_id, event, payload, created_at, updated_at, next_attempt_at)
+SELECT $1::uuid, h.id, h.account_id, 'environment.gitops.changed',
+       $2::jsonb, $3::timestamptz, $3::timestamptz, $3::timestamptz
+FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
+WHERE h.account_id = $4::uuid AND h.scope = 'account' AND h.enabled
+  AND 'environment.gitops.changed' = ANY(h.event_filter)
+  AND a.status = 'active' AND a.abuse_hold_at IS NULL
+ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING
+`
+
+type EnqueueEnvironmentGitNotificationParams struct {
+	EventID   pgtype.UUID
+	Payload   []byte
+	NowAt     pgtype.Timestamptz
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error {
+	_, err := db.Exec(ctx, enqueueEnvironmentGitNotification,
+		arg.EventID,
+		arg.Payload,
+		arg.NowAt,
+		arg.AccountID,
+	)
+	return err
+}
+
 const enqueueEnvironmentGitOps = `-- name: EnqueueEnvironmentGitOps :exec
 INSERT INTO environment_gitops_jobs (source_id, desired_generation, next_attempt_at)
 VALUES ($1::uuid, $2::bigint, $3::timestamptz)
@@ -13670,7 +13705,7 @@ func (q *Queries) EnvironmentWorkloadQualificationInputsCurrent(ctx context.Cont
 }
 
 const environmentWorkloadQualificationSourceForUpdate = `-- name: EnvironmentWorkloadQualificationSourceForUpdate :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_workload_qualification_requests q
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider, s.notification_state FROM environment_workload_qualification_requests q
 JOIN environment_workload_graphs g ON g.id=q.graph_id JOIN environment_git_sources s ON s.id=g.source_id
 WHERE q.id=$1::uuid FOR UPDATE OF s
 `
@@ -13705,6 +13740,7 @@ func (q *Queries) EnvironmentWorkloadQualificationSourceForUpdate(ctx context.Co
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -19864,7 +19900,7 @@ func (q *Queries) GetEnvironmentGitRevisionApproval(ctx context.Context, db DBTX
 }
 
 const getEnvironmentGitSource = `-- name: GetEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider, s.notification_state FROM environment_git_sources s
 JOIN project_environments e ON e.id = s.environment_id
 WHERE s.account_id = $1::uuid AND s.project_id = $2::uuid
   AND e.slug = $3::text AND NOT s.detached
@@ -19906,12 +19942,13 @@ func (q *Queries) GetEnvironmentGitSource(ctx context.Context, db DBTX, arg GetE
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
 
 const getEnvironmentGitSourceByID = `-- name: GetEnvironmentGitSourceByID :one
-SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider FROM environment_git_sources WHERE id = $1::uuid
+SELECT id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state FROM environment_git_sources WHERE id = $1::uuid
 `
 
 func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sourceID pgtype.UUID) (EnvironmentGitSource, error) {
@@ -19944,6 +19981,7 @@ func (q *Queries) GetEnvironmentGitSourceByID(ctx context.Context, db DBTX, sour
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -20712,7 +20750,8 @@ const getRegressionObservation = `-- name: GetRegressionObservation :one
 SELECT app_id, deployment_id, route,
        p95_ms, p95_base_ms, affected_count,
        regression_factor, first_detected_at, last_detected_at,
-       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND deployment_id = $2
@@ -20745,6 +20784,10 @@ func (q *Queries) GetRegressionObservation(ctx context.Context, db DBTX, arg Get
 		&i.DismissedUntil,
 		&i.ResolvedAt,
 		&i.SuspectedDependency,
+		&i.Kind,
+		&i.ErrorRatePct,
+		&i.ErrorRateBasePct,
+		&i.ErrorCount,
 	)
 	return i, err
 }
@@ -31890,13 +31933,14 @@ SELECT deployment_id, route,
                 AND dismissed_until <= now() THEN 'active'
            ELSE state
        END AS state,
-       acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+       acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+       kind, error_rate_pct, error_rate_base_pct, error_count
 FROM debug_regression_observations
 WHERE app_id = $1
   AND last_detected_at > now() - $2::interval
   AND state <> 'resolved'
   AND (state <> 'dismissed' OR dismissed_until IS NULL OR dismissed_until <= now())
-ORDER BY regression_factor DESC, last_detected_at DESC
+ORDER BY (kind <> 'latency') DESC, regression_factor DESC, last_detected_at DESC
 `
 
 type ListActiveRegressionsByAppParams struct {
@@ -31918,13 +31962,19 @@ type ListActiveRegressionsByAppRow struct {
 	DismissedUntil      pgtype.Timestamptz
 	ResolvedAt          pgtype.Timestamptz
 	SuspectedDependency []byte
+	Kind                string
+	ErrorRatePct        pgtype.Numeric
+	ErrorRateBasePct    pgtype.Numeric
+	ErrorCount          int32
 }
 
 // Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 // `since` is an interval (e.g. '1 hour') clamped handler-side to the
-// plan's DebugTelemetryRetentionDays cap. ORDER BY regression_factor
-// DESC, last_detected_at DESC matches the dashboard render order
-// (worst regression at the top, then most-recently-reconfirmed).
+// plan's DebugTelemetryRetentionDays cap. Observations that include the
+// error signal come first (an errors-only row stores regression_factor
+// 1.00, which would otherwise always sort it last), then regression_factor
+// DESC, last_detected_at DESC: the dashboard render order (worst regression
+// at the top, then most-recently-reconfirmed).
 // Uses debug_regression_observations_app_idx (00436).
 func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg ListActiveRegressionsByAppParams) ([]ListActiveRegressionsByAppRow, error) {
 	rows, err := db.Query(ctx, listActiveRegressionsByApp, arg.AppID, arg.Column2)
@@ -31949,6 +31999,10 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 			&i.DismissedUntil,
 			&i.ResolvedAt,
 			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
 		); err != nil {
 			return nil, err
 		}
@@ -42380,7 +42434,7 @@ func (q *Queries) LockEnvironmentGitOpsServingProject(ctx context.Context, db DB
 }
 
 const lockEnvironmentGitSource = `-- name: LockEnvironmentGitSource :one
-SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider FROM environment_git_sources s
+SELECT s.id, s.account_id, s.project_id, s.environment_id, s.repository_id, s.installation_id, s.repository, s.source_ref, s.manifest_path, s.mode, s.approval_policy, s.prune, s.suspended, s.generation, s.intent_version, s.approved_revision_id, s.applied_revision_id, s.source_checked_at, s.source_error_code, s.created_at, s.updated_at, s.source_commit_sha, s.source_definition_digest, s.source_verified_at, s.detached, s.provider, s.notification_state FROM environment_git_sources s
 WHERE s.account_id = $1::uuid AND s.id = $2::uuid
 FOR UPDATE
 `
@@ -42420,6 +42474,7 @@ func (q *Queries) LockEnvironmentGitSource(ctx context.Context, db DBTX, arg Loc
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -54219,6 +54274,17 @@ func (q *Queries) ObjectUploadRoutesList(ctx context.Context, db DBTX, arg Objec
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectUsageAccountPlan = `-- name: ObjectUsageAccountPlan :one
+SELECT plan FROM accounts WHERE id = $1
+`
+
+func (q *Queries) ObjectUsageAccountPlan(ctx context.Context, db DBTX, id pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectUsageAccountPlan, id)
+	var plan string
+	err := row.Scan(&plan)
+	return plan, err
 }
 
 const objectUsageAuthorizationCount = `-- name: ObjectUsageAuthorizationCount :one
@@ -71142,6 +71208,74 @@ func (q *Queries) RequestTelemetryCoverage(ctx context.Context, db DBTX, arg Req
 	return i, err
 }
 
+const requestTelemetryErrorsByRoute = `-- name: RequestTelemetryErrorsByRoute :many
+
+SELECT route,
+       SUM(GREATEST(count, 1)::bigint)::bigint AS requests,
+       COALESCE(SUM(GREATEST(count, 1)::bigint) FILTER (WHERE status >= 500), 0)::bigint AS error_requests
+FROM request_telemetry
+WHERE app_id = $1
+  AND deployment_id = $2
+  AND received_at >= $3
+  AND received_at <  $4
+GROUP BY route
+`
+
+type RequestTelemetryErrorsByRouteParams struct {
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	ReceivedAt   pgtype.Timestamptz
+	ReceivedAt_2 pgtype.Timestamptz
+}
+
+type RequestTelemetryErrorsByRouteRow struct {
+	Route         string
+	Requests      int64
+	ErrorRequests int64
+}
+
+// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
+// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
+// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
+// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
+// exceeds p95_base_ms * 1.20). The detections persist here.
+//
+// A native sqlc RequestTelemetryRegression query was tried during the PR-A
+// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
+// reference" parser on (deployment_id) even after explicit ON clauses;
+// the workaround is a LATERAL join that requires a more invasive query
+// refactor. Go-side composition of the two PR-A queries above is the
+// chosen workaround (cheap, no parser gymnastics).
+// Per-route represented request and server-error (HTTP 5xx) counts for one
+// deployment and window, weighted by the publisher's collapsed-row count.
+// The regression detector compares the error share of the current and the
+// previous deployment (ADR-127 amendment: error-rate regressions). Same
+// index as RequestTelemetryBaselineP95ByRoute.
+func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, arg RequestTelemetryErrorsByRouteParams) ([]RequestTelemetryErrorsByRouteRow, error) {
+	rows, err := db.Query(ctx, requestTelemetryErrorsByRoute,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.ReceivedAt,
+		arg.ReceivedAt_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestTelemetryErrorsByRouteRow{}
+	for rows.Next() {
+		var i RequestTelemetryErrorsByRouteRow
+		if err := rows.Scan(&i.Route, &i.Requests, &i.ErrorRequests); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestTelemetryRouteCustomers = `-- name: RequestTelemetryRouteCustomers :many
 WITH filtered AS MATERIALIZED (
     SELECT rt.route, rt.method, rt.count::bigint AS requests, rt.received_at,
@@ -71749,7 +71883,8 @@ WHERE last_detected_at <= now() - $1::interval
 RETURNING app_id, deployment_id, route,
           p95_ms, p95_base_ms, affected_count,
           regression_factor, first_detected_at, last_detected_at,
-          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency
+          state, acknowledged_at, dismissed_until, resolved_at, suspected_dependency,
+          kind, error_rate_pct, error_rate_base_pct, error_count
 `
 
 // A detector pass that no longer sees a regression resolves the previous
@@ -71779,6 +71914,10 @@ func (q *Queries) ResolveStaleRegressionObservations(ctx context.Context, db DBT
 			&i.DismissedUntil,
 			&i.ResolvedAt,
 			&i.SuspectedDependency,
+			&i.Kind,
+			&i.ErrorRatePct,
+			&i.ErrorRateBasePct,
+			&i.ErrorCount,
 		); err != nil {
 			return nil, err
 		}
@@ -75100,7 +75239,7 @@ UPDATE environment_git_sources
 SET approved_revision_id = $1::uuid,
     generation = generation + 1, updated_at = now()
 WHERE id = $2::uuid AND generation = $3::bigint
-RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
+RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state
 `
 
 type SetEnvironmentApprovedRevisionParams struct {
@@ -75139,6 +75278,7 @@ func (q *Queries) SetEnvironmentApprovedRevision(ctx context.Context, db DBTX, a
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -77549,7 +77689,7 @@ func (q *Queries) UpdateDeploymentStatus(ctx context.Context, db DBTX, arg Updat
 const updateEnvironmentGitSourceControl = `-- name: UpdateEnvironmentGitSourceControl :one
 UPDATE environment_git_sources SET mode = $1::text, prune = $2::boolean,
     suspended = $3::boolean, generation = generation + 1, intent_version = intent_version + 1, updated_at = now()
-WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider
+WHERE id = $4::uuid AND generation = $5::bigint RETURNING id, account_id, project_id, environment_id, repository_id, installation_id, repository, source_ref, manifest_path, mode, approval_policy, prune, suspended, generation, intent_version, approved_revision_id, applied_revision_id, source_checked_at, source_error_code, created_at, updated_at, source_commit_sha, source_definition_digest, source_verified_at, detached, provider, notification_state
 `
 
 type UpdateEnvironmentGitSourceControlParams struct {
@@ -77596,6 +77736,7 @@ func (q *Queries) UpdateEnvironmentGitSourceControl(ctx context.Context, db DBTX
 		&i.SourceVerifiedAt,
 		&i.Detached,
 		&i.Provider,
+		&i.NotificationState,
 	)
 	return i, err
 }
@@ -78585,21 +78726,27 @@ func (q *Queries) UpsertOIDCTrustPolicy(ctx context.Context, db DBTX, arg Upsert
 }
 
 const upsertRegressionObservation = `-- name: UpsertRegressionObservation :exec
-
 INSERT INTO debug_regression_observations (
     app_id, deployment_id, route,
     p95_ms, p95_base_ms, affected_count,
-    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency
+    regression_factor, state, first_detected_at, last_detected_at, suspected_dependency,
+    kind, error_rate_pct, error_rate_base_pct, error_count
 ) VALUES (
     $1, $2, $3,
     $4, $5, $6,
-    $7, 'active', now(), now(), $8::jsonb
+    $7, 'active', now(), now(), $8::jsonb,
+    $9, $10, $11, $12
 )
 ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
     p95_ms            = EXCLUDED.p95_ms,
     p95_base_ms       = EXCLUDED.p95_base_ms,
     affected_count    = EXCLUDED.affected_count,
     regression_factor = EXCLUDED.regression_factor,
+    -- kind and error rates describe the latest pass that saw the regression.
+    kind                = EXCLUDED.kind,
+    error_rate_pct      = EXCLUDED.error_rate_pct,
+    error_rate_base_pct = EXCLUDED.error_rate_base_pct,
+    error_count         = EXCLUDED.error_count,
     -- Keep the last known suspect when a pass could not compute one.
     suspected_dependency = COALESCE(EXCLUDED.suspected_dependency, debug_regression_observations.suspected_dependency),
     first_detected_at = CASE
@@ -78607,11 +78754,15 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
           OR (debug_regression_observations.state = 'dismissed'
               AND (debug_regression_observations.dismissed_until IS NULL
                    OR debug_regression_observations.dismissed_until <= now()))
+          OR (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors'))
         THEN EXCLUDED.last_detected_at
         ELSE debug_regression_observations.first_detected_at
     END,
     last_detected_at  = EXCLUDED.last_detected_at,
     state             = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN 'active'
         WHEN debug_regression_observations.state = 'acknowledged' THEN 'acknowledged'
         WHEN debug_regression_observations.state = 'dismissed'
              AND debug_regression_observations.dismissed_until IS NOT NULL
@@ -78619,10 +78770,14 @@ ON CONFLICT (app_id, deployment_id, route) DO UPDATE SET
         ELSE 'active'
     END,
     acknowledged_at   = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN NULL
         WHEN debug_regression_observations.state = 'acknowledged' THEN debug_regression_observations.acknowledged_at
         ELSE NULL
     END,
     dismissed_until   = CASE
+        WHEN (debug_regression_observations.kind = 'latency'
+              AND EXCLUDED.kind IN ('errors', 'latency_and_errors')) THEN NULL
         WHEN debug_regression_observations.state = 'dismissed'
              AND debug_regression_observations.dismissed_until IS NOT NULL
              AND debug_regression_observations.dismissed_until > now()
@@ -78641,20 +78796,12 @@ type UpsertRegressionObservationParams struct {
 	AffectedCount    int32
 	RegressionFactor pgtype.Numeric
 	Column8          []byte
+	Kind             string
+	ErrorRatePct     pgtype.Numeric
+	ErrorRateBasePct pgtype.Numeric
+	ErrorCount       int32
 }
 
-// PR-B (ADR-127 §PR-B) — regression observation persistence + dashboard
-// read patterns. The cron in cmd/apid/debug_regression_cron.go composes
-// RequestTelemetryBaselineP95ByRoute (above) + RequestTelemetryByDeployment
-// in Go to detect per-route regressions (ADR-127 §Decision 5: p95_ms
-// exceeds p95_base_ms * 1.20). The detections persist here.
-//
-// A native sqlc RequestTelemetryRegression query was tried during the PR-A
-// recon: the CTE-on-CTE shape trips sqlc v1.31's "ambiguous column
-// reference" parser on (deployment_id) even after explicit ON clauses;
-// the workaround is a LATERAL join that requires a more invasive query
-// refactor. Go-side composition of the two PR-A queries above is the
-// chosen workaround (cheap, no parser gymnastics).
 // Persist a regression observation. PRIMARY KEY (app_id, deployment_id,
 // route) — the cron upserts on this triple so the table grows at most
 // one row per (deployment, route) across all cron passes, not one row
@@ -78663,6 +78810,12 @@ type UpsertRegressionObservationParams struct {
 // (or a dismissal expires). The webhook trigger uses that timestamp as
 // the detection transition's idempotency key. last_detected_at is
 // refreshed on every pass and backs the dashboard's since filter.
+//
+// A latency-only observation that gains the error signal reopens: a route
+// that starts failing is a new incident even when its slowness was already
+// acknowledged or dismissed, so state returns to active with a new
+// first_detected_at (and therefore a new webhook transition). In ON CONFLICT
+// DO UPDATE, debug_regression_observations.* is the row before this update.
 func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg UpsertRegressionObservationParams) error {
 	_, err := db.Exec(ctx, upsertRegressionObservation,
 		arg.AppID,
@@ -78673,6 +78826,10 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.AffectedCount,
 		arg.RegressionFactor,
 		arg.Column8,
+		arg.Kind,
+		arg.ErrorRatePct,
+		arg.ErrorRateBasePct,
+		arg.ErrorCount,
 	)
 	return err
 }
@@ -79780,6 +79937,21 @@ func (q *Queries) WriteDeploymentHostingVerification(ctx context.Context, db DBT
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const writeEnvironmentGitNotificationState = `-- name: WriteEnvironmentGitNotificationState :exec
+UPDATE environment_git_sources SET notification_state = $1::jsonb
+WHERE id = $2::uuid AND NOT detached
+`
+
+type WriteEnvironmentGitNotificationStateParams struct {
+	NotificationState []byte
+	SourceID          pgtype.UUID
+}
+
+func (q *Queries) WriteEnvironmentGitNotificationState(ctx context.Context, db DBTX, arg WriteEnvironmentGitNotificationStateParams) error {
+	_, err := db.Exec(ctx, writeEnvironmentGitNotificationState, arg.NotificationState, arg.SourceID)
+	return err
 }
 
 const writeProfileAlertState = `-- name: WriteProfileAlertState :exec

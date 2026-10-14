@@ -33,9 +33,11 @@ class WorkflowRecoveryPolicyEvaluation:
     """Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
     resets its automatic failure pause and suppresses older pending automatic actions."""
     proposed: WorkflowRecoveryPolicy
-    """Explicit app recovery policy. Preview prepares plans only. Opt-in automatic_retry requires saved_failure
-    only and explicit failure statuses and execution limits. Resume count caps the absolute generation; preparation
-    and execution budgets are separate. Cancellation remains manual."""
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
+    automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
+    execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
+    Cancellation remains manual."""
     observed_at: datetime.datetime
     created_after: datetime.datetime
     created_before: datetime.datetime

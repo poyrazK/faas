@@ -1,7 +1,9 @@
 # Route regression webhooks
 
 App webhooks can notify your systems when Gregale's route regression detector
-finds that a route has regressed or later recovered. Subscribe to either event
+finds that a route has regressed or later recovered. A route regresses on
+latency (its p95 rose), on errors (it returns HTTP 5xx materially more often
+than on the previous deployment), or on both. Subscribe to either event
 or both:
 
 ```sh
@@ -27,10 +29,14 @@ The event payload is metadata-only:
   "app_id": "...",
   "deployment_id": "...",
   "route": "POST /checkout",
+  "kind": "latency",
   "p95_ms": 183,
   "p95_base_ms": 41,
   "affected_count": 823,
   "regression_factor": 4.46,
+  "error_rate_pct": 0.2,
+  "error_rate_base_pct": 0.1,
+  "error_count": 2,
   "first_detected_at": "2026-09-27T10:41:13Z",
   "last_detected_at": "2026-09-27T10:46:13Z",
   "state": "active",
@@ -47,6 +53,24 @@ The event payload is metadata-only:
 }
 ```
 
+`kind` is `latency`, `errors` or `latency_and_errors`:
+
+- `latency`: the route's p95 is at least 1.2x the previous deployment's, across
+  at least 100 slower requests.
+- `errors`: the share of HTTP 5xx responses rose by at least 5 percentage
+  points and at least doubled, with at least 10 failed requests and at least
+  50 requests on each deployment. `error_rate_pct` and `error_rate_base_pct`
+  are the share after and before the deployment; `error_count` and
+  `affected_count` are the failed requests, and `regression_factor` is 1.00
+  unless the p95 also rose.
+
+Each deployment and route has one observation. When a latency regression later
+starts failing too, the observation reopens as a new incident: it becomes
+`active` again even if you had acknowledged or dismissed it, gets a new
+`transition_id`, and sends another `debug.regression.detected` with `kind`
+`latency_and_errors`. Payloads sent before error-rate detection have no
+`kind`; they are latency regressions.
+
 `suspected_dependency` names the database, cache, HTTP, RPC or messaging
 dependency most likely behind the regression on that route. It is present when
 the app's spans reach the debugger (for example with
@@ -60,8 +84,9 @@ credential.
 - `latency`: its p95 regressed most between the previous and the regressed
   deployment. This is preferred, because the route regression itself is a
   latency signal.
-- `failures`: none of its dependencies slowed down, but this one started
-  failing more often. The suspect then also carries `baseline_error_rate_pct`,
+- `failures`: this dependency started failing more often. An `errors`
+  regression looks for a failing dependency first; a `latency` regression only
+  falls back to one when none of its dependencies slowed down. The suspect then also carries `baseline_error_rate_pct`,
   `error_rate_pct` and, when the spans report one, `error_type`:
 
 ```json

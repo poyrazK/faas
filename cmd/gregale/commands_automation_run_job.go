@@ -14,7 +14,7 @@ import (
 func automationRunJobRequest(p automationRecoveryPlan, rate int, reason string) api.EventRecoveryRequest {
 	targets := make([]api.WorkflowRunRecoveryTarget, 0, len(p.Runs))
 	for _, item := range p.Runs {
-		targets = append(targets, api.WorkflowRunRecoveryTarget{RunID: item.ID, ExpectedResumeCount: item.ExpectedResumeCount, ParentPosition: item.ParentPosition})
+		targets = append(targets, api.WorkflowRunRecoveryTarget{RunID: item.ID, FailureEvidenceID: item.FailureEvidenceID, ExpectedResumeCount: item.ExpectedResumeCount, ParentPosition: item.ParentPosition})
 	}
 	identity := fmt.Sprintf("automation-run-job:%q:%q:%q", p.AppID, p.Name, p.Key)
 	return api.EventRecoveryRequest{ParentJobID: p.ParentJobID, RequestID: uuid.NewSHA1(uuid.NameSpaceURL, []byte(identity)).String(), Mode: "workflow", RatePerSecond: rate, Reason: reason, WorkflowRuns: &api.WorkflowRunRecoveryPlan{Name: p.Name, Runs: targets}}

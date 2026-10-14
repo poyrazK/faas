@@ -20,6 +20,7 @@ import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOp
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
+import type { PreviewEnvironmentGitPlanResponse } from '../models/PreviewEnvironmentGitPlanResponse.js';
 import type { PreviewEnvironmentGitRevisionRequest } from '../models/PreviewEnvironmentGitRevisionRequest.js';
 import type { PreviewEnvironmentGitRevisionResponse } from '../models/PreviewEnvironmentGitRevisionResponse.js';
 import type { ProjectApplyRequest } from '../models/ProjectApplyRequest.js';
@@ -945,6 +946,57 @@ export class ProjectsService {
       url: '/v1/environment-field-ownership',
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview field changes for an immutable commit without approval or writes.
+   * Requires environment read scope and a bound Git source. Verifies the immutable commit, repository identity and definition scope, then observes current intent and ownership. Values are redacted. The candidate plan cannot approve, adopt, deploy or certify runtime readiness. Request a fresh plan after source or environment changes.
+   * @returns PreviewEnvironmentGitPlanResponse Read-only field plan with redacted values and current observation metadata.
+   * @throws ApiError
+   */
+  public static previewEnvironmentGitPlan({
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Immutable commit to assess using the bound Git source.
+     */
+    requestBody: PreviewEnvironmentGitRevisionRequest,
+  }): CancelablePromise<PreviewEnvironmentGitPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/plan',
+      path: {
+        'slug': slug,
+        'environment': environment,
       },
       body: requestBody,
       mediaType: 'application/json',

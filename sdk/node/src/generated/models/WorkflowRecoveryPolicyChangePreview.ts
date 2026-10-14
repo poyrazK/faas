@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkflowRecoveryInitialPolicyChangePreview } from './WorkflowRecoveryInitialPolicyChangePreview.js';
 import type { WorkflowRecoveryPolicy } from './WorkflowRecoveryPolicy.js';
 import type { WorkflowRecoveryPolicyChangeCandidate } from './WorkflowRecoveryPolicyChangeCandidate.js';
 import type { WorkflowRecoveryPolicyChangeEntry } from './WorkflowRecoveryPolicyChangeEntry.js';
@@ -10,6 +11,7 @@ import type { WorkflowRecoveryPolicyResponse } from './WorkflowRecoveryPolicyRes
  * Consistent read-only snapshot of a proposed full replacement. Budget and cooldown observations retain spent charges and preparation targets across versions. Replacement clears automatic pause and failure streak; current contains that historical state. Remaining budgets describe proposed settings even when disabled. Serial slots, inspection errors and execution quota can still prevent progress. No update is authorized by this response; apply the same expected version with deploy write access and MFA. Queue and evidence may change without changing the configuration version.
  */
 export type WorkflowRecoveryPolicyChangePreview = {
+  initial_failures?: WorkflowRecoveryInitialPolicyChangePreview;
   current: WorkflowRecoveryPolicyResponse;
   proposed: WorkflowRecoveryPolicy;
   observed_at: string;

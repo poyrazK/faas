@@ -195,6 +195,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/disconnect":              true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":          true, // GitHub activity recovery form; session-cookie + CSRF-only
 	"GET /dashboard/apps/{slug}/data-api":                        true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/auth":                            true, // ADR-1190 session-auth owner page; the browser calls the Auth app
 	"GET /dashboard/apps/{slug}/data-api/types/{id}":             true, // ADR-968 session-auth type download
 	"POST /dashboard/apps/{slug}/data-api/refresh":               true, // ADR-968 session + CSRF contract refresh adapter
 	"POST /dashboard/apps/{slug}/data-api/{operation}":           true, // ADR-968 session + CSRF schema/type task adapter
@@ -351,7 +352,11 @@ var dtoExclude = map[string]bool{
 	// EdgeRuleParamKind is an internal enum for kind=validate parameter
 	// locations (path, query, header); it never appears on the wire alone.
 	"EdgeRuleParamKind": true,
+	// ADR-1320: a plan's included object storage in month-close billing
+	// units; internal to pricing and never serialized.
+	"ObjectStorageAllowance": true,
 
+	"WorkflowInitialFailureOptions":  true, // client-only inbox query parameters; documented on the route
 	"WorkflowRecoveryHistoryOptions": true, // client-only history query parameters; documented on the route
 	"WorkflowRecoveryReportOptions":  true, // client-only report query parameters; documented on the route
 	// Workflow list options encode URL query parameters, not JSON request bodies.
@@ -1070,6 +1075,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	files := []string{
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_preview.go"),
+		filepath.Join(root, "pkg", "api", "environment_gitops_notifications.go"),
 		filepath.Join(root, "pkg", "api", "environment_definition.go"),
 		filepath.Join(root, "pkg", "api", dtoFile),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
@@ -1093,15 +1100,22 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_recovery.go"),
 		filepath.Join(root, "pkg", "api", "event_workflow_recovery.go"),
 		filepath.Join(root, "pkg", "api", "workflow_run_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_review.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_evidence.go"),
+		filepath.Join(root, "pkg", "api", "workflow_retry_evidence.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_history.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_change.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_initial_policy_change.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_evaluation.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_health_alerts.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_history.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_report.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_overview.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_polling_alert.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),

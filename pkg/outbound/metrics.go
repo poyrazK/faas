@@ -96,7 +96,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		}, []string{"integration_id"}),
 		aiUsageRecordEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_usage_record_events_total",
-			Help: "AI usage settlement writes by integration and bounded event (recorded, state_error, or unavailable).",
+			Help: "AI usage settlement writes by integration and bounded event (recorded, retried, state_error after the last attempt, or unavailable).",
 		}, []string{"integration_id", "event"}),
 		relayConnections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_relay_connections_total",
