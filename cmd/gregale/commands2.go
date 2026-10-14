@@ -5159,7 +5159,7 @@ func cmdCrons(args []string) int {
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
-		path := fs.String("path", "", "HTTP request path (HTTP cron only; default: /)")
+		path := fs.String("path", "", "path the cron sends a POST to (HTTP cron only; default: /)")
 		command := fs.String("command", "", "executable for a deployment-attached command cron")
 		commandArgs := registerJobsMultiFlag(fs, "arg", "append one command argument; repeat as needed")
 		commandShell := fs.Bool("shell", false, "run --command as a shell string (requires exactly one string and no --arg flags)")
@@ -5327,7 +5327,10 @@ func createCronAndRender(ctx context.Context, client *Client, slug string, req a
 	if jsonOutput {
 		return jsonOut(writeJSON(c))
 	}
-	target := c.Path
+	// HTTP crons fire a synthetic POST (spec §4); a cron aimed at a GET-only
+	// route failed every run with 404 while the receipt showed only the
+	// path (H10-14).
+	target := "POST " + c.Path
 	if c.Kind == "command" {
 		target = "command " + formatCronCommand(c)
 	}

@@ -1488,11 +1488,11 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "next", Short: "Show upcoming expression times across app tasks, with state and policy caveats", Examples: []string{"gregale crons next --app my-api", "gregale crons next --app my-api --json"}, Flags: []cliFlag{{Name: "app", Short: "app slug (linked app or picker by default)", Value: "SLUG"}}},
 			{Name: "list", Short: "List cron rules", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
-			{Name: "add", Short: "Schedule an HTTP request or deployment command", Examples: []string{"gregale crons add --app my-api --interactive"}, Flags: []cliFlag{
+			{Name: "add", Short: "Schedule a POST to an app path, or a deployment command", Examples: []string{"gregale crons add --app my-api --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose an HTTP path, schedule, and timezone, preview run times, and confirm creation", Bool: true},
 				{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 				{Name: "schedule", Short: "five-field cron expression (required unless interactive)", Value: "EXPR"},
-				{Name: "path", Short: "HTTP request path (mutually exclusive with --command)", Value: "PATH"},
+				{Name: "path", Short: "path the cron sends a POST to (mutually exclusive with --command)", Value: "PATH"},
 				{Name: "command", Short: "executable for a deployment command cron", Value: "EXEC"},
 				{Name: "arg", Short: "append one command argument (repeatable)", Value: "ARG"},
 				{Name: "shell", Short: "run --command as one shell string"},
@@ -1510,7 +1510,7 @@ var cliCommands = []cliCommand{
 				{Name: "interactive", Short: "choose an HTTP task, edit current values, preview times, and confirm changes", Bool: true},
 				{Name: "app", Short: "app slug for interactive task selection (linked app or picker by default)", Value: "SLUG"},
 				{Name: "schedule", Short: "new five-field cron expression", Value: "EXPR"},
-				{Name: "path", Short: "HTTP request path", Value: "PATH"},
+				{Name: "path", Short: "path the cron sends a POST to", Value: "PATH"},
 				{Name: "timezone", Short: "IANA timezone", Value: "TZ"},
 				{Name: "enable", Short: "enable the cron"},
 				{Name: "disable", Short: "disable the cron"},
