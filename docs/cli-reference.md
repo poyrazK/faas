@@ -2306,7 +2306,7 @@ Add an alert rule
 | `--event-subscription-id <UUID>` | Subscription UUID for event consumer metrics |  |
 | `--edge-rule-id <ID>` | edge rule for edge_rule_hits / edge_rule_log_hits (empty = all rules) |  |
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
-| `--webhook-url <URL>` | https webhook URL | required |
+| `--webhook-url <URL>` | http(s) webhook URL (https recommended: deliveries are signed, not encrypted) | required |
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin (this or --webhook-secret is required) |  |
@@ -14145,7 +14145,7 @@ Add a webhook
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--target-url <URL>` | HTTPS target URL | required |
+| `--target-url <URL>` | http(s) target URL (https recommended: deliveries are signed, not encrypted) | required |
 | `--event <EVENT>` | event to deliver (repeat) |  |
 | `--retry-policy <POLICY>` | default\|aggressive\|none |  |
 | `--delivery-format <FORMAT>` | json\|cloudevents |  |
@@ -14169,7 +14169,7 @@ Update one webhook
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
-| `--target-url <URL>` | new HTTPS target URL |  |
+| `--target-url <URL>` | new http(s) target URL |  |
 | `--retry-policy <POLICY>` | new retry policy | one of `default` · `aggressive` · `none` |
 | `--delivery-format <FORMAT>` | new delivery format | one of `json` · `cloudevents` |
 | `--enable` | enable the webhook |  |

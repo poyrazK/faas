@@ -880,7 +880,7 @@ var cliCommands = []cliCommand{
 				{Name: "event-subscription-id", Short: "Subscription UUID for event consumer metrics", Value: "UUID"},
 				{Name: "edge-rule-id", Short: "edge rule for edge_rule_hits / edge_rule_log_hits (empty = all rules)", Value: "ID"},
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
-				{Name: "webhook-url", Short: "https webhook URL", Req: true, Value: "URL"},
+				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted)", Req: true, Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
@@ -4989,11 +4989,11 @@ var cliCommands = []cliCommand{
 		Short:   "Manage app and account release webhooks (webhooks account <verb>)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's webhooks (slug defaults to linked context)", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{{Name: "app", Short: "app slug (alternative to the positional)", Value: "slug"}}},
-			{Name: "add", Short: "Add a webhook", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "target-url", Short: "HTTPS target URL", Req: true, Value: "URL"}, {Name: "event", Short: "event to deliver (repeat)", Value: "EVENT"}, {Name: "retry-policy", Short: "default|aggressive|none", Value: "POLICY"}, {Name: "delivery-format", Short: "json|cloudevents", Value: "FORMAT"}}},
+			{Name: "add", Short: "Add a webhook", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "target-url", Short: "http(s) target URL (https recommended: deliveries are signed, not encrypted)", Req: true, Value: "URL"}, {Name: "event", Short: "event to deliver (repeat)", Value: "EVENT"}, {Name: "retry-policy", Short: "default|aggressive|none", Value: "POLICY"}, {Name: "delivery-format", Short: "json|cloudevents", Value: "FORMAT"}}},
 			{Name: "info", Short: "Show one webhook", Positionals: []string{"<webhook-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}}},
 			{Name: "update", Short: "Update one webhook", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
-				{Name: "target-url", Short: "new HTTPS target URL", Value: "URL"},
+				{Name: "target-url", Short: "new http(s) target URL", Value: "URL"},
 				{Name: "retry-policy", Short: "new retry policy", Value: "POLICY", ClosedSet: []string{"default", "aggressive", "none"}},
 				{Name: "delivery-format", Short: "new delivery format", Value: "FORMAT", ClosedSet: []string{"json", "cloudevents"}},
 				{Name: "enable", Short: "enable the webhook"},
