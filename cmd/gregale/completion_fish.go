@@ -144,6 +144,18 @@ func renderFishHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "complete -c gregale -n '__gregale_profile_value_position' -f -a '(gregale completion profile-names 2>/dev/null)'")
 	_, _ = fmt.Fprintln(w, "complete -c gregale -n 'test (count (__gregale_context_words)) -eq 1' -l profile -r -f -a '(gregale completion profile-names 2>/dev/null)' -d 'Connection profile' ")
 
+	_, _ = io.WriteString(w, `function __gregale_local_name_position
+  set -l words (__gregale_context_words)
+  set -l current (commandline -ct)
+  gregale (__gregale_profile_args) completion local-name-context -- $words[2..-1] "$current" >/dev/null 2>/dev/null
+end
+function __gregale_local_names
+  set -l words (__gregale_context_words)
+  set -l current (commandline -ct)
+  gregale (__gregale_profile_args) completion local-names -- $words[2..-1] "$current" 2>/dev/null | string escape
+end
+complete -c gregale -f -n __gregale_local_name_position -a '(__gregale_local_names)'
+`)
 	_, _ = io.WriteString(w, `function __gregale_secret_key_position
   set -l words (__gregale_context_words)
   test "$words[2]" = secrets; or return 1
@@ -198,7 +210,7 @@ complete -c gregale -f -n __gregale_secret_key_position -a '(__gregale_secret_ke
 	// Org-scoped and app-scoped leaf parsers accept these flags across
 	// nested command families. Keep their values cache-backed even when
 	// the parent cliCommand does not duplicate every leaf flag.
-	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n \"__fish_prev_arg_in --app\" -a \"(__gregale_cache_slugs apps)\"")
+	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n \"__fish_prev_arg_in --app; and not __gregale_local_name_position\" -a \"(__gregale_cache_slugs apps)\"")
 	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n \"__fish_prev_arg_in --org\" -a \"(__gregale_cache_slugs orgs)\"")
 	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n __gregale_build_id_position -a \"(__gregale_cache_ids builds)\"")
 	_, _ = fmt.Fprintln(w, "complete -c gregale -f -n __gregale_deployment_id_position -a \"(__gregale_cache_ids deployments)\"")
@@ -234,6 +246,7 @@ func fishAppSlugPositionCondition(position cliAppSlugCompletionPosition) string 
 
 func renderFishAppSlugPosition(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "function __gregale_app_slug_position")
+	_, _ = fmt.Fprintln(w, "  __gregale_local_name_position; and return 1")
 	_, _ = fmt.Fprintln(w, "  set -l words (__gregale_context_words)")
 	_, _ = fmt.Fprintln(w, "  set -l position (count $words)")
 	for _, position := range appSlugCompletionPositions() {
@@ -407,7 +420,11 @@ func renderFishCommand(w io.Writer, c cliCommand) {
 	}
 	// Flags.
 	for _, f := range c.Flags {
-		renderFishFlag(w, fmt.Sprintf("__fish_seen_subcommand_from %s", c.Name), f)
+		condition := fmt.Sprintf("__fish_seen_subcommand_from %s", c.Name)
+		if c.Name == "logs" {
+			condition += "; and not __gregale_local_name_position"
+		}
+		renderFishFlag(w, condition, f)
 	}
 }
 

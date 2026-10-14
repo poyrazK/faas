@@ -22916,6 +22916,24 @@ CREATE TABLE public.invocation_plain_replays (
 
 
 --
+-- Name: invocation_queue_lease_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.invocation_queue_lease_receipts (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    replay_generation bigint NOT NULL,
+    token_hash text NOT NULL,
+    issued_at timestamp with time zone NOT NULL,
+    lease_expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT invocation_queue_lease_receipts_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT invocation_queue_lease_receipts_check CHECK ((lease_expires_at > issued_at)),
+    CONSTRAINT invocation_queue_lease_receipts_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT invocation_queue_lease_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
 -- Name: invocation_work_cancellations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36034,6 +36052,14 @@ ALTER TABLE ONLY public.invocation_plain_replays
 
 ALTER TABLE ONLY public.invocation_plain_replays
     ADD CONSTRAINT invocation_plain_replays_replay_invocation_id_key UNIQUE (replay_invocation_id);
+
+
+--
+-- Name: invocation_queue_lease_receipts invocation_queue_lease_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_queue_lease_receipts
+    ADD CONSTRAINT invocation_queue_lease_receipts_pkey PRIMARY KEY (invocation_id);
 
 
 --
@@ -55507,6 +55533,14 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocations
     ADD CONSTRAINT invocation_queue_binding_tenant FOREIGN KEY (queue_binding_id, app_id, account_id) REFERENCES public.queue_bindings(id, app_id, account_id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: invocation_queue_lease_receipts invocation_queue_lease_receipts_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocation_queue_lease_receipts
+    ADD CONSTRAINT invocation_queue_lease_receipts_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
 
 
 --

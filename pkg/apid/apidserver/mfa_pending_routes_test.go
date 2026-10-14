@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/durableentity"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -73,6 +74,9 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 		t.Fatalf("only %d session routes found; the scan is broken", len(routes))
 	}
 	e := apidserver.SetupWithMFA(t, api.PlanPro, false, true)
+	// With the preview off, durable entity routes answer 404 before auth.
+	// Enable it so their MFA enforcement stays covered.
+	(*e.Srv()).Durable().Engine = &durableentity.Manager{}
 	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
 		AccountID: (*e.Acct()).ID, Slug: "mfa-pending-app", Status: state.AppActive, RAMMB: 256,
 	}); err != nil {

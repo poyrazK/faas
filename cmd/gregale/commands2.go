@@ -950,7 +950,8 @@ func cmdApp(args []string) int {
 	return 0
 }
 
-// cmdAppsRm implements `gregale apps -q <slug>` (DELETE /v1/apps/{slug}).
+// cmdAppsRm implements `gregale apps rm <slug>` and `gregale apps -q <slug>`
+// (DELETE /v1/apps/{slug}).
 // On the interactive path (no -q) the user must retype the slug
 // verbatim (issue #312) so a stray `y` cannot delete the app.
 
@@ -964,7 +965,7 @@ func cmdAppsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps [--dry-run|-q|--quiet|--yes] <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale apps rm <slug> [--dry-run|-q|--quiet|--yes]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -2738,7 +2739,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployRuntime, deployHandler := *runtime, *handler
 	if *templateName != "" {
 		if !templates.Exists(*templateName) {
-			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.Names, ", ")))
+			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
 		}
 		if rt, hnd, functionTemplate := templateFunctionConfig(*templateName); functionTemplate {
 			if deployApp {
@@ -3223,6 +3224,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			projectName = defaultProjectSlug(*tarball)
 		case *name == "" && *templateName != "":
 			projectName = *templateName
+		case *name == "":
+			// Compose names its project at the top level; a directory
+			// name that differs must not claim another project's apps.
+			if composeName := composeProjectName(sourceDir); composeName != "" {
+				projectName = composeName
+			}
 		}
 		*projectSlug = sanitizeProjectSlug(projectName)
 	}
@@ -3824,7 +3831,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return jsonOut(writeJSONProblem(planProblem(plan)))
 			}
 			printPlanText(osStdout, plan, excludeList, *deployShowAffected)
-			return printErr("Plan is not applicable on this plan", errors.New("over-quota or unsupported configuration"))
+			return printErr("Project plan cannot be applied", planBlockedError(plan))
 		}
 		if !*yes {
 			if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
@@ -5159,7 +5166,7 @@ func cmdCrons(args []string) int {
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
 		schedule := fs.String("schedule", "", "cron expression (required)")
-		path := fs.String("path", "", "HTTP request path (HTTP cron only; default: /)")
+		path := fs.String("path", "", "path the cron sends a POST to (HTTP cron only; default: /)")
 		command := fs.String("command", "", "executable for a deployment-attached command cron")
 		commandArgs := registerJobsMultiFlag(fs, "arg", "append one command argument; repeat as needed")
 		commandShell := fs.Bool("shell", false, "run --command as a shell string (requires exactly one string and no --arg flags)")
@@ -5327,7 +5334,10 @@ func createCronAndRender(ctx context.Context, client *Client, slug string, req a
 	if jsonOutput {
 		return jsonOut(writeJSON(c))
 	}
-	target := c.Path
+	// HTTP crons fire a synthetic POST (spec §4); a cron aimed at a GET-only
+	// route failed every run with 404 while the receipt showed only the
+	// path (H10-14).
+	target := "POST " + c.Path
 	if c.Kind == "command" {
 		target = "command " + formatCronCommand(c)
 	}
@@ -6369,7 +6379,17 @@ func validateRepoSlug(s string) error {
 // inner subcommand today; the switch leaves room for future siblings
 // (e.g. `logs list` for batch tail of all app's deployments) without
 // a wire-format break.
+// Mirrors gatewayd's archiveInstanceRegex; archive IDs are not restricted to UUIDs.
+var archiveLogInstancePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
 func cmdLogs(args []string) int {
+	return cmdLogsWithPreviewContext(args, nil)
+}
+
+func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) int {
+	if len(args) > 0 && args[0] == "defaults" {
+		return cmdLogsDefaults(args[1:])
+	}
 	if len(args) > 0 && args[0] == "views" {
 		return cmdLogViews(args[1:])
 	}
@@ -6377,7 +6397,15 @@ func cmdLogs(args []string) int {
 		return cmdLogsTail(args[1:])
 	}
 	fs := newFlagSet("logs", flag.ContinueOnError)
+	dryRun := fs.Bool("dry-run", false, "preview the effective log query locally without authentication or remote reads")
+	clearStatus := fs.Bool("clear-status", false, "remove the saved status filter for one ordinary HTTP view query")
+	clearGrep := fs.Bool("clear-grep", false, "remove the saved text filter for one runtime view query")
+	clearLevel := fs.Bool("clear-level", false, "remove the saved level filter for one runtime view query")
+	clearRoute := fs.Bool("clear-route", false, "remove the saved route filter for one HTTP view query")
+	latestFailure := fs.Bool("latest-failure", false, "read the latest failed deployment's retained build/deploy log")
+	latestRequestError := fs.Bool("latest-request-error", false, "select newest retained HTTP 5xx telemetry in a bounded window")
 	viewName := fs.String("view", "", "reuse a named local log view")
+	savedView := fs.Bool("saved-view", false, "use the project-local preferred log view; excludes --view and other selectors")
 	interactive := fs.Bool("interactive", false, "choose log source, time window, and filters interactively")
 	follow := fs.Bool("follow", false, "follow new lines")
 	deployment := fs.String("deployment", "", "deployment id or vN revision (default: latest)")
@@ -6394,7 +6422,7 @@ func cmdLogs(args []string) int {
 	all := fs.Bool("all", false, "read every retained HTTP request page")
 	archive := fs.Bool("archive", false, "read durable logs for one instance and UTC day")
 	archiveInstance := fs.String("instance", "", "instance id for --archive")
-	archiveDate := fs.String("date", "", "UTC day for --archive (YYYY-MM-DD)")
+	archiveDate := fs.String("date", "", "UTC day for --archive (today, yesterday, or YYYY-MM-DD)")
 	// Error-explanations cluster (spec §6.4 amendment 1): when the
 	// stream ends, print a 3-line summary covering the last failure
 	// (lifted from the deployment's persisted error_code), the count
@@ -6408,15 +6436,84 @@ func cmdLogs(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
 	}
-	if logsFlagWasSet(fs, "view") {
-		invalid := *viewName == "" || fs.NArg() > 1
+	savedViewPath := ""
+	if *savedView {
+		if logsFlagWasSet(fs, "view") || *latestFailure || *latestRequestError || *interactive {
+			return printErr("Conflicting log selectors", errors.New("use --saved-view separately from --view, --latest-failure, --latest-request-error, and --interactive"))
+		}
+		defaults, path, err := readLogDefaults()
+		if errors.Is(err, os.ErrNotExist) {
+			return printErr("No saved log view defaults", errors.New("configure logs defaults set NAME with an existing saved view, or use --view NAME; no API request was made"))
+		}
+		if err != nil {
+			return printErr("Could not read log defaults", err)
+		}
+		*viewName, savedViewPath = defaults.View, path
+	}
+	useView := logsFlagWasSet(fs, "view") || *savedView
+	if *clearStatus && !useView {
+		return printErr("Invalid status clear option", errors.New("--clear-status requires --view NAME for an ordinary HTTP view"))
+	}
+	if (*clearGrep || *clearLevel || *clearRoute) && !useView {
+		return printErr("Invalid log filter clear option", errors.New("--clear-grep, --clear-level, and --clear-route require --view NAME with compatible saved filters"))
+	}
+	if *latestRequestError {
+		invalid := false
 		fs.Visit(func(f *flag.Flag) {
-			if f.Name != "view" && f.Name != "app" {
+			if f.Name != "dry-run" && f.Name != "app" && f.Name != "latest-request-error" && f.Name != "since" && f.Name != "route" {
 				invalid = true
 			}
 		})
-		if invalid {
-			return printErr("Invalid log view flags", errors.New("--view NAME accepts only an app target; inspect the saved filters with logs views show NAME"))
+		if invalid || fs.NArg() > 1 {
+			return printErr("Invalid latest request error flags", errors.New("--latest-request-error accepts only an app target, --since, and --route; HTTP telemetry is selected automatically"))
+		}
+		pos, err := mergeAppFlag(fs.Args(), *app, 1)
+		if err != nil {
+			return printErr("Invalid app target", err)
+		}
+		target := ""
+		if len(pos) == 1 {
+			target = pos[0]
+		}
+		slug, err := resolveLogsAppTarget(target, *dryRun)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		if *dryRun {
+			return previewSelectedLogQuery(fs, slug, "latest_request_error", viewPreview)
+		}
+		return latestHTTPRequestError(slug, *since, *route)
+	}
+	if *latestFailure {
+		invalid := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "dry-run" && f.Name != "app" && f.Name != "latest-failure" {
+				invalid = true
+			}
+		})
+		if invalid || fs.NArg() > 1 {
+			return printErr("Invalid latest failure log flags", errors.New("--latest-failure accepts only an app target; use an explicit --deployment for other log filters"))
+		}
+		pos, err := mergeAppFlag(fs.Args(), *app, 1)
+		if err != nil {
+			return printErr("Invalid app target", err)
+		}
+		target := ""
+		if len(pos) == 1 {
+			target = pos[0]
+		}
+		slug, err := resolveLogsAppTarget(target, *dryRun)
+		if err != nil {
+			return readAppTargetError(err)
+		}
+		if *dryRun {
+			return previewSelectedLogQuery(fs, slug, "latest_failure", viewPreview)
+		}
+		return runLatestFailureLogs(slug)
+	}
+	if useView {
+		if *viewName == "" || fs.NArg() > 1 {
+			return printErr("Invalid log view flags", errors.New("provide --view NAME and at most one app target"))
 		}
 		views, err := loadLogViews()
 		if err != nil {
@@ -6424,13 +6521,49 @@ func cmdLogs(args []string) int {
 		}
 		view, exists := views.Views[*viewName]
 		if !exists {
-			return printErr("Unknown log view", errors.New("run gregale logs views list to see saved views"))
+			if *savedView {
+				return printErr("Preferred log view is unavailable", fmt.Errorf("view %q is not in the local saved views; inspect logs defaults show and logs views list, then use logs defaults set NAME or --view NAME; no API request was made", *viewName))
+			}
+			return unknownSavedName("Unknown log view", *viewName, views.Views, func(candidate string) []string {
+				return correctedSavedNameFlags([]string{"logs"}, fs, candidate, "view")
+			}, []string{"logs", "views", "list"})
 		}
 		pos, err := mergeAppFlag(fs.Args(), *app, 1)
 		if err != nil {
 			return printErr("Invalid app target", err)
 		}
-		return cmdLogs(append(pos, view.args()...))
+		filters, overrides, err := logViewQueryArgs(fs, view)
+		if err != nil {
+			return printErr("Invalid log view overrides", err)
+		}
+		if view.LatestRequestError && !jsonOutput {
+			sinceValue, routeValue := view.Since, view.Route
+			if overrides["since"] {
+				sinceValue = *since
+			}
+			if overrides["route"] {
+				routeValue = *route
+			}
+			if sinceValue == "" {
+				sinceValue = "15m"
+			}
+			_, _ = fmt.Fprintf(osStderr, "Using saved view %s: latest recorded HTTP 5xx; since=%s; route=%s\n", oneLine(*viewName), oneLine(sinceValue), oneLine(routeValue))
+		}
+		previewContext := &logQueryPreviewView{Name: *viewName, AppSource: logPreviewAppSource(fs), Overrides: overrides, DefaultsPath: savedViewPath}
+		for _, filter := range []string{"grep", "level", "route", "status"} {
+			if overrides["clear-"+filter] {
+				previewContext.ClearedFilters = append(previewContext.ClearedFilters, filter)
+			}
+		}
+		previewContext.Path, err = logViewsPath()
+		if err != nil {
+			return printErr("Could not locate log views", err)
+		}
+		queryArgs := append(pos, filters...)
+		if *dryRun {
+			queryArgs = append(queryArgs, "--dry-run")
+		}
+		return cmdLogsWithPreviewContext(queryArgs, previewContext)
 	}
 	if *interactive {
 		invalid := false
@@ -6453,7 +6586,7 @@ func cmdLogs(args []string) int {
 		if len(pos) == 1 {
 			target = pos[0]
 		}
-		slug, err := resolveReadAppTarget(target)
+		slug, err := resolveLogsAppTarget(target, *dryRun)
 		if err != nil {
 			return readAppTargetError(err)
 		}
@@ -6514,18 +6647,23 @@ func cmdLogs(args []string) int {
 	var archiveSelector *api.ArchiveLogSelector
 	if archiveRequested {
 		if !*archive || *archiveInstance == "" || *archiveDate == "" {
-			PrintUsage(os.Stderr, "--archive, --instance ID, and --date YYYY-MM-DD must be used together", "logs")
+			PrintUsage(os.Stderr, "--archive, --instance ID, and --date today|yesterday|YYYY-MM-DD must be used together", "logs")
 			return 2
 		}
 		if logSource == logsSourceHTTP || *follow || *deployment != "" || *grep != "" || *since != "" || *level != "" || httpQueryRequested {
 			PrintUsage(os.Stderr, "--archive cannot be combined with HTTP queries, --follow, --release, --deployment, --grep, --since, or --level", "logs")
 			return 2
 		}
-		parsedDate, err := time.Parse("2006-01-02", *archiveDate)
-		if err != nil || parsedDate.Format("2006-01-02") != *archiveDate {
-			PrintUsage(os.Stderr, "--date must use YYYY-MM-DD (for example, 2026-09-14)", "logs")
+		if !archiveLogInstancePattern.MatchString(*archiveInstance) {
+			PrintUsage(os.Stderr, "--instance must be 1..128 ASCII letters, numbers, dots, underscores, or hyphens (for example, instance-123); spaces and slashes are not allowed", "logs")
 			return 2
 		}
+		resolvedDate, err := resolveArchiveLogDate(*archiveDate, time.Now())
+		if err != nil {
+			PrintUsage(os.Stderr, err.Error(), "logs")
+			return 2
+		}
+		*archiveDate = resolvedDate
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
 	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
@@ -6557,10 +6695,16 @@ func cmdLogs(args []string) int {
 		slug = pos[0]
 	} else {
 		var resolveErr error
-		slug, resolveErr = resolveReadAppTarget("")
+		slug, resolveErr = resolveLogsAppTarget("", *dryRun)
 		if resolveErr != nil {
 			return readAppTargetError(resolveErr)
 		}
+	}
+	if *dryRun {
+		if !api.ValidAppSlug(slug) {
+			return printErr("Invalid app target", errors.New("provide a valid app slug"))
+		}
+		return previewLogQuery(fs, slug, logSource, normalizedSince, archiveSelector, "query", viewPreview)
 	}
 	// ADR-198: --deployment accepts a vN handle. `slug` is already
 	// resolved above (positional, else linked project), so the revision is

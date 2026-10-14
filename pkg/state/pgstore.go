@@ -8825,6 +8825,19 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 	if held && failedTraffic == 0 {
 		return nil
 	}
+	// The remaining live rows already carry all traffic: the failed row was
+	// not serving (a rollback target being re-primed, a 0% candidate). Moving
+	// everything to one fallback collapsed a 50/50 split to 100/0 when a
+	// rollback target failed verification (H10-11).
+	var remaining int
+	if err := tx.QueryRow(ctx, `
+		SELECT coalesce(sum(traffic_percent), 0) FROM deployments
+		 WHERE app_id=$1 AND id<>$2 AND status='live' AND deleted_at IS NULL`, appID, failedID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining == 100 {
+		return nil
+	}
 	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
 		AppID: mustPgUUID(appID), FailedID: mustPgUUID(failedID),
 	})
