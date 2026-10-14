@@ -174,6 +174,8 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 00:58:50 INFO event publish proxy started endpoint=http://169.254.169.254/v1/events:publish\n",
 		"2026/10/14 00:58:50 INFO outbound relay started endpoint=http://127.0.0.1:2774\n",
 		"2026/10/14 00:58:50 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err=\"invalid argument\"\n",
+		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
+		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
 		"hello-gregale listening on :3000\n",

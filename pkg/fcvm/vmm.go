@@ -534,6 +534,8 @@ func firecrackerControlLine(line []byte) bool {
 	for _, marker := range []string{
 		"running firecracker",
 		"listening on api socket",
+		"vmm is stopping",
+		"killing vcpu threads",
 		"successfully started microvm",
 		"firecracker exiting",
 		"host cpu vendor",
