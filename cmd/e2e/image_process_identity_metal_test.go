@@ -60,6 +60,9 @@ func TestImageProcessIdentityMetal(t *testing.T) {
 		wantUID, wantGID int
 	}{
 		{"no USER runs as root", "identity-root", "", 8080, 0, 0},
+		// guest-init moves its metadata proxy off port 80 for an image that
+		// serves it, as nginx and httpd do.
+		{"no USER serves port 80", "identity-port80", "", 80, 0, 0},
 		{"unknown numeric USER runs with group 0", "identity-uid", "1001", 8080, 1001, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
