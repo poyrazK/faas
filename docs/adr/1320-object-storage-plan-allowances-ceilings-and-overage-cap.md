@@ -1,4 +1,4 @@
-# ADR-1238: Object-storage plan allowances, plan ceilings, and the overage cap
+# ADR-1320: Object-storage plan allowances, plan ceilings, and the overage cap
 
 Status: accepted (mechanism only; every plan's object-storage values are zero
 until pricing is decided, so shipping it changes no bill and no limit).

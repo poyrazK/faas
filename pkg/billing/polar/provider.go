@@ -705,7 +705,7 @@ func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account,
 // Polar's catalog price is 0.001 cents per charge_millicent, so the integer
 // quantity reproduces Gregale's exact customer ledger without float money.
 // chargeMillicents is the record's total held under the overage cap
-// (ADR-1238); the uncapped total travels as metadata for audit.
+// (ADR-1320); the uncapped total travels as metadata for audit.
 func (p *Provider) PublishObjectStorageLineItem(ctx context.Context, record state.ObjectStorageBillingRecord, chargeMillicents int64) error {
 	if p == nil || p.objectStorageMode != ObjectStorageBillingLive || !p.Capabilities().Has(billing.CapObjectStorageUsage) {
 		return errors.New("polar: object storage usage delivery is not live")

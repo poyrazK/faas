@@ -128,7 +128,7 @@ func (p ObjectStoragePricing) Valid() bool {
 }
 
 // ObjectStorageAllowance is usage included in an account's plan, in
-// month-close billing units (ADR-1238). It is removed from each meter before
+// month-close billing units (ADR-1320). It is removed from each meter before
 // pricing; usage below it is never charged. The zero value includes nothing.
 type ObjectStorageAllowance struct {
 	StoredByteHours int64

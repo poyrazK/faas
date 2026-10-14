@@ -20,7 +20,7 @@ var (
 
 // CalculateCharge converts normalized cumulative usage into a customer-facing
 // estimate. It uses integer arithmetic throughout. The plan allowance is
-// removed from each meter first (ADR-1238); only usage above it is priced.
+// removed from each meter first (ADR-1320); only usage above it is priced.
 // Storage is priced in GiB-months using the conventional 730-hour month;
 // requests are priced per million and egress per GiB. Each component is
 // rounded up independently to the nearest millicent.

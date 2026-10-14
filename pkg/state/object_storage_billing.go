@@ -20,7 +20,7 @@ type ObjectStorageBillingRecord struct {
 	StoredByteHours int64
 	RequestCount    int64
 	EgressBytes     int64
-	// Included* are the plan allowance removed before pricing (ADR-1238),
+	// Included* are the plan allowance removed before pricing (ADR-1320),
 	// copied into the row like the rates so the charge stays auditable.
 	IncludedStoredByteHours      int64
 	IncludedRequests             int64

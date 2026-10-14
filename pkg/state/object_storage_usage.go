@@ -47,7 +47,7 @@ type ObjectUsageSnapshot struct {
 	Authorizations int64
 	// PlanLimits are the object-storage limits of the account's plan when
 	// the snapshot was read. Admission and gateway checks tighten the
-	// operator policy by their ceilings (ADR-1238); zero, as for an unknown
+	// operator policy by their ceilings (ADR-1320); zero, as for an unknown
 	// plan, keeps the operator policy.
 	PlanLimits api.ObjectStoragePlanLimits
 }
@@ -60,7 +60,7 @@ func objectStoragePlanLimits(plan api.Plan) api.ObjectStoragePlanLimits {
 }
 
 // planPolicy is the policy every admission and gateway check enforces: the
-// operator safety policy tightened by the account plan's ceilings (ADR-1238).
+// operator safety policy tightened by the account plan's ceilings (ADR-1320).
 func (s ObjectUsageSnapshot) planPolicy(p api.ObjectStoragePolicy) api.ObjectStoragePolicy {
 	return s.PlanLimits.Policy(p)
 }

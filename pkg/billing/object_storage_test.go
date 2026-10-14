@@ -50,7 +50,7 @@ type objectStorageBillingStore struct {
 	snapshots  map[string]state.ObjectUsageSnapshot
 	records    map[string]state.ObjectStorageBillingRecord
 	deliveries map[string]state.ObjectStorageBillingDelivery
-	// caps and usage back the overage cap reads (ADR-1238); usage rows
+	// caps and usage back the overage cap reads (ADR-1320); usage rows
 	// carry their hour in Month.
 	caps  map[string]int64
 	usage map[string][]state.Usage
@@ -143,7 +143,7 @@ func TestFinalizeObjectStoragePeriodIsClosedAndIdempotent(t *testing.T) {
 	}
 }
 
-// adr: 1238 — month close prices usage above the plan allowance and copies the
+// adr: 1320 — month close prices usage above the plan allowance and copies the
 // allowance into the immutable record.
 func TestFinalizeObjectStoragePeriodRecordsAllowance(t *testing.T) {
 	period := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)

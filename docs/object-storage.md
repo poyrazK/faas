@@ -745,7 +745,7 @@ Policy changes require restarting API replicas with identical config.
 
 A plan can tighten the account bytes, monthly requests, and monthly egress
 limits through its object-storage ceilings in `pkg/api/limits.go`
-([ADR-1238](adr/1238-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
 Per limit, the tighter positive value applies, and the bucket byte limit never
 exceeds the account limit. A plan never loosens the operator policy.
 `GET /v1/account/object-storage-usage` reports the effective policy. Every
@@ -970,7 +970,7 @@ allowance among the plans active in it, and the finalized record copies the
 allowance it used. Every plan's allowance is currently zero. A finalized
 month is billed only up to what the account's overage cap still allows after
 the month's billable compute and live egress, and capped usage is never billed
-later ([ADR-1238](adr/1238-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+later ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
 `apid` closes the prior UTC month once per deployment period and stores an
 immutable per-account billing snapshot. Polar can publish that
 snapshot idempotently when its independent rollout gate is live; other billing

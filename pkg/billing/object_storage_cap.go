@@ -11,14 +11,14 @@ import (
 )
 
 // objectStorageCapStore is what month close reads to keep an object-storage
-// charge under the account's overage cap (ADR-1238).
+// charge under the account's overage cap (ADR-1320).
 type objectStorageCapStore interface {
 	UsageRangeStore
 	GetAccountOverageCapCents(context.Context, string) (int64, bool, error)
 }
 
 // objectStorageChargeWithinCap returns the part of a finalized period's
-// charge that the account's overage cap still allows (ADR-1238). Compute and
+// charge that the account's overage cap still allows (ADR-1320). Compute and
 // live egress bill hourly during the month and keep their place under the cap
 // (ADR-1162); object storage, priced only at month close, takes what remains
 // after their month's billable cost is reserved. An uncapped account is
