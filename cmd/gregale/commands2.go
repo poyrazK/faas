@@ -6415,7 +6415,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	since := fs.String("since", "", "lookback duration (15m, 3d) or RFC3339 timestamp")
 	level := fs.String("level", "", "only show lines at this level (info|warn|error)")
 	status := fs.Int("status", 0, "only show HTTP requests with this status (100..599)")
-	route := fs.String("route", "", "only show HTTP requests for this route")
+	route := fs.String("route", "", "only show HTTP requests for this route label (METHOD /path)")
 	requestID := fs.String("request", "", "show one HTTP request by public request id or row id")
 	traceID := fs.String("trace", "", "show HTTP access logs correlated with this W3C trace id")
 	limit := fs.Int("limit", 100, "HTTP request page size (1..200)")
@@ -6629,6 +6629,10 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	}
 	if logsFlagWasSet(fs, "trace") && !validTraceID(strings.TrimSpace(*traceID)) {
 		PrintUsage(os.Stderr, "--trace must be a 32-character lowercase W3C trace id", "logs")
+		return 2
+	}
+	if err := validateHTTPLogRoute(*route); err != nil {
+		PrintUsage(os.Stderr, err.Error(), "logs")
 		return 2
 	}
 	if strings.TrimSpace(*requestID) != "" && strings.TrimSpace(*traceID) != "" {

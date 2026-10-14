@@ -3848,7 +3848,7 @@ var cliCommands = []cliCommand{
 			{Name: "since", Short: "lookback duration or RFC3339 timestamp", Value: "15m|3d|RFC3339"},
 			{Name: "level", Short: "only show lines at this level", Value: "LEVEL", ClosedSet: []string{"info", "warn", "error"}},
 			{Name: "status", Short: "only show HTTP requests with this status", Value: "100..599"},
-			{Name: "route", Short: "only show HTTP requests for this route", Value: "PATH"},
+			{Name: "route", Short: "only show HTTP requests for this route label", Value: "METHOD /path"},
 			{Name: "request", Short: "show one HTTP request by public request id or row id", Value: "ID"},
 			{Name: "trace", Short: "show HTTP access logs correlated with a W3C trace id", Value: "TRACE_ID"},
 			{Name: "limit", Short: "HTTP request page size (1..200)", Value: "N"},
