@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { MCPPolicyConvergenceSnapshot } from './MCPPolicyConvergenceSnapshot.js';
 import type { RuntimePolicyComponentStatus } from './RuntimePolicyComponentStatus.js';
 import type { RuntimePolicyNodeStatus } from './RuntimePolicyNodeStatus.js';
 import type { RuntimePolicySchedulerStatus } from './RuntimePolicySchedulerStatus.js';
@@ -9,6 +10,7 @@ import type { RuntimePolicySchedulerStatus } from './RuntimePolicySchedulerStatu
  * Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection; consumers use their existing acknowledged cursor.
  */
 export type RuntimePolicyStatusResponse = {
+  mcp_convergence?: MCPPolicyConvergenceSnapshot;
   app_id: string;
   /**
    * Latest desired control-plane revision for app-cache and deployment traffic policy.

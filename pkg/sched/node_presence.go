@@ -176,7 +176,17 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 	retry := false
 	reconciled := 0
 	attempted := 0
+	var frozenGone []string
 	for _, ins := range instances {
+		if ins.State == string(state.StateFrozen) {
+			// ADR-1151: a frozen VM missing from the node's signed inventory
+			// is gone (vmmd or the node restarted). Its deployment has a
+			// snapshot, so parking the row is safe even if the VM survived.
+			if _, present := observation.reported[ins.ID]; !present {
+				frozenGone = append(frozenGone, ins.ID)
+			}
+			continue
+		}
 		if ins.State != string(state.StateRunning) {
 			continue
 		}
@@ -279,6 +289,12 @@ func (e *Engine) ObserveNodeInventory(ctx context.Context, inventory NodeInstanc
 		retry = true
 		e.log.Warn("sched: stale-instance reconciliation update failed",
 			"instance_id", ins.ID, "node_id", nodeID, "err", err)
+	}
+	for _, id := range frozenGone {
+		if err := e.ParkFrozen(checkCtx, id, "node_restart"); err != nil {
+			retry = true
+			e.log.Warn("sched: park frozen instance missing from inventory", "instance_id", id, "node_id", nodeID, "err", err)
+		}
 	}
 	if !retry {
 		e.nodePresence.markReconciled(nodeID, observation.fingerprint)
