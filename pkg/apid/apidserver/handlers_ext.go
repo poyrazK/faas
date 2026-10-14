@@ -2369,6 +2369,47 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 	return out
 }
 
+// trafficSplitEarlierRelease reports whether more than one deployment of a
+// scope serves a share of traffic, and the oldest of them as a retypeable
+// ref. A plain rollback then has no single previous release: the latest
+// superseded row is one nobody serves, so `rollback` re-activated a release
+// the customer had rolled away from while the split stayed in place (H10-10).
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID string) (string, bool) {
+	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 50, 0)
+	if err != nil {
+		return "", false
+	}
+	serving := map[string][]state.Deployment{}
+	for _, d := range deployments {
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
+			serving[d.Scope] = append(serving[d.Scope], d)
+		}
+	}
+	for _, rows := range serving {
+		if len(rows) < 2 {
+			continue
+		}
+		earliest := rows[0]
+		for _, d := range rows[1:] {
+			if d.CreatedAt.Before(earliest.CreatedAt) {
+				earliest = d
+			}
+		}
+		if earliest.Revision > 0 {
+			return fmt.Sprintf("v%d", earliest.Revision), true
+		}
+		return earliest.ID, true
+	}
+	return "", false
+}
+
+func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+		"Traffic is split between deployments",
+		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, earlier)).
+		WithDocs("https://gregale.dev/docs/deploys#rollback")
+}
+
 // rollbackAppCore performs the shared rollback state transition for the REST
 // and dashboard surfaces. The caller owns authentication and app lookup;
 // this helper owns target selection, notifications, and audit records so the
@@ -2420,6 +2461,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			}
 		}
 	} else {
+		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
+			return state.Deployment{}, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
+		}
 		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
 		if err != nil {
 			return state.Deployment{}, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))

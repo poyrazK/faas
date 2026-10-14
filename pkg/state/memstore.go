@@ -8659,6 +8659,17 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 		m.enqueueDeploymentLifecycleWebhooksLocked(d)
 	}
 
+	// Mirrors rebalanceTrafficAfterFailure: a failure that leaves the other
+	// live rows carrying all traffic must not collapse their split (H10-11).
+	remaining := 0
+	for id, other := range m.deployments {
+		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+			remaining += other.TrafficPercent
+		}
+	}
+	if remaining == 100 {
+		return
+	}
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
