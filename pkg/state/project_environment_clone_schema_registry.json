@@ -176,6 +176,7 @@
       "comparison",
       "cooldown_minutes",
       "created_at",
+      "edge_rule_id",
       "enabled",
       "event_subscription_id",
       "failure_source",
@@ -4365,6 +4366,18 @@
       "parent_invocation_id",
       "replay_created_at",
       "replay_invocation_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_queue_lease_receipts",
+    "columns": [
+      "attempt",
+      "invocation_id",
+      "issued_at",
+      "lease_expires_at",
+      "replay_generation",
+      "token_hash"
     ],
     "kind": "operational"
   },

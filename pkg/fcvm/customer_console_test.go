@@ -206,3 +206,57 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		t.Fatalf("customer lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// A command's last output without a newline reaches the ring when the VM
+// exits; Flush is idempotent and still filters platform lines.
+func TestCustomerConsoleWriterFlushCommitsFinalPartialLine(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	if _, err := w.Write([]byte("first\r\ndone")); err != nil {
+		t.Fatal(err)
+	}
+	if lines := ring.Snapshot(1); len(lines) != 1 {
+		t.Fatalf("before flush = %+v, want only the complete line", lines)
+	}
+	for i := 0; i < 2; i++ {
+		if err := w.Flush(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := ring.Snapshot(1)
+	if len(lines) != 2 || lines[0].Line != "first" || lines[1].Line != "done" {
+		t.Fatalf("after flush = %+v, want first, done", lines)
+	}
+	if _, err := w.Write([]byte("guest-init: stage pivot")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(ring.Snapshot(1)); got != 2 {
+		t.Fatalf("flushed platform line reached the customer log: %d lines", got)
+	}
+}
+
+// A guest that never writes a newline cannot grow the writer past the ring's
+// partial-line cap, and later lines still arrive.
+func TestCustomerConsoleWriterBoundsPartialLine(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	chunk := []byte(strings.Repeat("x", 64<<10))
+	for written := 0; written <= 3*logbuf.MaxPartialLineBytes; written += len(chunk) {
+		if _, err := w.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+		if len(w.pending) > logbuf.MaxPartialLineBytes {
+			t.Fatalf("pending grew to %d bytes", len(w.pending))
+		}
+	}
+	if _, err := w.Write([]byte("\nafter\n")); err != nil {
+		t.Fatal(err)
+	}
+	lines := ring.Snapshot(1)
+	if len(lines) == 0 || lines[len(lines)-1].Line != "after" {
+		t.Fatalf("an over-long partial line blocked later output: %d lines", len(lines))
+	}
+}

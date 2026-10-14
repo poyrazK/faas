@@ -761,6 +761,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			value = snapshot.DueAgeSeconds
 		}
 		return value, compareFloat(value, rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricEdgeRuleHits, state.AlertMetricEdgeRuleLogHits:
+		return e.observeEdgeRuleHits(ctx, rule)
 	case state.AlertMetricFailedInvocs:
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
@@ -1166,6 +1168,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 	}
 	if rule.FailureSource != "" {
 		m["failure_source"] = string(rule.FailureSource)
+	}
+	if rule.EdgeRuleID != "" {
+		m["edge_rule_id"] = rule.EdgeRuleID
 	}
 	if paths.observations != "" {
 		m["observations_path"] = paths.observations

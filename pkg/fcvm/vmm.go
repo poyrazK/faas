@@ -402,21 +402,47 @@ func (w *customerConsoleWriter) Write(p []byte) (int, error) {
 		}
 		line := append([]byte(nil), w.pending[:newline+1]...)
 		w.pending = w.pending[newline+1:]
-		if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
-			continue
-		}
-		// The guest serial console's tty turns every '\n' into "\r\n"
-		// (ONLCR); the '\r' is the console's, not the app's, and reached the
-		// logs API, drains and log search on every line (production-us
-		// hunt #9, H9-108). An app's own trailing '\r' survives.
-		if n := len(line); n >= 2 && line[n-2] == '\r' {
-			line = append(line[:n-2], '\n')
-		}
-		if _, err := w.ring.Write("stdout", line); err != nil {
+		if err := w.commitLocked(line); err != nil {
 			return len(p), err
 		}
 	}
+	// A guest that never writes '\n' must not grow vmmd's memory: drop an
+	// over-long partial line, as the ring itself does past the same cap.
+	if len(w.pending) > logbuf.MaxPartialLineBytes {
+		w.pending = nil
+	}
 	return len(p), nil
+}
+
+// Flush commits a final line that has no trailing newline, such as a
+// command's last `printf` before it exits. startJailer calls it once
+// Firecracker has exited so the line reaches the ring before the job's
+// output is captured or archived.
+func (w *customerConsoleWriter) Flush() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) == 0 {
+		return nil
+	}
+	line := append(w.pending, '\n')
+	w.pending = nil
+	return w.commitLocked(line)
+}
+
+// commitLocked filters one complete line and writes it to the ring.
+func (w *customerConsoleWriter) commitLocked(line []byte) error {
+	if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+		return nil
+	}
+	// The guest serial console's tty turns every '\n' into "\r\n"
+	// (ONLCR); the '\r' is the console's, not the app's, and reached the
+	// logs API, drains and log search on every line (production-us
+	// hunt #9, H9-108). An app's own trailing '\r' survives.
+	if n := len(line); n >= 2 && line[n-2] == '\r' {
+		line = append(line[:n-2], '\n')
+	}
+	_, err := w.ring.Write("stdout", line)
+	return err
 }
 
 // guestInitStageLine matches guest-init's internal boot-progress markers
@@ -5164,12 +5190,14 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		consoleFile = f
 	}
 	stdout := io.Discard
+	var consoleWriter *customerConsoleWriter
 	if ring != nil {
 		// Stream FC's stdout (kernel printk + guest /dev/console writers)
 		// into the per-instance ring. stderr stays discarded — FC only
 		// writes there on configuration errors and operators inspect those
 		// via systemctl logs, not the per-app tail.
-		stdout = &customerConsoleWriter{ring: ring}
+		consoleWriter = &customerConsoleWriter{ring: ring}
+		stdout = consoleWriter
 	}
 	if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
@@ -5228,6 +5256,11 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			} // Process exit is confirmed, including signal exits.
 		} else {
 			state, waitErr = cmd.Process.Wait()
+		}
+		if consoleWriter != nil {
+			// cmd.Wait has drained stdout; after Process.Wait a late write
+			// still arrives, just as its own line.
+			_ = consoleWriter.Flush()
 		}
 		if consoleFile != nil {
 			_ = consoleFile.Close()
