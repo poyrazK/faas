@@ -49672,6 +49672,10 @@ components:
           type: boolean
         capacity_blocked:
           type: boolean
+        trigger_id:
+          type: string
+          format: uuid
+          description: "Realtime trigger consuming this group (ADR-1237). Absent when workers consume it directly."
         lease_seconds:
           type: integer
         max_attempts:
@@ -74143,10 +74147,30 @@ components:
     # same batch / filter / retry / ReportBatchItemFailures machinery;
     # cron retains its pre-existing (schedule, path) shape.
 
+    RealtimeTriggerConfig:
+      description: |
+        Config of a `kind: realtime` trigger (ADR-1237). Each message of the bound consumer group is delivered as one
+        invocation. The group must already exist in the caller's account with `lease_seconds` of at least 120, and binds
+        to at most one trigger; while bound, direct claims and settlements return 409 `realtime_group_bound_to_trigger`.
+        The group's ordering, filters, retry policy and dead-letter queue govern delivery. The binding is immutable;
+        only `max_concurrency` can change.
+      type: object
+      additionalProperties: false
+      required: [endpoint_id, channel, group]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        channel: { type: string, minLength: 1, maxLength: 256 }
+        group: { type: string, minLength: 1, maxLength: 128 }
+        max_concurrency:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: "Parallel invocations; 0 means 1. Also capped by the plan's concurrency."
+
     TriggerKind:
       description: "Discriminator for the underlying event source."
       type: string
-      enum: [cron, kafka, nats, redis_streams, sqs_compat, queue]
+      enum: [cron, kafka, nats, redis_streams, sqs_compat, queue, realtime]
 
     Trigger:
       description: |
@@ -74279,7 +74303,11 @@ components:
         config:
           type: object
           additionalProperties: true
-          description: "Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence."
+          description: |
+            Per-kind opaque config blob. Kafka password and client_key leaves are plaintext-on-write and sealed before persistence.
+            For `kind: realtime` (ADR-1237) the shape is `RealtimeTriggerConfig`; `batch_window_ms`, `max_attempts`,
+            `retry_policy`, `broker_poison_strategy` and `filter_criteria` are rejected because the bound consumer group owns them,
+            and `batch_size_max` may only be 1.
         batch_size_max: { type: [integer, "null"], minimum: 1, maximum: 5000 }
         batch_window_ms: { type: [integer, "null"], minimum: 10, maximum: 600000 }
         max_attempts: { type: [integer, "null"], minimum: 1, maximum: 25 }

@@ -2193,6 +2193,9 @@ const (
 	TriggerKindRedisStreams TriggerKind = "redis_streams"
 	TriggerKindSQSCompat    TriggerKind = "sqs_compat"
 	TriggerKindQueue        TriggerKind = "queue"
+	// TriggerKindRealtime delivers a bound realtime consumer group's messages
+	// as invocations (ADR-1237).
+	TriggerKindRealtime TriggerKind = "realtime"
 )
 
 // Trigger is the wire shape returned by GET/POST/PATCH /v1/triggers.

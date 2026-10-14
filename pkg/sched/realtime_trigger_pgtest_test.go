@@ -138,21 +138,31 @@ func TestRealtimeTriggerDispatchSettlesConsumerGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loop.triggerPollers = map[string]triggerSource{f.trigger.ID.String(): poller}
-	for i := 0; i < 3; i++ {
+	tick := func() {
+		t.Helper()
 		_ = loop.dispatchOneTrigger(ctx, f.trigger, f.store, func(string) api.Plan { return api.PlanPro })
 	}
-
-	if len(bodies) != 3 || bodies[0].Sequence != "1" || bodies[0].Channel != "orders" || bodies[0].Group != "billing" || bodies[0].Attempt != 1 {
-		t.Fatalf("invocation bodies = %+v", bodies)
+	// Tick 1: success completes the group message (its row is removed).
+	tick()
+	if len(bodies) != 1 || bodies[0].Sequence != "1" || bodies[0].Channel != "orders" || bodies[0].Group != "billing" || bodies[0].Attempt != 1 {
+		t.Fatalf("first invocation body = %+v", bodies)
 	}
 	if status, _, _ := f.message(t, 1); status != "absent" {
-		t.Fatalf("succeeded message status = %s, want completed (row removed)", status)
+		t.Fatalf("succeeded message status = %s, want completed", status)
 	}
+	// Tick 2: a handler failure retries with the gateway's code.
+	tick()
 	if status, attempts, failure := f.message(t, 2); status != "ready" || attempts != 1 || failure != "function_failed" {
 		t.Fatalf("handler failure = %s/%d/%q, want ready/1/function_failed", status, attempts, failure)
 	}
-	if status, attempts, _ := f.message(t, 3); status != "ready" || attempts != 0 {
-		t.Fatalf("platform failure = %s/%d, want ready with the attempt returned", status, attempts)
+	// Tick 3: the default group retry delay is zero, so message 2 is
+	// redelivered as attempt 2; a platform failure returns that attempt.
+	tick()
+	if len(bodies) != 3 || bodies[2].Sequence != "2" || bodies[2].Attempt != 2 {
+		t.Fatalf("redelivery body = %+v, want sequence 2 attempt 2", bodies[2])
+	}
+	if status, attempts, _ := f.message(t, 2); status != "ready" || attempts != 1 {
+		t.Fatalf("platform failure = %s/%d, want ready with attempt 2 returned", status, attempts)
 	}
 	if states := f.ledgerStates(t); states["succeeded"] != 1 || states["superseded"] != 2 || len(states) != 2 {
 		t.Fatalf("trigger ledger = %v, want 1 succeeded and 2 superseded", states)
@@ -167,7 +177,7 @@ func TestRealtimeTriggerDispatchSettlesConsumerGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	groups, err := f.store.ListRealtimeConsumerGroups(ctx, f.cfg.EndpointID, "orders")
-	if err != nil || len(groups) != 1 || groups[0].TriggerID != "" || groups[0].Ready != 2 {
+	if err != nil || len(groups) != 1 || groups[0].TriggerID != "" || groups[0].Ready != 1 || groups[0].Unassigned != "1" {
 		t.Fatalf("group after trigger delete = %+v, %v", groups, err)
 	}
 	if _, err := f.store.ClaimRealtimeConsumerGroup(ctx, f.cfg.EndpointID, "orders", "billing", "worker"); err != nil {
