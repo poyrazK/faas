@@ -118,6 +118,13 @@ func (r *Reconciler) Sweep(ctx context.Context) (ReconcileSummary, error) {
 			summary.Completed++
 		case OutcomeDeferred:
 			summary.Deferred++
+			// A deferred database retries silently forever; without its
+			// reason a restore stuck in provisioning left no trace in apid
+			// (production-us live test 2026-10-14). Errors are sentinels
+			// with step names, never provider payloads or credentials.
+			if err != nil {
+				r.logger.Info("managed postgres reconciliation deferred", "database", database.ID, "operation", string(operation), "error", err)
+			}
 		case OutcomeContended:
 			summary.Contended++
 		case OutcomeFailed:

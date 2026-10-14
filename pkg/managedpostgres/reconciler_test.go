@@ -1,8 +1,11 @@
 package managedpostgres
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,5 +159,43 @@ func TestRetryDelayIsBounded(t *testing.T) {
 	}
 	if got := retryDelay(ErrUnsupported, 1); got != time.Hour {
 		t.Fatalf("unsupported retry = %s", got)
+	}
+}
+
+// TestReconcilerLogsWhyADatabaseIsDeferred pins the production-us live test
+// (2026-10-14): a restore stuck in provisioning retried silently and apid
+// logged nothing. A deferred database must log its sanitized reason, never
+// the provider's raw error.
+func TestReconcilerLogsWhyADatabaseIsDeferred(t *testing.T) {
+	provider := &fakeProvider{capabilities: testCapabilities(), provisionStatus: ProviderStatusReady, provisionErr: errors.New("provider token must never persist")}
+	store := NewMemoryStore()
+	now := time.Date(2026, 9, 5, 22, 30, 0, 0, time.UTC)
+	service, err := NewService(testRegistry(t, provider, nil), store, ServiceOptions{
+		Now: func() time.Time { return now }, NewID: uuid.NewString, NewLeaseToken: uuid.NewString,
+		LeaseDuration: 2 * time.Minute, ProviderTimeout: time.Second, ProvisioningEnabled: func() bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(context.Background(), CreateRequest{AccountID: "account-a", Name: "private", Spec: testSpec()}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Create error = %v, want ErrUnavailable", err)
+	}
+	var logs bytes.Buffer
+	reconciler, err := NewReconciler(service, ReconcilerOptions{
+		Interval: time.Second, Now: func() time.Time { return now }, IncludeProvisioning: func() bool { return true },
+		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if summary, err := reconciler.Sweep(context.Background()); err != nil || summary.Deferred != 1 {
+		t.Fatalf("sweep: %+v %v", summary, err)
+	}
+	if !strings.Contains(logs.String(), "managed postgres reconciliation deferred") || !strings.Contains(logs.String(), "unavailable") {
+		t.Fatalf("deferred reason not logged: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "provider token") {
+		t.Fatalf("raw provider error logged: %s", logs.String())
 	}
 }

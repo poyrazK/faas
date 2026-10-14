@@ -3,6 +3,7 @@ package neon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,7 +38,7 @@ func (sqlHistoricalPointReader) ReadLSN(ctx context.Context, dsn string) (string
 		return "", credentialSQLError(err)
 	}
 	if !recovery || readOnly != "on" || lsn == nil {
-		return "", managedpostgres.ErrUnavailable
+		return "", fmt.Errorf("%w: historical connection is not a read-only replay (recovery=%t read_only=%s)", managedpostgres.ErrUnavailable, recovery, readOnly)
 	}
 	if _, err := parseLSN(*lsn); err != nil {
 		return "", err
@@ -96,32 +97,36 @@ func historicalDSN(material managedpostgres.CredentialMaterial, primary endpoint
 
 func (p *Provider) historicalPointLSN(ctx context.Context, source resourceRef, point time.Time) (string, error) {
 	if p.historicalPoints == nil || source.branchID == "" || point.IsZero() || point.After(p.now()) {
-		return "", managedpostgres.ErrUnavailable
+		return "", fmt.Errorf("%w: historical point: no reader or invalid point", managedpostgres.ErrUnavailable)
 	}
 	metadata, err := p.readDatabaseMetadata(ctx, source, false)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("historical point: read source metadata: %w", err)
 	}
 	selected, primary, ready := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, source.branchID)
 	if !ready || selected.ID != source.branchID || selected.ProjectID != source.projectID || selected.PendingState != "" || primary.RegionID != p.regionID {
-		return "", managedpostgres.ErrUnavailable
+		return "", fmt.Errorf("%w: historical point: source branch or primary endpoint not ready", managedpostgres.ErrUnavailable)
 	}
 	var response connectionURIResponse
 	err = p.connectionURIForDatabaseEndpoint(ctx, source.projectID, source.branchID, primary.ID, p.databaseName, ownerLogin, false, &response)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("historical point: owner connection URI: %w", err)
 	}
 	parsed, err := parseConnectionURI(response.URI)
 	if err != nil || parsed.username != ownerLogin || parsed.database != p.databaseName {
-		return "", managedpostgres.ErrUnavailable
+		return "", fmt.Errorf("%w: historical point: unexpected owner connection URI", managedpostgres.ErrUnavailable)
 	}
 	material := managedpostgres.CredentialMaterial{Username: parsed.username, Password: parsed.password, Database: parsed.database,
 		Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: parsed.host, Port: parsed.port}}}
 	dsn, err := historicalDSN(material, primary, source, point)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("historical point: build DSN: %w", err)
 	}
-	return p.historicalPoints.ReadLSN(ctx, dsn)
+	lsn, err := p.historicalPoints.ReadLSN(ctx, dsn)
+	if err != nil {
+		return "", fmt.Errorf("historical point: read LSN: %w", err)
+	}
+	return lsn, nil
 }
 
 // A requested timestamp becomes evidence only when an independently routed
@@ -172,7 +177,7 @@ func (p *Provider) observeRestoredBranch(ctx context.Context, projectID, parentI
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	if actualLSN != expectedLSN {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrConflict
+		return managedpostgres.ObservedDatabase{}, fmt.Errorf("%w: restore branch parent LSN does not match the requested point", managedpostgres.ErrConflict)
 	}
 	var response createdBranchResponse
 	path := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(target.ID)

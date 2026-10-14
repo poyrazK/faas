@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -141,6 +142,14 @@ func cmdDataAPICreate(args []string) int {
 	}
 	if db.State != "ready" {
 		return printErr("Database unavailable", errors.New("the managed database must be ready"))
+	}
+	// Check the backend offers data_api credentials before creating anything.
+	// On production-us the command created an app first and only then failed
+	// the binding, leaving an undeployed app on the plan's app count (hunt #9
+	// H9-P119; live test 2026-10-14 hit the 100-app cap instead). An unreadable
+	// capability answer does not block: the binding still decides.
+	if caps, capErr := client.GetManagedPostgresCapabilities(ctx, db.Region); capErr == nil && !slices.Contains(caps.CredentialAccess, "data_api") {
+		return printErr("Data API not offered", fmt.Errorf("the database's backend in %s does not offer data_api credential access; no app was created", db.Region))
 	}
 	var app api.AppResponse
 	if *resume {
