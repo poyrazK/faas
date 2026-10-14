@@ -9729,11 +9729,14 @@ func (x *FreezeInstanceResponse) GetResidentBytesAfter() int64 {
 // ThawInstanceRequest (ADR-1151) names the frozen instance to resume.
 // image_healthcheck_required asks vmmd to confirm the instance's stored boot
 // contract, as ResumeWarmInstance does; the thaw then runs the resume hook and
-// the image healthcheck before it returns.
+// the image healthcheck before it returns. run_after_restore asks vmmd to run
+// the resume hook, and with it the app's after_restore callback, before the
+// thaw returns; a failed callback fails the thaw.
 type ThawInstanceRequest struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
 	Instance                 string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
 	ImageHealthcheckRequired bool                   `protobuf:"varint,2,opt,name=image_healthcheck_required,json=imageHealthcheckRequired,proto3" json:"image_healthcheck_required,omitempty"`
+	RunAfterRestore          bool                   `protobuf:"varint,3,opt,name=run_after_restore,json=runAfterRestore,proto3" json:"run_after_restore,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -9782,11 +9785,21 @@ func (x *ThawInstanceRequest) GetImageHealthcheckRequired() bool {
 	return false
 }
 
+func (x *ThawInstanceRequest) GetRunAfterRestore() bool {
+	if x != nil {
+		return x.RunAfterRestore
+	}
+	return false
+}
+
 // ThawInstanceResponse (ADR-1151) acknowledges the in-place resume.
+// after_restore_ran confirms the resume hook ran; a vmmd that predates
+// run_after_restore leaves it false.
 type ThawInstanceResponse struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
 	Instance                 string                 `protobuf:"bytes,1,opt,name=instance,proto3" json:"instance,omitempty"`
 	ImageHealthcheckVerified bool                   `protobuf:"varint,2,opt,name=image_healthcheck_verified,json=imageHealthcheckVerified,proto3" json:"image_healthcheck_verified,omitempty"`
+	AfterRestoreRan          bool                   `protobuf:"varint,3,opt,name=after_restore_ran,json=afterRestoreRan,proto3" json:"after_restore_ran,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -9831,6 +9844,13 @@ func (x *ThawInstanceResponse) GetInstance() string {
 func (x *ThawInstanceResponse) GetImageHealthcheckVerified() bool {
 	if x != nil {
 		return x.ImageHealthcheckVerified
+	}
+	return false
+}
+
+func (x *ThawInstanceResponse) GetAfterRestoreRan() bool {
+	if x != nil {
+		return x.AfterRestoreRan
 	}
 	return false
 }
@@ -12317,13 +12337,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\fpause_micros\x18\x02 \x01(\x03R\vpauseMicros\x12%\n" +
 	"\x0ereclaim_micros\x18\x03 \x01(\x03R\rreclaimMicros\x122\n" +
 	"\x15resident_bytes_before\x18\x04 \x01(\x03R\x13residentBytesBefore\x120\n" +
-	"\x14resident_bytes_after\x18\x05 \x01(\x03R\x12residentBytesAfter\"o\n" +
+	"\x14resident_bytes_after\x18\x05 \x01(\x03R\x12residentBytesAfter\"\x9b\x01\n" +
 	"\x13ThawInstanceRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12<\n" +
-	"\x1aimage_healthcheck_required\x18\x02 \x01(\bR\x18imageHealthcheckRequired\"p\n" +
+	"\x1aimage_healthcheck_required\x18\x02 \x01(\bR\x18imageHealthcheckRequired\x12*\n" +
+	"\x11run_after_restore\x18\x03 \x01(\bR\x0frunAfterRestore\"\x9c\x01\n" +
 	"\x14ThawInstanceResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12<\n" +
-	"\x1aimage_healthcheck_verified\x18\x02 \x01(\bR\x18imageHealthcheckVerified\"\xbb\x01\n" +
+	"\x1aimage_healthcheck_verified\x18\x02 \x01(\bR\x18imageHealthcheckVerified\x12*\n" +
+	"\x11after_restore_ran\x18\x03 \x01(\bR\x0fafterRestoreRan\"\xbb\x01\n" +
 	"\x15RestoreAppTaskRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12.\n" +
 	"\x03app\x18\x02 \x01(\v2\x1c.onebox.faas.vmmd.v1.AppSpecR\x03app\x12\x12\n" +

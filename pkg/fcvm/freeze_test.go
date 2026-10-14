@@ -482,6 +482,36 @@ func TestThawRunsRequiredImageHealthcheck(t *testing.T) {
 	}
 }
 
+// A thaw runs the resume hook, and with it the app's after_restore
+// callback, only when schedd asks for it; a failed callback fails the thaw.
+func TestThawWithRunsResumeHookWhenAsked(t *testing.T) {
+	v := &freezingVMM{fakeVMM: &fakeVMM{}}
+	m := newFreezeManager(t, v)
+	for _, run := range []bool{false, true} {
+		if _, err := m.Freeze(t.Context(), "f", FreezeOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		hooks := len(v.resumeHookCalls)
+		if err := m.ThawWith(t.Context(), "f", ThawOptions{RunResumeHook: run}); err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if run {
+			want = 1
+		}
+		if got := len(v.resumeHookCalls) - hooks; got != want {
+			t.Fatalf("RunResumeHook=%v ran %d resume hooks, want %d", run, got, want)
+		}
+	}
+	if _, err := m.Freeze(t.Context(), "f", FreezeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	v.resumeHookErr = ErrAfterRestoreHook
+	if err := m.ThawWith(t.Context(), "f", ThawOptions{RunResumeHook: true}); !errors.Is(err, ErrAfterRestoreHook) {
+		t.Fatalf("thaw with a failing after_restore = %v, want ErrAfterRestoreHook", err)
+	}
+}
+
 func TestFreezeMetrics(t *testing.T) {
 	v := &freezingVMM{fakeVMM: &fakeVMM{}, resident: 48 << 20}
 	m := newFreezeManager(t, v)

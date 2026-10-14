@@ -5748,14 +5748,15 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 	if m.vmm == nil {
 		return fmt.Errorf("resume_vm %s: nil vmm", instance)
 	}
-	return m.resumeAndProbe(ctx, "resume_vm", inst)
+	return m.resumeAndProbe(ctx, "resume_vm", inst, false)
 }
 
 // resumeAndProbe resumes a paused guest, runs the resume hook and image
-// healthcheck its stored boot contract requires, and restarts its probes. A
-// resumed guest is no longer frozen (ADR-1151). The caller holds the
-// instance flight.
-func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance) error {
+// healthcheck its stored boot contract requires, and restarts its probes.
+// runResumeHook also runs the resume hook, and with it the app's
+// after_restore callback, when no healthcheck requires it. A resumed guest
+// is no longer frozen (ADR-1151). The caller holds the instance flight.
+func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance, runResumeHook bool) error {
 	instance := inst.Lease.Instance
 	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
@@ -5773,6 +5774,10 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance)
 		}
 		if err := checker.WaitImageHealthcheck(ctx, inst.Lease, inst.StartupDeadlineS); err != nil {
 			return err
+		}
+	} else if runResumeHook {
+		if err := m.vmm.TriggerResumeHook(ctx, inst.Lease, time.Now().UnixNano()); err != nil {
+			return fmt.Errorf("%s %s: resume hook: %w", op, instance, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
