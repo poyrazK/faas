@@ -2073,7 +2073,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchDeploys,
 		DocSlug: "deploys",
-		Short:   "Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)",
+		Short:   "Deployment drill-downs (deploys show|status|logs|cancel|reorder|clear|clear-obsolete|retry)",
 		CompletionPositions: []cliCompletionPosition{
 			{Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"show"}, Position: 1, Role: cliCompletionDeploymentID},
@@ -2097,6 +2097,10 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: statusLiteral, Short: "Print stages, terminal status, and failure guidance", Examples: []string{"gregale deploys status 00000000000000000000000000000001", "gregale deploys status v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+			}},
+			{Name: "logs", Short: "Print one deployment's build and deploy log", Examples: []string{"gregale deploys logs v42 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug; only needed to resolve a vN revision outside a linked project", Value: "SLUG"},
+				{Name: "limit", Short: "most recent log lines to print (1-5000)", Value: "N"},
 			}},
 			{Name: "cancel", Short: "Cancel one pending deployment", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to the linked project, or the deployment's own app)", Value: "slug"},

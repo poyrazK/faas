@@ -40,7 +40,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`delayed-task`](#delayed-task) | Schedule and inspect deferred invocations |
 | [`deployments`](#deployments) | List deployments or manage stable named URLs for immutable revisions |
 | [`deployment`](#deployment) | Inspect a deployment, wait for its rollout, advance a canary, or set its minimum instances |
-| [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
+| [`deploys`](#deploys) | Deployment drill-downs (deploys show\|status\|logs\|cancel\|reorder\|clear\|clear-obsolete\|retry) |
 | [`deploy`](#deploy) | Deploy an app, function, or project |
 | [`domains`](#domains) | Manage custom domains |
 | [`dev`](#dev) | Sync local changes to a developer environment |
@@ -6906,7 +6906,7 @@ Set the per-deployment cold-wake floor
 
 ## deploys
 
-Deployment drill-downs (deploys show|status|cancel|reorder|clear|clear-obsolete|retry)
+Deployment drill-downs (deploys show|status|logs|cancel|reorder|clear|clear-obsolete|retry)
 
 `gregale deploys [<subcommand>] <id|vN> [--app <SLUG>]`
 
@@ -6955,6 +6955,23 @@ Examples:
 ```sh
 gregale deploys status 00000000000000000000000000000001
 gregale deploys status v42 --app my-api --json
+```
+
+### deploys logs
+
+Print one deployment&#39;s build and deploy log
+
+`gregale deploys logs [--app <SLUG>] [--limit <N>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug; only needed to resolve a vN revision outside a linked project |  |
+| `--limit <N>` | most recent log lines to print (1-5000) |  |
+
+Examples:
+
+```sh
+gregale deploys logs v42 --app my-api
 ```
 
 ### deploys cancel
