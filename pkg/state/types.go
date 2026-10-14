@@ -3787,6 +3787,8 @@ const (
 	AppWebhookEventRouteHealthResumed                      AppWebhookEvent = "routes.health.resumed"
 	AppWebhookEventProfileRouteRegressed                   AppWebhookEvent = "profile.route_regressed"
 	AppWebhookEventProfileRouteRecovered                   AppWebhookEvent = "profile.route_recovered"
+	AppWebhookEventProfileCaptureReady                     AppWebhookEvent = "profile.capture_ready"
+	AppWebhookEventProfileCaptureOOMLinked                 AppWebhookEvent = "profile.capture_oom_linked"
 	AppWebhookEventRouteRequirementsChanged                AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated               AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered              AppWebhookEvent = "routes.requirements.recovered"
@@ -3830,6 +3832,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRealtimeInboxAcknowledged,
 	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
+	AppWebhookEventProfileCaptureReady, AppWebhookEventProfileCaptureOOMLinked,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,

@@ -87619,6 +87619,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -88646,6 +88648,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -88820,6 +88824,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -89403,7 +89409,7 @@ components:
         kinds: { type: array, items: { type: string, enum: [cpu, heap, stacks] } }
         duration_seconds: { type: integer }
         requested_instance_id: { type: string, format: uuid }
-        trigger: { type: string, enum: [manual, memory_pressure, slow_request], description: Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds. }
+        trigger: { type: string, enum: [manual, memory_pressure, slow_request], description: 'Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds.' }
         request_id: { type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture. }
         request_trace_id: { type: string, maxLength: 128, description: The trace id that request's telemetry is stored under. }
         trigger_detail: { type: string }
@@ -89413,7 +89419,7 @@ components:
         dropped: { type: integer, description: Profiles discarded by the reply bounds. }
         reason: { type: string }
         profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
-        partial: { type: boolean, description: The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill. }
+        partial: { type: boolean, description: 'The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.' }
         oom_killed_at: { type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture. }
         oom_peak_mb: { type: integer, description: Memory in use when the instance was OOM-killed. }
         oom_plan_mb: { type: integer, description: The instance's plan memory limit. }

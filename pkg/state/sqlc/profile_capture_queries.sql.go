@@ -359,13 +359,43 @@ func (q *Queries) ReadProfileCapture(ctx context.Context, db DBTX, arg ReadProfi
 	return capture, err
 }
 
+const readProfileCaptureNotice = `-- name: ReadProfileCaptureNotice :one
+SELECT p.account_id::text AS account_id, p.app_id::text AS app_id, a.slug,
+  (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
+FROM profile_captures p JOIN apps a ON a.id = p.app_id
+WHERE p.id = $1::text::uuid AND a.account_id = p.account_id AND a.status <> 'deleted'
+`
+
+type ReadProfileCaptureNoticeRow struct {
+	AccountID string
+	AppID     string
+	Slug      string
+	Capture   []byte
+}
+
+// The capture and its owner, read inside the transaction that finished it or
+// linked an OOM kill, for the automatic capture webhook (ADR-1155).
+func (q *Queries) ReadProfileCaptureNotice(ctx context.Context, db DBTX, id string) (ReadProfileCaptureNoticeRow, error) {
+	row := db.QueryRow(ctx, readProfileCaptureNotice, id)
+	var i ReadProfileCaptureNoticeRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.Slug,
+		&i.Capture,
+	)
+	return i, err
+}
+
 const stampProfileCaptureOOM = `-- name: StampProfileCaptureOOM :one
-UPDATE profile_captures SET capture = capture || jsonb_build_object('oom_killed_at', $1::timestamptz, 'oom_peak_mb', $2::int, 'oom_plan_mb', $3::int)
-WHERE id = (SELECT q.id FROM profile_captures q
-    WHERE q.app_id = $4::text::uuid AND q.capture->>'instance_id' = $5::text
-      AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= $6::timestamptz
-    ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
-RETURNING id::text AS id
+WITH target AS (
+  SELECT q.id, (q.capture->>'oom_killed_at' IS NULL) AS first_link FROM profile_captures q
+  WHERE q.app_id = $4::text::uuid AND q.capture->>'instance_id' = $5::text
+    AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= $6::timestamptz
+  ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
+UPDATE profile_captures p SET capture = p.capture || jsonb_build_object('oom_killed_at', $1::timestamptz, 'oom_peak_mb', $2::int, 'oom_plan_mb', $3::int)
+FROM target WHERE p.id = target.id
+RETURNING p.id::text AS id, target.first_link::boolean AS first_link, p.status
 `
 
 type StampProfileCaptureOOMParams struct {
@@ -377,7 +407,14 @@ type StampProfileCaptureOOMParams struct {
 	Since      pgtype.Timestamptz
 }
 
-func (q *Queries) StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (string, error) {
+type StampProfileCaptureOOMRow struct {
+	ID        string
+	FirstLink bool
+	Status    string
+}
+
+// first_link is true when the capture had no OOM kill before this stamp.
+func (q *Queries) StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (StampProfileCaptureOOMRow, error) {
 	row := db.QueryRow(ctx, stampProfileCaptureOOM,
 		arg.KilledAt,
 		arg.PeakMb,
@@ -386,9 +423,9 @@ func (q *Queries) StampProfileCaptureOOM(ctx context.Context, db DBTX, arg Stamp
 		arg.InstanceID,
 		arg.Since,
 	)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var i StampProfileCaptureOOMRow
+	err := row.Scan(&i.ID, &i.FirstLink, &i.Status)
+	return i, err
 }
 
 const startProfileCapture = `-- name: StartProfileCapture :execrows

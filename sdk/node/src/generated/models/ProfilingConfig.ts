@@ -8,5 +8,9 @@
 export type ProfilingConfig = {
   enabled: boolean;
   window_seconds?: number;
+  /**
+   * Continuous profile kinds (ADR-1155); defaults to cpu.
+   */
+  kinds?: Array<'cpu' | 'heap'>;
 };
 

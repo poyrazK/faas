@@ -57,12 +57,23 @@ UPDATE profile_captures SET capture = capture || jsonb_build_object('instance_id
 WHERE id = sqlc.arg(id)::text::uuid AND status = 'capturing';
 
 -- name: StampProfileCaptureOOM :one
-UPDATE profile_captures SET capture = capture || jsonb_build_object('oom_killed_at', sqlc.arg(killed_at)::timestamptz, 'oom_peak_mb', sqlc.arg(peak_mb)::int, 'oom_plan_mb', sqlc.arg(plan_mb)::int)
-WHERE id = (SELECT q.id FROM profile_captures q
-    WHERE q.app_id = sqlc.arg(app_id)::text::uuid AND q.capture->>'instance_id' = sqlc.arg(instance_id)::text
-      AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= sqlc.arg(since)::timestamptz
-    ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
-RETURNING id::text AS id;
+-- first_link is true when the capture had no OOM kill before this stamp.
+WITH target AS (
+  SELECT q.id, (q.capture->>'oom_killed_at' IS NULL) AS first_link FROM profile_captures q
+  WHERE q.app_id = sqlc.arg(app_id)::text::uuid AND q.capture->>'instance_id' = sqlc.arg(instance_id)::text
+    AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= sqlc.arg(since)::timestamptz
+  ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
+UPDATE profile_captures p SET capture = p.capture || jsonb_build_object('oom_killed_at', sqlc.arg(killed_at)::timestamptz, 'oom_peak_mb', sqlc.arg(peak_mb)::int, 'oom_plan_mb', sqlc.arg(plan_mb)::int)
+FROM target WHERE p.id = target.id
+RETURNING p.id::text AS id, target.first_link::boolean AS first_link, p.status;
+
+-- name: ReadProfileCaptureNotice :one
+-- The capture and its owner, read inside the transaction that finished it or
+-- linked an OOM kill, for the automatic capture webhook (ADR-1155).
+SELECT p.account_id::text AS account_id, p.app_id::text AS app_id, a.slug,
+  (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture
+FROM profile_captures p JOIN apps a ON a.id = p.app_id
+WHERE p.id = sqlc.arg(id)::text::uuid AND a.account_id = p.account_id AND a.status <> 'deleted';
 
 -- name: LatestOOMProfileCapture :one
 SELECT (p.capture || jsonb_build_object('id', p.id, 'app_id', p.app_id, 'status', p.status, 'created_at', p.created_at, 'completed_at', p.completed_at, 'expires_at', p.expires_at))::jsonb AS capture

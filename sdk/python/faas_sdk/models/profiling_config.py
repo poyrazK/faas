@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.profiling_config_kinds_item import ProfilingConfigKindsItem, check_profiling_config_kinds_item
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ProfilingConfig")
@@ -17,12 +18,21 @@ class ProfilingConfig:
 
     enabled: bool
     window_seconds: int | Unset = 10
+    kinds: list[ProfilingConfigKindsItem] | Unset = UNSET
+    """Continuous profile kinds (ADR-1155); defaults to cpu."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
 
         window_seconds = self.window_seconds
+
+        kinds: list[str] | Unset = UNSET
+        if not isinstance(self.kinds, Unset):
+            kinds = []
+            for kinds_item_data in self.kinds:
+                kinds_item: str = kinds_item_data
+                kinds.append(kinds_item)
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -33,6 +43,8 @@ class ProfilingConfig:
         )
         if window_seconds is not UNSET:
             field_dict["window_seconds"] = window_seconds
+        if kinds is not UNSET:
+            field_dict["kinds"] = kinds
 
         return field_dict
 
@@ -43,9 +55,19 @@ class ProfilingConfig:
 
         window_seconds = d.pop("window_seconds", UNSET)
 
+        _kinds = d.pop("kinds", UNSET)
+        kinds: list[ProfilingConfigKindsItem] | Unset = UNSET
+        if _kinds is not UNSET:
+            kinds = []
+            for kinds_item_data in _kinds:
+                kinds_item = check_profiling_config_kinds_item(kinds_item_data)
+
+                kinds.append(kinds_item)
+
         profiling_config = cls(
             enabled=enabled,
             window_seconds=window_seconds,
+            kinds=kinds,
         )
 
         profiling_config.additional_properties = d

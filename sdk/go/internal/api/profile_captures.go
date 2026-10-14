@@ -91,6 +91,16 @@ type ProfileCaptureList struct {
 	Captures []ProfileCapture `json:"captures"`
 }
 
+// ProfileCaptureWebhookPayload is delivered with profile.capture_ready and
+// profile.capture_oom_linked (ADR-1155): the capture record and where to
+// open it, never profile samples.
+type ProfileCaptureWebhookPayload struct {
+	Version     int            `json:"version"`
+	Capture     ProfileCapture `json:"capture"`
+	CapturePath string         `json:"capture_path"`
+	APIPath     string         `json:"api_path"`
+}
+
 // ProfileCaptureFunction is a function's sampled cost in the view's unit:
 // CPU nanoseconds, live heap bytes, or goroutines/threads parked there.
 type ProfileCaptureFunction struct {

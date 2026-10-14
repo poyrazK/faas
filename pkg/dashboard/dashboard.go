@@ -1466,6 +1466,9 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	// AnnouncedCaptures is the banner for profile captures the platform
+	// took on its own or that an OOM kill followed (ADR-1155); nil hides it.
+	AnnouncedCaptures  *AnnouncedProfileCapturesView
 	ProfilingAvailable bool
 	App                AppListItem
 	Manifest           ManifestView

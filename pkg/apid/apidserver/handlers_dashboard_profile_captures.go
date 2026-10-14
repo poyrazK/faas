@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -166,6 +167,22 @@ func (s *server) requestProfileCaptureID(ctx context.Context, acct state.Account
 		return ""
 	}
 	return c.ID
+}
+
+// announcedProfileCaptures builds the app page banner for captures the
+// platform took on its own or that an OOM kill followed (ADR-1155). A read
+// failure hides the banner rather than the page.
+func (s *server) announcedProfileCaptures(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) *dashboard.AnnouncedProfileCapturesView {
+	store, ok := s.profileCaptures.CaptureStore()
+	if !ok || !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
+		return nil
+	}
+	captures, err := store.ListProfileCaptures(ctx, acct.ID, app.ID)
+	if err != nil {
+		log.Warn("dashboard renderAppDetail: list profile captures", "account_id", acct.ID, "app_id", app.ID, "err", err)
+		return nil
+	}
+	return dashboard.BuildAnnouncedProfileCaptures(app.Slug, captures)
 }
 
 // oomProfileCaptureURL links an OOM-failed deployment to the heap capture

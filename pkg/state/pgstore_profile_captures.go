@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -162,8 +163,40 @@ func (s *PgStore) FinishProfileCapture(ctx context.Context, id string, result ap
 			return fmt.Errorf("store profile capture data: %w", err)
 		}
 	}
+	if result.Status == api.ProfileCaptureReady {
+		if err := pgEnqueueProfileCaptureNotice(ctx, tx, id, AppWebhookEventProfileCaptureReady); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit profile capture finish: %w", err)
+	}
+	return nil
+}
+
+// pgEnqueueProfileCaptureNotice enqueues the capture's webhook, if it has
+// one, in the transaction that changed it, so the event is enqueued once
+// with the change (ADR-1155).
+func pgEnqueueProfileCaptureNotice(ctx context.Context, tx pgx.Tx, id string, event AppWebhookEvent) error {
+	q := sqlc.New()
+	row, err := q.ReadProfileCaptureNotice(ctx, tx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // the app was deleted meanwhile
+	}
+	if err != nil {
+		return fmt.Errorf("read profile capture notice: %w", err)
+	}
+	c, err := decodeProfileCapture(row.Capture)
+	if err != nil {
+		return err
+	}
+	payload, ok, err := profileCaptureNotice(event, c, row.Slug)
+	if err != nil || !ok {
+		return err
+	}
+	if err := q.EnqueueProfileAlertNotification(ctx, tx, sqlc.EnqueueProfileAlertNotificationParams{AccountID: row.AccountID, AppID: row.AppID,
+		Event: string(event), SourceID: id, Payload: payload}); err != nil {
+		return fmt.Errorf("enqueue profile capture notice: %w", err)
 	}
 	return nil
 }
@@ -180,12 +213,26 @@ func (s *PgStore) StartProfileCapture(ctx context.Context, id, instanceID, deplo
 }
 
 func (s *PgStore) StampProfileCaptureOOM(ctx context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error) {
-	id, err := sqlc.New().StampProfileCaptureOOM(ctx, s.pool, sqlc.StampProfileCaptureOOMParams{KilledAt: pgtypeFromTime(oom.KilledAt),
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return "", fmt.Errorf("begin profile capture OOM link: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	row, err := sqlc.New().StampProfileCaptureOOM(ctx, tx, sqlc.StampProfileCaptureOOMParams{KilledAt: pgtypeFromTime(oom.KilledAt),
 		PeakMb: int32(oom.PeakMB), PlanMb: int32(oom.PlanMB), AppID: appID, InstanceID: instanceID, Since: pgtypeFromTime(since)})
 	if err != nil {
 		return "", routePolicyReadError(err)
 	}
-	return id, nil
+	// A capture still running announces the kill when it finishes.
+	if row.FirstLink && row.Status == api.ProfileCaptureReady {
+		if err := pgEnqueueProfileCaptureNotice(ctx, tx, row.ID, AppWebhookEventProfileCaptureOOMLinked); err != nil {
+			return "", err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit profile capture OOM link: %w", err)
+	}
+	return row.ID, nil
 }
 
 func (s *PgStore) LatestOOMProfileCapture(ctx context.Context, accountID, appID, deploymentID string) (api.ProfileCapture, error) {

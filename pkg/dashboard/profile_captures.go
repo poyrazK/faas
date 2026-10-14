@@ -35,13 +35,57 @@ type ProfileCaptureCompareOption struct {
 	ID, Label string
 }
 
+// AnnouncedProfileCapturesView is the app page banner for retained
+// announced captures (ADR-1155): how many, how many an OOM kill followed,
+// and the newest.
+type AnnouncedProfileCapturesView struct {
+	Count, OOMKilled int
+	Days             int
+	Latest           api.ProfileCapture
+	LatestURL        string
+	LatestTrigger    string
+	ListURL          string
+}
+
+// BuildAnnouncedProfileCaptures summarizes captures, newest first, for the
+// banner. It returns nil when none is announced.
+func BuildAnnouncedProfileCaptures(slug string, captures []api.ProfileCapture) *AnnouncedProfileCapturesView {
+	var out *AnnouncedProfileCapturesView
+	for _, c := range captures {
+		if !c.Announced() {
+			continue
+		}
+		if out == nil {
+			out = &AnnouncedProfileCapturesView{Days: int(api.ProfileCaptureRetention / (24 * time.Hour)), Latest: c,
+				LatestURL: ProfileCaptureURL(slug, c.ID), LatestTrigger: ProfileCaptureTriggerLabel(c.Trigger),
+				ListURL: "/dashboard/apps/" + url.PathEscape(slug) + "/profiles#profile-captures"}
+		}
+		out.Count++
+		if c.OOMKilledAt != nil {
+			out.OOMKilled++
+		}
+	}
+	return out
+}
+
+// ProfileCaptureTriggerLabel names what started a capture.
+func ProfileCaptureTriggerLabel(trigger string) string {
+	switch trigger {
+	case api.ProfileCaptureTriggerMemoryPressure:
+		return "memory pressure"
+	case api.ProfileCaptureTriggerSlowRequest:
+		return "slow request"
+	}
+	return "manual"
+}
+
 // ProfileCaptureCompareOptions labels comparable captures for the picker.
 func ProfileCaptureCompareOptions(captures []api.ProfileCapture) []ProfileCaptureCompareOption {
 	out := make([]ProfileCaptureCompareOption, 0, len(captures))
 	for _, c := range captures {
 		label := c.CreatedAt.UTC().Format("2006-01-02 15:04Z") + " · " + strings.Join(c.Kinds, "+") + fmt.Sprintf(" · %ds", c.DurationSeconds)
-		if c.Trigger == api.ProfileCaptureTriggerMemoryPressure {
-			label += " · memory pressure"
+		if c.Automatic() {
+			label += " · " + ProfileCaptureTriggerLabel(c.Trigger)
 		}
 		if c.OOMKilledAt != nil {
 			label += " · OOM-killed after"

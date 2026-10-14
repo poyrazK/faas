@@ -199,6 +199,36 @@ the instance. schedd queues a stacks+CPU capture of 5 s with trigger
 captures up by trace id and links them (`profile_capture_id`). The gateway
 reports only route labels, never raw paths.
 
+## Amendment: announcing automatic captures
+
+Automatic captures were only visible to someone already looking at the
+profiles page. A capture is now *announced* when it is ready with at least
+one profile and either the platform started it (memory pressure, slow
+request) or an OOM kill is linked to it (`ProfileCapture.Announced`). Manual
+captures without a kill are not announced; whoever asked is already waiting.
+
+- Two app webhook events, delivered through the existing app webhook outbox
+  with its signing, retries and event filters. A subscription with no filter
+  receives them, like `profile.route_regressed`:
+  - `profile.capture_ready`: enqueued in the transaction that finishes an
+    announced capture.
+  - `profile.capture_oom_linked`: enqueued in the transaction that links the
+    first OOM kill to a capture that was already ready. A kill linked while
+    the capture is still running is announced by `profile.capture_ready`,
+    so each fact is delivered once. schedd links a kill reported in the
+    capture reply before finishing the capture for the same reason.
+  The outbox deduplicates by event and capture id. The payload
+  (`ProfileCaptureWebhookPayload`, version 1) is the capture record plus its
+  dashboard and API paths, never profile samples.
+- The app page shows a banner while announced captures are retained: how
+  many in the retention window, how many an OOM kill followed, and a link to
+  the newest.
+
+schedd already writes the outbox for other producers (`app.parked`); no new
+writer or table is introduced. Volume stays bounded by the capture quotas:
+one automatic capture per app and trigger per minimum interval, 60 captures
+per account per hour.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

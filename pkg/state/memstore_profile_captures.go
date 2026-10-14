@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -175,6 +176,35 @@ func (m *MemStore) FinishProfileCapture(_ context.Context, id string, result api
 	for _, b := range blobs {
 		row.blobs = append(row.blobs, ProfileCaptureBlob{Kind: b.Kind, ProcessID: b.ProcessID, Profile: append([]byte(nil), b.Profile...)})
 	}
+	return m.enqueueProfileCaptureNoticeLocked(row, AppWebhookEventProfileCaptureReady, now)
+}
+
+// enqueueProfileCaptureNoticeLocked mirrors pgEnqueueProfileCaptureNotice.
+func (m *MemStore) enqueueProfileCaptureNoticeLocked(row *memProfileCapture, event AppWebhookEvent, at time.Time) error {
+	app, ok := m.apps[row.capture.AppID]
+	if !ok || app.AccountID != row.accountID || app.Status == AppDeleted {
+		return nil
+	}
+	payload, ok, err := profileCaptureNotice(event, copyProfileCapture(row.capture), app.Slug)
+	if err != nil || !ok {
+		return err
+	}
+	var recipients []string
+	for id, h := range m.appWebhooks {
+		if h.Scope == AppWebhookScopeApp && h.AppID == app.ID && h.AccountID == app.AccountID && h.Enabled && appWebhookMatches(h.EventFilter, event) {
+			recipients = append(recipients, id)
+		}
+	}
+	if len(recipients) == 0 {
+		return nil
+	}
+	sort.Strings(recipients)
+	if m.appWebhookEventOutbox == nil {
+		m.appWebhookEventOutbox = map[string]appWebhookOutboxEvent{}
+	}
+	id := uuid.NewString()
+	m.appWebhookEventOutbox[id] = appWebhookOutboxEvent{ID: id, AccountID: app.AccountID, AppID: app.ID, Event: event, SourceID: row.capture.ID,
+		Payload: payload, RecipientWebhookIDs: recipients, CreatedAt: at}
 	return nil
 }
 
@@ -205,8 +235,14 @@ func (m *MemStore) StampProfileCaptureOOM(_ context.Context, appID, instanceID s
 	if newest == nil {
 		return "", ErrNotFound
 	}
+	firstLink := newest.capture.OOMKilledAt == nil
 	killed := oom.KilledAt
 	newest.capture.OOMKilledAt, newest.capture.OOMPeakMB, newest.capture.OOMPlanMB = &killed, oom.PeakMB, oom.PlanMB
+	if firstLink && newest.capture.Status == api.ProfileCaptureReady {
+		if err := m.enqueueProfileCaptureNoticeLocked(newest, AppWebhookEventProfileCaptureOOMLinked, killed); err != nil {
+			return "", err
+		}
+	}
 	return newest.capture.ID, nil
 }
 

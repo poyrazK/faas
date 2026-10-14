@@ -332,6 +332,52 @@ taken while this request was in flight"
 Streaming responses and WebSocket upgrades are long-lived by design and are
 never reported.
 
+### Get notified about automatic captures
+
+Captures that Gregale takes on its own, and captures followed by an OOM
+kill, appear on the app page as **Profile captures to review**, with the
+count from the last 7 days, how many an OOM kill followed, and a link to the
+newest one. Captures you start yourself are not announced unless an OOM kill
+follows them.
+
+The same captures are sent to app webhooks:
+
+| Event | Sent when |
+|---|---|
+| `profile.capture_ready` | an automatic capture (memory pressure, slow request), or any capture linked to an OOM kill, finishes with at least one profile |
+| `profile.capture_oom_linked` | an OOM kill is linked to a capture that had already finished |
+
+Each event is sent once per capture. A webhook with no event filter receives
+both; to receive only these, subscribe to them explicitly:
+
+```sh
+gregale webhooks add --app my-app --target-url https://hooks.example.com/gregale \
+  --event profile.capture_ready --event profile.capture_oom_linked
+```
+
+The payload is the capture record and where to open it; it never contains
+profile samples:
+
+```json
+{
+  "version": 1,
+  "capture": {
+    "id": "3f6c…", "app_id": "…", "status": "ready", "kinds": ["heap"],
+    "trigger": "memory_pressure",
+    "trigger_detail": "guest memory available fell to 31 MiB of 246 MiB (180 MiB anonymous)",
+    "instance_id": "…", "deployment_id": "…", "partial": true,
+    "oom_killed_at": "2026-10-14T21:03:12Z", "oom_peak_mb": 263, "oom_plan_mb": 256,
+    "profiles": [{"kind": "heap", "process_id": "7", "bytes": 18234}],
+    "created_at": "2026-10-14T21:02:58Z", "completed_at": "2026-10-14T21:03:13Z"
+  },
+  "capture_path": "/dashboard/apps/my-app/profiles/captures/3f6c…",
+  "api_path": "/v1/apps/my-app/profiles/captures/3f6c…"
+}
+```
+
+Delivery uses the app's existing webhook signing, retries and delivery
+inspection.
+
 ### Compare two captures
 
 A single heap capture shows where memory is held; two captures show what grew.

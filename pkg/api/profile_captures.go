@@ -79,8 +79,9 @@ type ProfileCapture struct {
 	Kinds               []string `json:"kinds"`
 	DurationSeconds     int      `json:"duration_seconds"`
 	RequestedInstanceID string   `json:"requested_instance_id,omitempty"`
-	// Trigger is manual or memory_pressure; TriggerDetail explains an
-	// automatic capture ("guest memory available fell to 31 MiB of 246 MiB").
+	// Trigger is manual, memory_pressure or slow_request; TriggerDetail
+	// explains an automatic capture ("guest memory available fell to 31 MiB
+	// of 246 MiB").
 	Trigger       string                  `json:"trigger,omitempty"`
 	TriggerDetail string                  `json:"trigger_detail,omitempty"`
 	InstanceID    string                  `json:"instance_id,omitempty"`
@@ -112,9 +113,38 @@ func (c ProfileCapture) Done() bool {
 	return c.Status == ProfileCaptureReady || c.Status == ProfileCaptureFailed
 }
 
+// Automatic reports whether the platform, not a person, started the capture.
+func (c ProfileCapture) Automatic() bool {
+	return c.Trigger != "" && c.Trigger != ProfileCaptureTriggerManual
+}
+
+// Announced reports whether the capture is worth telling the app's owner
+// about unprompted (ADR-1155): ready with profiles, and started by the
+// platform or linked to an OOM kill. Webhooks and the app page announce
+// exactly these.
+func (c ProfileCapture) Announced() bool {
+	return c.Status == ProfileCaptureReady && len(c.Profiles) > 0 && (c.Automatic() || c.OOMKilledAt != nil)
+}
+
 type ProfileCaptureList struct {
 	Captures []ProfileCapture `json:"captures"`
 }
+
+// ProfileCaptureWebhookPayload is delivered with profile.capture_ready when
+// an automatic capture, or one linked to an OOM kill, finishes with
+// profiles, and with profile.capture_oom_linked when an OOM kill is linked
+// to a capture that already finished (ADR-1155). It carries the capture
+// record and where to open it, never profile samples.
+type ProfileCaptureWebhookPayload struct {
+	Version int            `json:"version"`
+	Capture ProfileCapture `json:"capture"`
+	// CapturePath is the dashboard capture page; APIPath the capture resource.
+	CapturePath string `json:"capture_path"`
+	APIPath     string `json:"api_path"`
+}
+
+// ProfileCaptureWebhookVersion is the ProfileCaptureWebhookPayload version.
+const ProfileCaptureWebhookVersion = 1
 
 // ProfileCaptureFunction is a function's sampled cost in the view's unit:
 // CPU nanoseconds, live heap bytes, or goroutines/threads parked there.

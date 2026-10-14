@@ -3091,6 +3091,9 @@ type Querier interface {
 	// instance and one automatic-profile policy revision.
 	ReadProfileCanaryHistoryTarget(ctx context.Context, db DBTX, arg ReadProfileCanaryHistoryTargetParams) (bool, error)
 	ReadProfileCapture(ctx context.Context, db DBTX, arg ReadProfileCaptureParams) ([]byte, error)
+	// The capture and its owner, read inside the transaction that finished it or
+	// linked an OOM kill, for the automatic capture webhook (ADR-1155).
+	ReadProfileCaptureNotice(ctx context.Context, db DBTX, id string) (ReadProfileCaptureNoticeRow, error)
 	ReadProfileDeploymentCheck(ctx context.Context, db DBTX, arg ReadProfileDeploymentCheckParams) ([]byte, error)
 	ReadProfileDeploymentPolicy(ctx context.Context, db DBTX, arg ReadProfileDeploymentPolicyParams) ([]byte, error)
 	ReadProfileGateContext(ctx context.Context, db DBTX, arg ReadProfileGateContextParams) ([]byte, error)
@@ -3713,7 +3716,8 @@ type Querier interface {
 	StampDeadLetterEventReplay(ctx context.Context, db DBTX, arg StampDeadLetterEventReplayParams) error
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
-	StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (string, error)
+	// first_link is true when the capture had no OOM kill before this stamp.
+	StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (StampProfileCaptureOOMRow, error)
 	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
 	StartCustomerOperationWorkflowRun(ctx context.Context, db DBTX, arg StartCustomerOperationWorkflowRunParams) error

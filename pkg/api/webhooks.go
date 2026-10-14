@@ -101,6 +101,7 @@ var AllowedAppWebhookEvents = []string{
 	"realtime.message.read",
 	"realtime.inbox.acknowledged", "realtime.inbox.gap", "realtime.inbox.fallback_required",
 	"profile.route_regressed", "profile.route_recovered",
+	"profile.capture_ready", "profile.capture_oom_linked",
 	"operation.effect",
 	"app.parked", "app.woken",
 	"app.health.changed",

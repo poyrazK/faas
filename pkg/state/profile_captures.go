@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -60,6 +61,8 @@ type ProfileCaptureQueue interface {
 	ClaimProfileCapture(ctx context.Context, now time.Time) (ClaimedProfileCapture, error)
 	// FinishProfileCapture stamps a capturing row ready or failed. It returns
 	// ErrNotFound when the row is no longer capturing (expired meanwhile).
+	// A ready automatic or OOM-linked capture enqueues profile.capture_ready
+	// in the same transaction.
 	FinishProfileCapture(ctx context.Context, id string, result api.ProfileCapture, blobs []ProfileCaptureBlob, now time.Time) error
 	// ExpireProfileCaptures fails interrupted captures and deletes expired ones.
 	ExpireProfileCaptures(ctx context.Context, now time.Time) (int64, error)
@@ -68,7 +71,9 @@ type ProfileCaptureQueue interface {
 	StartProfileCapture(ctx context.Context, id, instanceID, deploymentID string) error
 	// StampProfileCaptureOOM links an OOM kill to the newest heap capture
 	// started on that instance since `since`, returning its id or
-	// ErrNotFound. Re-stamping the same kill is idempotent.
+	// ErrNotFound. Re-stamping the same kill is idempotent. The first kill
+	// linked to an already ready capture enqueues profile.capture_oom_linked;
+	// a capture still running announces it when it finishes.
 	StampProfileCaptureOOM(ctx context.Context, appID, instanceID string, oom ProfileCaptureOOM, since time.Time) (string, error)
 	// QueueAutomaticProfileCapture queues a platform-triggered capture under
 	// the same quota and single-active rules as CreateProfileCapture, plus a
@@ -134,4 +139,23 @@ func validProfileCaptureFinish(result api.ProfileCapture, blobs []ProfileCapture
 		}
 	}
 	return nil
+}
+
+// profileCaptureNotice returns the webhook payload for an announced capture
+// (ADR-1155). Manual captures without an OOM kill are not announced: whoever
+// asked for them is already waiting.
+func profileCaptureNotice(event AppWebhookEvent, c api.ProfileCapture, slug string) ([]byte, bool, error) {
+	if event != AppWebhookEventProfileCaptureReady && event != AppWebhookEventProfileCaptureOOMLinked {
+		return nil, false, errors.New("profile capture notice: unsupported event " + string(event))
+	}
+	if !c.Announced() || event == AppWebhookEventProfileCaptureOOMLinked && c.OOMKilledAt == nil {
+		return nil, false, nil
+	}
+	body, err := json.Marshal(api.ProfileCaptureWebhookPayload{Version: api.ProfileCaptureWebhookVersion, Capture: c,
+		CapturePath: "/dashboard/apps/" + url.PathEscape(slug) + "/profiles/captures/" + url.PathEscape(c.ID),
+		APIPath:     "/v1/apps/" + url.PathEscape(slug) + "/profiles/captures/" + url.PathEscape(c.ID)})
+	if err != nil {
+		return nil, false, err
+	}
+	return body, true, nil
 }
