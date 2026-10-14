@@ -188,7 +188,7 @@ func cmdPostgresUsage(args []string) int {
 	}
 	_, _ = fmt.Fprintln(osStdout, "managed postgres usage")
 	_, _ = fmt.Fprintf(osStdout, "  period_start:                 %s\n", result.PeriodStart.UTC().Format("2006-01-02"))
-	_, _ = fmt.Fprintf(osStdout, "  observed_at:                  %s\n", formatPostgresObservedAt(result.ObservedAt))
+	_, _ = fmt.Fprintf(osStdout, "  observed_at:                  %s\n", postgresUsageObservedLabel(result.ObservedAt, result.Fresh))
 	_, _ = fmt.Fprintf(osStdout, "  policy_enabled:               %t\n", result.PolicyEnabled)
 	_, _ = fmt.Fprintf(osStdout, "  fresh:                        %t\n", result.Fresh)
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
@@ -235,6 +235,18 @@ func formatIECBytes(value int64) string {
 		size, unit = size/1024, unit+1
 	}
 	return fmt.Sprintf("%.1f %s", size, units[unit])
+}
+
+// postgresUsageObservedLabel explains a missing observation on a fresh
+// summary: fresh means no observation is overdue, which also holds before the
+// first one, and "never" next to "fresh: true" read as a contradiction
+// (Snapbox SB-12).
+func postgresUsageObservedLabel(observedAt *time.Time, fresh bool) string {
+	label := formatPostgresObservedAt(observedAt)
+	if label == "never" && fresh {
+		return "never (no usage metered yet; nothing is overdue)"
+	}
+	return label
 }
 
 func formatPostgresObservedAt(observedAt *time.Time) string {
