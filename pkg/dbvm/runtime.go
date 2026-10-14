@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -85,6 +86,30 @@ type RuntimeConfig struct {
 	ArchiveSocket string
 	// Spares is how many spare VMs to keep booted per shape (spare.go).
 	Spares map[SpareShape]int
+	// ArchiveQuotaFactor caps each database's archive on this node at
+	// that many times its volume size (default 10; negative is no cap).
+	// The relay stamps the cap on every stream (dbarchive.Header).
+	ArchiveQuotaFactor int
+}
+
+// defaultArchiveQuotaFactor allows a restore window's worth of churn: a
+// database rewriting its whole volume several times over its window.
+const defaultArchiveQuotaFactor = 10
+
+// archiveQuota is the archive cap for a database whose volume is at path.
+func (r *Runtime) archiveQuota(volume string) int64 {
+	factor := r.cfg.ArchiveQuotaFactor
+	if factor == 0 {
+		factor = defaultArchiveQuotaFactor
+	}
+	if factor < 0 || volume == "" {
+		return 0
+	}
+	info, err := os.Stat(volume)
+	if err != nil {
+		return 0
+	}
+	return int64(factor) * info.Size()
 }
 
 // BootRequest starts one database VM.
@@ -441,7 +466,10 @@ func (r *Runtime) launch(vm *databaseVM, req BootRequest) error {
 	// The VM outlives the RPC that started it, so the command is not bound
 	// to the caller's context; Stop and teardown end it.
 	cmd := exec.Command(r.cfg.JailerBin, argv[1:]...)
-	cmd.Stdout, cmd.Stderr = console, console
+	// The guest writes to its console at will; the log keeps only its
+	// latest output, so it cannot fill the jail filesystem.
+	capped := &consoleLog{f: console, max: consoleMaxBytes}
+	cmd.Stdout, cmd.Stderr = capped, capped
 	if err := cmd.Start(); err != nil {
 		_ = console.Close()
 		return fmt.Errorf("dbvm: start jailer: %w", err)
@@ -550,4 +578,35 @@ func (r *Runtime) teardown(id string, vm *databaseVM) {
 		delete(r.vms, id)
 	}
 	r.mu.Unlock()
+}
+
+// consoleMaxBytes bounds a database VM's console log.
+const consoleMaxBytes = 4 << 20
+
+// consoleLog writes a VM's console to a file and starts the file over once
+// it reaches max, so it holds the latest output and never grows without
+// end. Writes always succeed, so Firecracker never blocks on its console.
+type consoleLog struct {
+	mu      sync.Mutex
+	f       *os.File
+	max     int64
+	written int64
+}
+
+func (c *consoleLog) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	total := len(p)
+	if c.written+int64(len(p)) > c.max {
+		if c.f.Truncate(0) == nil {
+			_, _ = c.f.Seek(0, io.SeekStart)
+			c.written = 0
+		}
+	}
+	if int64(len(p)) > c.max {
+		p = p[int64(len(p))-c.max:]
+	}
+	n, _ := c.f.Write(p)
+	c.written += int64(n)
+	return total, nil
 }

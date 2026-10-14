@@ -49,6 +49,8 @@ const (
 const (
 	ErrCodeNotFound = "not_found"
 	ErrCodeConflict = "conflict"
+	// ErrCodeQuota refuses archive bytes past Header.QuotaBytes.
+	ErrCodeQuota    = "quota_exceeded"
 	ErrCodeInvalid  = "invalid"
 	ErrCodeInternal = "internal"
 )
@@ -66,6 +68,9 @@ var ErrNotFound = errors.New("dbarchive: not found")
 // ErrConflict reports an archive object that already exists with other
 // content. PostgreSQL must never overwrite archived WAL.
 var ErrConflict = errors.New("dbarchive: object exists with different content")
+
+// ErrQuotaExceeded refuses archive bytes past the stream's quota.
+var ErrQuotaExceeded = errors.New("dbarchive: archive quota exceeded")
 
 // walName matches the files archive_command ships: segments, partial
 // segments, backup history and timeline history files.
@@ -93,14 +98,19 @@ type Header struct {
 	// Admin marks vmmd's own stream for OpDrop and OpPrune. The relay
 	// never sets it.
 	Admin bool `json:"admin,omitempty"`
+	// QuotaBytes caps the database's archive on this node; zero is
+	// unlimited. A guest can stream WAL and backups at will, past the
+	// volume's rate limiter, so vmmd stamps a quota on every relayed
+	// stream and one database cannot fill the node's archive disk.
+	QuotaBytes int64 `json:"quota_bytes,omitempty"`
 }
 
 // Validate rejects a header naming anything but database ids.
 func (h Header) Validate() error {
-	if !ValidDatabaseID(h.DatabaseID) || (h.RestoreSource != "" && !ValidDatabaseID(h.RestoreSource)) || h.RestoreWindowSeconds < 0 {
+	if !ValidDatabaseID(h.DatabaseID) || (h.RestoreSource != "" && !ValidDatabaseID(h.RestoreSource)) || h.RestoreWindowSeconds < 0 || h.QuotaBytes < 0 {
 		return errors.New("dbarchive: invalid header")
 	}
-	if h.Admin && (h.RestoreSource != "" || h.RestoreWindowSeconds != 0) {
+	if h.Admin && (h.RestoreSource != "" || h.RestoreWindowSeconds != 0 || h.QuotaBytes != 0) {
 		return errors.New("dbarchive: invalid admin header")
 	}
 	return nil
@@ -172,6 +182,8 @@ func errorFor(code string) error {
 		return ErrNotFound
 	case ErrCodeConflict:
 		return ErrConflict
+	case ErrCodeQuota:
+		return ErrQuotaExceeded
 	default:
 		return fmt.Errorf("dbarchive: %s", code)
 	}
@@ -186,6 +198,8 @@ func codeFor(err error) string {
 		return ErrCodeNotFound
 	case errors.Is(err, ErrConflict):
 		return ErrCodeConflict
+	case errors.Is(err, ErrQuotaExceeded):
+		return ErrCodeQuota
 	default:
 		return ErrCodeInternal
 	}

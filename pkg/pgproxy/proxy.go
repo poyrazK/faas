@@ -78,6 +78,14 @@ type Config struct {
 	HandshakeTimeout time.Duration
 	WakeTimeout      time.Duration
 	TouchInterval    time.Duration
+	// MaxConnections caps open client connections; MaxHandshakes caps
+	// those not yet authenticated, and MaxHandshakesPerSource those from
+	// one address. Unauthenticated clients cost a TLS handshake and a
+	// verifier lookup each, so they are bounded well below sessions.
+	// Connections past a cap are closed at once.
+	MaxConnections         int
+	MaxHandshakes          int
+	MaxHandshakesPerSource int
 	// Metrics records session outcomes; nil records nothing.
 	Metrics *Metrics
 }
@@ -90,6 +98,11 @@ type Proxy struct {
 	dialer SessionDialer
 	log    *slog.Logger
 	tlsCfg *tls.Config
+
+	mu          sync.Mutex
+	open        int
+	handshaking map[string]int // by source address
+	handshakes  int
 }
 
 // New validates cfg and builds a Proxy.
@@ -102,6 +115,15 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	}
 	if cfg.WakeTimeout <= 0 {
 		cfg.WakeTimeout = time.Minute
+	}
+	if cfg.MaxConnections <= 0 {
+		cfg.MaxConnections = 10000
+	}
+	if cfg.MaxHandshakes <= 0 {
+		cfg.MaxHandshakes = 512
+	}
+	if cfg.MaxHandshakesPerSource <= 0 {
+		cfg.MaxHandshakesPerSource = 32
 	}
 	if cfg.TouchInterval <= 0 {
 		cfg.TouchInterval = 30 * time.Second
@@ -116,7 +138,7 @@ func New(cfg Config, creds Credentials, waker Waker, dialer SessionDialer, log *
 	// PostgreSQL 17 direct TLS requires the "postgresql" ALPN protocol.
 	tlsCfg.NextProtos = []string{"postgresql"}
 	cfg.HostSuffix = strings.ToLower(strings.TrimPrefix(cfg.HostSuffix, "."))
-	return &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg}, nil
+	return &Proxy{cfg: cfg, creds: creds, waker: waker, dialer: dialer, log: log, tlsCfg: tlsCfg, handshaking: map[string]int{}}, nil
 }
 
 // Serve accepts clients until ln closes.
@@ -142,6 +164,18 @@ func (f *fatal) Error() string { return f.code + ": " + f.msg }
 
 func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 	defer func() { _ = raw.Close() }()
+	source := sourceOf(raw)
+	if !p.admit(source) {
+		p.cfg.Metrics.result("limit")
+		return
+	}
+	defer p.closed()
+	authenticated := false
+	defer func() {
+		if !authenticated {
+			p.authenticated(source)
+		}
+	}()
 	_ = raw.SetDeadline(time.Now().Add(p.cfg.HandshakeTimeout))
 	conn, err := p.negotiateTLS(raw)
 	if err != nil {
@@ -164,6 +198,8 @@ func (p *Proxy) handle(ctx context.Context, raw net.Conn) {
 		return
 	}
 	defer func() { _ = session.Close() }()
+	authenticated = true
+	p.authenticated(source)
 	p.cfg.Metrics.result("ok")
 	p.cfg.Metrics.sessionStarted()
 	defer p.cfg.Metrics.sessionEnded()
@@ -495,4 +531,42 @@ func (c *countingWriter) Write(b []byte) (int, error) {
 	n, err := c.w.Write(b)
 	c.n.Add(int64(n))
 	return n, err
+}
+
+// admit counts a new connection from source against the caps.
+func (p *Proxy) admit(source string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.open >= p.cfg.MaxConnections || p.handshakes >= p.cfg.MaxHandshakes || p.handshaking[source] >= p.cfg.MaxHandshakesPerSource {
+		return false
+	}
+	p.open++
+	p.handshakes++
+	p.handshaking[source]++
+	return true
+}
+
+// authenticated ends a connection's handshake phase.
+func (p *Proxy) authenticated(source string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.handshakes--
+	if p.handshaking[source]--; p.handshaking[source] <= 0 {
+		delete(p.handshaking, source)
+	}
+}
+
+func (p *Proxy) closed() {
+	p.mu.Lock()
+	p.open--
+	p.mu.Unlock()
+}
+
+// sourceOf is a connection's remote address without its port.
+func sourceOf(c net.Conn) string {
+	host, _, err := net.SplitHostPort(c.RemoteAddr().String())
+	if err != nil {
+		return c.RemoteAddr().String()
+	}
+	return host
 }

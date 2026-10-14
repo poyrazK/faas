@@ -234,7 +234,7 @@ func (r *Runtime) adopt(ctx context.Context, vm *databaseVM, spareID string, req
 	if err := os.Chmod(volume, 0o600); err != nil {
 		return req.ID, err
 	}
-	header := dbarchive.Header{DatabaseID: req.ID, RestoreWindowSeconds: req.RestoreWindowSeconds}
+	header := dbarchive.Header{DatabaseID: req.ID, RestoreWindowSeconds: req.RestoreWindowSeconds, QuotaBytes: r.archiveQuota(volume)}
 	if err := header.Validate(); err != nil {
 		return req.ID, err
 	}

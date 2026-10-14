@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -238,5 +239,32 @@ func TestGrowVolumeRefusals(t *testing.T) {
 	}
 	if info, _ := os.Stat(path); info.Size() != 2<<30 {
 		t.Fatalf("a refused grow changed the file: %d", info.Size())
+	}
+}
+
+// A guest flooding its console never grows the log past its cap; the log
+// keeps the latest output.
+func TestConsoleLogIsCapped(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "console")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	c := &consoleLog{f: f, max: 1000}
+	for i := 0; i < 500; i++ {
+		if n, err := c.Write([]byte("0123456789")); n != 10 || err != nil {
+			t.Fatalf("write = %d, %v", n, err)
+		}
+	}
+	if n, err := c.Write([]byte(strings.Repeat("y", 5000) + "LAST")); n != 5004 || err != nil {
+		t.Fatalf("oversized write = %d, %v", n, err)
+	}
+	info, err := f.Stat()
+	if err != nil || info.Size() > 1000 {
+		t.Fatalf("console log is %d bytes, cap 1000", info.Size())
+	}
+	body, _ := os.ReadFile(f.Name())
+	if !strings.HasSuffix(string(body), "LAST") {
+		t.Fatalf("the log lost the latest output: %q", body[max(0, len(body)-10):])
 	}
 }

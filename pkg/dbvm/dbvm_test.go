@@ -3,6 +3,7 @@ package dbvm
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -258,5 +259,40 @@ func TestFilesystemBytes(t *testing.T) {
 	}
 	if _, err := FilesystemBytes([]byte("dumpe2fs: Bad magic number in super-block")); err == nil {
 		t.Fatal("garbage parsed")
+	}
+}
+
+// A hostile guest answering without end cannot make the host buffer
+// without end: the reply is cut off at MaxResponseBytes.
+func TestControlBoundsAGuestsReply(t *testing.T) {
+	sent := make(chan int64, 1)
+	uds := fakeFirecracker(t, func(port string, conn net.Conn) {
+		if port != "5433" {
+			return
+		}
+		_, _ = bufio.NewReader(conn).ReadBytes('\n')
+		chunk := bytes.Repeat([]byte("x"), 32<<10)
+		var n int64
+		for n < 64<<20 {
+			w, err := conn.Write(chunk)
+			n += int64(w)
+			if err != nil {
+				break
+			}
+		}
+		sent <- n
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := Control(ctx, uds, dbguest.Request{Op: dbguest.OpStatus}); err == nil {
+		t.Fatal("an endless reply decoded")
+	}
+	select {
+	case n := <-sent:
+		if n >= 64<<20 {
+			t.Fatalf("the host read all %d bytes of an endless reply", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the guest is still writing: the host never stopped reading")
 	}
 }

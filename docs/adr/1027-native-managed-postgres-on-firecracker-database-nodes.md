@@ -767,6 +767,61 @@ guest-init. A spare has done all of that before anyone asks.
   in the spare reached the volume, and after the park the pool refilled
   and a second wake adopted again.
 
+### Security review (phase 6)
+
+The review took the threat model above at its word: a guest may be
+compromised, and pgproxyd faces the internet. It asked what a hostile guest
+can make the host do, whether customer SQL can escalate, and whether the
+tenant seams hold.
+
+**Fixed:**
+
+1. *Archive disk exhaustion.* A guest could archive any number of WAL files
+   (each capped at 1 GiB) and stream a base backup without end, past its
+   volume's rate limiter, filling the archive disk every database on the
+   node shares. vmmd now stamps `quota_bytes` on every relayed stream: 10x
+   the volume size by default (`archive_quota_factor`; negative disables).
+   dbbackupd refuses WAL and backup bytes past it with `quota_exceeded`. A
+   refused archive_command leaves the WAL on the database's own volume.
+2. *vmmd memory.* The host read a guest's control reply with an unbounded
+   `ReadBytes`, so a reply without a newline grew vmmd's memory until the
+   request's deadline (an hour for a base backup), against the root
+   daemon serving every tenant. Replies are now read through a 64 KiB
+   limit (`dbguest.MaxResponseBytes`).
+3. *Console growth.* A guest writing to its console without end grew
+   `console.log` in the jail directory. The log now keeps only its latest
+   4 MiB.
+4. *Archive stream fan-out.* A guest could open unlimited archive streams,
+   each costing vmmd and dbbackupd a connection. A VM gets 4 at a time;
+   PostgreSQL uses one or two.
+5. *pgproxyd pre-auth limits.* The public listener had no cap, and every
+   unauthenticated client costs a TLS handshake and a verifier lookup in
+   the control-plane database. It now caps open connections (10,000),
+   in-flight handshakes (512) and in-flight handshakes per source (32),
+   closing clients past a cap at once.
+
+**Reviewed and holding:**
+
+- The archive relay stamps the database (and restore source) on every
+  guest stream; a guest cannot name another database's archive. Admin ops
+  need a header only vmmd writes, on a socket only vmmd's user can open
+  (0600 in a 0700 directory).
+- Customer roles are `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+  NOBYPASSRLS`, so the pre-16 CREATEROLE route to `pg_execute_server_program`
+  does not exist. Admin SQL interpolates only names matching
+  `^gregale_(rt|ro|mig)_[0-9a-f]{40}$` and SCRAM verifiers matching their
+  format; no customer string reaches it. Passwords are 256-bit HMAC
+  derivations, so online guessing is moot.
+- Database RPCs accept only `schedd.faas` (and `pgproxyd.faas` for sessions)
+  and, on a database node, nothing but database RPCs.
+- Spares run no tenant code before adoption and serve one tenant once; a
+  spare's directory holds only its placeholder and links. Volume transfers
+  install only on a matching digest. Volume ids are validated before any
+  path is built.
+
+**Out of scope here:** app VMs also write an unbounded console file under
+`/var/log/faas`, a pre-existing compute-node issue.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives

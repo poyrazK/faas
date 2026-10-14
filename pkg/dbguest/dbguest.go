@@ -54,6 +54,10 @@ const (
 
 	// MaxRequestBytes bounds one control request line.
 	MaxRequestBytes = 64 << 10
+	// MaxResponseBytes bounds one control response line. The guest is
+	// untrusted: a host reading without a bound could be made to buffer
+	// without end.
+	MaxResponseBytes = 64 << 10
 	// MaxAdminSQLBytes bounds the SQL of one admin request.
 	MaxAdminSQLBytes = 60 << 10
 )

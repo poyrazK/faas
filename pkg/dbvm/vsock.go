@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -92,7 +93,8 @@ func Control(ctx context.Context, uds string, req dbguest.Request) (dbguest.Resp
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return dbguest.Response{}, fmt.Errorf("dbvm: send %s: %w", req.Op, err)
 	}
-	line, err := bufio.NewReaderSize(conn, dbguest.MaxRequestBytes).ReadBytes('\n')
+	// ReadBytes grows past the buffer, so the bound is the reader's.
+	line, err := bufio.NewReader(io.LimitReader(conn, dbguest.MaxResponseBytes)).ReadBytes('\n')
 	if err != nil {
 		return dbguest.Response{}, fmt.Errorf("dbvm: read %s response: %w", req.Op, err)
 	}

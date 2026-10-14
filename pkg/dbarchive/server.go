@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"time"
@@ -104,6 +105,10 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			if req.Size <= 0 || req.Size > MaxWALBytes {
 				_ = WriteLine(conn, Response{Error: ErrCodeInvalid})
 				return
+			}
+			if room, err := s.quotaRoom(header); err != nil || room < req.Size {
+				s.refuseOverQuota(conn, header, err)
+				return // the payload is unread; the stream is unusable
 			}
 			err := s.Store.PutWAL(ctx, header.DatabaseID, req.Name, io.LimitReader(br, req.Size), req.Size)
 			if err != nil {
@@ -261,8 +266,17 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 		now = s.now
 	}
 	if req.Op == OpPutBackup {
-		body := &chunkReader{r: br}
+		room, err := s.quotaRoom(header)
+		if err != nil || room <= 0 {
+			s.refuseOverQuota(conn, header, err)
+			return false
+		}
+		body := &quotaReader{r: &chunkReader{r: br}, room: room}
 		m, err := s.Backups.PutBackup(ctx, header.DatabaseID, body, now())
+		if errors.Is(err, ErrQuotaExceeded) || body.over {
+			s.refuseOverQuota(conn, header, nil)
+			return false
+		}
 		if err != nil {
 			s.Log.Warn("dbarchive: base backup failed", "database_id", header.DatabaseID, "err", err)
 			_ = WriteLine(conn, Response{Error: codeFor(err)})
@@ -297,4 +311,44 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 		return false
 	}
 	return bw.Flush() == nil
+}
+
+// quotaRoom is how many more bytes the stream's database may archive here:
+// unlimited without a quota (or without the archive's size to check).
+func (s *Server) quotaRoom(header Header) (int64, error) {
+	if header.QuotaBytes == 0 || s.Retention == nil {
+		return math.MaxInt64, nil
+	}
+	used, err := s.Retention.LocalBytes(header.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return header.QuotaBytes - used, nil
+}
+
+func (s *Server) refuseOverQuota(conn net.Conn, header Header, err error) {
+	if err != nil {
+		s.Log.Warn("dbarchive: size the archive for its quota", "database_id", header.DatabaseID, "err", err)
+		_ = WriteLine(conn, Response{Error: ErrCodeInternal})
+		return
+	}
+	s.Log.Warn("dbarchive: archive quota exceeded; refusing", "database_id", header.DatabaseID, "quota_bytes", header.QuotaBytes)
+	_ = WriteLine(conn, Response{Error: ErrCodeQuota})
+}
+
+// quotaReader fails once more than room bytes have been read.
+type quotaReader struct {
+	r    io.Reader
+	room int64
+	over bool
+}
+
+func (q *quotaReader) Read(p []byte) (int, error) {
+	n, err := q.r.Read(p)
+	q.room -= int64(n)
+	if q.room < 0 {
+		q.over = true
+		return n, ErrQuotaExceeded
+	}
+	return n, err
 }

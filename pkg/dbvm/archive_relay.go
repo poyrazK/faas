@@ -31,7 +31,8 @@ func (r *Runtime) startArchiveRelay(vm *databaseVM, id string, req BootRequest) 
 	if r.cfg.ArchiveSocket == "" {
 		return nil
 	}
-	header := dbarchive.Header{DatabaseID: id, RestoreSource: req.RestoreSource, RestoreWindowSeconds: req.RestoreWindowSeconds}
+	header := dbarchive.Header{DatabaseID: id, RestoreSource: req.RestoreSource, RestoreWindowSeconds: req.RestoreWindowSeconds,
+		QuotaBytes: r.archiveQuota(vm.volume)}
 	if err := header.Validate(); err != nil {
 		return err
 	}
@@ -48,14 +49,27 @@ func (r *Runtime) startArchiveRelay(vm *databaseVM, id string, req BootRequest) 
 		return fmt.Errorf("dbvm: archive relay: %w", err)
 	}
 	vm.archive = ln
+	// PostgreSQL archives and restores one file at a time and takes one
+	// base backup at a time, so a guest needs only a few streams; more
+	// would only spend vmmd's and dbbackupd's connections.
+	slots := make(chan struct{}, archiveStreamsPerVM)
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
+			select {
+			case slots <- struct{}{}:
+			default:
+				_ = conn.Close()
+				continue
+			}
 			// A spare's header changes when a database adopts it.
-			go r.relayArchive(conn, *vm.header.Load())
+			go func() {
+				defer func() { <-slots }()
+				r.relayArchive(conn, *vm.header.Load())
+			}()
 		}
 	}()
 	return nil
@@ -166,3 +180,6 @@ func (r *Runtime) relayArchive(guest net.Conn, header dbarchive.Header) {
 	_, _ = io.Copy(guest, host)
 	<-done
 }
+
+// archiveStreamsPerVM caps one VM's concurrent archive streams.
+const archiveStreamsPerVM = 4

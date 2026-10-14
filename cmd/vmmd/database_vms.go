@@ -53,6 +53,9 @@ type DatabaseVMConfig struct {
 	// Their memory is outside schedd's accounting: lower the node's
 	// admission_ceiling_mb by count x (mem_mib + 8) for every shape.
 	Spares []DatabaseSpareConfig `toml:"spares"`
+	// ArchiveQuotaFactor caps each database's archive on the node at that
+	// many times its volume size (default 10; negative is no cap).
+	ArchiveQuotaFactor int `toml:"archive_quota_factor"`
 }
 
 // DatabaseSpareConfig is one spare pool.
@@ -125,14 +128,15 @@ func (c DatabaseVMConfig) runtimeConfig(leases dbvm.Leaser) (dbvm.RuntimeConfig,
 		return dbvm.RuntimeConfig{}, nil, err
 	}
 	return dbvm.RuntimeConfig{
-		JailBase:      orDefault(c.JailBase, defaultDatabaseJailBase),
-		VolumeRoot:    orDefault(c.VolumeRoot, defaultDatabaseVolumeRoot),
-		KernelPath:    c.KernelPath,
-		Bases:         bases,
-		ParentCgroup:  orDefault(c.ParentCgroup, defaultDatabaseParentCgroup),
-		Leases:        leases,
-		ArchiveSocket: c.ArchiveSocket,
-		Spares:        spares,
+		JailBase:           orDefault(c.JailBase, defaultDatabaseJailBase),
+		VolumeRoot:         orDefault(c.VolumeRoot, defaultDatabaseVolumeRoot),
+		KernelPath:         c.KernelPath,
+		Bases:              bases,
+		ParentCgroup:       orDefault(c.ParentCgroup, defaultDatabaseParentCgroup),
+		Leases:             leases,
+		ArchiveSocket:      c.ArchiveSocket,
+		Spares:             spares,
+		ArchiveQuotaFactor: c.ArchiveQuotaFactor,
 	}, images, nil
 }
 
