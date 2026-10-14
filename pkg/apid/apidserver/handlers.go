@@ -125,6 +125,7 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		api.WriteProblem(w, api.ErrCapacity("could not resolve app deployment availability"))
 		return
 	}
+	parkedByApp := s.latestParkedDeploymentsByApp(r.Context(), acct.ID)
 	out := make([]api.AppResponse, 0, len(apps))
 	for _, a := range apps {
 		resp := s.appResponseWithContext(r.Context(), a, acct.Plan)
@@ -132,9 +133,31 @@ func (s *server) listApps(w http.ResponseWriter, r *http.Request, acct state.Acc
 		if _, deployed := latestByApp[a.ID]; !deployed && resp.Status == string(state.AppActive) {
 			resp.Status = api.AppStatusUndeployed
 		}
+		if parkedByApp != nil {
+			out = append(out, withParkedDeployment(resp, parkedByApp[a.ID]))
+			continue
+		}
 		out = append(out, s.withParkedDeploymentRef(r.Context(), resp, a))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// latestParkedDeploymentsByApp reads every app's parked reference in one
+// query. Per-app lookups ran past the request deadline on a busy control
+// plane and left most of a 100-app list without its references (H10-71). A
+// nil map (store without the batch read, or a read error) falls back to the
+// per-app path.
+func (s *server) latestParkedDeploymentsByApp(ctx context.Context, accountID string) map[string]state.Deployment {
+	lister, ok := s.store.(state.ParkedDeploymentLister)
+	if !ok {
+		return nil
+	}
+	parked, err := lister.ListLatestParkedDeploymentPerApp(ctx, accountID)
+	if err != nil {
+		s.log.Warn("apid: parked deployment refs lookup", "account", accountID, "err", err)
+		return nil
+	}
+	return parked
 }
 
 func appDeploymentAvailability(hasLive bool) api.AppDeploymentAvailability {
@@ -1198,6 +1221,15 @@ func (s *server) withParkedDeploymentRef(ctx context.Context, resp api.AppRespon
 		if !errors.Is(err, state.ErrNotFound) {
 			s.log.Warn("apid: parked deployment ref lookup", "app", app.ID, "err", err)
 		}
+		return resp
+	}
+	return withParkedDeployment(resp, d)
+}
+
+// withParkedDeployment attaches d as the parked reference; a zero d (no parked
+// deployment) leaves the response unchanged.
+func withParkedDeployment(resp api.AppResponse, d state.Deployment) api.AppResponse {
+	if d.ID == "" {
 		return resp
 	}
 	resp.ParkedDeployment = &api.ParkedDeploymentRef{
