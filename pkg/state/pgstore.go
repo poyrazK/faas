@@ -2739,6 +2739,12 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 }
 
 func (s *PgStore) AppByID(ctx context.Context, id string) (App, error) {
+	// A job task instance carries no app ID. Looking one up sent '' as a
+	// uuid and logged "invalid input syntax for type uuid" in Postgres on
+	// every job run on production-us; no app has an empty ID (hunt #10).
+	if id == "" {
+		return App{}, ErrNotFound
+	}
 	sel := `select ` + appsSelectColumns + ` from apps where id = $1`
 	row := s.pool.QueryRow(ctx, sel, id)
 	return scanApp(row)
