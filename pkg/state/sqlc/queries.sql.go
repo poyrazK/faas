@@ -28389,6 +28389,50 @@ func (q *Queries) InstanceListByNodeForRecovery(ctx context.Context, db DBTX, no
 	return items, nil
 }
 
+const instanceLogsOwnedByApp = `-- name: InstanceLogsOwnedByApp :one
+SELECT (
+    EXISTS (
+        SELECT 1 FROM instances i
+        JOIN apps a ON a.id = i.app_id
+        WHERE i.id = $1::uuid
+          AND i.app_id = $2::uuid
+          AND a.account_id = $3::uuid
+    )
+    OR EXISTS (
+        SELECT 1 FROM usage_minutes u
+        WHERE u.account_id = $3::uuid
+          AND u.app_id = $2::uuid
+          AND u.instance_id = $1::uuid
+          AND u.minute >= $4::timestamptz
+          AND u.minute < $5::timestamptz
+    )
+)::boolean AS owned
+`
+
+type InstanceLogsOwnedByAppParams struct {
+	InstanceID pgtype.UUID
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	FromMinute pgtype.Timestamptz
+	ToMinute   pgtype.Timestamptz
+}
+
+// Archived runtime logs are keyed by instance only. The instance row proves
+// ownership while it exists; afterwards the app's billing rows for that
+// instance in [from_minute, to_minute) do.
+func (q *Queries) InstanceLogsOwnedByApp(ctx context.Context, db DBTX, arg InstanceLogsOwnedByAppParams) (bool, error) {
+	row := db.QueryRow(ctx, instanceLogsOwnedByApp,
+		arg.InstanceID,
+		arg.AppID,
+		arg.AccountID,
+		arg.FromMinute,
+		arg.ToMinute,
+	)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
 const instanceRuntimeConfigReceipt = `-- name: InstanceRuntimeConfigReceipt :one
 SELECT r.instance_id, r.wake_id, r.scope, r.boundary_at, r.variables, r.secret_versions, r.all_secrets, r.acknowledged_at, r.secret_refs, r.sidecar_secret_versions FROM instance_runtime_config_receipts r JOIN instances i ON i.id = r.instance_id AND i.wake_id = r.wake_id
 WHERE r.instance_id = $1::uuid
@@ -69463,6 +69507,28 @@ func (q *Queries) RenewEnvironmentWorkloadQualification(ctx context.Context, db 
 		&i.ReservedInstanceID,
 	)
 	return i, err
+}
+
+const renewInvocationLease = `-- name: RenewInvocationLease :execrows
+UPDATE invocations
+SET lease_expires_at = now() + $1::integer * interval '1 second'
+WHERE id = $2::uuid AND operation_id IS NULL
+  AND state = 'dispatching' AND attempts = $3::integer
+  AND lease_expires_at > now()
+`
+
+type RenewInvocationLeaseParams struct {
+	LeaseSeconds int32
+	ID           pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) RenewInvocationLease(ctx context.Context, db DBTX, arg RenewInvocationLeaseParams) (int64, error) {
+	result, err := db.Exec(ctx, renewInvocationLease, arg.LeaseSeconds, arg.ID, arg.Attempt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const renewNotificationClaim = `-- name: RenewNotificationClaim :execrows
