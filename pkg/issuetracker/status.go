@@ -188,14 +188,8 @@ func (c *Client) SetStatus(ctx context.Context, observed Status, token, wanted, 
 	if e != nil || stateID == uuid.Nil {
 		return Status{}, errors.New("Linear push requires the selected workflow state UUID")
 	}
-	var workflow statusResponse
-	err = c.request(ctx, "linear", "POST", "/graphql", token, map[string]any{"query": "query GregaleWorkflowState($id: String!) { workflowState(id: $id) { id type archivedAt team { id } } }", "variables": map[string]string{"id": stateID.String()}}, &workflow, false)
-	if err != nil {
+	if err := c.VerifyLinearWorkflowState(ctx, token, fresh.TeamID, stateID.String(), wanted); err != nil {
 		return Status{}, err
-	}
-	w := workflow.Data.Workflow
-	if len(workflow.Errors) > 0 || w == nil || w.ID != stateID.String() || w.Team.ID != fresh.TeamID || (len(w.ArchivedAt) == 0 || strings.TrimSpace(string(w.ArchivedAt)) != "null") || mappedLinearState(w.Type) != wanted {
-		return Status{}, errors.New("Linear workflow state must be active, belong to the linked issue's team and match the desired lifecycle")
 	}
 	var out statusResponse
 	err = c.request(ctx, "linear", "POST", "/graphql", token, map[string]any{"query": "mutation GregaleIssueStatus($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { " + linearStatusFields + " } } }", "variables": map[string]any{"id": fresh.ID, "input": map[string]string{"stateId": stateID.String()}}}, &out, false)

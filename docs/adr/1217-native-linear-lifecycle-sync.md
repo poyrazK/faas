@@ -54,3 +54,17 @@ reporter denial, preview fences, workflow requirements, stale updates, changed
 connections, foreign teams, unsupported states and disconnect. CLI contracts cover
 preview, explicit push, fixing-deployment pull, changed-group refusal and rejection
 of local credentials. Go/Node/Python contracts preserve preview guards and selection.
+
+## Automatic reconciliation prerequisite
+
+The provider exposes read-only verification of a selected workflow state, reused
+by explicit pushes. The Linear domain service verifies distinct open and resolved
+workflow UUIDs against the connected team before returning a native snapshot. It
+rechecks the connection and issue group between checks and after the final issue
+read. Invalid, missing, archived, foreign-team and unfamiliar workflow states are
+rejected without issuing a mutation; provider diagnostics remain sanitized.
+
+This is an internal prerequisite, with no new public route or automatic policy.
+Automatic reconciliation still needs durable workflow mappings, connection-revision
+pinning, exact pending workflow-state recovery, policy configuration and worker
+integration. GitHub's existing automatic policy remains unchanged.
