@@ -58,3 +58,8 @@ records an operator assertion, not provider evidence. Missing endpoints, unknown
 issuance and expired credentials can require provider console recovery. Account
 removal still cascades account-owned records. Rollback refuses while retirement
 records remain, preserving the operator's opportunity to export metadata first.
+
+Catalog connection state, OAuth grant retirement records and edge-rule replay
+ownership are operational, account-specific state. Environment clones start
+without these records; their connections require independent configuration and
+authorization rather than copying private grants or replay history.
