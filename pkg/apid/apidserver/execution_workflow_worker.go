@@ -417,7 +417,7 @@ func (s *server) admitManagedExecutionWorkflowStep(ctx context.Context, runs sta
 	if setSecretRecipient == nil {
 		return fmt.Errorf("host age recipient is not loaded")
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return fmt.Errorf("host age recipient is not loaded")
 	}

@@ -39,12 +39,12 @@ func (s *server) startGitLabOAuth(w http.ResponseWriter, r *http.Request) {
 	config := gitLabOAuthConfig()
 	redirect, redirectErr := url.Parse(config.RedirectURI)
 	if !config.Valid() || redirectErr != nil || redirect.Path != gitLabOAuthCallbackPath || redirect.RawQuery != "" ||
-		hostHMACKey == nil || len(hostHMACKey()) == 0 || setSecretRecipient == nil || setSecretRecipient() == nil ||
+		hostHMACKey == nil || len(hostHMACKeyBytes()) == 0 || setSecretRecipient == nil || hostSecretRecipient() == nil ||
 		hostIdentitiesForUnseal == nil || len(hostIdentitiesForUnseal(r.Context())) == 0 {
 		api.WriteProblem(w, api.ErrCapacity("GitLab OAuth is not configured."))
 		return
 	}
-	authorize, value, err := gitlabsource.MintOAuthState(config, acct.ID, hostHMACKey(), time.Now())
+	authorize, value, err := gitlabsource.MintOAuthState(config, acct.ID, hostHMACKeyBytes(), time.Now())
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("Could not start GitLab OAuth."))
 		return
@@ -62,11 +62,11 @@ func (s *server) finishGitLabOAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cookie, err := r.Cookie(gitLabOAuthStateCookie)
-	if err != nil || hostHMACKey == nil || len(hostHMACKey()) == 0 {
+	if err != nil || hostHMACKey == nil || len(hostHMACKeyBytes()) == 0 {
 		api.WriteProblem(w, api.ErrValidation("GitLab OAuth state is missing."))
 		return
 	}
-	verifier, valid := gitlabsource.VerifyOAuthState(cookie.Value, r.URL.Query().Get("state"), acct.ID, hostHMACKey(), time.Now())
+	verifier, valid := gitlabsource.VerifyOAuthState(cookie.Value, r.URL.Query().Get("state"), acct.ID, hostHMACKeyBytes(), time.Now())
 	if !valid {
 		api.WriteProblem(w, api.ErrValidation("GitLab OAuth state does not match this account."))
 		return
