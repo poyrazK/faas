@@ -223,7 +223,7 @@ export type DeploymentResponse = {
   /**
    * Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path.
    */
-  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100';
+  canary_preset?: 'none' | 'slow' | 'balanced' | 'aggressive' | '1-10-50-100' | 'adaptive';
   /**
    * Current zero-based canary ladder step.
    */

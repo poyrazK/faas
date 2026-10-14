@@ -30,7 +30,7 @@ type PolicyOutcome string
 const (
 	// PolicyNotApplied: the request deploys as written.
 	PolicyNotApplied PolicyOutcome = ""
-	// PolicySafe: the balanced canary and first-wake 5xx rollback were
+	// PolicySafe: the default (adaptive) canary and first-wake 5xx rollback were
 	// filled in for every rollout field the request left unset.
 	PolicySafe PolicyOutcome = "safe"
 	// PolicySafeUnavailable: rollback was filled in, but the canary worker

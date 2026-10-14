@@ -2366,15 +2366,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	environment := fs.String("environment", "", "registered project environment to deploy to (for example staging)")
 	// SAFE-RELEASES production-leveling Stream F: canary ladder
 	// selectors. --canary-preset picks a catalog entry
-	// (none/slow/balanced/aggressive/1-10-50-100) or "custom";
+	// (none/slow/balanced/aggressive/1-10-50-100/adaptive) or "custom";
 	// --canary-stages is a comma-separated
 	// "percent@duration" list (e.g. "1@30s,10@2m,100@0s")
 	// required only when --canary-preset=custom. The CLI parses
 	// + validates BEFORE the network round-trip so a typo
 	// surfaces as an exit-2 error instead of a 422.
-	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|custom); empty = the app release policy (safe: balanced for a live app; none opts out)")
+	canaryPreset := fs.String("canary-preset", "", "canary preset name (none|slow|balanced|aggressive|1-10-50-100|adaptive|custom); empty = the app release policy (safe: adaptive for a live app; none opts out)")
 	canaryStages := fs.String("canary-stages", "", "comma-separated percent@duration pairs for --canary-preset=custom (e.g. \"1@30s,10@2m,100@0s\")")
-	safeDeploy := fs.Bool("safe", false, "deploy with the balanced health-gated rollout and first-wake 5xx rollback")
+	safeDeploy := fs.Bool("safe", false, "deploy with the adaptive health-gated rollout and first-wake 5xx rollback, and wait for 100%")
 	// Issue #560: per-deployment require_authn opt-in (Cloud Run
 	// --no-allow-unauthenticated analogue). Same flag pair as
 	// cmdApp / cmdAppScale. Mirrors the --warm-snapshot /
@@ -2626,7 +2626,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if (explicit["wait"] && !*waitDeploy) || (explicit["no-wait"] && *noWaitDeploy) {
 			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
 		}
-		*canaryPreset = "balanced"
+		*canaryPreset = api.DefaultReleaseCanaryPreset
 	}
 	if *safeDeploy && projectRequested {
 		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))

@@ -61900,7 +61900,7 @@ components:
           maximum: 604800
           default: 0
         release_policy:
-          description: "Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the balanced health-gated canary with first-wake 5xx rollback; immediate moves all traffic at once."
+          description: "Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; immediate moves all traffic at once."
           type: string
           enum: [safe, immediate]
         # ADR-093: per-route observability opt-in. Default-on for
@@ -66181,7 +66181,7 @@ components:
         # SAFE-RELEASES-A/F: canary ladder and durable rollout state.
         canary_preset:
           type: string
-          enum: [none, slow, balanced, aggressive, 1-10-50-100]
+          enum: [none, slow, balanced, aggressive, 1-10-50-100, adaptive]
           description: "Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment path."
         canary_step:
           type: integer
@@ -72759,7 +72759,7 @@ components:
 
     # ─── Canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A) ───────────
     # The catalog lives in pkg/api/canary (the closed set of preset
-    # names: none / slow / balanced / aggressive / 1-10-50-100 /
+    # names: none / slow / balanced / aggressive / 1-10-50-100 / adaptive /
     # custom). Production-leveling Stream F widens the set with
     # `custom` and re-homes the per-deployment ladder onto the row's
     # canary_stages jsonb column (migrations/00487). Wire shape:
@@ -72813,7 +72813,7 @@ components:
         The canary ladder a customer asks for on a deploy (issue
         #976 / ADR-122 / SAFE-RELEASES-A + production-leveling
         Stream F). Preset is the catalog name from
-        pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/
+        pkg/api/canary (none/slow/balanced/aggressive/1-10-50-100/adaptive/
         custom). When Preset is 'custom', Stages is the
         customer-supplied ladder (each entry is percent +
         duration string in time.ParseDuration form, e.g.
@@ -72827,7 +72827,7 @@ components:
       properties:
         preset:
           type: string
-          enum: [none, slow, balanced, aggressive, 1-10-50-100, custom]
+          enum: [none, slow, balanced, aggressive, 1-10-50-100, adaptive, custom]
           description: "Catalog preset name. 'none' = no canary (server stamps canary_preset='none', canary_total_steps=0). 'custom' requires Stages to be non-empty."
           example: "balanced"
         stages:

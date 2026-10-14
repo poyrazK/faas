@@ -3175,7 +3175,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_canary_progression_advanced_total",
 		Help: "Count of canary step boundaries crossed by the meterd canary_progression tick, labelled by canary_preset.",
 	}, []string{"canary_preset"})
-	for _, preset := range []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"} {
+	for _, preset := range []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"} {
 		canaryProgressionAdvancedTotal.WithLabelValues(preset)
 	}
 	canaryProgressionErrorsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -8500,7 +8500,7 @@ func (m *OpsMetrics) CanaryProgressionAdvancedTotal(preset string) prometheus.Co
 		return nil
 	}
 	switch preset {
-	case "none", "slow", "balanced", "aggressive", "1-10-50-100", "custom":
+	case "none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom":
 		return m.canaryProgressionAdvancedTotal.WithLabelValues(preset)
 	default:
 		return nil

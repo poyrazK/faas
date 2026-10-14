@@ -274,7 +274,7 @@ type AppManifest struct {
 	RevisionPinTTLSeconds int `json:"revision_pin_ttl_seconds,omitempty"`
 	// ReleasePolicy selects how a production release with a serving
 	// predecessor rolls out when the deploy names no rollout policy
-	// (ADR-1160). Empty or "safe" is the balanced health-gated canary with
+	// (ADR-1160). Empty or "safe" is the adaptive health-gated canary with
 	// first-wake 5xx rollback; "immediate" moves all traffic at once.
 	ReleasePolicy string `json:"release_policy,omitempty"`
 }
@@ -287,7 +287,8 @@ const (
 	ReleasePolicyImmediate = "immediate"
 	// DefaultReleaseCanaryPreset is the ladder a safe release uses when the
 	// deploy names none; it is the same ladder `gregale deploy --safe` uses.
-	DefaultReleaseCanaryPreset = "balanced"
+	// "adaptive" is the balanced ladder paced by evidence (ADR-1321).
+	DefaultReleaseCanaryPreset = "adaptive"
 )
 
 // ValidReleasePolicy reports whether p is an accepted release_policy value.

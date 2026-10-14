@@ -51,15 +51,19 @@ func (s *server) runRouteProbeWorker(ctx context.Context) {
 }
 
 // drainRouteProbes runs at most one probe round per app and minute across
-// apid replicas.
+// apid replicas. It runs every RouteHealthProbePollInterval, so a minute's
+// round starts soon after the minute does (ADR-1321).
 func (s *server) drainRouteProbes(ctx context.Context) error {
 	store, ok := s.store.(state.RouteProbeStore)
 	if !ok || s.routeProbes == nil {
 		return nil
 	}
 	now := time.Now().UTC()
-	if err := store.PruneRouteProbeData(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
-		s.log.Warn("route probe prune failed", "err", err)
+	if now.Sub(s.routeProbePrunedAt) >= api.RouteHealthProbePruneInterval {
+		s.routeProbePrunedAt = now
+		if err := store.PruneRouteProbeData(ctx, now.Add(-api.RouteHealthProbeRetention)); err != nil {
+			s.log.Warn("route probe prune failed", "err", err)
+		}
 	}
 	gated, err := store.ListRouteProbeTargets(ctx)
 	if err != nil {
@@ -75,7 +79,7 @@ func (s *server) drainRouteProbes(ctx context.Context) error {
 		if err != nil || !claimed {
 			continue
 		}
-		roundCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbePollInterval-5*time.Second)
+		roundCtx, cancel := context.WithTimeout(ctx, api.RouteHealthProbeRoundTimeout)
 		if err := s.probeRouteHealthTarget(roundCtx, store, target, minute); err != nil {
 			s.log.Warn("route probe round skipped", "app_id", target.AppID, "err", err)
 		}
@@ -99,8 +103,11 @@ func (s *server) defaultRouteProbeTargets(ctx context.Context) []state.RouteProb
 	return targets
 }
 
+// routeProbePlan is one probed selector and how many probes each
+// deployment gets this round.
 type routeProbePlan struct {
 	selector api.RouteHealthRoute
+	requests int
 }
 
 // routeProbePlans picks probed selectors whose organic evidence is sparse, or
@@ -112,7 +119,7 @@ func routeProbePlans(gate api.RouteHealthGate, report api.RouteHealthReport) []r
 			continue
 		}
 		if f.EvidenceWindow == "synthetic" || f.EvidenceWindow == "" && routehealth.NeedsPooledEvidence(f) {
-			plans = append(plans, routeProbePlan{selector: gate.Routes[i]})
+			plans = append(plans, routeProbePlan{selector: gate.Routes[i], requests: api.RouteHealthProbeRequestsPerMinute})
 		}
 	}
 	return plans
@@ -173,19 +180,24 @@ func (s *server) routeProbeRound(ctx context.Context, target release.ProbeTarget
 		}
 	}
 	if target.Default {
+		// The default probe meets the circuit breaker's request floor in one
+		// round (ADR-1321), also when a gated selector already covers it.
 		route := release.DefaultProbeRoute()
-		for _, p := range plans {
+		for i, p := range plans {
 			if p.selector.Method == route.Method && p.selector.Probe.Path == route.Probe.Path {
+				if p.requests < api.DefaultRouteProbeRequestsPerRound {
+					plans[i].requests = api.DefaultRouteProbeRequestsPerRound
+				}
 				return plans, stableID, nil
 			}
 		}
-		plans = append(plans, routeProbePlan{selector: route})
+		plans = append(plans, routeProbePlan{selector: route, requests: api.DefaultRouteProbeRequestsPerRound})
 	}
 	return plans, stableID, nil
 }
 
-// sendRouteProbes sends RouteHealthProbeRequestsPerMinute probes per route
-// and deployment with bounded concurrency and counts attributed responses.
+// sendRouteProbes sends each plan's probes per deployment with bounded
+// concurrency and counts attributed responses.
 func (s *server) sendRouteProbes(ctx context.Context, slug string, plans []routeProbePlan, deployments []string, tokens map[string]string, minute time.Time) []state.RouteProbeObservation {
 	var mu sync.Mutex
 	// Each goroutine gets its observation directly; nothing it touches is
@@ -198,7 +210,7 @@ func (s *server) sendRouteProbes(ctx context.Context, slug string, plans []route
 			c := &state.RouteProbeObservation{DeploymentID: deployment, Method: plan.selector.Method, Path: plan.selector.Path, WindowStart: minute}
 			counts = append(counts, c)
 			token, probePath := tokens[deployment], plan.selector.Probe.Path
-			for range api.RouteHealthProbeRequestsPerMinute {
+			for range plan.requests {
 				wg.Add(1)
 				sem <- struct{}{}
 				go func() {

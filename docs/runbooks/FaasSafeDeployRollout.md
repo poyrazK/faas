@@ -159,8 +159,11 @@ these staging checks against an app with a known-good predecessor:
 - **Probe-backed low traffic (ADR-1160):** with `FAAS_ROUTE_PROBE_URL` set on
   apid, a quiet safe-policy canary gets `GET /` probes on both revisions.
   Confirm `route_probe_observations` gains rows with path `/` for the
-  candidate and the predecessor, and that each stage advances at its boundary
-  with `canary_progression_circuit_breaker_total{event="advance_probe_evidence"}`.
+  candidate and the predecessor (20 requests each per minute, ADR-1321), and
+  that each stage advances with
+  `canary_progression_circuit_breaker_total{event="advance_probe_evidence"}`:
+  after its first minute on the default `adaptive` ladder, at its 2-minute
+  boundary on an explicit `balanced` one.
   A candidate whose `/` starts failing after its hosting smoke must abort with
   `abort_5xx`. The deployment's rollout reason is "circuit breaker: 5xx error
   rate regression; restoring predecessor <id>", and its `rollout_decision` has
@@ -168,6 +171,12 @@ these staging checks against an app with a known-good predecessor:
   canary still waits the 5-minute bound, check that the probes are
   attributed: an auth-gated `/` (401/403 on at least half the probes) or a
   missing probe origin falls back to `advance_low_traffic`.
+- **Evidence-paced default (ADR-1321):** deploy a flag-free release of a live
+  app and confirm the deployment's `canary_preset` is `adaptive`. With traffic
+  or probes, each stage should advance one to two minutes after it starts, and
+  meterd logs "canary: stage advanced before its timer on clean evidence" for
+  the early ones. A stage still at its first minute never advances, and one
+  with too few samples waits for its 2-minute timer as before.
 - **Smoke verifier prerequisite (ADR-1160):** confirm imaged has
   `FAAS_API_HOSTING_SMOKE_URL` before relying on the default. Without it every
   canary deployment, including a defaulted one, fails with

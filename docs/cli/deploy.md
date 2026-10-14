@@ -189,8 +189,9 @@ warning to stderr, including with `--json`, so a script's stdout stays parseable
 ## Safe production rollouts
 
 A production release of an app that already serves traffic uses the
-balanced health-gated canary and first-wake 5xx rollback by default
-([ADR-1160](../adr/1160-safe-releases-by-default.md)); see
+adaptive health-gated canary and first-wake 5xx rollback by default
+([ADR-1160](../adr/1160-safe-releases-by-default.md),
+[ADR-1321](../adr/1321-evidence-paced-default-rollouts.md)); see
 [Safe by default](../deploys.md#safe-by-default). To also wait for the
 rollout to reach 100% before the command returns, use the safe path:
 
@@ -198,7 +199,8 @@ rollout to reach 100% before the command returns, use the safe path:
 gregale deploy --safe
 ```
 
-`--safe` selects Gregale's balanced 1% → 10% → 50% → 100% rollout, enables
+`--safe` selects Gregale's adaptive 1% → 10% → 50% → 100% rollout, where
+each stage advances as soon as the evidence is clean after a minute, enables
 first-wake 5xx auto-rollback, and waits for the rollout to reach 100% traffic
 before returning success. The server's smoke verification, configured health
 gates, and rollback behavior remain the source of truth. Safe rollouts are

@@ -165,7 +165,7 @@ export type AppResponse = {
    */
   revision_pin_ttl_seconds?: number;
   /**
-   * Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the balanced health-gated canary with first-wake 5xx rollback; immediate moves all traffic at once.
+   * Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake 5xx rollback; immediate moves all traffic at once.
    */
   release_policy?: 'safe' | 'immediate';
   /**

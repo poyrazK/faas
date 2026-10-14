@@ -178,7 +178,8 @@ class AppResponse:
     revision pinning."""
     release_policy: AppResponseReleasePolicy | Unset = UNSET
     """Default rollout for production releases that name no rollout policy (ADR-1160). safe (or unset) uses the
-    balanced health-gated canary with first-wake 5xx rollback; immediate moves all traffic at once."""
+    adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake
+    5xx rollback; immediate moves all traffic at once."""
     route_metrics_enabled: bool | Unset = UNSET
     """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.

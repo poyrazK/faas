@@ -1390,7 +1390,7 @@ var cliCommands = []cliCommand{
 				{Name: "profile-override-reason", Short: "audited reason for overriding only the profiling gate", Value: "TEXT"},
 			}},
 			{Name: "simulate", Short: "Estimate per-stage canary success from the last hour", Positionals: []string{"<slug>"}, Flags: []cliFlag{
-				{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"slow", "balanced", "aggressive", "1-10-50-100"}},
+				{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"slow", "balanced", "aggressive", "1-10-50-100", "adaptive"}},
 			}},
 		},
 		Positionals: []string{"<slug>"},
@@ -2187,9 +2187,9 @@ var cliCommands = []cliCommand{
 			// subsequent deploys honor the persisted set automatically.
 			{Name: "persist-exclude", Short: "save --exclude slugs for future project deploys"},
 			{Name: "project-slug", Short: "kebab slug for the project (one-key provision)", Value: "SLUG"},
-			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}},
+			{Name: "canary-preset", Short: "canary ladder preset", Value: "PRESET", ClosedSet: []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"}},
 			{Name: "canary-stages", Short: "custom percent@duration canary stages (requires --canary-preset custom)", Value: "STAGES"},
-			{Name: "safe", Short: "deploy with the balanced health-gated rollout and first-wake 5xx rollback"},
+			{Name: "safe", Short: "deploy with the adaptive health-gated rollout and first-wake 5xx rollback, and wait for 100%"},
 			{Name: "require-authn", Short: "require bearer auth on every request"},
 			{Name: "no-require-authn", Short: "drop the token requirement"},
 			{Name: "platform-tenant-required", Short: "require verified customer identity on selected apps (Hobby and above)"},

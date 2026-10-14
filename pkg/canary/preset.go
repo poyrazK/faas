@@ -304,12 +304,15 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		if currentStage.MirrorClean != nil && !p.mirrorCleanReady(ctx, row, currentStage.MirrorClean, now, &stats) {
 			continue
 		}
-		ready, record := p.circuitBreakerReady(ctx, row, currentStage.Duration, now, &stats)
+		ready, record := p.circuitBreakerReady(ctx, row, currentStage, now, &stats)
 		if !ready {
 			continue
 		}
+		// Before the timer ends, only conclusive evidence on a stage paced
+		// by evidence (ADR-1321) comes back with a record.
 		elapsed := now.Sub(row.CanaryStepStarted)
-		if elapsed < currentStage.Duration {
+		early := elapsed < currentStage.Duration
+		if early && record == nil {
 			stats.SkippedNotElapsed++
 			continue
 		}
@@ -339,6 +342,14 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		if response.ProfileGate != nil && response.ProfileGate.Status == "rolled_back" {
 			stats.Aborted++
 			continue
+		}
+		if early {
+			stats.EarlyAdvanced++
+			p.Log.Info("canary: stage advanced before its timer on clean evidence",
+				"deployment_id", row.ID,
+				"rule", record.Rule,
+				"elapsed", elapsed.Round(time.Second).String(),
+				"stage_duration", currentStage.Duration.String())
 		}
 		stats.Advanced++
 		if p.Ops != nil {
@@ -431,7 +442,9 @@ func (p *Progression) safeReleaseHealthReady(ctx context.Context, row CanaryRow,
 //
 // The returned record is the evidence for an advance taken this tick
 // (ADR-1237); holds are reported to APID here and aborts carry their record.
-func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stageDuration time.Duration, now time.Time, stats *Stats) (bool, *api.RolloutDecision) {
+// Before the stage's timer ends the record is nil unless the stage is paced
+// by evidence and that evidence is conclusive and clean (ADR-1321).
+func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, stage canarycatalog.Stage, now time.Time, stats *Stats) (bool, *api.RolloutDecision) {
 	checker, ok := p.Store.(CircuitBreakerStore)
 	if !ok {
 		p.Log.Error("canary: circuit-breaker observation unavailable; holding promotion",
@@ -459,9 +472,16 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		return false, nil
 	}
 	decision := EvaluateCircuitBreaker(observation)
+	elapsed := now.Sub(row.CanaryStepStarted)
+	beforeTimer := elapsed < stage.Duration
 	switch decision.Action {
 	case CircuitBreakerAdvance:
-		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
+		rule := circuitBreakerRule(decision)
+		if beforeTimer && (rule != api.RolloutRuleAdvanceHealthy || !earlyAdvanceAllowed(stage, elapsed)) {
+			// Without a predecessor there is no evidence to pace by.
+			return true, nil
+		}
+		record := rolloutDecisionRecord(row, rule, decision.Reason, &observation, since, now)
 		return true, &record
 	case CircuitBreakerAbort:
 		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
@@ -472,8 +492,8 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		// current weight and retry the same safe decision on the next tick.
 		return false, nil
 	default:
-		held := now.Sub(row.CanaryStepStarted) - stageDuration
-		if held < 0 {
+		held := elapsed - stage.Duration
+		if held < 0 && !(earlyAdvanceAllowed(stage, elapsed) && ProbeEvidenceAdvanceAllowed(decision, observation)) {
 			return true, nil
 		}
 		if ProbeEvidenceAdvanceAllowed(decision, observation) {
@@ -509,6 +529,13 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		p.recordHold(ctx, row, rolloutDecisionRecord(row, circuitBreakerHoldEvent(decision.Reason), decision.Reason, &observation, since, now))
 		return false, nil
 	}
+}
+
+// earlyAdvanceAllowed reports whether a stage paced by evidence (ADR-1321)
+// has run long enough to advance before its timer on conclusive evidence.
+// Rollout-wide OOM and liveness signals cover the earlier stages too.
+func earlyAdvanceAllowed(stage canarycatalog.Stage, elapsed time.Duration) bool {
+	return stage.MinDuration > 0 && elapsed >= stage.MinDuration
 }
 
 // advance asks APID for one step, carrying the evidence when the client can
@@ -680,13 +707,16 @@ func (p *Progression) now() time.Time {
 // bucket per tick (Errors is its own bucket; SkippedNotElapsed is
 // distinct from SkippedUnknownPreset).
 type Stats struct {
-	Advanced               int
-	Errors                 int
-	Aborted                int
-	CircuitBreakerAborted  int
-	SkippedCircuitBreaker  int
-	LowTrafficAdvanced     int
-	ProbeEvidenceAdvanced  int
+	Advanced              int
+	Errors                int
+	Aborted               int
+	CircuitBreakerAborted int
+	SkippedCircuitBreaker int
+	LowTrafficAdvanced    int
+	ProbeEvidenceAdvanced int
+	// EarlyAdvanced counts advances taken before the stage's timer
+	// (ADR-1321); each is also counted in Advanced.
+	EarlyAdvanced          int
 	SkippedUnknownPreset   int
 	SkippedOutOfBounds     int
 	SkippedAlreadyTerminal int

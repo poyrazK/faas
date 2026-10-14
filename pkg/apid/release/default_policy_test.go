@@ -51,7 +51,7 @@ func TestApplyDefaultReleasePolicy(t *testing.T) {
 		wantRollback *bool
 	}{
 		{name: "production release with a serving predecessor is safe", store: serving,
-			want: PolicySafe, wantCanary: "balanced", wantRollback: ptrBool(true)},
+			want: PolicySafe, wantCanary: api.DefaultReleaseCanaryPreset, wantRollback: ptrBool(true)},
 		{name: "first deploy stays immediate", store: releasePolicyFakeStore{leaseOK: true}},
 		{name: "immediate app policy opts out", store: serving,
 			app: state.App{Manifest: state.AppManifest{ReleasePolicy: api.ReleasePolicyImmediate}}},
@@ -67,7 +67,7 @@ func TestApplyDefaultReleasePolicy(t *testing.T) {
 			want: PolicySafe, wantRollback: ptrBool(true)},
 		{name: "explicit rollback false still gets the canary", store: serving,
 			req:  api.CreateDeploymentRequest{RollbackOn5xx: &falseVal},
-			want: PolicySafe, wantCanary: "balanced", wantRollback: ptrBool(false)},
+			want: PolicySafe, wantCanary: api.DefaultReleaseCanaryPreset, wantRollback: ptrBool(false)},
 		{name: "fully explicit request is untouched", store: serving,
 			req:          api.CreateDeploymentRequest{RollbackOn5xx: &falseVal, Canary: &api.CanaryPresetSpec{Preset: "slow"}},
 			wantCanary:   "slow",
@@ -125,8 +125,8 @@ func TestApplyDefaultReleaseToEnqueue(t *testing.T) {
 	if got != PolicySafe {
 		t.Fatalf("outcome = %q, want safe", got)
 	}
-	if !p.RollbackOn5xx || p.CanaryPreset != "balanced" || p.CanaryTotalSteps == 0 || p.TrafficPercent != 1 || p.CanaryStepStartedAt == nil {
-		t.Fatalf("enqueue params = %+v; want balanced canary at 1%% with rollback", p)
+	if !p.RollbackOn5xx || p.CanaryPreset != api.DefaultReleaseCanaryPreset || p.CanaryTotalSteps == 0 || p.TrafficPercent != 1 || p.CanaryStepStartedAt == nil {
+		t.Fatalf("enqueue params = %+v; want the default canary at 1%% with rollback", p)
 	}
 
 	var first apidsource.EnqueueParams

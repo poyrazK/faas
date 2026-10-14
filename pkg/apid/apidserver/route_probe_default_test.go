@@ -55,14 +55,15 @@ func (h *defaultProbeHarness) Probe(_ context.Context, _ string, deploymentID, t
 
 // adr: 1160
 // A safe-policy canary with no route health probes of its own gets the
-// default probe of "/" on the candidate and its predecessor, once per minute,
+// default probe of "/" on the candidate and its predecessor, once per minute
+// and with the circuit breaker's request floor per deployment (ADR-1321),
 // unless the app opted into immediate releases or the operator turned the
 // safe default off.
 func TestRouteProbeWorkerProbesSafeReleaseCanaryDefaultPath(t *testing.T) {
 	old := *apidserver.RouteProbeChallengeDelay
 	*apidserver.RouteProbeChallengeDelay = 0
 	t.Cleanup(func() { *apidserver.RouteProbeChallengeDelay = old })
-	n := api.RouteHealthProbeRequestsPerMinute
+	n := api.DefaultRouteProbeRequestsPerRound
 	for _, tc := range []struct {
 		name       string
 		policy     string

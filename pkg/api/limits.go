@@ -9655,12 +9655,23 @@ const (
 // RouteHealthProbeMaxRoutes selectors and RouteHealthProbeRequestsPerMinute
 // requests per route and deployment, only while a canary is in flight.
 // Probe requests are never written to request telemetry or usage.
+//
+// Rounds are claimed once per app and minute. The worker polls every
+// RouteHealthProbePollInterval so a minute's round starts within about
+// that long of the minute (ADR-1321), and a round may take
+// RouteHealthProbeRoundTimeout. The ADR-1160 default probe sends
+// DefaultRouteProbeRequestsPerRound per deployment, the circuit breaker's
+// request floor (canary.CircuitBreakerMinRequests), so one round inside a
+// canary stage is enough evidence.
 const (
 	RouteHealthProbeMaxRoutes         = 5
 	RouteHealthProbeRequestsPerMinute = 10
+	DefaultRouteProbeRequestsPerRound = 20
 	RouteHealthProbeRequestTimeout    = 10 * time.Second
 	RouteHealthProbeChallengeTTL      = 2 * time.Minute
-	RouteHealthProbePollInterval      = time.Minute
+	RouteHealthProbePollInterval      = 15 * time.Second
+	RouteHealthProbeRoundTimeout      = 55 * time.Second
+	RouteHealthProbePruneInterval     = time.Minute
 	RouteHealthProbeRetention         = 24 * time.Hour
 	// A probe window is unknown when at least this share of responses were
 	// 401/403: customer auth gates stay in force for probes.

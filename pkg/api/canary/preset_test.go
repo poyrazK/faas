@@ -19,8 +19,8 @@ func TestAllowedCanaryPresets_ClosedSet(t *testing.T) {
 	// closed set with the "custom" entry — Stages come from
 	// the deployment row's canary_stages jsonb column, not the
 	// catalog. The migration's deployments_canary_preset_chk
-	// (00487) mirrors this list verbatim.
-	want := []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "custom"}
+	// (00487) mirrors this list verbatim. ADR-1321 adds "adaptive".
+	want := []string{"none", "slow", "balanced", "aggressive", "1-10-50-100", "adaptive", "custom"}
 	if len(AllowedCanaryPresets) != len(want) {
 		t.Fatalf("AllowedCanaryPresets = %v, want %v", AllowedCanaryPresets, want)
 	}
@@ -102,6 +102,45 @@ func TestLookupPreset_OneTenFiftyHundredAliasOfBalanced(t *testing.T) {
 	for i := range alias.Stages {
 		if alias.Stages[i] != balanced.Stages[i] {
 			t.Fatalf("stage %d: alias=%+v balanced=%+v; must match", i, alias.Stages[i], balanced.Stages[i])
+		}
+	}
+}
+
+func TestLookupPreset_AdaptiveIsBalancedPacedByEvidence(t *testing.T) {
+	adaptive, ok1 := LookupPreset("adaptive")
+	balanced, ok2 := LookupPreset("balanced")
+	if !ok1 || !ok2 {
+		t.Fatalf("lookup ok=%v,%v; both must succeed", ok1, ok2)
+	}
+	if len(adaptive.Stages) != len(balanced.Stages) {
+		t.Fatalf("adaptive Stages=%d, balanced Stages=%d; must match", len(adaptive.Stages), len(balanced.Stages))
+	}
+	for i, s := range adaptive.Stages {
+		b := balanced.Stages[i]
+		if s.Percent != b.Percent || s.Duration != b.Duration {
+			t.Errorf("stage %d: adaptive=%+v balanced=%+v; percent and timer must match", i, s, b)
+		}
+		wantMin := time.Minute
+		if s.Duration == 0 {
+			wantMin = 0
+		}
+		if s.MinDuration != wantMin {
+			t.Errorf("adaptive stage %d MinDuration = %v, want %v", i, s.MinDuration, wantMin)
+		}
+		if b.MinDuration != 0 {
+			t.Errorf("balanced stage %d MinDuration = %v, want 0 (timer only)", i, b.MinDuration)
+		}
+	}
+}
+
+func TestPresetValidate_MinDurationWithinTimer(t *testing.T) {
+	for _, minDuration := range []time.Duration{-time.Second, 3 * time.Minute} {
+		bad := Preset{Name: "broken", Stages: []Stage{
+			{Percent: 1, MinDuration: minDuration, Duration: 2 * time.Minute},
+			{Percent: 100, Duration: 0},
+		}}
+		if err := bad.Validate(); err == nil {
+			t.Errorf("Validate accepted MinDuration %v with a 2m timer; want error", minDuration)
 		}
 	}
 }

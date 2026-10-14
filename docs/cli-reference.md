@@ -3704,7 +3704,7 @@ Estimate per-stage canary success from the last hour
 
 | Flag | Meaning | |
 |---|---|---|
-| `--canary-preset <PRESET>` | canary ladder preset | one of `slow` · `balanced` · `aggressive` · `1-10-50-100` |
+| `--canary-preset <PRESET>` | canary ladder preset | one of `slow` · `balanced` · `aggressive` · `1-10-50-100` · `adaptive` |
 
 
 ## build
@@ -6242,9 +6242,9 @@ Deploy an app, function, or project
 | `--show-affected` | show workloads that deploy, stay unchanged, or are removed |  |
 | `--persist-exclude` | save --exclude slugs for future project deploys |  |
 | `--project-slug <SLUG>` | kebab slug for the project (one-key provision) |  |
-| `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `custom` |
+| `--canary-preset <PRESET>` | canary ladder preset | one of `none` · `slow` · `balanced` · `aggressive` · `1-10-50-100` · `adaptive` · `custom` |
 | `--canary-stages <STAGES>` | custom percent@duration canary stages (requires --canary-preset custom) |  |
-| `--safe` | deploy with the balanced health-gated rollout and first-wake 5xx rollback |  |
+| `--safe` | deploy with the adaptive health-gated rollout and first-wake 5xx rollback, and wait for 100% |  |
 | `--require-authn` | require bearer auth on every request |  |
 | `--no-require-authn` | drop the token requirement |  |
 | `--platform-tenant-required` | require verified customer identity on selected apps (Hobby and above) |  |

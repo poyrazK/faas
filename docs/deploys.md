@@ -148,7 +148,9 @@ gregale deploy --canary-preset balanced
 ```
 
 `balanced` sends 1% of traffic to the new revision for 2 minutes, then 10%,
-then 50%, then 100%. `slow` and `aggressive` trade speed against exposure, and
+then 50%, then 100%. `adaptive` uses the same ladder but moves on as soon as
+the evidence is clean (see [Safe by default](#safe-by-default)). `slow` and
+`aggressive` trade speed against exposure, and
 `--canary-preset custom --canary-stages "5@1m,25@5m,100@0s"` defines your own
 ladder. Preview how a preset would behave against your app's recent traffic
 before deploying:
@@ -159,7 +161,7 @@ gregale canary simulate my-api --canary-preset balanced
 
 Promotion is health-gated. If an alert rule with a `rollback` or `demote`
 action is firing, the ladder holds at its current stage rather than advancing.
-`gregale deploy --safe` combines the balanced ladder with automatic rollback
+`gregale deploy --safe` combines the adaptive ladder with automatic rollback
 when the new revision returns 5xx responses in its first window.
 `--rollback-on-5xx` adds the same rollback to any deploy.
 
@@ -173,28 +175,36 @@ the previous one is ready again. If a rollout wedges,
 ### Safe by default
 
 A production release of an app that already serves traffic rolls out on the
-`balanced` ladder with first-wake 5xx rollback even when the deploy names no
+`adaptive` ladder with first-wake 5xx rollback even when the deploy names no
 rollout policy ([ADR-1160](adr/1160-safe-releases-by-default.md)). This covers
 `gregale deploy`, GitHub App pushes, the API, and Terraform. It does not
 apply to an app's first deploy, PR previews, named project environments, or
 service, worker, and job apps, which keep their own rollout behavior.
 
+The adaptive ladder sends 1%, then 10%, then 50%, then 100% of traffic to the
+new revision. Each stage lasts at least a minute and advances as soon as both
+revisions have answered at least 20 requests in that stage (your traffic, or
+the probes below) with no regression, no OOM kills, and no liveness restarts
+([ADR-1321](adr/1321-evidence-paced-default-rollouts.md)). A typical release
+reaches 100% in 3 to 5 minutes. When the evidence isn't in after 2 minutes,
+the stage follows the rules below.
+
 `gregale deploy` returns once the candidate is live at 1% and prints how to
 follow the rollout. Use `--safe` to wait for 100% instead.
 
 A quiet app may not send enough requests to compare the two revisions, so
-while the rollout runs Gregale sends `GET /` ten times a minute to both the
+while the rollout runs Gregale sends `GET /` twenty times a minute to both the
 new and the previous revision. These probes go through your app's normal
 routing and auth, are not counted in your request analytics, and wake both
 revisions for the rollout, which is billed like any other running time
-(about 10 minutes for a quiet app on the `balanced` ladder). If the new
-revision answers the probes with 5xx more often than the previous one, the
-rollout is aborted and traffic returns to the previous revision. If the probes
-are clean, each stage advances when its duration ends.
+(about 5 minutes for a quiet app). If the new revision answers the probes
+with 5xx more often than the previous one, the rollout is aborted and traffic
+returns to the previous revision. If the probes are clean, each stage
+advances after its first minute.
 
 When probes cannot give an answer (for example, `/` requires a login), a
-stage whose only problem is too few samples waits up to 5 minutes past its
-duration and then advances, provided the new revision returned no 5xx
+stage whose only problem is too few samples waits up to 5 more minutes after
+its 2 minutes and then advances, provided the new revision returned no 5xx
 responses, had no OOM kills, and was never restarted by its liveness probe.
 The first-wake 5xx rollback still protects the release once real traffic
 arrives. Set `release_policy: immediate` to turn both the rollout and its

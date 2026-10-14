@@ -112,8 +112,36 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		}
 		second := d.deployLive(t, "sr-default", api.CreateDeploymentRequest{Image: v2})
 		if second.CanaryPreset != api.DefaultReleaseCanaryPreset || !second.RollbackOn5xx || second.TrafficPercent != 1 {
-			t.Fatalf("second deploy = preset:%q rollback:%v traffic:%d, want balanced at 1%% with rollback",
-				second.CanaryPreset, second.RollbackOn5xx, second.TrafficPercent)
+			t.Fatalf("second deploy = preset:%q rollback:%v traffic:%d, want %s at 1%% with rollback",
+				second.CanaryPreset, second.RollbackOn5xx, second.TrafficPercent, api.DefaultReleaseCanaryPreset)
+		}
+		// ADR-1321: with no traffic, the default probes alone carry the
+		// adaptive ladder to 100% before balanced's timers (3 x 2 minutes)
+		// would allow it.
+		started := time.Now()
+		if second.CanaryStepStartedAt != nil {
+			started = *second.CanaryStepStartedAt
+		}
+		got := d.waitDeployment(t, second.ID, 12*time.Minute, func(dep state.Deployment) bool {
+			return dep.RolloutState == "complete" || dep.RolloutState == "aborted"
+		})
+		elapsed := time.Since(started)
+		if got.RolloutState != "complete" || got.TrafficPercent != 100 {
+			t.Fatalf("default release = state:%q traffic:%d reason:%q, want complete at 100%%", got.RolloutState, got.TrafficPercent, got.RolloutAbortedReason)
+		}
+		early := 0
+		advances := d.advanceDecisions(t, second.ID)
+		for _, a := range advances {
+			window := decisionWindow(t, a)
+			if window < 2*time.Minute {
+				early++
+			}
+			t.Logf("DRILL adaptive_advance step=%d rule=%s window=%.0fs candidate_probes=%d stable_probes=%d",
+				a.Step, a.Rule, window.Seconds(), a.Candidate.ProbeRequests, a.Stable.ProbeRequests)
+		}
+		t.Logf("DRILL adaptive_complete seconds=%.0f advances=%d early=%d", elapsed.Seconds(), len(advances), early)
+		if elapsed >= 6*time.Minute || early == 0 {
+			t.Fatalf("default release took %s with %d early advances; want 100%% before 6m with at least one early advance", elapsed.Round(time.Second), early)
 		}
 	})
 
@@ -348,6 +376,41 @@ func (d *safeReleaseDrill) holdRules(t *testing.T, deploymentID string) []string
 		}
 	}
 	return rules
+}
+
+// advanceDecisions returns the advance records in the deployment's audit
+// timeline, oldest first.
+func (d *safeReleaseDrill) advanceDecisions(t *testing.T, deploymentID string) []api.RolloutDecision {
+	t.Helper()
+	audits, err := d.store.ListDeploymentAudit(context.Background(), deploymentID, 100)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	var out []api.RolloutDecision
+	for i := len(audits) - 1; i >= 0; i-- {
+		var data struct {
+			Decision *api.RolloutDecision `json:"decision"`
+		}
+		if json.Unmarshal(audits[i].Data, &data) != nil || data.Decision == nil || data.Decision.Kind != api.RolloutDecisionAdvance {
+			continue
+		}
+		if data.Decision.Candidate == nil || data.Decision.Stable == nil {
+			t.Fatalf("advance record %+v has no samples", *data.Decision)
+		}
+		out = append(out, *data.Decision)
+	}
+	return out
+}
+
+// decisionWindow is how long the stage had run when the decision was made.
+func decisionWindow(t *testing.T, d api.RolloutDecision) time.Duration {
+	t.Helper()
+	start, err1 := time.Parse(time.RFC3339Nano, d.WindowStart)
+	end, err2 := time.Parse(time.RFC3339Nano, d.WindowEnd)
+	if err1 != nil || err2 != nil {
+		t.Fatalf("decision window %q..%q: %v %v", d.WindowStart, d.WindowEnd, err1, err2)
+	}
+	return end.Sub(start)
 }
 
 // deployLive submits a deployment and waits until it is live. A canary
