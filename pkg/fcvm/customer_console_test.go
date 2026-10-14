@@ -161,3 +161,37 @@ func TestCustomerConsoleStripsTheConsoleCarriageReturn(t *testing.T) {
 		t.Fatalf("customer lines = %+v, want the console CR stripped and the app's own CR kept", lines)
 	}
 }
+
+// H10-15: on rc.257 every customer's logs and log drains began with
+// Firecracker's API-socket line and guest-init's own startup and warning
+// lines, including three "WARN stateless advisory fanotify_mark failed".
+func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	for _, line := range []string{
+		"2026-10-14T00:58:49.583701763 [4f7d6569-3265-464f-96be-9b199d019b24:main] Listening on API socket (\"api.sock\").\n",
+		"2026/10/14 00:58:50 INFO workload identity proxy started endpoint=http://127.0.0.1:2773/oidc/token\n",
+		"2026/10/14 00:58:50 INFO event publish proxy started endpoint=http://169.254.169.254/v1/events:publish\n",
+		"2026/10/14 00:58:50 INFO outbound relay started endpoint=http://127.0.0.1:2774\n",
+		"2026/10/14 00:58:50 WARN stateless advisory fanotify_mark failed (non-fatal) path=/data err=\"invalid argument\"\n",
+		"2026/10/14 00:58:51 INFO order created id=42\n",
+		"workload identity proxy started is fine from an app without the slog stamp\n",
+		"hello-gregale listening on :3000\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	for _, l := range ring.Snapshot(1) {
+		got = append(got, strings.TrimSpace(l.Line))
+	}
+	want := []string{
+		"2026/10/14 00:58:51 INFO order created id=42",
+		"workload identity proxy started is fine from an app without the slog stamp",
+		"hello-gregale listening on :3000",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("customer lines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}

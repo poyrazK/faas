@@ -30,7 +30,9 @@ For slower work, raise the function's request timeout:
 Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
 a streamed response included, may run for the longer of that timeout and
 30 s. The runner passes the time left to the handler in the
-`X-Faas-Deadline-Ms` request header. Async, queue and cron invocations keep
+`X-Faas-Deadline-Ms` request header. In an event handler, `event.headers` has
+lowercase names and ignores case on lookup (`event.headers["x-faas-deadline-ms"]`);
+repeated request headers arrive joined into one value. Async, queue and cron invocations keep
 a 30 s limit.
 
 An idle function parks after 30 seconds by default on every plan; set

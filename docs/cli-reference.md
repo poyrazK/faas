@@ -3901,7 +3901,7 @@ List cron rules
 
 ### crons add
 
-Schedule an HTTP request or deployment command
+Schedule a POST to an app path, or a deployment command
 
 `gregale crons add [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
@@ -3910,7 +3910,7 @@ Schedule an HTTP request or deployment command
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
-| `--path <PATH>` | HTTP request path (mutually exclusive with --command) |  |
+| `--path <PATH>` | path the cron sends a POST to (mutually exclusive with --command) |  |
 | `--command <EXEC>` | executable for a deployment command cron |  |
 | `--arg <ARG>` | append one command argument (repeatable) |  |
 | `--shell` | run --command as one shell string |  |
@@ -3946,7 +3946,7 @@ Update one cron rule
 | `--interactive` | choose an HTTP task, edit current values, preview times, and confirm changes |  |
 | `--app <SLUG>` | app slug for interactive task selection (linked app or picker by default) |  |
 | `--schedule <EXPR>` | new five-field cron expression |  |
-| `--path <PATH>` | HTTP request path |  |
+| `--path <PATH>` | path the cron sends a POST to |  |
 | `--timezone <TZ>` | IANA timezone |  |
 | `--enable` | enable the cron |  |
 | `--disable` | disable the cron |  |
