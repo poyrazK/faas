@@ -47,6 +47,37 @@ const { chromium } = require('playwright');
     const initial = await page.goto(fixture.url + '?template=scheduled-report');
     assert.equal(initial.status(), 200, 'starter page must load');
     await page.locator('#automation-name').fill('browser-report');
+    if (fixture.mode === 'report') {
+      assert.equal(await page.locator('input[name=editor_mode][value=report]').isChecked(), true);
+      await page.locator('#report-schedule').fill('30 8 * * 1-5');
+      await page.locator('#report-timezone').fill('Europe/Istanbul');
+      await page.locator('#report-collect').fill('/reports/collect');
+      await page.locator('#report-deliver').fill('/reports/deliver');
+      await page.locator('#report-catch-up').selectOption('latest');
+      await page.locator('#report-window').fill('2h');
+      await submit('Preview edited schedule', 'Edited definition preview');
+      assert.ok(await page.locator('#schedule-preview').getByText(/\+03:00/).count());
+      assert.ok(await page.locator('#schedule-preview').getByText('Automatic starts in this definition: paused', { exact: false }).count());
+      await submit('Save draft', 'Draft saved.');
+      const configured = JSON.parse(await page.locator('#automation-definition').inputValue());
+      assert.equal(configured.name, 'browser-report');
+      assert.equal(configured.trigger.schedule, '30 8 * * 1-5');
+      assert.equal(configured.trigger.timezone, 'Europe/Istanbul');
+      assert.equal(configured.steps[0].path, '/reports/collect');
+      assert.equal(configured.steps[1].path, '/reports/deliver');
+      await submit('Check and publish', 'Checks passed and the draft was published.');
+      assert.ok(await page.getByRole('heading', { name: 'Published schedule preview', exact: true }).count());
+      assert.ok(await page.getByRole('button', { name: 'Enable automatic starts', exact: true }).count());
+      if (process.env.GREGALE_AUTOMATION_REPORT_SCREENSHOT) {
+        await page.screenshot({ path: process.env.GREGALE_AUTOMATION_REPORT_SCREENSHOT, fullPage: true });
+      }
+      await submit('Enable automatic starts', 'Automatic starts: enabled');
+      assert.ok(await page.getByRole('button', { name: 'Pause automatic starts', exact: true }).count());
+      assert.equal(errors.length, 0, 'browser reported a script error');
+      return;
+    }
+    await page.locator('input[name=editor_mode][value=json]').check();
+    await page.getByText('Advanced definition (JSON)', { exact: true }).click();
     const definition = JSON.parse(await page.locator('#automation-definition').inputValue());
     definition.name = 'browser-report';
     await page.locator('#automation-definition').fill(JSON.stringify(definition, null, 2));

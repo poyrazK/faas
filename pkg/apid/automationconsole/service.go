@@ -104,7 +104,13 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.Version = version
+	if message := prepareEditor(r, &data); message != "" {
+		s.invalid(w, r, scope, data, message)
+		return
+	}
 	switch r.PathValue("action") {
+	case "preview-schedule":
+		s.previewSchedule(w, r, scope, data)
 	case "validate", "simulate", "save":
 		s.edit(w, r, scope, data)
 	case "check", "publish":
@@ -120,6 +126,7 @@ func (s *Service) Act(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) render(w http.ResponseWriter, r *http.Request, scope Scope, data dashboard.AutomationConsoleData, status int) {
 	s.refreshMetadata(r, scope, &data)
+	s.setup(r, scope, &data)
 	data.BaseURL = "/dashboard/apps/" + url.PathEscape(scope.Slug) + "/automations"
 	data.CSRFToken = s.Host.IssueCSRF(w, scope)
 	data.ActionKey = uuid.NewString()

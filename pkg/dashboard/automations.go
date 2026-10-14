@@ -32,7 +32,21 @@ type AutomationConsoleData struct {
 	RunControlsDisabled                                      bool
 	SelectedStep, AttemptsError                              string
 	Attempts                                                 []AutomationConsoleAttempt
+	EditorMode                                               string
+	Report                                                   *AutomationReportForm
+	SetupChecks                                              []AutomationSetupCheck
+	RuntimeObserved, PublicationObserved, PublishedSchedule  bool
+	DraftSchedule, PublishedSchedulePreview                  *api.WorkflowSchedulePreviewResponse
+	PublishedScheduleError                                   string
+	ScheduleConfigured                                       bool
 }
+
+type AutomationReportForm struct {
+	Schedule, Timezone, CollectPath, DeliverPath string
+	Overlap, CatchUp, CatchUpWindow              string
+}
+
+type AutomationSetupCheck struct{ Name, Status, Detail string }
 
 type AutomationConsoleRun struct {
 	ID, Name, Status, CurrentStep, CreatedAt, DeploymentID, URL string

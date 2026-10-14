@@ -18,10 +18,11 @@ func (s *Service) workspace(r *http.Request, scope Scope) (dashboard.AutomationC
 		return data, &response
 	}
 	data.RuntimeEnabled, data.UnavailableReason = listing.RuntimeEnabled, listing.UnavailableReason
+	data.RuntimeObserved = true
 	for _, item := range listing.Automations {
 		data.Items = append(data.Items, dashboard.AutomationConsoleItem{Name: item.Name, Source: item.Source,
 			URL: consoleURL(scope.Slug, item.Name, ""), Version: item.Version, PublishedVersion: item.PublishedVersion,
-			Enabled: item.Enabled, FailurePaused: item.FailurePaused})
+			Enabled: item.Published != nil && item.Enabled, FailurePaused: item.FailurePaused})
 	}
 	var policy api.AutomationPublishPolicy
 	response = s.Host.Request(r, scope, Operation{Kind: "policy"})
@@ -159,6 +160,7 @@ func (s *Service) afterWrite(w http.ResponseWriter, r *http.Request, scope Scope
 	data.Version, data.Published, data.Enabled, data.FailurePaused = saved.Version, saved.Published != nil, saved.Enabled, saved.FailurePaused
 	data.Items, data.Starters = current.Items, current.Starters
 	data.RuntimeEnabled, data.UnavailableReason, data.PolicyMode = current.RuntimeEnabled, current.UnavailableReason, current.PolicyMode
+	data.RuntimeObserved = current.RuntimeObserved
 	data.Message = message
 	s.inspectAutomation(r, scope, &data)
 	s.render(w, r, scope, data, http.StatusOK)
@@ -171,13 +173,21 @@ func (s *Service) refreshMetadata(r *http.Request, scope Scope, data *dashboard.
 		if failure == nil {
 			data.Items, data.Starters = current.Items, current.Starters
 			data.RuntimeEnabled, data.UnavailableReason, data.PolicyMode = current.RuntimeEnabled, current.UnavailableReason, current.PolicyMode
+			data.RuntimeObserved = current.RuntimeObserved
 		}
 	}
 	if data.Name == "" {
 		return
 	}
 	var current api.AutomationResponse
-	if read(s.Host.Request(r, scope, Operation{Kind: "get", Name: data.Name}), &current) {
+	response := s.Host.Request(r, scope, Operation{Kind: "get", Name: data.Name})
+	data.PublicationObserved = false
+	if read(response, &current) && current.Name == data.Name {
+		data.PublicationObserved = true
 		data.Published, data.Enabled, data.FailurePaused = current.Published != nil, current.Enabled, current.FailurePaused
+		data.PublishedSchedule = current.Published != nil && current.Published.Trigger != nil && current.Published.Trigger.Type == "schedule"
+	} else if response.Status == http.StatusNotFound {
+		data.PublicationObserved = true
+		data.Published, data.Enabled, data.FailurePaused, data.PublishedSchedule = false, false, false, false
 	}
 }

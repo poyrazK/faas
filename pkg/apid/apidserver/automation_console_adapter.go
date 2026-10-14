@@ -100,6 +100,8 @@ func (h automationConsoleHost) endpoint(slug string, op automationconsole.Operat
 		return http.MethodGet, named + "/health", h.server.getAutomationHealth
 	case "runs":
 		return http.MethodGet, "/v1/apps/" + url.PathEscape(slug) + "/workflows/runs", h.server.listWorkflowRuns
+	case "schedule-preview":
+		return http.MethodGet, "/v1/apps/" + url.PathEscape(slug) + "/workflows/schedules/" + url.PathEscape(op.Name) + "/preview", h.server.previewWorkflowSchedule
 	case "run":
 		return http.MethodPost, "/v1/apps/" + url.PathEscape(slug) + "/workflows/" + url.PathEscape(op.Name) + "/runs", h.server.createWorkflowRun
 	default:

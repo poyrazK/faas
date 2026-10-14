@@ -8,7 +8,7 @@ Create and manage definitions through the automation authoring API or generated
 SDKs. Save a draft with a trigger and steps, including input mapping, event filters,
 waits, and failure handlers as needed. Validate reports errors without executing
 or saving steps; publishing makes the saved draft available to future runs.
-The app dashboard also offers a guided JSON authoring workspace, described below.
+The app dashboard also offers starter forms and an advanced JSON editor, described below.
 
 ## Start from the app dashboard
 
@@ -18,8 +18,10 @@ available through `gregale automations init`. Selection does not save a draft
 or start a run. Deploy the starter's handler routes and configure its required
 integrations or event sources separately.
 
-1. Choose a unique automation name and use that same name in the JSON definition.
-   Configure its trigger and action routes, then validate the definition.
+1. Choose a unique automation name. Scheduled reports offer form fields for cron,
+   timezone, collect/deliver paths, overlap and missed-start recovery. Other
+   definitions use JSON; keep its name matched to the automation name. Validate
+   the configured definition before saving.
 2. Review the sample input and mock outcomes, then simulate. The trace shows step
    decisions without calling handlers or connected services.
 3. Save the draft. The browser preserves your sample and check text through the
@@ -45,6 +47,38 @@ starts** is selected. Manual runs remain distinct from that setting. The console
 cannot enable a disabled workflow runtime, satisfy tenant admission requirements,
 configure outbound worker flags, or establish native KVM qualification. The
 existing permissions, publication policies and execution gates still apply.
+
+### Configure and preview a scheduled report
+
+Choose **scheduled-report**, enter its schedule and an IANA timezone, and replace
+the collect/deliver paths with routes deployed by your app. Choose whether an
+active run skips a new occurrence or allows overlap. Missed starts can be skipped
+or recover only the latest occurrence within a bounded window (default 1h,
+allowed 1m–24h); leave the window empty when using skip.
+
+Select **Use report settings below** to apply these fields. They patch the
+submitted definition while preserving advanced inputs, retries and other
+options. Choose **Use the JSON editor** to edit those same fields directly.
+Different step graphs remain available through JSON rather than being replaced
+by a starter. New reports configured through the form have starts disabled.
+
+**Preview edited schedule** validates the submitted definition and shows five
+upcoming nominal times in local time with numeric UTC offsets and in UTC. It
+uses the scheduler's shared timing helper, including daylight-saving rules.
+It saves no draft, changes no durable cursor, enables no starts and calls no
+handlers. A separate **Published schedule preview** reads the effective published
+definition and its current cursor through the existing schedule preview API.
+Unsaved edits do not change that preview or the published definition. Preview
+times reserve no capacity and do not guarantee execution.
+
+The **Setup checklist** reports observed runtime availability, execution
+prerequisites, publication and enabled state. A successful prerequisite read
+confirms app eligibility and a live default deployment at that observation.
+When an earlier execution gate blocks the read, deployment readiness is shown
+as unverified. Handler routes and credentials always remain unverified by this
+page: mocked scenarios do not exercise a deployed handler. Test those routes
+before explicitly enabling automatic starts. Save and checked publication still
+require the submitted revision and definition to match the current saved draft.
 
 ### Diagnose and recover a dashboard run
 

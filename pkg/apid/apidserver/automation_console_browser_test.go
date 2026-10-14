@@ -1,5 +1,6 @@
 // adr: 1285
 // adr: 1286
+// adr: 1287
 package apidserver_test
 
 import (
@@ -31,6 +32,14 @@ func TestAutomationConsoleBrowserRecoveryJourney(t *testing.T) {
 	e, app, cookie := consoleFixture(t)
 	run := consoleFailedRun(t, e, app)
 	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations?name="+run.WorkflowName+"&run="+run.ID, "recovery")
+}
+
+func TestAutomationConsoleBrowserReportJourney(t *testing.T) {
+	if os.Getenv("GREGALE_AUTOMATION_BROWSER_ACCEPTANCE") != "1" {
+		t.Skip("set GREGALE_AUTOMATION_BROWSER_ACCEPTANCE=1 with Playwright and Chromium installed")
+	}
+	e, app, cookie := consoleFixture(t)
+	consoleBrowserJourney(t, e, cookie, "/dashboard/apps/"+app.Slug+"/automations", "report")
 }
 
 func consoleBrowserJourney(t *testing.T, e apidserver.TestEnv, cookie *http.Cookie, path, mode string) {
