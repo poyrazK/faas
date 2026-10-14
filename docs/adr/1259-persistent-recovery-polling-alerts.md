@@ -42,7 +42,7 @@ is introduced. Existing signed webhook delivery and replay remain authoritative.
 
 ## Consequences
 
-Apply migration `20261013190000001` before deploying. Downgrade refuses to remove
+Apply migration `20261014092444767` before deploying. Downgrade refuses to remove
 retained receipts, history, outbox or delivery evidence. The status describes
 capture, not successful delivery, and inspection does not refresh it. Both stores
 cover threshold, quiet repeats, no receivers, late subscribers, restart and

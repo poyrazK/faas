@@ -47,7 +47,7 @@ outbox effect. Deferral neither changes policy authority/version nor counts as
 execution failure, grants retries or resumes an operator pause. Existing budget,
 cooldown, generation and account locks remain authoritative.
 
-Apply migration `20261013180000001` before deploying the worker. Rollback refuses
+Apply migration `20261014092444724` before deploying the worker. Rollback refuses
 to drop retained polling failures. Typed policy inspection can still fail if the
 policy JSON itself cannot be decoded; polling metadata remains separately stored
 for operational diagnosis. Both stores have fairness and restart regressions;

@@ -3056,7 +3056,7 @@ resume clears this metadata. Read-only inspection does not retry work.
 Polling failures do not increment execution failure counters, consume budgets,
 submit another job or grant execution authority. Database outages, cancellation,
 transaction failures and unknown errors still end the affected pass. Apply
-migration `20261013180000001` before deploying the updated automatic worker.
+migration `20261014092444724` before deploying the updated automatic worker.
 
 ### Persistent polling failure alerts
 
@@ -3077,4 +3077,4 @@ including event ID and recipients. The CLI prints its state and code. `queued`
 means durable outbox admission, while `no_receivers` never replays to subscribers
 added later. New transitions use current recipients. Automation history retains
 `polling_failed` and `polling_recovered` with their frozen receipts. Apply migration
-`20261013190000001` before deploying the worker.
+`20261014092444767` before deploying the worker.
