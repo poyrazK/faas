@@ -1156,9 +1156,21 @@ for await (const line of lines) {
   }
   const headers = env.headers || {};
   invocationID = headers["x-faas-invocation-id"] || headers["X-Faas-Invocation-Id"] || "";
+  // One line per call, like the Python adapter: console.error(msg, fields)
+  // printed a multi-line inspect() of the fields, and every line became its
+  // own log record (H10-59).
+  const formatLogArg = (arg) => {
+    if (typeof arg === "string") return arg;
+    if (arg instanceof Error) return arg.stack || String(arg);
+    try {
+      const text = JSON.stringify(arg);
+      if (text !== undefined) return text;
+    } catch (_) {}
+    return String(arg);
+  };
   const log = {};
   for (const level of ["debug", "info", "warn", "error"]) {
-    log[level] = (...args) => console.error(...args);
+    log[level] = (...args) => console.error(args.map(formatLogArg).join(" "));
   }
   const ctx = {
     invocation_id: invocationID,
