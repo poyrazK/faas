@@ -871,6 +871,12 @@ type MemStore struct {
 	apiConsumerTelemetryHours map[string]APIConsumerTelemetryHour
 	// apiConsumerUsageAlerts are recorded plan alert crossings (ADR-849).
 	apiConsumerUsageAlerts []APIConsumerUsageAlert
+	// apiConsumerCreditGrants (by ID), apiConsumerCreditApplications and
+	// apiConsumerSpendCaps (by consumer ID) back prepaid credits and spend
+	// caps (ADR-1306).
+	apiConsumerCreditGrants       map[string]APIConsumerCreditGrant
+	apiConsumerCreditApplications []apiConsumerCreditApplication
+	apiConsumerSpendCaps          map[string]APIConsumerSpendCap
 	// billingConnections and statementInvoiceExports back statement invoice
 	// exports (ADR-1300); keyed by account/provider and export ID.
 	billingConnections      map[string]BillingConnection

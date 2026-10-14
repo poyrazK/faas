@@ -826,6 +826,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		startProfileDeploymentChecks(ctx, srv, log)
 		srv.billingRuns.Start(ctx, log)       // ADR-1301
 		srv.statementInvoices.Start(ctx, log) // ADR-1302
+		srv.consumerCredits.Start(ctx, log)   // ADR-1306
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion

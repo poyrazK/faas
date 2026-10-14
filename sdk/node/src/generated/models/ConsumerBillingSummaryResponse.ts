@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APIConsumerCreditBalance } from './APIConsumerCreditBalance.js';
 import type { ConsumerBillingPlan } from './ConsumerBillingPlan.js';
+import type { ConsumerBillingSpendCap } from './ConsumerBillingSpendCap.js';
 /**
  * A consumer's own month to date (ADR-1304), priced like its next statement.
  */
@@ -28,5 +30,10 @@ export type ConsumerBillingSummaryResponse = {
   priced: boolean;
   plan?: ConsumerBillingPlan;
   as_of: string;
+  /**
+   * Prepaid credit the consumer can still use, per currency (ADR-1306).
+   */
+  credits?: Array<APIConsumerCreditBalance>;
+  spend_cap?: ConsumerBillingSpendCap;
 };
 

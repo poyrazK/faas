@@ -83,7 +83,8 @@ func newUsageCommitFixture(t *testing.T, method string, maxBytes int64, consumer
 func abortPanics(holder *usageCommitHolder, rec *statusRecorder) (aborted bool) {
 	defer func() {
 		if p := recover(); p != nil {
-			aborted = p == http.ErrAbortHandler
+			err, ok := p.(error)
+			aborted = ok && errors.Is(err, http.ErrAbortHandler)
 		}
 	}()
 	abortUnrecordedResponse(holder, rec)

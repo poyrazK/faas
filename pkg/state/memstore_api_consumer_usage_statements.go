@@ -139,6 +139,7 @@ func (m *MemStore) FinalizeAPIConsumerUsageStatement(_ context.Context, accountI
 	now := time.Now().UTC()
 	statement.Status = APIConsumerUsageStatementFinalized
 	statement.FinalizedAt = &now
+	statement.CreditAppliedMillicents = m.applyAPIConsumerCreditsLocked(statement, now)
 	var recipients []string
 	for _, hook := range m.appWebhooks {
 		if hook.Scope == AppWebhookScopeApp && hook.AppID == appID && hook.AccountID == accountID && hook.Enabled &&

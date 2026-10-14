@@ -1475,6 +1475,10 @@ type APIConsumerUsageStatementResponse struct {
 	AsOf             string                                    `json:"as_of"`
 	CreatedAt        time.Time                                 `json:"created_at"`
 	FinalizedAt      *time.Time                                `json:"finalized_at,omitempty"`
+	// CreditAppliedMillicents is prepaid credit drawn when the statement was
+	// finalized; AmountDueMillicents is what is left to bill (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // APIConsumerUsageStatementListResponse wraps statements newest-period first.

@@ -181,13 +181,18 @@ func (s *PgStore) GetAPIConsumerPlanPolicy(ctx context.Context, accountID, appID
 		  from current_assignment a join api_consumer_plans p on p.id = a.plan_id`,
 		accountID, appID, consumerID, at.UTC()).Scan(&policy.PlanID, &policy.AppID, &policy.MaxRequestsPerMinute, &policy.MaxUnitsPerMonth, &policy.AlertThresholdsPercent, &weights)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return APIConsumerPlanPolicy{}, nil // default plan: no limits
-	}
-	if err != nil {
+		policy = APIConsumerPlanPolicy{} // default plan: no limits
+	} else if err != nil {
+		return APIConsumerPlanPolicy{}, err
+	} else if err := json.Unmarshal(weights, &policy.RouteWeights); err != nil {
 		return APIConsumerPlanPolicy{}, err
 	}
-	if err := json.Unmarshal(weights, &policy.RouteWeights); err != nil {
+	spendCap, err := s.GetAPIConsumerSpendCap(ctx, accountID, consumerID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return APIConsumerPlanPolicy{}, err
+	}
+	if err == nil {
+		policy.attachSpendCap(spendCap, at)
 	}
 	return policy, nil
 }

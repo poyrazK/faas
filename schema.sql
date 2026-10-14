@@ -15542,6 +15542,51 @@ CREATE TABLE public.alert_rules (
 
 
 --
+-- Name: api_consumer_credit_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_applications (
+    grant_id uuid NOT NULL,
+    statement_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    amount_millicents bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_credit_applications_amount_chk CHECK ((amount_millicents > 0))
+);
+
+
+--
+-- Name: api_consumer_credit_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    remaining_millicents bigint NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    voided_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_credit_grants_amount_chk CHECK (((amount_millicents > 0) AND (remaining_millicents >= 0) AND (remaining_millicents <= amount_millicents))),
+    CONSTRAINT api_consumer_credit_grants_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_grants_expiry_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT api_consumer_credit_grants_note_chk CHECK ((char_length(note) <= 200)),
+    CONSTRAINT api_consumer_credit_grants_voided_chk CHECK (((voided_at IS NULL) OR (remaining_millicents = 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_credit_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to an API consumer; finalized statements draw it down oldest-expiring first (ADR-1306).';
+
+
+--
 -- Name: api_consumer_plan_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15702,6 +15747,37 @@ COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per 
 
 
 --
+-- Name: api_consumer_spend_caps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_spend_caps (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    currency text NOT NULL,
+    monthly_cap_millicents bigint NOT NULL,
+    capped boolean DEFAULT false NOT NULL,
+    month_start timestamp with time zone,
+    amount_due_millicents bigint,
+    checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_spend_caps_cap_chk CHECK ((monthly_cap_millicents >= 0)),
+    CONSTRAINT api_consumer_spend_caps_capped_chk CHECK (((NOT capped) OR ((month_start IS NOT NULL) AND (checked_at IS NOT NULL)))),
+    CONSTRAINT api_consumer_spend_caps_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_spend_caps_due_chk CHECK (((amount_due_millicents IS NULL) OR (amount_due_millicents >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_spend_caps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_spend_caps IS 'Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).';
+
+
+--
 -- Name: api_consumer_usage_alerts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15818,7 +15894,9 @@ CREATE TABLE public.api_consumer_usage_statements (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
     revision integer DEFAULT 1 NOT NULL,
+    credit_applied_millicents bigint DEFAULT 0 NOT NULL,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
+    CONSTRAINT api_consumer_usage_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= amount_millicents))),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
     CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT api_consumer_usage_statements_period_chk CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
@@ -31898,6 +31976,22 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_pkey PRIMARY KEY (grant_id, statement_id);
+
+
+--
+-- Name: api_consumer_credit_grants api_consumer_credit_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_grants
+    ADD CONSTRAINT api_consumer_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_plan_admissions api_consumer_plan_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31959,6 +32053,14 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_spend_caps api_consumer_spend_caps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_spend_caps
+    ADD CONSTRAINT api_consumer_spend_caps_pkey PRIMARY KEY (consumer_id);
 
 
 --
@@ -39014,6 +39116,20 @@ CREATE INDEX alert_rules_org_id_idx ON public.alert_rules USING btree (org_id) W
 
 
 --
+-- Name: api_consumer_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_applications_statement_idx ON public.api_consumer_credit_applications USING btree (statement_id);
+
+
+--
+-- Name: api_consumer_credit_grants_consumer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_credit_grants USING btree (consumer_id, currency, created_at);
+
+
+--
 -- Name: api_consumer_plan_assignments_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -39039,6 +39155,13 @@ CREATE UNIQUE INDEX api_consumer_rate_cards_default_effective_uniq ON public.api
 --
 
 CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, effective_from) WHERE (plan_id IS NOT NULL);
+
+
+--
+-- Name: api_consumer_spend_caps_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_spend_caps_next_check_idx ON public.api_consumer_spend_caps USING btree (next_check_at);
 
 
 --
@@ -49956,6 +50079,46 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_grant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.api_consumer_credit_grants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_statement_id_fkey FOREIGN KEY (statement_id) REFERENCES public.api_consumer_usage_statements(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_grants api_consumer_credit_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_grants
+    ADD CONSTRAINT api_consumer_credit_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_grants api_consumer_credit_grants_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_grants
+    ADD CONSTRAINT api_consumer_credit_grants_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_plan_admissions api_consumer_plan_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50057,6 +50220,22 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_spend_caps api_consumer_spend_caps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_spend_caps
+    ADD CONSTRAINT api_consumer_spend_caps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_spend_caps api_consumer_spend_caps_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_spend_caps
+    ADD CONSTRAINT api_consumer_spend_caps_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --

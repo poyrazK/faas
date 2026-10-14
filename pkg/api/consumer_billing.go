@@ -34,6 +34,20 @@ type ConsumerBillingSummaryResponse struct {
 	Priced           bool                 `json:"priced"`
 	Plan             *ConsumerBillingPlan `json:"plan,omitempty"`
 	AsOf             time.Time            `json:"as_of"`
+	// Credits is the prepaid credit the consumer can still use, per
+	// currency; SpendCap is its monthly cap and last check (ADR-1306).
+	Credits  []APIConsumerCreditBalance `json:"credits"`
+	SpendCap *ConsumerBillingSpendCap   `json:"spend_cap,omitempty"`
+}
+
+// ConsumerBillingSpendCap is a consumer's monthly spend cap as the consumer
+// sees it: once AmountDueMillicents passes the cap, requests are refused
+// until the month ends or credit is added.
+type ConsumerBillingSpendCap struct {
+	Currency             string `json:"currency"`
+	MonthlyCapMillicents int64  `json:"monthly_cap_millicents"`
+	Capped               bool   `json:"capped"`
+	AmountDueMillicents  *int64 `json:"amount_due_millicents,omitempty"`
 }
 
 // ConsumerBillingDay is one UTC day of a consumer's usage.

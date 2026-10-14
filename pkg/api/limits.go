@@ -223,6 +223,22 @@ const (
 	ConsumerBillingStatementsMax = 24
 )
 
+// Consumer prepaid credits and spend caps (ADR-1306).
+const (
+	// One grant and one monthly cap are at most 10,000,000.00 in their
+	// currency.
+	ConsumerCreditGrantMaxMillicents int64 = 1_000_000_000_000
+	ConsumerSpendCapMaxMillicents    int64 = 1_000_000_000_000
+	// A consumer holds at most this many grants with credit left.
+	ConsumerCreditOpenGrantsMax = 100
+	ConsumerCreditNoteMaxBytes  = 200
+	// apid rechecks each capped consumer's month to date this often, in
+	// batches; a claimed check is retried after the lease.
+	ConsumerSpendCapCheckInterval = time.Minute
+	ConsumerSpendCapCheckLease    = 2 * time.Minute
+	ConsumerSpendCapBatchSize     = 500
+)
+
 type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int

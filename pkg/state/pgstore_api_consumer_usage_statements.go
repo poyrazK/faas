@@ -14,7 +14,7 @@ import (
 const apiConsumerUsageStatementSelectCols = `id, account_id, app_id, consumer_id,
        period_start, period_end, revision, status, currency, billable_units,
        unpriced_units, amount_millicents, priced, buckets, as_of,
-       created_at, finalized_at`
+       created_at, finalized_at, credit_applied_millicents`
 
 type apiConsumerUsageStatementRowScanner interface{ Scan(dest ...any) error }
 
@@ -26,7 +26,7 @@ func scanAPIConsumerUsageStatementRow(row apiConsumerUsageStatementRowScanner) (
 		&statement.ID, &statement.AccountID, &statement.AppID, &statement.ConsumerID,
 		&statement.PeriodStart, &statement.PeriodEnd, &statement.Revision, &status, &statement.Currency,
 		&statement.BillableUnits, &statement.UnpricedUnits, &statement.AmountMillicents,
-		&statement.Priced, &buckets, &statement.AsOf, &statement.CreatedAt, &statement.FinalizedAt,
+		&statement.Priced, &buckets, &statement.AsOf, &statement.CreatedAt, &statement.FinalizedAt, &statement.CreditAppliedMillicents,
 	); err != nil {
 		return APIConsumerUsageStatement{}, err
 	}
@@ -238,6 +238,9 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 		statementID, accountID, appID, consumerID)
 	statement, err := scanAPIConsumerUsageStatementRow(row)
 	if err == nil {
+		if statement, err = applyAPIConsumerCredits(ctx, tx, statement); err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
 		payload, payloadErr := usageStatementFinalizedWebhookPayload(statement)
 		if payloadErr != nil {
 			return APIConsumerUsageStatement{}, false, payloadErr

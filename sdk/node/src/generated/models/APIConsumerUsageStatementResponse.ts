@@ -22,5 +22,13 @@ export type APIConsumerUsageStatementResponse = {
   as_of: string;
   created_at: string;
   finalized_at?: string | null;
+  /**
+   * Prepaid credit drawn when the statement was finalized (ADR-1306).
+   */
+  credit_applied_millicents?: number;
+  /**
+   * amount_millicents less credit_applied_millicents: what is left to bill.
+   */
+  amount_due_millicents?: number;
 };
 

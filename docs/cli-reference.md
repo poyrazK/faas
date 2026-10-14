@@ -7498,6 +7498,66 @@ List the plan usage alerts a consumer crossed
 
 `gregale consumers usage-alerts <slug> <consumer-id>`
 
+### consumers credits
+
+List a consumer&#39;s prepaid credit grants and usable balance
+
+`gregale consumers credits <slug> <consumer-id>`
+
+### consumers credit-grant
+
+Grant prepaid credit that finalized statements draw down
+
+`gregale consumers credit-grant --currency <CODE> --amount-millicents <N> [--expires <TIME>] [--note <TEXT>] <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--currency <CODE>` | ISO-4217 currency of the credit, e.g. EUR | required |
+| `--amount-millicents <N>` | credit in millicents; 100000 = 1.00 | required |
+| `--expires <TIME>` | when unused credit expires, RFC3339 |  |
+| `--note <TEXT>` | note shown with the credit |  |
+
+Examples:
+
+```sh
+gregale consumers credit-grant my-api CONSUMER_ID --currency EUR --amount-millicents 5000000 --note "Starter pack"
+```
+
+### consumers credit-void
+
+Void what is left of a credit grant
+
+`gregale consumers credit-void <slug> <consumer-id> <credit-id>`
+
+### consumers spend-cap
+
+Show a consumer&#39;s monthly spend cap and whether it is reached
+
+`gregale consumers spend-cap <slug> <consumer-id>`
+
+### consumers spend-cap-set
+
+Refuse a consumer&#39;s requests once the month&#39;s amount due after credit passes a cap
+
+`gregale consumers spend-cap-set --currency <CODE> --monthly-cap-millicents <N> <slug> <consumer-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--currency <CODE>` | ISO-4217 currency of the cap, e.g. EUR | required |
+| `--monthly-cap-millicents <N>` | cap in millicents; 0 allows prepaid usage only | required |
+
+Examples:
+
+```sh
+gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-millicents 0
+```
+
+### consumers spend-cap-delete
+
+Remove a consumer&#39;s spend cap
+
+`gregale consumers spend-cap-delete <slug> <consumer-id>`
+
 
 ## platform-tenants
 

@@ -11,7 +11,9 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.api_consumer_credit_balance import APIConsumerCreditBalance
     from ..models.consumer_billing_plan import ConsumerBillingPlan
+    from ..models.consumer_billing_spend_cap import ConsumerBillingSpendCap
 
 
 T = TypeVar("T", bound="ConsumerBillingSummaryResponse")
@@ -37,6 +39,11 @@ class ConsumerBillingSummaryResponse:
     currency: str | Unset = UNSET
     plan: ConsumerBillingPlan | Unset = UNSET
     """The consumer's current plan and its monthly unit cap."""
+    credits_: list[APIConsumerCreditBalance] | Unset = UNSET
+    """Prepaid credit the consumer can still use, per currency (ADR-1306)."""
+    spend_cap: ConsumerBillingSpendCap | Unset = UNSET
+    """The consumer's monthly spend cap; once the amount due passes it, requests are refused until the month ends
+    or credit is added."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +73,17 @@ class ConsumerBillingSummaryResponse:
         if not isinstance(self.plan, Unset):
             plan = self.plan.to_dict()
 
+        credits_: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.credits_, Unset):
+            credits_ = []
+            for credits_item_data in self.credits_:
+                credits_item = credits_item_data.to_dict()
+                credits_.append(credits_item)
+
+        spend_cap: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.spend_cap, Unset):
+            spend_cap = self.spend_cap.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,12 +104,18 @@ class ConsumerBillingSummaryResponse:
             field_dict["currency"] = currency
         if plan is not UNSET:
             field_dict["plan"] = plan
+        if credits_ is not UNSET:
+            field_dict["credits"] = credits_
+        if spend_cap is not UNSET:
+            field_dict["spend_cap"] = spend_cap
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.api_consumer_credit_balance import APIConsumerCreditBalance
         from ..models.consumer_billing_plan import ConsumerBillingPlan
+        from ..models.consumer_billing_spend_cap import ConsumerBillingSpendCap
 
         d = dict(src_dict)
         consumer_id = UUID(d.pop("consumer_id"))
@@ -123,6 +147,22 @@ class ConsumerBillingSummaryResponse:
         else:
             plan = ConsumerBillingPlan.from_dict(_plan)
 
+        _credits_ = d.pop("credits", UNSET)
+        credits_: list[APIConsumerCreditBalance] | Unset = UNSET
+        if _credits_ is not UNSET:
+            credits_ = []
+            for credits_item_data in _credits_:
+                credits_item = APIConsumerCreditBalance.from_dict(credits_item_data)
+
+                credits_.append(credits_item)
+
+        _spend_cap = d.pop("spend_cap", UNSET)
+        spend_cap: ConsumerBillingSpendCap | Unset
+        if isinstance(_spend_cap, Unset):
+            spend_cap = UNSET
+        else:
+            spend_cap = ConsumerBillingSpendCap.from_dict(_spend_cap)
+
         consumer_billing_summary_response = cls(
             consumer_id=consumer_id,
             external_ref=external_ref,
@@ -136,6 +176,8 @@ class ConsumerBillingSummaryResponse:
             as_of=as_of,
             currency=currency,
             plan=plan,
+            credits_=credits_,
+            spend_cap=spend_cap,
         )
 
         consumer_billing_summary_response.additional_properties = d

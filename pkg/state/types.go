@@ -1039,6 +1039,14 @@ type APIConsumerUsageStatement struct {
 	AsOf             time.Time
 	CreatedAt        time.Time
 	FinalizedAt      *time.Time
+	// CreditAppliedMillicents is prepaid credit drawn down when the
+	// statement was finalized (ADR-1306).
+	CreditAppliedMillicents int64
+}
+
+// AmountDueMillicents is what the statement bills after prepaid credit.
+func (s APIConsumerUsageStatement) AmountDueMillicents() int64 {
+	return s.AmountMillicents - s.CreditAppliedMillicents
 }
 
 // APIConsumerUsageStatementHandoff is the immutable customer-billing claim

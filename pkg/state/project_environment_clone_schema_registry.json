@@ -210,6 +210,34 @@
     "kind": "configuration"
   },
   {
+    "table": "api_consumer_credit_applications",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "created_at",
+      "grant_id",
+      "statement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_credit_grants",
+    "columns": [
+      "account_id",
+      "amount_millicents",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "expires_at",
+      "id",
+      "note",
+      "remaining_millicents",
+      "voided_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_plan_admissions",
     "columns": [
       "account_id",
@@ -277,6 +305,24 @@
       "route",
       "updated_at",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_spend_caps",
+    "columns": [
+      "account_id",
+      "amount_due_millicents",
+      "app_id",
+      "capped",
+      "checked_at",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "month_start",
+      "monthly_cap_millicents",
+      "next_check_at",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -355,6 +401,7 @@
       "buckets",
       "consumer_id",
       "created_at",
+      "credit_applied_millicents",
       "currency",
       "finalized_at",
       "id",

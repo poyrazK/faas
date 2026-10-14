@@ -390,7 +390,10 @@ func statementInvoiceItems(inv billing.StatementInvoice) []statementInvoiceItem 
 	items := make([]statementInvoiceItem, 0, len(inv.Lines)+1)
 	for _, line := range inv.Lines {
 		description := fmt.Sprintf("%d usage units at %s %s each", line.Units, formatMillicentsDecimal(line.PriceMillicentsPerUnit), inv.Currency)
-		if line.PriceMillicentsPerUnit == 0 {
+		switch {
+		case line.Credit:
+			description = "Prepaid credit applied"
+		case line.PriceMillicentsPerUnit == 0:
 			description = fmt.Sprintf("%d usage units included at no charge", line.Units)
 		}
 		items = append(items, statementInvoiceItem{amount: line.AmountMinor, description: description})

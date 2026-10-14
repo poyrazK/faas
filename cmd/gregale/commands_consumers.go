@@ -43,9 +43,15 @@ var consumerVerbPositionals = map[string][]string{
 	"set-plan":           {"slug", "consumer-id"},
 	"plan-history":       {"slug", "consumer-id"},
 	"usage-alerts":       {"slug", "consumer-id"},
+	"credits":            {"slug", "consumer-id"},
+	"credit-grant":       {"slug", "consumer-id"},
+	"credit-void":        {"slug", "consumer-id", "credit-id"},
+	"spend-cap":          {"slug", "consumer-id"},
+	"spend-cap-set":      {"slug", "consumer-id"},
+	"spend-cap-delete":   {"slug", "consumer-id"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -57,6 +63,9 @@ type consumerFlags struct {
 	periodStart, periodEnd, month      string
 	invoiceID                          string
 	customer, provider                 string
+	amountMillicents                   int64
+	monthlyCapMillicents               int64
+	note                               string
 	tiers                              multiFlag
 	weights                            multiFlag
 	plan                               string
@@ -77,6 +86,8 @@ var consumerVerbFlags = map[string][]string{
 	"statement-draft":   {"period-start", "period-end", "month"},
 	"statement-handoff": {"invoice-id"},
 	"statement-export":  {"customer", "provider"},
+	"credit-grant":      {"currency", "amount-millicents", "expires", "note"},
+	"spend-cap-set":     {"currency", "monthly-cap-millicents"},
 }
 
 // cmdConsumers manages an app's API consumers and their monetization:
@@ -97,7 +108,10 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.externalRef, "external-ref", "", "stable consumer reference (create)")
 	fs.StringVar(&f.name, "name", "", "consumer or key display name")
 	fs.StringVar(&f.scopes, "scopes", "write", "comma-separated key scopes: read, write, admin (key-create)")
-	fs.StringVar(&f.expires, "expires", "", "key expiry, RFC3339 (key-create)")
+	fs.StringVar(&f.expires, "expires", "", "key or credit expiry, RFC3339 (key-create, credit-grant)")
+	fs.Int64Var(&f.amountMillicents, "amount-millicents", 0, "prepaid credit in millicents; 100000 = 1.00 (credit-grant)")
+	fs.Int64Var(&f.monthlyCapMillicents, "monthly-cap-millicents", -1, "monthly spend cap in millicents after prepaid credit; 0 allows prepaid usage only (spend-cap-set)")
+	fs.StringVar(&f.note, "note", "", "note shown with the credit (credit-grant)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
@@ -166,6 +180,9 @@ func runConsumers(verb string, args []string, f consumerFlags) int {
 // buildConsumerRequest validates flags and builds the request body before
 // authentication, so argument mistakes never reach the API.
 func buildConsumerRequest(verb string, f consumerFlags) (any, error) {
+	if req, handled, err := buildConsumerCreditRequest(verb, f); handled {
+		return req, err
+	}
 	switch verb {
 	case "create":
 		if strings.TrimSpace(f.externalRef) == "" || strings.TrimSpace(f.name) == "" {
@@ -388,6 +405,9 @@ func callConsumers(ctx context.Context, client *Client, verb string, args []stri
 	if out, handled, err := callConsumerPlans(ctx, client, verb, args, f); handled {
 		return out, err
 	}
+	if out, handled, err := callConsumerCredits(ctx, client, verb, args, request); handled {
+		return out, err
+	}
 	switch verb {
 	case "list":
 		return client.ListAPIConsumers(ctx, slug)
@@ -522,7 +542,7 @@ func consumerKeyStatus(k api.ConsumerKeyResponse) string {
 }
 
 func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
-	if printConsumerPlanResult(tw, out) {
+	if printConsumerPlanResult(tw, out) || printConsumerCreditResult(tw, out) {
 		return tw.Flush()
 	}
 	switch v := out.(type) {
@@ -558,6 +578,10 @@ func printConsumerBillingResult(tw *tabwriter.Writer, out any) error {
 		}
 		if priced := v.BillableUnits - v.UnpricedUnits; charged != priced {
 			_, _ = fmt.Fprintf(tw, "Charged units\t%d\t(the monthly allowance covers the rest; an adjustment can charge units that were free before)\n", charged)
+		}
+		if v.CreditAppliedMillicents > 0 {
+			_, _ = fmt.Fprintf(tw, "Prepaid credit\t%s\nAmount due\t%s\n", formatMillicents(v.Currency, -v.CreditAppliedMillicents),
+				formatMillicents(v.Currency, v.AmountDueMillicents))
 		}
 	case api.APIConsumerUsageCompletenessResponse:
 		printUsageCompleteness(tw, v)

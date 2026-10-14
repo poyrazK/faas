@@ -91,3 +91,10 @@ func TestPgStoreBillingProviders(t *testing.T) {
 	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)
 	checkBillingProviders(t, ctx, store, accountID)
 }
+
+// adr: 1306
+func TestPgStoreConsumerCredits(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	accountID, appID := seedConsumerKeyAccountApp(t, ctx, store)
+	checkConsumerCredits(t, ctx, store, accountID, appID)
+}

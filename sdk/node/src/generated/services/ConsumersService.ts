@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { APIConsumerCreditListResponse } from '../models/APIConsumerCreditListResponse.js';
+import type { APIConsumerCreditResponse } from '../models/APIConsumerCreditResponse.js';
 import type { APIConsumerListResponse } from '../models/APIConsumerListResponse.js';
 import type { APIConsumerPlanAssignmentListResponse } from '../models/APIConsumerPlanAssignmentListResponse.js';
 import type { APIConsumerPlanAssignmentResponse } from '../models/APIConsumerPlanAssignmentResponse.js';
@@ -10,6 +12,7 @@ import type { APIConsumerPlanResponse } from '../models/APIConsumerPlanResponse.
 import type { APIConsumerRateCardListResponse } from '../models/APIConsumerRateCardListResponse.js';
 import type { APIConsumerRateCardResponse } from '../models/APIConsumerRateCardResponse.js';
 import type { APIConsumerResponse } from '../models/APIConsumerResponse.js';
+import type { APIConsumerSpendCapResponse } from '../models/APIConsumerSpendCapResponse.js';
 import type { APIConsumerUsageAlertListResponse } from '../models/APIConsumerUsageAlertListResponse.js';
 import type { APIConsumerUsageCompletenessResponse } from '../models/APIConsumerUsageCompletenessResponse.js';
 import type { APIConsumerUsageQuoteResponse } from '../models/APIConsumerUsageQuoteResponse.js';
@@ -24,12 +27,14 @@ import type { ConsumerBillingSummaryResponse } from '../models/ConsumerBillingSu
 import type { ConsumerBillingUsageResponse } from '../models/ConsumerBillingUsageResponse.js';
 import type { ConsumerKeyListResponse } from '../models/ConsumerKeyListResponse.js';
 import type { ConsumerKeyResponse } from '../models/ConsumerKeyResponse.js';
+import type { CreateAPIConsumerCreditRequest } from '../models/CreateAPIConsumerCreditRequest.js';
 import type { CreateAPIConsumerPlanRequest } from '../models/CreateAPIConsumerPlanRequest.js';
 import type { CreateAPIConsumerRateCardRequest } from '../models/CreateAPIConsumerRateCardRequest.js';
 import type { CreateAPIConsumerRequest } from '../models/CreateAPIConsumerRequest.js';
 import type { CreateAPIConsumerUsageStatementRequest } from '../models/CreateAPIConsumerUsageStatementRequest.js';
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { PutAPIConsumerSpendCapRequest } from '../models/PutAPIConsumerSpendCapRequest.js';
 import type { StatementInvoiceExportResponse } from '../models/StatementInvoiceExportResponse.js';
 import type { UpdateAPIConsumerPlanLimitsRequest } from '../models/UpdateAPIConsumerPlanLimitsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -1023,6 +1028,235 @@ export class ConsumersService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * List a consumer's prepaid credit grants, newest first, with the usable balance per currency (ADR-1306).
+   * @returns APIConsumerCreditListResponse The consumer's grants and balances.
+   * @throws ApiError
+   */
+  public static listApiConsumerCredits({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose prepaid credit is listed or granted.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerCreditListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/credits',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Grant a consumer prepaid credit.
+   * Finalized statements in the credit's currency draw it down, the grant
+   * that expires first before grants that never expire, in the same
+   * transaction that finalizes them (ADR-1306). Credit never pays more
+   * than a statement's amount. A consumer holds at most 100 grants with
+   * credit left.
+   *
+   * @returns APIConsumerCreditResponse The new grant.
+   * @throws ApiError
+   */
+  public static createApiConsumerCredit({
+    slug,
+    consumerId,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose prepaid credit is listed or granted.
+     */
+    consumerId: string,
+    requestBody: CreateAPIConsumerCreditRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<APIConsumerCreditResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/credits',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The consumer already holds 100 grants with credit left.`,
+        422: `Invalid currency, amount, note or expiry.`,
+      },
+    });
+  }
+  /**
+   * Void what is left of a prepaid credit grant; credit already applied stays applied.
+   * @returns APIConsumerCreditResponse The voided grant.
+   * @throws ApiError
+   */
+  public static voidApiConsumerCredit({
+    slug,
+    consumerId,
+    creditId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer that holds the credit.
+     */
+    consumerId: string,
+    /**
+     * Credit grant to void.
+     */
+    creditId: string,
+  }): CancelablePromise<APIConsumerCreditResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/credits/{credit_id}',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+        'credit_id': creditId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Read a consumer's monthly spend cap and its last check.
+   * @returns APIConsumerSpendCapResponse The cap and whether it is reached this month.
+   * @throws ApiError
+   */
+  public static getApiConsumerSpendCap({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose monthly spend is capped.
+     */
+    consumerId: string,
+  }): CancelablePromise<APIConsumerSpendCapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Set a consumer's monthly spend cap (ADR-1306).
+   * Once the month's amount due passes the cap, the gateway answers the
+   * consumer with 402 `consumer_spend_cap_reached` until the month ends,
+   * the cap rises or credit is added. The amount due is the month to
+   * date priced like a statement, minus usable prepaid credit. apid
+   * checks it every minute and at once when the cap or credit changes,
+   * so a consumer can overshoot by about two minutes of traffic. A zero
+   * cap allows prepaid usage only.
+   *
+   * @returns APIConsumerSpendCapResponse The stored cap, checked at once.
+   * @throws ApiError
+   */
+  public static putApiConsumerSpendCap({
+    slug,
+    consumerId,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose monthly spend is capped.
+     */
+    consumerId: string,
+    requestBody: PutAPIConsumerSpendCapRequest,
+  }): CancelablePromise<APIConsumerSpendCapResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Invalid currency or cap.`,
+      },
+    });
+  }
+  /**
+   * Remove a consumer's spend cap.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteApiConsumerSpendCap({
+    slug,
+    consumerId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Consumer whose monthly spend is capped.
+     */
+    consumerId: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
+      path: {
+        'slug': slug,
+        'consumer_id': consumerId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
       },
     });
   }

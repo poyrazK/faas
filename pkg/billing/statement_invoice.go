@@ -40,6 +40,8 @@ type StatementInvoiceLine struct {
 	// AmountMinor is AmountMillicents in the currency's minor unit (cents),
 	// rounded half away from zero.
 	AmountMinor int64
+	// Credit marks the negative line for prepaid credit (ADR-1306).
+	Credit bool
 }
 
 // StatementInvoice is a statement converted to invoice items. RoundingMinor
@@ -114,7 +116,29 @@ func AppStatementInvoice(statement state.APIConsumerUsageStatement, cards []stat
 			return inv, err
 		}
 	}
-	return finishStatementInvoice(inv, lines, statement.AmountMillicents)
+	inv, err := finishStatementInvoice(inv, lines, statement.AmountMillicents)
+	if err != nil || statement.CreditAppliedMillicents == 0 {
+		return inv, err
+	}
+	return withCreditLine(inv, statement.CreditAppliedMillicents, statement.AmountDueMillicents())
+}
+
+// withCreditLine appends the prepaid credit a statement drew (ADR-1306) as a
+// negative line; the invoice total becomes the amount due rounded to the
+// cent.
+func withCreditLine(inv StatementInvoice, creditMillicents, dueMillicents int64) (StatementInvoice, error) {
+	if len(inv.Lines) >= MaxStatementInvoiceLines {
+		return inv, fmt.Errorf("%w: %d invoice lines (1 to %d)", ErrStatementNotInvoiceable, len(inv.Lines)+1, MaxStatementInvoiceLines)
+	}
+	inv.Lines = append(inv.Lines, StatementInvoiceLine{Credit: true, AmountMillicents: -creditMillicents,
+		AmountMinor: -millicentsToCents(creditMillicents)})
+	inv.TotalMinor = millicentsToCents(dueMillicents)
+	var itemsMinor int64
+	for _, line := range inv.Lines {
+		itemsMinor += line.AmountMinor
+	}
+	inv.RoundingMinor = inv.TotalMinor - itemsMinor
+	return inv, nil
 }
 
 // TenantStatementInvoice groups a platform tenant statement's lines across

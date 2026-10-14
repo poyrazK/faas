@@ -43,6 +43,10 @@ class APIConsumerUsageStatementResponse:
     created_at: datetime.datetime
     currency: str | Unset = UNSET
     finalized_at: datetime.datetime | None | Unset = UNSET
+    credit_applied_millicents: int | Unset = UNSET
+    """Prepaid credit drawn when the statement was finalized (ADR-1306)."""
+    amount_due_millicents: int | Unset = UNSET
+    """amount_millicents less credit_applied_millicents: what is left to bill."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +89,10 @@ class APIConsumerUsageStatementResponse:
         else:
             finalized_at = self.finalized_at
 
+        credit_applied_millicents = self.credit_applied_millicents
+
+        amount_due_millicents = self.amount_due_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,6 +116,10 @@ class APIConsumerUsageStatementResponse:
             field_dict["currency"] = currency
         if finalized_at is not UNSET:
             field_dict["finalized_at"] = finalized_at
+        if credit_applied_millicents is not UNSET:
+            field_dict["credit_applied_millicents"] = credit_applied_millicents
+        if amount_due_millicents is not UNSET:
+            field_dict["amount_due_millicents"] = amount_due_millicents
 
         return field_dict
 
@@ -166,6 +178,10 @@ class APIConsumerUsageStatementResponse:
 
         finalized_at = _parse_finalized_at(d.pop("finalized_at", UNSET))
 
+        credit_applied_millicents = d.pop("credit_applied_millicents", UNSET)
+
+        amount_due_millicents = d.pop("amount_due_millicents", UNSET)
+
         api_consumer_usage_statement_response = cls(
             id=id,
             consumer_id=consumer_id,
@@ -182,6 +198,8 @@ class APIConsumerUsageStatementResponse:
             created_at=created_at,
             currency=currency,
             finalized_at=finalized_at,
+            credit_applied_millicents=credit_applied_millicents,
+            amount_due_millicents=amount_due_millicents,
         )
 
         api_consumer_usage_statement_response.additional_properties = d

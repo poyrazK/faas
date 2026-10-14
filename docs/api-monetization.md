@@ -342,6 +342,52 @@ gregale account billing-run schedule-set --export stripe --delay-hours 6
 Gregale emails you when a run finishes with held or failed customers, and
 after every scheduled run.
 
+### Prepaid credit
+
+Sell prepaid bundles by granting a consumer credit. Finalized statements in
+the credit's currency draw it down automatically:
+
+```bash
+gregale consumers credit-grant my-api CONSUMER_ID --currency EUR --amount-millicents 5000000 --note "Starter pack"
+gregale consumers credits my-api CONSUMER_ID
+gregale consumers credit-void my-api CONSUMER_ID CREDIT_ID
+```
+
+- **When it applies.** Credit is drawn when a statement is finalized, from
+  the grant that expires first, then grants that never expire. It never pays
+  more than the statement's amount, and it never crosses currencies.
+- **Statements.** Each statement shows `credit_applied_millicents` and
+  `amount_due_millicents`, and so does the `usage_statement.finalized`
+  webhook.
+- **Invoices.** Exported invoices carry a negative "Prepaid credit applied"
+  line, so the invoice total is the amount due. Paddle and Lago get one
+  summary item instead. Billing runs don't export statements that credit pays
+  in full.
+- **Expiry and voiding.** Use `--expires` for credit that lapses. Voiding
+  removes what is left of a grant; credit already applied stays applied.
+- **Scope.** Credit pays app consumer statements, not cross-app
+  [platform tenant](#customers-across-several-apps) statements.
+
+### Spend caps
+
+Cap what a consumer can run up each month. Once the month's amount due,
+after prepaid credit, passes the cap, the gateway refuses the consumer's
+requests with `402 consumer_spend_cap_reached`. This lasts until the month
+ends, you raise the cap, or you add credit:
+
+```bash
+gregale consumers spend-cap-set my-api CONSUMER_ID --currency EUR --monthly-cap-millicents 2000000
+gregale consumers spend-cap my-api CONSUMER_ID
+```
+
+- **Prepaid only.** A cap of 0 stops the consumer as soon as its credit runs
+  out.
+- **Soft limit.** Gregale checks each cap every minute, and right away when
+  you change the cap or the credit. A consumer can therefore go over by about
+  two minutes of traffic. The refused requests are not billed.
+- **Currency.** The cap is compared with the month to date in its own
+  currency only.
+
 ## Let customers see their own billing
 
 Give a customer a key with the `billing` scope, and it can read its own usage,
@@ -356,8 +402,8 @@ curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billi
 ```
 
 - **Month to date.** The summary prices this month's usage the same way the
-  next statement will, and shows the plan's monthly cap. Late usage can still
-  change it.
+  next statement will. It also shows the plan's monthly cap, the prepaid
+  credit left, and the spend cap. Late usage can still change it.
 - **Statements.** The latest finalized statements include each invoice's
   payment status and the provider's hosted invoice or checkout page, where
   your customer can pay.
@@ -424,8 +470,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1301](adr/1301-month-end-billing-runs.md),
 [ADR-1302](adr/1302-statement-invoice-payment-status.md),
 [ADR-1303](adr/1303-usage-durable-before-response-completes.md),
-[ADR-1304](adr/1304-consumer-billing-self-service.md), and
-[ADR-1305](adr/1305-paddle-and-lago-statement-exports.md) for the billing rules.
+[ADR-1304](adr/1304-consumer-billing-self-service.md),
+[ADR-1305](adr/1305-paddle-and-lago-statement-exports.md), and
+[ADR-1306](adr/1306-consumer-prepaid-credit-and-spend-caps.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

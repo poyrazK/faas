@@ -85,7 +85,10 @@ func (s *Service) exportConsumer(ctx context.Context, acct state.Account, consum
 		return false, api.ErrInternal("could not list the month's statements")
 	}
 	for _, revision := range revisions {
-		if revision.Status != state.APIConsumerUsageStatementFinalized || revision.AmountMillicents == 0 {
+		if revision.Status != state.APIConsumerUsageStatementFinalized || revision.AmountDueMillicents() == 0 {
+			if revision.Status == state.APIConsumerUsageStatementFinalized && revision.CreditAppliedMillicents > 0 && item.ExportedCount == 0 {
+				item.Reason = creditCoveredReason
+			}
 			continue
 		}
 		if _, err := handoffs.GetAPIConsumerUsageStatementHandoff(ctx, acct.ID, item.AppID, item.SourceID, revision.ID); err == nil {
@@ -107,7 +110,7 @@ func (s *Service) exportConsumer(ctx context.Context, acct state.Account, consum
 		if problem != nil {
 			return true, settle(item, state.BillingRunItemFailed, problem)
 		}
-		item.InvoiceID, item.ExportedCount = export.ProviderInvoiceID, item.ExportedCount+1
+		item.InvoiceID, item.ExportedCount, item.Reason = export.ProviderInvoiceID, item.ExportedCount+1, ""
 	}
 	return false, nil
 }

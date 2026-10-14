@@ -52,6 +52,9 @@ export type { AlertPresetResponse } from './models/AlertPresetResponse.js';
 export type { AlertRollback } from './models/AlertRollback.js';
 export type { AlertRollbackDeploymentEvidence } from './models/AlertRollbackDeploymentEvidence.js';
 export type { AlertRuleResponse } from './models/AlertRuleResponse.js';
+export type { APIConsumerCreditBalance } from './models/APIConsumerCreditBalance.js';
+export type { APIConsumerCreditListResponse } from './models/APIConsumerCreditListResponse.js';
+export type { APIConsumerCreditResponse } from './models/APIConsumerCreditResponse.js';
 export type { APIConsumerListResponse } from './models/APIConsumerListResponse.js';
 export type { APIConsumerPlanAssignmentListResponse } from './models/APIConsumerPlanAssignmentListResponse.js';
 export type { APIConsumerPlanAssignmentResponse } from './models/APIConsumerPlanAssignmentResponse.js';
@@ -61,6 +64,7 @@ export type { APIConsumerRateCardListResponse } from './models/APIConsumerRateCa
 export type { APIConsumerRateCardResponse } from './models/APIConsumerRateCardResponse.js';
 export type { APIConsumerRateCardTier } from './models/APIConsumerRateCardTier.js';
 export type { APIConsumerResponse } from './models/APIConsumerResponse.js';
+export type { APIConsumerSpendCapResponse } from './models/APIConsumerSpendCapResponse.js';
 export type { APIConsumerUsageAlertListResponse } from './models/APIConsumerUsageAlertListResponse.js';
 export type { APIConsumerUsageAlertResponse } from './models/APIConsumerUsageAlertResponse.js';
 export type { APIConsumerUsageBucketResponse } from './models/APIConsumerUsageBucketResponse.js';
@@ -283,6 +287,7 @@ export type { ConsumeInvoiceResponse } from './models/ConsumeInvoiceResponse.js'
 export type { ConsumerBillingDay } from './models/ConsumerBillingDay.js';
 export type { ConsumerBillingInvoice } from './models/ConsumerBillingInvoice.js';
 export type { ConsumerBillingPlan } from './models/ConsumerBillingPlan.js';
+export type { ConsumerBillingSpendCap } from './models/ConsumerBillingSpendCap.js';
 export type { ConsumerBillingStatement } from './models/ConsumerBillingStatement.js';
 export type { ConsumerBillingStatementsResponse } from './models/ConsumerBillingStatementsResponse.js';
 export type { ConsumerBillingSummaryResponse } from './models/ConsumerBillingSummaryResponse.js';
@@ -295,6 +300,7 @@ export type { CorsPresetListResponse } from './models/CorsPresetListResponse.js'
 export type { CorsPresetResponse } from './models/CorsPresetResponse.js';
 export type { CreateAccountReleaseWebhookRequest } from './models/CreateAccountReleaseWebhookRequest.js';
 export type { CreateAlertRuleRequest } from './models/CreateAlertRuleRequest.js';
+export type { CreateAPIConsumerCreditRequest } from './models/CreateAPIConsumerCreditRequest.js';
 export type { CreateAPIConsumerPlanRequest } from './models/CreateAPIConsumerPlanRequest.js';
 export type { CreateAPIConsumerRateCardRequest } from './models/CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './models/CreateAPIConsumerRequest.js';
@@ -1643,6 +1649,7 @@ export type { PublishEventBatchResult } from './models/PublishEventBatchResult.j
 export type { PublishEventRequest } from './models/PublishEventRequest.js';
 export type { PublishEventResponse } from './models/PublishEventResponse.js';
 export type { PublishProjectReleaseSetRequest } from './models/PublishProjectReleaseSetRequest.js';
+export type { PutAPIConsumerSpendCapRequest } from './models/PutAPIConsumerSpendCapRequest.js';
 export type { PutAppEnvRequest } from './models/PutAppEnvRequest.js';
 export type { PutAppRegistryCredentialRequest } from './models/PutAppRegistryCredentialRequest.js';
 export type { PutAppSecretReferenceRequest } from './models/PutAppSecretReferenceRequest.js';

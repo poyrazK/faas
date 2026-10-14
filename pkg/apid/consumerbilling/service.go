@@ -133,7 +133,41 @@ func (s *Service) Summary(w http.ResponseWriter, r *http.Request) {
 		App: c.app.Slug, Month: monthStart.Format("2006-01"), Currency: quote.Currency, BillableUnits: quote.BillableUnits,
 		UnpricedUnits: quote.UnpricedUnits, AmountMillicents: quote.AmountMillicents, Priced: quote.Priced, AsOf: now}
 	out.Plan = s.currentPlan(r.Context(), c, now)
+	out.Credits, out.SpendCap = s.prepaid(r.Context(), c, now)
 	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+// prepaid reads the consumer's usable credit per currency and its spend cap
+// (ADR-1306); a store without them reports none.
+func (s *Service) prepaid(ctx context.Context, c caller, now time.Time) ([]api.APIConsumerCreditBalance, *api.ConsumerBillingSpendCap) {
+	balances := []api.APIConsumerCreditBalance{}
+	if credits, ok := s.Host.Store().(state.APIConsumerCreditStore); ok {
+		grants, _ := credits.ListAPIConsumerCreditGrants(ctx, c.app.AccountID, c.app.ID, c.consumer.ID)
+		sums := map[string]int64{}
+		for _, g := range grants {
+			if g.Usable(now) {
+				sums[g.Currency] += g.RemainingMillicents
+			}
+		}
+		for currency, available := range sums {
+			balances = append(balances, api.APIConsumerCreditBalance{Currency: currency, AvailableMillicents: available})
+		}
+		sort.Slice(balances, func(i, j int) bool { return balances[i].Currency < balances[j].Currency })
+	}
+	caps, ok := s.Host.Store().(state.APIConsumerSpendCapStore)
+	if !ok {
+		return balances, nil
+	}
+	spendCap, err := caps.GetAPIConsumerSpendCap(ctx, c.app.AccountID, c.consumer.ID)
+	if err != nil {
+		return balances, nil
+	}
+	out := &api.ConsumerBillingSpendCap{Currency: spendCap.Currency, MonthlyCapMillicents: spendCap.MonthlyCapMillicents,
+		Capped: spendCap.CappedIn(billing.MonthStart(now))}
+	if spendCap.MonthStart != nil && spendCap.MonthStart.Equal(billing.MonthStart(now)) {
+		out.AmountDueMillicents = spendCap.AmountDueMillicents
+	}
+	return balances, out
 }
 
 func (s *Service) currentPlan(ctx context.Context, c caller, now time.Time) *api.ConsumerBillingPlan {
