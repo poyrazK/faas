@@ -81,7 +81,7 @@ func databaseRuntime(vm dbsched.VM) *scheddpb.DatabaseRuntime {
 		Bootstrapped: vm.Bootstrapped, LastError: vm.LastError, VmmdTarget: vm.NodeTarget,
 		PostgresMajor: int32(vm.Major), VcpuCount: int32(vm.VcpuCount), MemMib: int32(vm.MemMiB), VolumeBytes: vm.VolumeBytes,
 		AlwaysOn: vm.AlwaysOn, RestoreWindowSeconds: vm.RestoreWindowSeconds, RestoreSourceId: vm.RestoreSource,
-		ResizePending: vm.ResizePending,
+		ResizePending: vm.ResizePending, Replicated: vm.Replicated, StandbyNodeId: vm.StandbyNode, StandbySynced: vm.StandbySynced,
 	}
 	if vm.RestoreSource != "" {
 		rt.RestoreTarget = timestamppb.New(vm.RestoreTarget)
@@ -96,7 +96,7 @@ func provisionRequest(req *scheddpb.ProvisionDatabaseRequest) dbsched.ProvisionR
 	return dbsched.ProvisionRequest{
 		DatabaseID: req.GetDatabaseId(), Major: int(req.GetPostgresMajor()), VcpuCount: int(req.GetVcpuCount()),
 		MemMiB: int(req.GetMemMib()), VolumeBytes: req.GetVolumeBytes(), AlwaysOn: req.GetAlwaysOn(),
-		RestoreWindowSeconds: req.GetRestoreWindowSeconds(),
+		RestoreWindowSeconds: req.GetRestoreWindowSeconds(), Replicated: req.GetReplicated(),
 	}
 }
 

@@ -94,7 +94,7 @@ func (s *Scheduler) Restore(ctx context.Context, req RestoreRequest) (VM, error)
 	place := VM{
 		DatabaseID: req.DatabaseID, NodeID: pin, Major: req.Major, VcpuCount: req.VcpuCount, MemMiB: req.MemMiB,
 		VolumeBytes: req.VolumeBytes, AlwaysOn: req.AlwaysOn, RestoreWindowSeconds: req.RestoreWindowSeconds,
-		RestoreSource: source.DatabaseID, RestoreTarget: req.Target,
+		RestoreSource: source.DatabaseID, RestoreTarget: req.Target, Replicated: req.Replicated,
 	}
 	vm, err := s.store.Place(ctx, place)
 	if errors.Is(err, ErrNoCapacity) && pin != "" && s.cfg.SharedArchive {

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -52,9 +51,9 @@ func nativeEnv(t *testing.T) map[string]string {
 }
 
 // The native backend loads and is described without schedd, a database or
-// its credential key. It is not yet ready to be the default: Scale plans are
-// entitled to the production class, which needs a standby VM native does
-// not run yet, and the preflight says exactly that.
+// its credential key, and every plan's classes, production included (a
+// synchronous standby on a second node), are entitled on it: it can be a
+// region's default.
 func TestPreflightDescribesANativeDefaultBackend(t *testing.T) {
 	values := nativeEnv(t)
 	var output, errorOutput bytes.Buffer
@@ -66,8 +65,8 @@ func TestPreflightDescribesANativeDefaultBackend(t *testing.T) {
 	if result.BackendID != "native-eu" || result.Spec == nil || result.Spec.PostgresMajor != 18 {
 		t.Fatalf("preflight = %+v; want the native backend qualified at its newest major", result)
 	}
-	if code != 1 || !slices.Equal(result.Readiness.Reasons, []string{"plan_entitlement_unsupported"}) {
-		t.Fatalf("preflight exit=%d reasons=%v; want only the missing production class", code, result.Readiness.Reasons)
+	if code != 0 || !result.Readiness.Ready || len(result.Readiness.Reasons) != 0 {
+		t.Fatalf("preflight exit=%d readiness=%+v stderr=%q; want a ready native default", code, result.Readiness, errorOutput.String())
 	}
 }
 

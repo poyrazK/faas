@@ -3126,8 +3126,11 @@ type ProvisionDatabaseRequest struct {
 	AlwaysOn bool `protobuf:"varint,6,opt,name=always_on,json=alwaysOn,proto3" json:"always_on,omitempty"`
 	// How far back the database may be restored; zero means no promise.
 	RestoreWindowSeconds int64 `protobuf:"varint,7,opt,name=restore_window_seconds,json=restoreWindowSeconds,proto3" json:"restore_window_seconds,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// replicated keeps a synchronous hot standby on a second database node
+	// (ADR-1027 production class).
+	Replicated    bool `protobuf:"varint,8,opt,name=replicated,proto3" json:"replicated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProvisionDatabaseRequest) Reset() {
@@ -3207,6 +3210,13 @@ func (x *ProvisionDatabaseRequest) GetRestoreWindowSeconds() int64 {
 		return x.RestoreWindowSeconds
 	}
 	return 0
+}
+
+func (x *ProvisionDatabaseRequest) GetReplicated() bool {
+	if x != nil {
+		return x.Replicated
+	}
+	return false
 }
 
 type RestoreDatabaseRequest struct {
@@ -3351,6 +3361,11 @@ type DatabaseRuntime struct {
 	// A resize recorded but not yet applied: the VM still runs, or its
 	// volume still has, the old shape.
 	ResizePending bool `protobuf:"varint,16,opt,name=resize_pending,json=resizePending,proto3" json:"resize_pending,omitempty"`
+	// A replicated database (production class): its standby's node and
+	// whether the standby holds every acknowledged commit.
+	Replicated    bool   `protobuf:"varint,17,opt,name=replicated,proto3" json:"replicated,omitempty"`
+	StandbyNodeId string `protobuf:"bytes,18,opt,name=standby_node_id,json=standbyNodeId,proto3" json:"standby_node_id,omitempty"`
+	StandbySynced bool   `protobuf:"varint,19,opt,name=standby_synced,json=standbySynced,proto3" json:"standby_synced,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3493,6 +3508,27 @@ func (x *DatabaseRuntime) GetRestoreRecoveredTo() *timestamppb.Timestamp {
 func (x *DatabaseRuntime) GetResizePending() bool {
 	if x != nil {
 		return x.ResizePending
+	}
+	return false
+}
+
+func (x *DatabaseRuntime) GetReplicated() bool {
+	if x != nil {
+		return x.Replicated
+	}
+	return false
+}
+
+func (x *DatabaseRuntime) GetStandbyNodeId() string {
+	if x != nil {
+		return x.StandbyNodeId
+	}
+	return ""
+}
+
+func (x *DatabaseRuntime) GetStandbySynced() bool {
+	if x != nil {
+		return x.StandbySynced
 	}
 	return false
 }
@@ -4158,7 +4194,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05count\x18\x06 \x01(\x03R\x05count\".\n" +
 	"\vDatabaseRef\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
-	"databaseId\"\x90\x02\n" +
+	"databaseId\"\xb0\x02\n" +
 	"\x18ProvisionDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12%\n" +
@@ -4168,7 +4204,10 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\amem_mib\x18\x04 \x01(\x05R\x06memMib\x12!\n" +
 	"\fvolume_bytes\x18\x05 \x01(\x03R\vvolumeBytes\x12\x1b\n" +
 	"\talways_on\x18\x06 \x01(\bR\balwaysOn\x124\n" +
-	"\x16restore_window_seconds\x18\a \x01(\x03R\x14restoreWindowSeconds\"\xd3\x01\n" +
+	"\x16restore_window_seconds\x18\a \x01(\x03R\x14restoreWindowSeconds\x12\x1e\n" +
+	"\n" +
+	"replicated\x18\b \x01(\bR\n" +
+	"replicated\"\xd3\x01\n" +
 	"\x16RestoreDatabaseRequest\x12K\n" +
 	"\bdatabase\x18\x01 \x01(\v2/.onebox.faas.schedd.v1.ProvisionDatabaseRequestR\bdatabase\x12,\n" +
 	"\x12source_database_id\x18\x02 \x01(\tR\x10sourceDatabaseId\x12>\n" +
@@ -4176,7 +4215,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x1aSetDatabaseAlwaysOnRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1b\n" +
-	"\talways_on\x18\x02 \x01(\bR\balwaysOn\"\xfe\x04\n" +
+	"\talways_on\x18\x02 \x01(\bR\balwaysOn\"\xed\x05\n" +
 	"\x0fDatabaseRuntime\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x17\n" +
@@ -4198,7 +4237,12 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x11restore_source_id\x18\r \x01(\tR\x0frestoreSourceId\x12A\n" +
 	"\x0erestore_target\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\rrestoreTarget\x12L\n" +
 	"\x14restore_recovered_to\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\x12restoreRecoveredTo\x12%\n" +
-	"\x0eresize_pending\x18\x10 \x01(\bR\rresizePending\"\x93\x01\n" +
+	"\x0eresize_pending\x18\x10 \x01(\bR\rresizePending\x12\x1e\n" +
+	"\n" +
+	"replicated\x18\x11 \x01(\bR\n" +
+	"replicated\x12&\n" +
+	"\x0fstandby_node_id\x18\x12 \x01(\tR\rstandbyNodeId\x12%\n" +
+	"\x0estandby_synced\x18\x13 \x01(\bR\rstandbySynced\"\x93\x01\n" +
 	"\x15ResizeDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x1d\n" +

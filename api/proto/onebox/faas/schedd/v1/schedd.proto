@@ -1172,6 +1172,9 @@ message ProvisionDatabaseRequest {
   bool always_on = 6;
   // How far back the database may be restored; zero means no promise.
   int64 restore_window_seconds = 7;
+  // replicated keeps a synchronous hot standby on a second database node
+  // (ADR-1027 production class).
+  bool replicated = 8;
 }
 
 message RestoreDatabaseRequest {
@@ -1214,6 +1217,11 @@ message DatabaseRuntime {
   // A resize recorded but not yet applied: the VM still runs, or its
   // volume still has, the old shape.
   bool resize_pending = 16;
+  // A replicated database (production class): its standby's node and
+  // whether the standby holds every acknowledged commit.
+  bool replicated = 17;
+  string standby_node_id = 18;
+  bool standby_synced = 19;
 }
 
 message ResizeDatabaseRequest {

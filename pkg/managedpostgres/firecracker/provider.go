@@ -56,6 +56,9 @@ type Verifiers interface {
 type shape struct {
 	vcpus  int
 	memMiB int
+	// replicated runs a synchronous standby on a second node (ADR-1027
+	// production class).
+	replicated bool
 }
 
 // Config is the driver's view of its BackendConfig.
@@ -105,6 +108,9 @@ func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 		Classes: map[managedpostgres.ServiceClass]shape{
 			managedpostgres.ClassDevelopment: {vcpus: 1, memMiB: 512},
 			managedpostgres.ClassBurstable:   {vcpus: 2, memMiB: 1024},
+			// Production keeps a synchronous standby on a second database
+			// node: no acknowledged commit is lost with a node.
+			managedpostgres.ClassProduction: {vcpus: 2, memMiB: 2048, replicated: true},
 		},
 	}
 	if cfg.HostSuffix == "" {
@@ -255,7 +261,7 @@ func (p *Provider) provisionRequest(id string, spec managedpostgres.Spec) *sched
 	return &scheddpb.ProvisionDatabaseRequest{
 		DatabaseId: id, PostgresMajor: int32(spec.PostgresMajor), VcpuCount: int32(shape.vcpus),
 		MemMib: int32(shape.memMiB), VolumeBytes: spec.StorageLimitBytes, AlwaysOn: !spec.ScaleToZero,
-		RestoreWindowSeconds: spec.RestoreWindowSeconds,
+		RestoreWindowSeconds: spec.RestoreWindowSeconds, Replicated: shape.replicated,
 	}
 }
 
@@ -331,7 +337,7 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 		ScaleToZero: !rt.GetAlwaysOn(), StorageLimitBytes: rt.GetVolumeBytes(), RestoreWindowSeconds: rt.GetRestoreWindowSeconds(),
 	}
 	for class, s := range p.cfg.Classes {
-		if int32(s.vcpus) == rt.GetVcpuCount() && int32(s.memMiB) == rt.GetMemMib() {
+		if int32(s.vcpus) == rt.GetVcpuCount() && int32(s.memMiB) == rt.GetMemMib() && s.replicated == rt.GetReplicated() {
 			spec.Class = class
 		}
 	}
@@ -356,6 +362,11 @@ func (p *Provider) Update(ctx context.Context, req managedpostgres.UpdateRequest
 	}
 	if err := p.supports(req.Spec); err != nil {
 		return managedpostgres.ObservedDatabase{}, err
+	}
+	// A class change resizes the VM in place; gaining or losing a standby
+	// is not a resize.
+	if p.cfg.Classes[req.Spec.Class].replicated != p.cfg.Classes[req.PreviousSpec.Class].replicated {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnsupported
 	}
 	id := resourceUUID(req.ResourceID)
 	rt, err := p.scheduler.SetDatabaseAlwaysOn(ctx, &scheddpb.SetDatabaseAlwaysOnRequest{DatabaseId: id, AlwaysOn: !req.Spec.ScaleToZero})

@@ -64,7 +64,7 @@ func (f *fakeScheduler) ProvisionDatabase(_ context.Context, in *scheddpb.Provis
 	}
 	rt := &scheddpb.DatabaseRuntime{DatabaseId: in.GetDatabaseId(), State: state, PostgresMajor: in.GetPostgresMajor(),
 		VcpuCount: in.GetVcpuCount(), MemMib: in.GetMemMib(), VolumeBytes: in.GetVolumeBytes(), AlwaysOn: in.GetAlwaysOn(),
-		RestoreWindowSeconds: in.GetRestoreWindowSeconds()}
+		RestoreWindowSeconds: in.GetRestoreWindowSeconds(), Replicated: in.GetReplicated()}
 	f.vms[in.GetDatabaseId()] = rt
 	if f.usage == nil {
 		f.usage = &scheddpb.DatabaseUsageResponse{} // the ledger opens at placement
@@ -404,7 +404,6 @@ func TestProvisionRejectsSpecsItCannotReportBack(t *testing.T) {
 		{"other region", func(s *managedpostgres.Spec) { s.Region = "us-east" }, managedpostgres.ErrUnsupported},
 		{"unbounded storage", func(s *managedpostgres.Spec) { s.StorageLimitBytes = 0 }, managedpostgres.ErrUnsupported},
 		{"storage over max", func(s *managedpostgres.Spec) { s.StorageLimitBytes = 200 << 30 }, managedpostgres.ErrUnsupported},
-		{"production class", func(s *managedpostgres.Spec) { s.Class = managedpostgres.ClassProduction }, managedpostgres.ErrUnsupported},
 		{"major not offered", func(s *managedpostgres.Spec) { s.PostgresMajor = 13 }, managedpostgres.ErrUnsupported},
 		{"highly available", func(s *managedpostgres.Spec) { s.Availability = managedpostgres.AvailabilityHighlyAvailable }, managedpostgres.ErrUnsupported},
 		{"invalid class", func(s *managedpostgres.Spec) { s.Class = "huge" }, managedpostgres.ErrInvalid},
@@ -913,5 +912,33 @@ func TestDescribeFactoryReadsCapabilitiesAndReachesNothing(t *testing.T) {
 	}
 	if _, err := described.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: testDatabaseID, IdentityKey: "k", Access: managedpostgres.CredentialReadWrite}); err == nil {
 		t.Fatal("a described backend issued credentials")
+	}
+}
+
+// The production class runs a synchronous standby on a second node: schedd
+// is asked for a replicated database, and the class reads back from it.
+// Gaining or losing the standby is not an in-place resize.
+func TestProductionClassIsReplicated(t *testing.T) {
+	p, sched, _ := newTestProvider(t)
+	ctx := context.Background()
+	spec := devSpec()
+	spec.Class = managedpostgres.ClassProduction
+	obs, err := p.Provision(ctx, managedpostgres.ProvisionRequest{ResourceID: testDatabaseID, Spec: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sched.provision) != 1 || !sched.provision[0].GetReplicated() || sched.provision[0].GetMemMib() != 2048 {
+		t.Fatalf("schedd got %+v; want a replicated 2 GiB database", sched.provision)
+	}
+	if obs.Spec.Class != managedpostgres.ClassProduction {
+		t.Fatalf("observed class %q", obs.Spec.Class)
+	}
+	burstable := spec
+	burstable.Class = managedpostgres.ClassBurstable
+	if _, err := p.Update(ctx, managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: spec, Spec: burstable}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+		t.Fatalf("production to burstable = %v, want ErrUnsupported", err)
+	}
+	if !slices.Contains(p.Capabilities().ServiceClasses, managedpostgres.ClassProduction) {
+		t.Fatal("capabilities omit the production class")
 	}
 }

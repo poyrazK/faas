@@ -846,12 +846,125 @@ tenant seams hold.
   fingerprint). The gate has one default per region and canary accounts
   only filter who may provision, so the switch moves every new database in
   the region at once.
-- **Blocker: the production class.** Scale is entitled to `production`;
-  native offers development and burstable, because production here means a
-  standby VM on a second node (see Durability), which is not built. The
-  preflight reports `plan_entitlement_unsupported` for a native default.
-  Offering production as a larger shape without the standby would quietly
-  give Scale databases up to 60 s of loss on node failure; not done.
+- Scale is entitled to `production`, which here means a synchronous
+  standby on a second node (below). With it the preflight reports a native
+  default ready; a backend without it would report
+  `plan_entitlement_unsupported`. Production was never offered as a larger
+  shape without the standby: that would quietly give Scale databases up to
+  60 s of loss on node failure.
+
+### Production class: synchronous standby (phase 6)
+
+A production database (2 vCPU, 2 GiB) runs a hot standby with its own
+volume on a second database node, with the database's own id. While the
+standby is synchronous every commit waits until the standby has flushed
+it, so a node loss loses no acknowledged commit.
+
+**Guest.** `gregale.standby=1` boots the volume as a hot standby. An empty
+volume (or one whose copy never finished: no `standby-seeded` marker)
+first copies the primary with `pg_basebackup -X stream` through the
+replication relay, holding the standby's slot. The standby streams on
+slot `gregale_standby` (bounded by `max_slot_wal_keep_size`, a quarter of
+the volume) and falls back to the archive. A hot standby reports `ready`
+in `postmaster.pid`; guest-init reports it as state `standby`, and it
+serves no client sessions. `OpPromote` promotes onto a new timeline, so a
+promoted standby never writes archive files under the primary's names.
+`gregale.promote=1` promotes at boot (a failover while parked).
+
+**Replication auth needs no secret.** A primary's guest-init serves vsock
+port 5435 and hands each stream to a bridge process (guest-init re-executed)
+running as `nobody`. `pg_ident` maps `nobody` to `gregale_replication`
+(LOGIN REPLICATION) on `local replication` lines only, so it reaches
+physical replication and nothing else. Tenant sessions arrive through the
+root-owned data bridge, which the map does not name.
+
+**Synchronous mode is host-driven and never persists across a boot.**
+`OpReplication` sets `off` (no slot), `async` (role and slot) or `sync`
+(`synchronous_standby_names = gregale_standby`) and reports
+streaming/synchronous/lag. Every primary boot and every promotion resets it
+to asynchronous before reporting ready.
+
+**Between nodes.** The standby's vmmd relays each stream as a
+`DatabaseReplication` RPC to the primary's vmmd. It dials as itself with
+the new node-identity leaf `vmmd/database-peer-client` (`<id>.faas`) and
+requires the server to be the primary's node. The primary's vmmd admits a
+stream only from the node schedd named as that database's standby: the
+TLS verifier admits only current standby nodes, and the RPC binds the
+caller to the database. `off` and `StopDatabase` forget the standby. A
+standby whose relay cannot dial the primary falls back to the archive.
+Nodes run standbys only with `database_vmmd_standbys` on, once their
+bundle carries the leaf.
+
+**schedd.** `database_vms` gains `replicated`, `standby_node`,
+`standby_running`, `standby_synced` and `promote_pending`. Placement gives
+a replicated database a standby node besides its own (else no capacity).
+Its volume counts there always, and its memory while the standby runs:
+`ClaimStandby` checks that node's ceiling. `standby_synced` is the only
+thing a failover trusts:
+
+- It is set only after the primary reports the standby synchronous.
+- It is cleared before a primary may commit without its standby. A wake
+  clears it in the same transaction that admits the wake (primaries boot
+  asynchronous). Before the monitor turns a primary asynchronous, the
+  record goes first.
+- A clean park stops the primary, then the standby, so a synchronous
+  standby stays synchronized while parked.
+
+Wakes never wait for the standby. It attaches in the background: async
+on the primary, then stop any leftover standby, create and grow the
+volume, boot (and seed) the standby, then sync, then record.
+`RunStandbyLoop` (2 s) attaches missing standbys and records syncs. It
+drops a standby that stops keeping up or whose node drains or is lost,
+record first, then async (or `off`, losing the slot, when the node goes).
+A standby's loss therefore holds commits for at most one check. Parked
+databases' standbys move off draining or lost nodes. Delete discards the
+standby volume; the orphan sweep leaves it alone.
+
+**Failover.** When the operator marks a node unavailable,
+`SettleLostNodes` fails a database over if its standby is synchronized
+and the standby's node is up:
+
+1. Fence the old primary (stop it, if its node still answers).
+2. Promote a running standby now, or mark a parked database
+   `promote_pending`; its next boot (`StartDatabase promote`) promotes the
+   standby volume on a new timeline.
+3. Switch the record to the standby's node (`last_error = failed_over`).
+
+An isolated old primary that is not fenced cannot commit: its synchronous
+standby no longer acknowledges. A database whose standby is not
+synchronized is parked as before (`node_lost`) and restored from the
+archive if its node does not return. After a failover the monitor places
+and seeds a new standby elsewhere.
+
+Metal (`TestMetalProductionClassFailover`), two nodes through vmmd's
+handlers:
+
+- Two replicated databases, one running and one parked, each had a
+  synchronous standby 5.5 s after the wake.
+- The running primary was killed with no shutdown and its node marked
+  lost. Both databases failed over (5.8 s) with every acknowledged commit,
+  writing on timeline 2.
+- The parked database's promotion boot took 2.3 s.
+- In the guest and runtime test the seed took 4 s, a seeded standby
+  resumes in 2.2 s, and a promotion takes 0.5 s.
+
+Not yet done:
+
+- **Standby metering.** The standby's vCPUs and volume are allocated but
+  not metered. Whether production is priced as two VMs or carried in its
+  class price is an owner decision against the financial model.
+- **Changing class to or from production.** It is unsupported: the
+  standby is not an in-place resize. Resizing a production database grows
+  the standby's volume at its next attach, but the standby node's volume
+  capacity is not checked at resize time.
+- **Failover is triggered by the operator's lost-node mark.** It is not
+  automatic on missed heartbeats.
+- **After every wake the primary runs asynchronous until its standby
+  syncs**, typically a few seconds. A node loss in that window falls back
+  to the archive (up to 60 s of loss), as for other classes.
+- **Several schedd replicas.** A standby claim that never synchronized is
+  reclaimed by another replica only after 15 minutes, since that replica
+  may still be seeding it.
 
 ### Usage metering
 
@@ -899,8 +1012,8 @@ Backend configuration (`FAAS_MANAGED_POSTGRES_CONFIG`):
 4. Density and wake: spares, admission ceiling, wake-storm queueing, classes.
 5. Operations: volume moves, node evacuation, node-loss restore, majors 14–18.
 6. Qualification: security review, `QualifyProvider` pass, the production
-   class (standby on a second node), then default for new databases and a
-   migration path off Neon.
+   class (synchronous standby on a second node, done), then default for
+   new databases and a migration path off Neon.
 
 Development may use a nested-virtualization VM; acceptance runs only on
 native x86_64 KVM database nodes.
