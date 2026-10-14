@@ -197,7 +197,12 @@ type ConsumerUsageEvent struct {
 	// Bounded "METHOD /template" label for consumer-attributed traffic. apid
 	// keeps route-level billable minutes so rate cards can weight routes
 	// (ADR-952). Empty for anonymous traffic and from older gateways.
-	BillingRoute  string `protobuf:"bytes,15,opt,name=billing_route,json=billingRoute,proto3" json:"billing_route,omitempty"`
+	BillingRoute string `protobuf:"bytes,15,opt,name=billing_route,json=billingRoute,proto3" json:"billing_route,omitempty"`
+	// Execution time and response size of a billable consumer request, which
+	// rate cards can price instead of requests (ADR-1308). Zero from older
+	// gateways and for requests a customer is not billed for.
+	ComputeMs     int64 `protobuf:"varint,16,opt,name=compute_ms,json=computeMs,proto3" json:"compute_ms,omitempty"`
+	ResponseBytes int64 `protobuf:"varint,17,opt,name=response_bytes,json=responseBytes,proto3" json:"response_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -337,6 +342,20 @@ func (x *ConsumerUsageEvent) GetBillingRoute() string {
 	return ""
 }
 
+func (x *ConsumerUsageEvent) GetComputeMs() int64 {
+	if x != nil {
+		return x.ComputeMs
+	}
+	return 0
+}
+
+func (x *ConsumerUsageEvent) GetResponseBytes() int64 {
+	if x != nil {
+		return x.ResponseBytes
+	}
+	return 0
+}
+
 type ConsumerUsageReceipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// False means the event was committed by an earlier attempt.
@@ -352,8 +371,11 @@ type ConsumerUsageReceipt struct {
 	// outbox record until a receiver explicitly advertises support.
 	SurfaceAttributionSupported   bool `protobuf:"varint,4,opt,name=surface_attribution_supported,json=surfaceAttributionSupported,proto3" json:"surface_attribution_supported,omitempty"`
 	JwtTenantAttributionSupported bool `protobuf:"varint,5,opt,name=jwt_tenant_attribution_supported,json=jwtTenantAttributionSupported,proto3" json:"jwt_tenant_attribution_supported,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// True when the receiver stored compute_ms and response_bytes. A gateway
+	// retains an event carrying them until a receiver acknowledges it.
+	ResourceUsageRecorded bool `protobuf:"varint,6,opt,name=resource_usage_recorded,json=resourceUsageRecorded,proto3" json:"resource_usage_recorded,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageReceipt) Reset() {
@@ -417,6 +439,13 @@ func (x *ConsumerUsageReceipt) GetSurfaceAttributionSupported() bool {
 func (x *ConsumerUsageReceipt) GetJwtTenantAttributionSupported() bool {
 	if x != nil {
 		return x.JwtTenantAttributionSupported
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetResourceUsageRecorded() bool {
+	if x != nil {
+		return x.ResourceUsageRecorded
 	}
 	return false
 }
@@ -1258,7 +1287,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\btrace_id\x18\x05 \x01(\tR\atraceId\x12-\n" +
 	"\x13received_at_unix_ms\x18\x06 \x01(\x03R\x10receivedAtUnixMs\"<\n" +
 	"\x1eRecordRequestIDJournalResponse\x12\x1a\n" +
-	"\brecorded\x18\x01 \x01(\bR\brecorded\"\xac\x05\n" +
+	"\brecorded\x18\x01 \x01(\bR\brecorded\"\xf2\x05\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -1278,13 +1307,17 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\x12;\n" +
 	"\x1aplatform_tenant_surface_id\x18\r \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
 	")platform_tenant_jwt_authorization_rule_id\x18\x0e \x01(\tR$platformTenantJwtAuthorizationRuleId\x12#\n" +
-	"\rbilling_route\x18\x0f \x01(\tR\fbillingRoute\"\x93\x02\n" +
+	"\rbilling_route\x18\x0f \x01(\tR\fbillingRoute\x12\x1d\n" +
+	"\n" +
+	"compute_ms\x18\x10 \x01(\x03R\tcomputeMs\x12%\n" +
+	"\x0eresponse_bytes\x18\x11 \x01(\x03R\rresponseBytes\"\xcb\x02\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
 	"\aapplied\x18\x01 \x01(\bR\aapplied\x12%\n" +
 	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\x12-\n" +
 	"\x12discovery_recorded\x18\x03 \x01(\bR\x11discoveryRecorded\x12B\n" +
 	"\x1dsurface_attribution_supported\x18\x04 \x01(\bR\x1bsurfaceAttributionSupported\x12G\n" +
-	" jwt_tenant_attribution_supported\x18\x05 \x01(\bR\x1djwtTenantAttributionSupported\"\xdf\x02\n" +
+	" jwt_tenant_attribution_supported\x18\x05 \x01(\bR\x1djwtTenantAttributionSupported\x126\n" +
+	"\x17resource_usage_recorded\x18\x06 \x01(\bR\x15resourceUsageRecorded\"\xdf\x02\n" +
 	"\x14RequestAuditEvidence\x12%\n" +
 	"\x0eroute_template\x18\x01 \x01(\tR\rrouteTemplate\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +

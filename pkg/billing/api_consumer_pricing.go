@@ -190,7 +190,7 @@ func QuoteAPIConsumerUsageFrom(cards []state.APIConsumerRateCard, usage []state.
 	})
 	var quote APIConsumerUsageQuote
 	for i, card := range ordered {
-		if card.Unit != state.APIConsumerRateCardUnitRequest {
+		if !state.ValidAPIConsumerRateCardUnit(card.Unit) {
 			return APIConsumerUsageQuote{}, fmt.Errorf("billing: unsupported API consumer rate-card unit %q", card.Unit)
 		}
 		if card.Currency == "" || len(card.Currency) != 3 || !isUpperASCIICurrency(card.Currency) {

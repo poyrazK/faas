@@ -102,6 +102,13 @@ func ValidateAPIConsumerUsageEvent(event APIConsumerUsageEvent) error {
 	if event.BillableUnits < 0 || event.BillableUnits > event.RequestCount {
 		return fmt.Errorf("consumer usage: billable_units must be between zero and request_count")
 	}
+	if event.ComputeMS < 0 || event.ComputeMS > event.RequestCount*MaxUsageComputeMSPerRequest ||
+		event.ResponseBytes < 0 || event.ResponseBytes > event.RequestCount*MaxUsageResponseBytesPerRequest {
+		return fmt.Errorf("consumer usage: compute_ms and response_bytes must be non-negative and bounded per request")
+	}
+	if (event.ComputeMS > 0 || event.ResponseBytes > 0) && (event.ConsumerKey == AnonymousConsumerKey || event.BillableUnits == 0) {
+		return fmt.Errorf("consumer usage: compute and response size belong to billable consumer requests")
+	}
 	if audit := event.Audit; audit != nil {
 		if event.RequestCount != 1 {
 			return fmt.Errorf("request audit: one event must describe exactly one request")
@@ -196,6 +203,8 @@ func (m *MemStore) RecordAPIConsumerUsage(_ context.Context, event APIConsumerUs
 	bucket.RequestCount += event.RequestCount
 	bucket.ErrorCount += event.ErrorCount
 	bucket.BillableUnits += event.BillableUnits
+	bucket.ComputeMS += event.ComputeMS
+	bucket.ResponseBytes += event.ResponseBytes
 	m.apiConsumerUsage[key] = bucket
 	if route := billingRouteFor(event); route != "" {
 		routeKey := consumerRouteUsageKey(event.AccountID, event.AppID, event.ConsumerKey, route, event.WindowStart)

@@ -1364,6 +1364,10 @@ type CreateAPIConsumerRateCardRequest struct {
 	// empty prices the app default plan.
 	PlanID        string     `json:"plan_id,omitempty"`
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+	// Unit is what the card prices (ADR-1308): request (default),
+	// compute_second, or response_megabyte. Compute and response size count
+	// billable requests per consumer minute, rounded to the nearest unit.
+	Unit string `json:"unit,omitempty"`
 }
 
 // APIConsumerRateCardTier is one step of a graduated ladder. Units whose

@@ -10,7 +10,20 @@ import (
 	"github.com/google/uuid"
 )
 
-const APIConsumerRateCardUnitRequest = "request"
+// App consumer rate card units (ADR-1308): billable requests, or the
+// compute time or response size of billable requests, rounded to the
+// nearest whole second or megabyte per consumer minute.
+const (
+	APIConsumerRateCardUnitRequest          = "request"
+	APIConsumerRateCardUnitComputeSecond    = "compute_second"
+	APIConsumerRateCardUnitResponseMegabyte = "response_megabyte"
+)
+
+// ValidAPIConsumerRateCardUnit reports whether unit is a known card unit.
+func ValidAPIConsumerRateCardUnit(unit string) bool {
+	return unit == APIConsumerRateCardUnitRequest || unit == APIConsumerRateCardUnitComputeSecond ||
+		unit == APIConsumerRateCardUnitResponseMegabyte
+}
 
 // APIConsumerRateCardStore is deliberately narrower than Store. The pricing
 // surface is additive, so existing test doubles that only implement the core
@@ -38,6 +51,8 @@ type APIConsumerRateCardInput struct {
 	RouteWeights           map[string]int64
 	PlanID                 string
 	EffectiveFrom          time.Time
+	// Unit is what the card prices; empty means request (ADR-1308).
+	Unit string
 }
 
 // normalizeAPIConsumerRateCardInput validates a version and derives the
@@ -45,6 +60,12 @@ type APIConsumerRateCardInput struct {
 func normalizeAPIConsumerRateCardInput(in APIConsumerRateCardInput) (APIConsumerRateCardInput, error) {
 	in.Currency = normalizeAPIConsumerRateCardCurrency(in.Currency)
 	in.EffectiveFrom = in.EffectiveFrom.UTC()
+	if in.Unit == "" {
+		in.Unit = APIConsumerRateCardUnitRequest
+	}
+	if !ValidAPIConsumerRateCardUnit(in.Unit) || (in.Unit != APIConsumerRateCardUnitRequest && len(in.RouteWeights) > 0) {
+		return in, fmt.Errorf("CreateAPIConsumerRateCard: %w: route weights apply to request cards only", ErrInvalidArgument)
+	}
 	if len(in.Tiers) > 0 {
 		if err := ValidateAPIConsumerRateCardTiers(in.Tiers); err != nil {
 			return in, fmt.Errorf("CreateAPIConsumerRateCard: %w", err)

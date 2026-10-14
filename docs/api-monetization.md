@@ -107,6 +107,35 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 25 \
 `gregale consumers quote` estimates charges for a window at current prices
 without creating anything.
 
+### Compute time and response size
+
+Charge for what a request costs you instead of counting requests. Set the
+card's `--unit`:
+
+```bash
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 900 --unit response_megabyte
+```
+
+- **Compute time.** A request's compute time is the execution time the
+  runtime reports. For runtimes that report none, it is the time from
+  forwarding the request to its response completing; a wake or cold start
+  is never counted.
+- **Response size.** The bytes of the response body sent to the client; a
+  megabyte is 1,000,000 bytes.
+- **Rounding.** Each consumer's billable requests are added up per minute
+  and rounded to the nearest whole second or megabyte, so each minute is
+  off by at most half a unit.
+- **Billable requests only.** Requests that fail through no fault of the app
+  are not measured, like any other unbillable request.
+- **Works with the rest.** Free units and tiers count seconds or megabytes,
+  and plans can price either. Route weights apply to request cards only. A
+  compute or response-size card cannot take effect in the past, and switching
+  a price history to another unit must start on the 1st of a month at
+  00:00 UTC.
+- **Plan limits still count requests.** A plan's monthly cap and per-minute
+  limit are enforced at the edge in requests, whatever the card's unit.
+
 ### Plans
 
 Package prices and limits as named plans, such as a capped free tier and a
@@ -465,8 +494,9 @@ gregale platform-tenants plan-history --id TENANT_ID
 
 ## Limits
 
-- Units are requests, optionally weighted by route. Pricing by measured
-  compute time or bytes is not available.
+- Units are requests, optionally weighted by route, or the compute seconds or
+  response megabytes of billable requests. Customer-wide (platform tenant)
+  cards price requests only.
 - Tiers are graduated. Pricing every request in the month at the price of the
   step the month ends in is not available.
 - Customer-wide (platform tenant) route weights apply to consumer requests
@@ -496,8 +526,9 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1303](adr/1303-usage-durable-before-response-completes.md),
 [ADR-1304](adr/1304-consumer-billing-self-service.md),
 [ADR-1305](adr/1305-paddle-and-lago-statement-exports.md),
-[ADR-1306](adr/1306-consumer-prepaid-credit-and-spend-caps.md), and
-[ADR-1307](adr/1307-platform-tenant-route-weights-and-plans.md) for the billing rules.
+[ADR-1306](adr/1306-consumer-prepaid-credit-and-spend-caps.md),
+[ADR-1307](adr/1307-platform-tenant-route-weights-and-plans.md), and
+[ADR-1308](adr/1308-consumer-compute-and-response-size-pricing.md) for the billing rules.
 
 These decisions were originally numbered ADR-843 through ADR-848. They were
 renumbered to ADR-949 through ADR-954 to resolve collisions with route-health

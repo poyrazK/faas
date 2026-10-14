@@ -37,7 +37,7 @@ func (m *MemStore) CreateAPIConsumerRateCardVersion(_ context.Context, in APICon
 		AccountID:              in.AccountID,
 		AppID:                  in.AppID,
 		Currency:               in.Currency,
-		Unit:                   APIConsumerRateCardUnitRequest,
+		Unit:                   in.Unit,
 		PriceMillicentsPerUnit: in.PriceMillicentsPerUnit,
 		IncludedUnitsPerMonth:  in.IncludedUnitsPerMonth,
 		Tiers:                  in.Tiers,

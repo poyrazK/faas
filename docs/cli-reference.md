@@ -7380,7 +7380,7 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7391,6 +7391,13 @@ Add an immutable per-request price version
 | `--weight <METHOD /template=N>` | count each request on a route as N units; unlisted routes count 1 |  |
 | `--plan <NAME>` | add the price to a consumer plan instead of the app default |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
+| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, per consumer minute rounded to the nearest unit | one of `request` · `compute_second` · `response_megabyte` |
+
+Examples:
+
+```sh
+gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second
+```
 
 ### consumers statements
 

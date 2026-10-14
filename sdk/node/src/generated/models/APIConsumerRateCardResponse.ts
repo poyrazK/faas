@@ -10,7 +10,10 @@ export type APIConsumerRateCardResponse = {
   id: string;
   app_id: string;
   currency: string;
-  unit: 'request';
+  /**
+   * What the card prices (ADR-1308): billable requests, or their compute seconds or response megabytes rounded to the nearest whole unit per consumer minute.
+   */
+  unit: 'request' | 'compute_second' | 'response_megabyte';
   price_millicents_per_unit: number;
   included_units_per_month: number;
   tiers?: Array<APIConsumerRateCardTier>;

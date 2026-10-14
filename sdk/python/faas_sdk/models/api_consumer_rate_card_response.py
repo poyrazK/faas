@@ -30,6 +30,8 @@ class APIConsumerRateCardResponse:
     app_id: UUID
     currency: str
     unit: APIConsumerRateCardResponseUnit
+    """What the card prices (ADR-1308): billable requests, or their compute seconds or response megabytes rounded
+    to the nearest whole unit per consumer minute."""
     price_millicents_per_unit: int
     included_units_per_month: int
     effective_from: datetime.datetime

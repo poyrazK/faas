@@ -43,6 +43,10 @@ type Event struct {
 	// BillingRoute is the bounded route label of consumer-attributed
 	// traffic, kept as route-level billable minutes for weights (ADR-952).
 	BillingRoute string `json:"billing_route,omitempty"`
+	// ComputeMS and ResponseBytes measure a billable consumer request for
+	// rate cards that price compute time or response size (ADR-1308).
+	ComputeMS     int64 `json:"compute_ms,omitempty"`
+	ResponseBytes int64 `json:"response_bytes,omitempty"`
 }
 
 // AuditEvidence is opt-in request metadata attached to the same fsynced

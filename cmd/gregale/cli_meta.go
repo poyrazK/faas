@@ -2673,7 +2673,8 @@ var cliCommands = []cliCommand{
 				{Name: "weight", Short: "count each request on a route as N units; unlisted routes count 1", Value: "METHOD /template=N", Repeatable: true},
 				{Name: "plan", Short: "add the price to a consumer plan instead of the app default", Value: "NAME"},
 				{Name: "effective-from", Short: "UTC minute the price starts (default next minute)", Value: "RFC3339"},
-			}},
+				{Name: "unit", Short: "what the price is per: request, compute second or response megabyte, per consumer minute rounded to the nearest unit", Value: "UNIT", ClosedSet: []string{"request", "compute_second", "response_megabyte"}},
+			}, Examples: []string{"gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 --unit compute_second"}},
 			{Name: "statements", Short: "List a consumer's usage statements and revisions", Positionals: []string{"<slug>", "<consumer-id>"}},
 			{Name: "statement-draft", Short: "Snapshot a period, or draft an adjustment for late usage", Positionals: []string{"<slug>", "<consumer-id>"}, Flags: []cliFlag{
 				{Name: "month", Short: "calendar month", Value: "YYYY-MM"},

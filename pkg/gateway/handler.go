@@ -5682,7 +5682,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w = rec
 	// ADR-1303: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
-	rec.usage = &usageCommitHolder{}
+	rec.usage = &usageCommitHolder{rec: rec}
 	r = r.WithContext(withUsageCommitHolder(r.Context(), rec.usage))
 	defer abortUnrecordedResponse(rec.usage, rec)
 	// Semantic request span. The public listener already creates an inbound
@@ -7849,7 +7849,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 				// ADR-1303: the response's completion already waited for (or
 				// is aborted by) this event; never append it twice.
 				row.EventID = commit.eventID
-				_ = commit.commit(status)
+				_ = commit.commit(status, commit.writtenBytes())
 				row.UsageOutboxed = true
 			} else if r.Context().Value(suppressFinancialUsageKey{}) == true {
 				// Rejected admissions remain visible in request telemetry but
@@ -8455,7 +8455,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
-	if code == http.StatusSwitchingProtocols && !s.commitUsage() {
+	if code == http.StatusSwitchingProtocols && !s.commitUsage(s.Bytes) {
 		// ADR-1303: an upgrade completes the request; without durable
 		// usage the client gets a refusal instead of a session.
 		s.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
@@ -8480,12 +8480,12 @@ func (s *statusRecorder) noteUsageLength(code int) {
 
 // commitUsage makes an armed usage commit durable. It reports false when the
 // response must not complete: its usage is billable and was not recorded.
-func (s *statusRecorder) commitUsage() bool {
+func (s *statusRecorder) commitUsage(responseBytes int64) bool {
 	commit := s.usage.armed()
 	if commit == nil {
 		return true
 	}
-	return commit.commit(s.status) == nil || !commit.mustAbort()
+	return commit.commit(s.status, responseBytes) == nil || !commit.mustAbort()
 }
 
 const preAuthTargetHeader = "X-Gregale-Abuse-Target"
@@ -8534,7 +8534,7 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.capturePreAuthTargetHeader()
 		s.noteUsageLength(http.StatusOK)
 	}
-	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, int64(len(b))) && !s.commitUsage() {
+	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, int64(len(b))) && !s.commitUsage(s.Bytes+int64(len(b))) {
 		return 0, errUsageNotDurable
 	}
 
@@ -8567,7 +8567,7 @@ func (s *statusRecorder) Flush() {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
-	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage() {
+	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage(s.Bytes) {
 		return
 	}
 	if s.flusher == nil {
@@ -8640,7 +8640,7 @@ func flushEveryWrite(contentType string) bool {
 // to the wire. Called from maybeFlush (periodic triggers), Flush
 // (explicit upstream call), and finalFlush (residual capture).
 func (s *statusRecorder) doFlush() {
-	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage() {
+	if commit := s.usage.armed(); commit != nil && commit.completes(s.Bytes, 0) && !s.commitUsage(s.Bytes) {
 		return
 	}
 	if s.firstFlush && s.writeDeadline > 0 {

@@ -58,6 +58,9 @@ type usageEventInput struct {
 	latencyMS                 int
 	requestID                 string
 	target                    Target
+	// computeMS and responseBytes are measured at commit for billable
+	// consumer requests (ADR-1308); zero elsewhere.
+	computeMS, responseBytes int64
 }
 
 // usageEvent builds the outbox event for one request (ADR-234). The event ID
@@ -80,6 +83,9 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 	}
 	if event.ConsumerID != "" {
 		event.BillingRoute = billingRouteFrom(r)
+		if billableUnits > 0 {
+			event.ComputeMS, event.ResponseBytes = max(in.computeMS, 0), max(in.responseBytes, 0)
+		}
 	}
 	if h.requestAuditEnabled || h.apiDiscoveryEnabled {
 		event.DiscoveredRoute = auditRouteFrom(r)
@@ -142,13 +148,20 @@ type usageCommit struct {
 	err                error
 	declaredLength     int64
 	declaredLengthSeen bool
+	// forwardedAt is when the request left for the guest, after any wake;
+	// compute time falls back to it when the runtime reports no duration.
+	forwardedAt time.Time
+	holder      *usageCommitHolder
+	evidence    *guestExecutionEvidence
 }
 
 // errUsageNotDurable refuses the bytes that would complete a response whose
 // usage could not be recorded.
 var errUsageNotDurable = fmt.Errorf("gateway: consumer usage could not be made durable; response withheld")
 
-func (c *usageCommit) commit(status int) error {
+// commit makes the usage durable; responseBytes is the response's size once
+// the bytes being written complete it.
+func (c *usageCommit) commit(status int, responseBytes int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.done {
@@ -158,7 +171,7 @@ func (c *usageCommit) commit(status int) error {
 	now := time.Now()
 	event := c.h.usageEvent(c.r, usageEventInput{eventID: c.eventID, accountID: c.accountID, appID: c.appID,
 		attr: c.attr, status: status, at: now, latencyMS: int(now.Sub(startTime(c.r)) / time.Millisecond),
-		requestID: requestIDFrom(c.r), target: c.target})
+		requestID: requestIDFrom(c.r), target: c.target, computeMS: c.computeMS(now), responseBytes: responseBytes})
 	c.billable = event.BillableUnits > 0
 	if err := c.h.usageOutbox.Enqueue(event); err != nil {
 		c.err = fmt.Errorf("%w: %w", errUsageNotDurable, err)
@@ -168,6 +181,19 @@ func (c *usageCommit) commit(status int) error {
 		c.h.log.Error("consumer usage commit failed", "err", err, "event_id", c.eventID)
 	}
 	return c.err
+}
+
+// computeMS is the request's execution time (ADR-1308): the duration the
+// runtime reported, else the time since the request was forwarded, which
+// excludes any wake.
+func (c *usageCommit) computeMS(now time.Time) int64 {
+	if duration := c.evidence.durationMS(); duration > 0 {
+		return int64(duration)
+	}
+	if c.forwardedAt.IsZero() {
+		return 0
+	}
+	return int64(now.Sub(c.forwardedAt) / time.Millisecond)
 }
 
 // mustAbort reports whether the response has to be aborted: its usage is
@@ -183,6 +209,17 @@ func (c *usageCommit) mustAbort() bool {
 type usageCommitHolder struct {
 	mu     sync.Mutex
 	commit *usageCommit
+	// rec is the request's recorder; a commit made after the response was
+	// written reads its size from it (ADR-1308).
+	rec *statusRecorder
+}
+
+// writtenBytes is how many response bytes the recorder has written.
+func (c *usageCommit) writtenBytes() int64 {
+	if c.holder == nil || c.holder.rec == nil {
+		return 0
+	}
+	return c.holder.rec.Bytes
 }
 
 func (h *usageCommitHolder) armed() *usageCommit {
@@ -221,7 +258,8 @@ func (h *Handler) armUsageCommit(r *http.Request, target Target) {
 	holder.mu.Lock()
 	defer holder.mu.Unlock()
 	if holder.commit == nil {
-		holder.commit = &usageCommit{h: h, r: r, target: target, attr: attr, eventID: uuid.New(), accountID: accountID, appID: appID}
+		holder.commit = &usageCommit{h: h, r: r, target: target, attr: attr, eventID: uuid.New(), accountID: accountID, appID: appID,
+			forwardedAt: time.Now(), holder: holder, evidence: guestExecutionEvidenceOf(r)}
 	}
 }
 
@@ -234,7 +272,7 @@ func abortUnrecordedResponse(holder *usageCommitHolder, rec *statusRecorder) {
 	if commit == nil {
 		return
 	}
-	_ = commit.commit(rec.status)
+	_ = commit.commit(rec.status, rec.Bytes)
 	if commit.mustAbort() {
 		if commit.h.metrics != nil {
 			commit.h.metrics.IncUsageCommitAbort()

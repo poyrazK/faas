@@ -83,6 +83,43 @@ func weightedUnits(weights map[string]int64, units int64, routes []state.APICons
 	return total, nil
 }
 
+// MeterAPIConsumerUsage converts each minute priced by a compute or
+// response-size card into that card's units (ADR-1308): the minute's
+// billable compute time in seconds, or response size in megabytes
+// (1,000,000 bytes), rounded to the nearest whole unit with halves rounding
+// up. Late usage can only raise a minute's units, so finalized revisions
+// stay consistent. Request cards leave minutes unchanged. Callers pass
+// usage ascending by minute.
+func MeterAPIConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket) []state.APIConsumerUsageBucket {
+	ordered := append([]state.APIConsumerRateCard(nil), cards...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
+	out := make([]state.APIConsumerUsageBucket, 0, len(usage))
+	cardIndex := -1
+	for _, bucket := range usage {
+		minute := bucket.WindowStart.UTC()
+		for cardIndex+1 < len(ordered) && !ordered[cardIndex+1].EffectiveFrom.After(minute) {
+			cardIndex++
+		}
+		if cardIndex >= 0 {
+			switch ordered[cardIndex].Unit {
+			case state.APIConsumerRateCardUnitComputeSecond:
+				bucket.BillableUnits = roundHalfUp(bucket.ComputeMS, 1000)
+			case state.APIConsumerRateCardUnitResponseMegabyte:
+				bucket.BillableUnits = roundHalfUp(bucket.ResponseBytes, 1_000_000)
+			}
+		}
+		out = append(out, bucket)
+	}
+	return out
+}
+
+func roundHalfUp(value, unit int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return value/unit + (value%unit*2)/unit
+}
+
 // IsCalendarMonth reports whether [start, end) is exactly one UTC month.
 func IsCalendarMonth(start, end time.Time) bool {
 	return start.Equal(MonthStart(start)) && end.Equal(MonthStart(start).AddDate(0, 1, 0))

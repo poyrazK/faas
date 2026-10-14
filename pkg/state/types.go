@@ -778,6 +778,10 @@ type APIConsumerUsageEvent struct {
 	RequestCount  int64
 	ErrorCount    int64
 	BillableUnits int64
+	// ComputeMS and ResponseBytes measure a billable consumer request for
+	// rate cards that price compute time or response size (ADR-1308).
+	ComputeMS     int64
+	ResponseBytes int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -826,6 +830,10 @@ type APIConsumerUsageBucket struct {
 	RequestCount           int64
 	ErrorCount             int64
 	BillableUnits          int64
+	// ComputeMS and ResponseBytes sum the minute's billable consumer
+	// requests (ADR-1308).
+	ComputeMS     int64
+	ResponseBytes int64
 }
 
 // APIConsumerRouteUsageBucket is one consumer's billable units on one
@@ -840,6 +848,13 @@ type APIConsumerRouteUsageBucket struct {
 
 // MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
 const MaxBillingRouteBytes = 256
+
+// Bounds on one request's measured compute and response size (ADR-1308):
+// a day of execution and 64 GiB.
+const (
+	MaxUsageComputeMSPerRequest     int64 = 24 * 60 * 60 * 1000
+	MaxUsageResponseBytesPerRequest int64 = 64 << 30
+)
 
 // ValidBillingRoute reports whether label is a storable billing route: an
 // HTTP method, one space, and a path, without control characters.

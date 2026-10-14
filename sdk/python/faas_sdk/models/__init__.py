@@ -570,6 +570,7 @@ from .create_api_consumer_credit_request import CreateAPIConsumerCreditRequest
 from .create_api_consumer_plan_request import CreateAPIConsumerPlanRequest
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+from .create_api_consumer_rate_card_request_unit import CreateAPIConsumerRateCardRequestUnit
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
@@ -4683,6 +4684,7 @@ __all__ = (
     "CreateAPIConsumerPlanRequest",
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRateCardRequestRouteWeights",
+    "CreateAPIConsumerRateCardRequestUnit",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
     "CreateAppLogDrainRequest",

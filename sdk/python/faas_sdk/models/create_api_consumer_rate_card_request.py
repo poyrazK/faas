@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_api_consumer_rate_card_request_unit import (
+    CreateAPIConsumerRateCardRequestUnit,
+    check_create_api_consumer_rate_card_request_unit,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -41,6 +45,10 @@ class CreateAPIConsumerRateCardRequest:
     plan_id: UUID | Unset = UNSET
     """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot
     be backdated."""
+    unit: CreateAPIConsumerRateCardRequestUnit | Unset = "request"
+    """What the card prices (ADR-1308). compute_second and response_megabyte count billable requests' execution
+    time or response size per consumer minute, rounded to the nearest whole unit; they take no route weights, cannot
+    be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -67,6 +75,10 @@ class CreateAPIConsumerRateCardRequest:
         if not isinstance(self.plan_id, Unset):
             plan_id = str(self.plan_id)
 
+        unit: str | Unset = UNSET
+        if not isinstance(self.unit, Unset):
+            unit = self.unit
+
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
             effective_from = UNSET
@@ -92,6 +104,8 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["route_weights"] = route_weights
         if plan_id is not UNSET:
             field_dict["plan_id"] = plan_id
+        if unit is not UNSET:
+            field_dict["unit"] = unit
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -134,6 +148,13 @@ class CreateAPIConsumerRateCardRequest:
         else:
             plan_id = UUID(_plan_id)
 
+        _unit = d.pop("unit", UNSET)
+        unit: CreateAPIConsumerRateCardRequestUnit | Unset
+        if isinstance(_unit, Unset):
+            unit = UNSET
+        else:
+            unit = check_create_api_consumer_rate_card_request_unit(_unit)
+
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -158,6 +179,7 @@ class CreateAPIConsumerRateCardRequest:
             tiers=tiers,
             route_weights=route_weights,
             plan_id=plan_id,
+            unit=unit,
             effective_from=effective_from,
         )
 

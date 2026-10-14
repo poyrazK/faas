@@ -85,7 +85,7 @@ func (s *PgStore) CreateAPIConsumerRateCardVersion(ctx context.Context, in APICo
 		       (account_id, app_id, currency, unit, price_millicents_per_unit, included_units_per_month, tiers, route_weights, plan_id, effective_from)
 		 values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8::jsonb, nullif($9::text, '')::uuid, $10)
 		 returning `+apiConsumerRateCardSelectCols,
-		in.AccountID, in.AppID, in.Currency, APIConsumerRateCardUnitRequest, in.PriceMillicentsPerUnit, in.IncludedUnitsPerMonth, rawTiers, rawWeights, in.PlanID, in.EffectiveFrom)
+		in.AccountID, in.AppID, in.Currency, in.Unit, in.PriceMillicentsPerUnit, in.IncludedUnitsPerMonth, rawTiers, rawWeights, in.PlanID, in.EffectiveFrom)
 	card, err := scanAPIConsumerRateCardRow(row)
 	if err != nil {
 		var pgErr *pgconn.PgError

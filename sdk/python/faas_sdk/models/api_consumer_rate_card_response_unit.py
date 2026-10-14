@@ -1,9 +1,11 @@
 from typing import Literal
 
-APIConsumerRateCardResponseUnit = Literal["request"]
+APIConsumerRateCardResponseUnit = Literal["compute_second", "request", "response_megabyte"]
 
 API_CONSUMER_RATE_CARD_RESPONSE_UNIT_VALUES: set[APIConsumerRateCardResponseUnit] = {
+    "compute_second",
     "request",
+    "response_megabyte",
 }
 
 

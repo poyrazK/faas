@@ -367,9 +367,11 @@
       "account_id",
       "app_id",
       "billable_units",
+      "compute_ms",
       "consumer_key",
       "error_count",
       "request_count",
+      "response_bytes",
       "updated_at",
       "window_start"
     ],

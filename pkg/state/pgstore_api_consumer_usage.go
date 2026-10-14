@@ -86,15 +86,17 @@ func (s *PgStore) RecordAPIConsumerUsage(ctx context.Context, event APIConsumerU
 	_, err = tx.Exec(ctx, `
 		insert into api_consumer_usage_minutes
 		       (account_id, app_id, consumer_key, window_start,
-		        request_count, error_count, billable_units)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)
+		        request_count, error_count, billable_units, compute_ms, response_bytes)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9)
 		on conflict (account_id, app_id, consumer_key, window_start) do update
 		set request_count = api_consumer_usage_minutes.request_count + excluded.request_count,
 		    error_count = api_consumer_usage_minutes.error_count + excluded.error_count,
 		    billable_units = api_consumer_usage_minutes.billable_units + excluded.billable_units,
+		    compute_ms = api_consumer_usage_minutes.compute_ms + excluded.compute_ms,
+		    response_bytes = api_consumer_usage_minutes.response_bytes + excluded.response_bytes,
 		    updated_at = now()`,
 		event.AccountID, event.AppID, event.ConsumerKey, event.WindowStart.UTC(),
-		event.RequestCount, event.ErrorCount, event.BillableUnits,
+		event.RequestCount, event.ErrorCount, event.BillableUnits, event.ComputeMS, event.ResponseBytes,
 	)
 	if err != nil {
 		return false, err
@@ -198,7 +200,7 @@ func (s *PgStore) ListAPIConsumerUsage(ctx context.Context, accountID, appID, co
 	}
 	rows, err := s.pool.Query(ctx, `
 		select account_id, app_id, consumer_key, window_start,
-		       request_count, error_count, billable_units
+		       request_count, error_count, billable_units, compute_ms, response_bytes
 		  from api_consumer_usage_minutes
 		 where account_id = $1::uuid
 		   and app_id = $2::uuid
@@ -214,7 +216,8 @@ func (s *PgStore) ListAPIConsumerUsage(ctx context.Context, accountID, appID, co
 	for rows.Next() {
 		var bucket APIConsumerUsageBucket
 		if err := rows.Scan(&bucket.AccountID, &bucket.AppID, &bucket.ConsumerKey,
-			&bucket.WindowStart, &bucket.RequestCount, &bucket.ErrorCount, &bucket.BillableUnits); err != nil {
+			&bucket.WindowStart, &bucket.RequestCount, &bucket.ErrorCount, &bucket.BillableUnits,
+			&bucket.ComputeMS, &bucket.ResponseBytes); err != nil {
 			return nil, err
 		}
 		bucket.WindowStart = bucket.WindowStart.UTC()

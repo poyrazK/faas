@@ -15688,7 +15688,7 @@ CREATE TABLE public.api_consumer_rate_cards (
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
     CONSTRAINT api_consumer_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
     CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
-    CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = 'request'::text))
+    CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
 );
 
 
@@ -15844,11 +15844,14 @@ CREATE TABLE public.api_consumer_usage_minutes (
     error_count bigint DEFAULT 0 NOT NULL,
     billable_units bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    compute_ms bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT api_consumer_usage_minutes_check CHECK (((error_count >= 0) AND (error_count <= request_count))),
     CONSTRAINT api_consumer_usage_minutes_check1 CHECK (((billable_units >= 0) AND (billable_units <= request_count))),
     CONSTRAINT api_consumer_usage_minutes_consumer_key_chk CHECK (((consumer_key = '__anonymous__'::text) OR (consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT api_consumer_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
-    CONSTRAINT api_consumer_usage_minutes_request_count_check CHECK ((request_count >= 0))
+    CONSTRAINT api_consumer_usage_minutes_request_count_check CHECK ((request_count >= 0)),
+    CONSTRAINT api_consumer_usage_minutes_resources_chk CHECK (((compute_ms >= 0) AND (response_bytes >= 0)))
 );
 
 

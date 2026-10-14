@@ -46,6 +46,22 @@ func withGuestExecutionEvidence(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), guestExecutionEvidenceContextKey{}, &guestExecutionEvidence{}))
 }
 
+// guestExecutionEvidenceOf is the request's evidence collector, or nil.
+func guestExecutionEvidenceOf(r *http.Request) *guestExecutionEvidence {
+	evidence, _ := r.Context().Value(guestExecutionEvidenceContextKey{}).(*guestExecutionEvidence)
+	return evidence
+}
+
+// durationMS is the execution time the runtime reported, or 0.
+func (e *guestExecutionEvidence) durationMS() int {
+	if e == nil {
+		return 0
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.DurationMS
+}
+
 func guestExecutionEvidenceFromContext(ctx context.Context) (guestExecutionEvidenceSnapshot, bool) {
 	evidence, ok := ctx.Value(guestExecutionEvidenceContextKey{}).(*guestExecutionEvidence)
 	if !ok || evidence == nil {

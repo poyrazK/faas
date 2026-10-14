@@ -26,6 +26,10 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   plan_id?: string;
   /**
+   * What the card prices (ADR-1308). compute_second and response_megabyte count billable requests' execution time or response size per consumer minute, rounded to the nearest whole unit; they take no route weights, cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC.
+   */
+  unit?: 'request' | 'compute_second' | 'response_megabyte';
+  /**
    * UTC minute at which this version starts; omitted means the next UTC minute.
    */
   effective_from?: string | null;

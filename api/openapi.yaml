@@ -57708,6 +57708,7 @@ components:
           description: "Counts each request on a listed \"METHOD /template\" route as that many units (1..1000, at most 50 routes); unlisted routes count 1. Weighted units feed included units, tiers, and statements. Route labels match the app's declared or discovered route templates."
           additionalProperties: { type: integer, format: int64, minimum: 1, maximum: 1000 }
         plan_id: { type: string, format: uuid, description: "Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot be backdated." }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], default: request, description: "What the card prices (ADR-1308). compute_second and response_megabyte count billable requests' execution time or response size per consumer minute, rounded to the nearest whole unit; they take no route weights, cannot be backdated, and a change of unit starts on the 1st of a month at 00:00 UTC." }
         effective_from: { type: [string, "null"], format: date-time, description: "UTC minute at which this version starts; omitted means the next UTC minute." }
 
     CreateAPIConsumerPlanRequest:
@@ -57806,7 +57807,7 @@ components:
         id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         currency: { type: string, pattern: '^[A-Z]{3}$' }
-        unit: { type: string, enum: [request] }
+        unit: { type: string, enum: [request, compute_second, response_megabyte], description: "What the card prices (ADR-1308): billable requests, or their compute seconds or response megabytes rounded to the nearest whole unit per consumer minute." }
         price_millicents_per_unit: { type: integer, format: int64, minimum: 0 }
         included_units_per_month: { type: integer, format: int64, minimum: 0 }
         tiers:
