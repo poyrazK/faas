@@ -219,7 +219,6 @@ func (s Service) Nack(w http.ResponseWriter, r *http.Request, acct state.Account
 		if req.DelaySeconds < 0 || req.DelaySeconds > api.QueueBindingRetryMaxSeconds {
 			return state.QueueLeaseOutcome{}, state.ErrInvalidArgument
 		}
-		// Postgres rejects invalid UTF-8, so the cut must not split a rune.
 		lastError := safetext.Truncate(req.Error, errorMaxBytes)
 		return store.NackQueueLeases(r.Context(), acct.ID, app.ID, r.PathValue("queue"), req.Receipts,
 			time.Duration(req.DelaySeconds)*time.Second, lastError)

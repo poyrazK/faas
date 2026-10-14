@@ -61,23 +61,24 @@ func eventCapacityTx(ctx context.Context, tx sqlc.DBTX, p eventAdmissionPlan, li
 	if err != nil {
 		return "", err
 	}
+	override, err := sqlc.New().EventSubscriptionCapacityOverride(ctx, tx, sqlc.EventSubscriptionCapacityOverrideParams{AccountID: mustPgUUID(p.recipient.AccountID), AppID: mustPgUUID(p.recipient.AppID), SubscriptionID: p.recipient.ID})
+	if err != nil {
+		return "", err
+	}
+	limits.PerConsumer = effectiveEventConsumerCapacity(limits.PerConsumer, int(override))
 	return eventCapacityScope(limits, counts.ConsumerCount, counts.AppCount, counts.AccountCount), nil
 }
 
 func (m *MemStore) eventCapacityLocked(slot eventDeliverySlot, replacing *eventAdmissionPlan) string {
-	acct, ok := m.accounts[slot.AccountID]
-	if !ok {
-		acct, ok = m.accounts[canonicalMemUUID(slot.AccountID)]
+	limits := m.eventDeliveryLimitsLocked(slot.AccountID)
+	if c := m.eventSubscriptionControls[canonicalMemUUID(slot.SubscriptionID)]; c != nil && sameMemUUID(c.AccountID, slot.AccountID) && sameMemUUID(c.AppID, slot.AppID) {
+		limits.PerConsumer = effectiveEventConsumerCapacity(limits.PerConsumer, c.MaxPendingDeliveries)
 	}
-	if !ok {
-		acct = m.accounts[strings.ReplaceAll(canonicalMemUUID(slot.AccountID), "-", "")]
-	}
-	planLimits, ok := api.LimitsFor(acct.Plan)
-	if !ok {
-		planLimits = api.MustLimitsFor(api.PlanFree)
-	}
-	limits := planLimits.EventDeliveries
-	var consumer, app, account int64
+	consumer, app, account := m.eventDeliveryCountsLocked(slot, replacing)
+	return eventCapacityScope(limits, consumer, app, account)
+}
+
+func (m *MemStore) eventDeliveryCountsLocked(slot eventDeliverySlot, replacing *eventAdmissionPlan) (consumer, app, account int64) {
 	for id, s := range m.eventDeliverySlots {
 		inv, ok := m.invocations[id]
 		if !ok || !sameMemUUID(s.AccountID, slot.AccountID) || (inv.State != InvocationPending && inv.State != InvocationDispatching) {
@@ -95,7 +96,7 @@ func (m *MemStore) eventCapacityLocked(slot eventDeliverySlot, replacing *eventA
 			}
 		}
 	}
-	return eventCapacityScope(limits, consumer, app, account)
+	return consumer, app, account
 }
 
 func (m *MemStore) recordEventDeliverySlotLocked(id string, slot eventDeliverySlot) {
@@ -245,4 +246,19 @@ func (m *MemStore) eventReceiptConsumerFairTimeLocked(receipt *PublishedEventWor
 		}
 	}
 	return oldest
+}
+
+func (m *MemStore) eventDeliveryLimitsLocked(account string) api.EventDeliveryLimits {
+	acct, ok := m.accounts[account]
+	if !ok {
+		acct, ok = m.accounts[canonicalMemUUID(account)]
+	}
+	if !ok {
+		acct = m.accounts[strings.ReplaceAll(canonicalMemUUID(account), "-", "")]
+	}
+	planLimits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		planLimits = api.MustLimitsFor(api.PlanFree)
+	}
+	return planLimits.EventDeliveries
 }

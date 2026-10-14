@@ -435,6 +435,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			ImageDigest:                          row.ImageDigest,
 			ColdBoot:                             row.ColdBoot,
 			LatencyBucket:                        row.LatencyMS,
+			ContentOutcome:                       row.ContentOutcome,
 			bucket:                               bucket,
 		}.String()
 		idx, ok := bucketIdx[key]
@@ -495,6 +496,7 @@ type bucketKey struct {
 	ImageDigest                          string
 	ColdBoot                             bool
 	LatencyBucket                        int
+	ContentOutcome                       string
 	bucket                               time.Time
 }
 

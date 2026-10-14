@@ -929,6 +929,7 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	}
 	req.Header.Set(api.InvocationIDHeader, inv.ID)
 	req.Header.Set(api.InvocationSourceHeader, string(inv.Source))
+	applyInvocationAttemptHeaders(req.Header, inv)
 	if state.InvocationHasOperation(inv) {
 		var proof map[string]string
 		if err := json.Unmarshal(inv.Headers, &proof); err != nil {
@@ -3230,6 +3231,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					GuestOutcome:                         row.GuestOutcome,
 					GuestErrorClass:                      row.GuestErrorClass,
 					FlagEvidenceJson:                     row.FlagEvidenceJSON,
+					ContentOutcome:                       row.ContentOutcome,
 					GuestCpuTimeMs:                       int32(row.GuestCPUTimeMS),
 					GuestPeakRssMb:                       int32(row.GuestPeakRSSMB),
 					GuestResourceUsageAvailable:          row.GuestResourceUsageAvailable,

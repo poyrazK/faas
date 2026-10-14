@@ -16189,6 +16189,7 @@ CREATE TABLE public.environment_git_sources (
     source_verified_at timestamp with time zone,
     detached boolean DEFAULT false NOT NULL,
     provider text DEFAULT 'github'::text NOT NULL,
+    notification_state jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT environment_git_source_candidate_complete CHECK ((((source_commit_sha = ''::text) AND (source_definition_digest = ''::text) AND (source_verified_at IS NULL)) OR ((source_commit_sha <> ''::text) AND (source_definition_digest <> ''::text) AND (source_verified_at IS NOT NULL)))),
     CONSTRAINT environment_git_source_poll_error_code CHECK ((source_error_code = ANY (ARRAY[''::text, 'environment_git_source_unavailable'::text, 'environment_git_definition_invalid'::text, 'environment_git_scope_mismatch'::text, 'environment_git_repository_unavailable'::text, 'environment_git_approval_unavailable'::text, 'environment_git_approval_not_qualified'::text]))),
     CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
@@ -16199,6 +16200,7 @@ CREATE TABLE public.environment_git_sources (
     CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
     CONSTRAINT environment_git_sources_mode_check CHECK ((mode = ANY (ARRAY['report'::text, 'enforce'::text]))),
+    CONSTRAINT environment_git_sources_notification_state_check CHECK (((jsonb_typeof(notification_state) = 'object'::text) AND (octet_length((notification_state)::text) <= 2048))),
     CONSTRAINT environment_git_sources_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'gitlab'::text]))),
     CONSTRAINT environment_git_sources_repository_check CHECK ((((provider = 'github'::text) AND (repository ~ '^[^/[:space:]]+/[^/[:space:]]+$'::text)) OR ((provider = 'gitlab'::text) AND (length(repository) <= 512) AND (repository ~ '^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$'::text) AND (repository !~ '(^|/)[.]{1,2}(/|$)'::text) AND (repository !~ '[.]git(/|$)'::text)))),
     CONSTRAINT environment_git_sources_repository_id_check CHECK ((repository_id > 0)),
@@ -17870,7 +17872,7 @@ CREATE TABLE public.app_webhooks (
     receiver_cooldown_until timestamp with time zone,
     CONSTRAINT app_webhooks_delivery_format_chk CHECK ((delivery_format = ANY (ARRAY['json'::text, 'cloudevents'::text]))),
     CONSTRAINT app_webhooks_retry_policy_chk CHECK ((retry_policy = ANY (ARRAY['default'::text, 'aggressive'::text, 'none'::text]))),
-    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 4)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
+    CONSTRAINT app_webhooks_scope_chk CHECK ((((scope = 'app'::text) AND (app_id IS NOT NULL) AND (platform_tenant_id IS NULL)) OR ((scope = 'account'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 5)) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['deployment.live'::text, 'deployment.failed'::text, 'rollout.completed'::text, 'rollout.aborted'::text, 'environment.gitops.changed'::text])) OR ((scope = 'platform_tenant'::text) AND (app_id IS NULL) AND (platform_tenant_id IS NOT NULL) AND ((cardinality(event_filter) >= 1) AND (cardinality(event_filter) <= 8)) AND (array_lower(event_filter, 1) = 1) AND (array_position(event_filter, NULL::text) IS NULL) AND (event_filter <@ ARRAY['platform_tenant.statement.finalized'::text, 'platform_tenant.hostname.verified'::text, 'platform_tenant.surface.certificate.changed'::text, 'platform_tenant.surface.deployment.changed'::text, 'platform_tenant.customer.linked'::text, 'platform_tenant.customer.offboarded'::text, 'platform_tenant.reconciliation.applied'::text, 'operation.effect'::text]) AND ((cardinality(event_filter) < 2) OR (event_filter[1] <> event_filter[2])) AND ((cardinality(event_filter) < 3) OR ((event_filter[1] <> event_filter[3]) AND (event_filter[2] <> event_filter[3]))) AND ((cardinality(event_filter) < 4) OR ((event_filter[1] <> event_filter[4]) AND (event_filter[2] <> event_filter[4]) AND (event_filter[3] <> event_filter[4]))) AND ((cardinality(event_filter) < 5) OR ((event_filter[1] <> event_filter[5]) AND (event_filter[2] <> event_filter[5]) AND (event_filter[3] <> event_filter[5]) AND (event_filter[4] <> event_filter[5]))) AND ((cardinality(event_filter) < 6) OR ((event_filter[1] <> event_filter[6]) AND (event_filter[2] <> event_filter[6]) AND (event_filter[3] <> event_filter[6]) AND (event_filter[4] <> event_filter[6]) AND (event_filter[5] <> event_filter[6]))) AND ((cardinality(event_filter) < 7) OR ((event_filter[1] <> event_filter[7]) AND (event_filter[2] <> event_filter[7]) AND (event_filter[3] <> event_filter[7]) AND (event_filter[4] <> event_filter[7]) AND (event_filter[5] <> event_filter[7]) AND (event_filter[6] <> event_filter[7]))) AND ((cardinality(event_filter) < 8) OR ((event_filter[1] <> event_filter[8]) AND (event_filter[2] <> event_filter[8]) AND (event_filter[3] <> event_filter[8]) AND (event_filter[4] <> event_filter[8]) AND (event_filter[5] <> event_filter[8]) AND (event_filter[6] <> event_filter[8]) AND (event_filter[7] <> event_filter[8])))))),
     CONSTRAINT app_webhooks_target_url_len_chk CHECK (((char_length(target_url) >= 8) AND (char_length(target_url) <= 2048)))
 );
 
@@ -21253,6 +21255,8 @@ CREATE TABLE public.event_execution_coverage (
     ledger_started_at timestamp with time zone,
     ledger_baseline_known boolean DEFAULT false NOT NULL,
     ledger_lost_through_at timestamp with time zone,
+    reconciliation_requested_at timestamp with time zone,
+    lineage_repair_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT event_execution_coverage_check CHECK (((lost_at IS NULL) = (loss_reason = ''::text))),
     CONSTRAINT event_execution_coverage_loss_reason_check CHECK ((loss_reason = ANY (ARRAY[''::text, 'receipt_deleted'::text, 'recipient_deleted'::text, 'invocation_deleted'::text, 'attempt_deleted'::text, 'execution_replaced'::text])))
 );
@@ -24329,6 +24333,33 @@ CREATE TABLE public.managed_postgres_restore_proofs (
 
 
 --
+-- Name: managed_postgres_restore_verifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_restore_verifications (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    generation bigint NOT NULL,
+    provider_resource_id text NOT NULL,
+    source_resource_id text NOT NULL,
+    point_in_time timestamp with time zone NOT NULL,
+    evidence text NOT NULL,
+    verified_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT managed_postgres_restore_verifications_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_restore_verifications_backend_id_check CHECK (((backend_id <> ''::text) AND (length(backend_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verifications_check CHECK (((provider_resource_id <> source_resource_id) AND (point_in_time <= verified_at))),
+    CONSTRAINT managed_postgres_restore_verifications_evidence_check CHECK (((evidence <> ''::text) AND (length(evidence) <= 1024))),
+    CONSTRAINT managed_postgres_restore_verifications_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_restore_verifications_point_in_time_check CHECK (isfinite(point_in_time)),
+    CONSTRAINT managed_postgres_restore_verifications_provider_resource_id_check CHECK (((provider_resource_id <> ''::text) AND (length(provider_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verifications_source_resource_id_check CHECK (((source_resource_id <> ''::text) AND (length(source_resource_id) <= 255))),
+    CONSTRAINT managed_postgres_restore_verifications_verified_at_check CHECK (isfinite(verified_at))
+);
+
+
+--
 -- Name: managed_postgres_usage; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26352,6 +26383,9 @@ CREATE TABLE public.object_storage_billing_periods (
     egress_millicents bigint NOT NULL,
     total_millicents bigint NOT NULL,
     finalized_at timestamp with time zone DEFAULT now() NOT NULL,
+    included_stored_byte_hours bigint DEFAULT 0 NOT NULL,
+    included_requests bigint DEFAULT 0 NOT NULL,
+    included_egress_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT object_storage_billing_perio_requests_millicents_per_mill_check CHECK (((requests_millicents_per_million >= 0) AND (requests_millicents_per_million <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_perio_storage_millicents_per_gib_m_check CHECK (((storage_millicents_per_gib_month >= 0) AND (storage_millicents_per_gib_month <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_check CHECK ((period_end = (period_start + '1 mon'::interval))),
@@ -26360,6 +26394,9 @@ CREATE TABLE public.object_storage_billing_periods (
     CONSTRAINT object_storage_billing_periods_egress_bytes_check CHECK (((egress_bytes >= 0) AND (egress_bytes <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_egress_millicents_check CHECK (((egress_millicents >= 0) AND (egress_millicents <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_egress_millicents_per_gib_check CHECK (((egress_millicents_per_gib >= 0) AND (egress_millicents_per_gib <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_periods_included_egress_bytes_check CHECK (((included_egress_bytes >= 0) AND (included_egress_bytes <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_periods_included_requests_check CHECK (((included_requests >= 0) AND (included_requests <= '1152921504606846976'::bigint))),
+    CONSTRAINT object_storage_billing_periods_included_stored_byte_hours_check CHECK (((included_stored_byte_hours >= 0) AND (included_stored_byte_hours <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT object_storage_billing_periods_provider_cost_millicents_check CHECK (((provider_cost_millicents >= 0) AND (provider_cost_millicents <= '1152921504606846976'::bigint))),
     CONSTRAINT object_storage_billing_periods_request_count_check CHECK (((request_count >= 0) AND (request_count <= '1152921504606846976'::bigint))),
@@ -27283,6 +27320,17 @@ CREATE TABLE public.outbound_ai_routes (
     format text DEFAULT 'native'::text NOT NULL,
     CONSTRAINT outbound_ai_routes_format_chk CHECK ((format = ANY (ARRAY['native'::text, 'openai'::text]))),
     CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+);
+
+
+--
+-- Name: outbound_ai_settlements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_settlements (
+    lease_id uuid NOT NULL,
+    integration_id uuid NOT NULL,
+    settled_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -30351,6 +30399,8 @@ CREATE TABLE public.request_telemetry (
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    content_outcome text DEFAULT ''::text NOT NULL,
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -30410,6 +30460,8 @@ CREATE TABLE public.request_telemetry_202610 (
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    content_outcome text DEFAULT ''::text NOT NULL,
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -30468,6 +30520,8 @@ CREATE TABLE public.request_telemetry_202611 (
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    content_outcome text DEFAULT ''::text NOT NULL,
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -30526,6 +30580,8 @@ CREATE TABLE public.request_telemetry_202612 (
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    content_outcome text DEFAULT ''::text NOT NULL,
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -30632,6 +30688,8 @@ CREATE TABLE public.request_telemetry_default (
     guest_peak_rss_mb integer DEFAULT 0 NOT NULL,
     guest_resource_usage_available boolean DEFAULT false NOT NULL,
     flag_evidence jsonb DEFAULT '[]'::jsonb NOT NULL,
+    content_outcome text DEFAULT ''::text NOT NULL,
+    CONSTRAINT request_telemetry_content_outcome_check CHECK ((content_outcome = ANY (ARRAY[''::text, 'uncacheable'::text, 'first'::text, 'same_60'::text, 'same_300'::text, 'same_3600'::text, 'same_long'::text, 'changed_60'::text, 'changed_300'::text, 'changed_3600'::text, 'changed_long'::text]))),
     CONSTRAINT request_telemetry_count_check CHECK ((count >= 1)),
     CONSTRAINT request_telemetry_country_check CHECK (((country = '__unknown__'::text) OR (country ~ '^[A-Z]{2}$'::text))),
     CONSTRAINT request_telemetry_flag_evidence_check CHECK ((jsonb_typeof(flag_evidence) = 'array'::text)),
@@ -36601,6 +36659,22 @@ ALTER TABLE ONLY public.managed_postgres_restore_proofs
 
 
 --
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_backend_id_backend_f_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_backend_id_backend_f_key UNIQUE (backend_id, backend_fingerprint, provider_resource_id);
+
+
+--
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_pkey PRIMARY KEY (database_id);
+
+
+--
 -- Name: managed_postgres_usage_coverage managed_postgres_usage_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -37782,6 +37856,14 @@ ALTER TABLE ONLY public.outbound_ai_routes
 
 ALTER TABLE ONLY public.outbound_ai_routes
     ADD CONSTRAINT outbound_ai_routes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: outbound_ai_settlements outbound_ai_settlements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_settlements
+    ADD CONSTRAINT outbound_ai_settlements_pkey PRIMARY KEY (lease_id);
 
 
 --
@@ -45623,6 +45705,13 @@ CREATE INDEX outbound_ai_request_log_recent_idx ON public.outbound_ai_request_lo
 --
 
 CREATE INDEX outbound_ai_route_targets_integration_idx ON public.outbound_ai_route_targets USING btree (integration_id);
+
+
+--
+-- Name: outbound_ai_settlements_settled_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_settlements_settled_at_idx ON public.outbound_ai_settlements USING btree (settled_at);
 
 
 --
@@ -56245,6 +56334,22 @@ ALTER TABLE ONLY public.managed_postgres_restore_proofs
 
 
 --
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_restore_verifications managed_postgres_restore_verifications_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_restore_verifications
+    ADD CONSTRAINT managed_postgres_restore_verifications_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_databases managed_postgres_restore_source_database_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57618,6 +57723,14 @@ ALTER TABLE ONLY public.outbound_ai_route_targets
 
 ALTER TABLE ONLY public.outbound_ai_routes
     ADD CONSTRAINT outbound_ai_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_settlements outbound_ai_settlements_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_settlements
+    ADD CONSTRAINT outbound_ai_settlements_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
 
 
 --
@@ -61102,3 +61215,100 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
+CREATE INDEX event_execution_reconciliation_pending_idx ON public.event_execution_coverage(reconciliation_requested_at,subscription_id) WHERE reconciliation_requested_at IS NOT NULL AND NOT ledger_baseline_known;
+
+CREATE TABLE IF NOT EXISTS event_execution_lineage_cases (
+ subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
+ outbox_id bigint NOT NULL CHECK(outbox_id>0), account_id uuid NOT NULL, app_id uuid NOT NULL,
+ diagnostic_id uuid CHECK(diagnostic_id IS NULL OR diagnostic_id<>'00000000-0000-0000-0000-000000000000'::uuid),
+ accepted_at timestamptz NOT NULL, root_invocation_id text NOT NULL DEFAULT '', root_created_at timestamptz,
+ status text NOT NULL CHECK(status IN ('unresolved','conflict','repaired','already_associated')),
+ reason text NOT NULL, revision bigint NOT NULL DEFAULT 1 CHECK(revision>0), retry_count bigint NOT NULL DEFAULT 0 CHECK(retry_count>=0),
+ recorded_at timestamptz NOT NULL, retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
+ PRIMARY KEY(subscription_id,outbox_id)
+);
+CREATE INDEX IF NOT EXISTS event_execution_lineage_cases_expiry_idx ON event_execution_lineage_cases(retain_until);
+CREATE TABLE IF NOT EXISTS event_execution_lineage_retries (
+ subscription_id uuid NOT NULL, outbox_id bigint NOT NULL, request_id uuid NOT NULL,
+ expected_revision bigint NOT NULL CHECK(expected_revision>0), result jsonb NOT NULL,
+ retain_until timestamptz NOT NULL,
+ PRIMARY KEY(subscription_id,outbox_id,request_id),
+ FOREIGN KEY(subscription_id,outbox_id) REFERENCES event_execution_lineage_cases(subscription_id,outbox_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS event_execution_lineage_retries_expiry_idx ON event_execution_lineage_retries(retain_until);
+
+CREATE TABLE IF NOT EXISTS event_execution_lineage_retry_jobs (
+ subscription_id uuid NOT NULL REFERENCES event_execution_coverage(subscription_id) ON DELETE CASCADE,
+ request_id uuid NOT NULL, account_id uuid NOT NULL, app_id uuid NOT NULL,
+ state text NOT NULL CHECK(state IN ('pending','paused','completed','cancelled')),
+ snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
+ created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+ retain_until timestamptz NOT NULL CHECK(retain_until>created_at),
+ PRIMARY KEY(subscription_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_pending_idx ON event_execution_lineage_retry_jobs(updated_at,subscription_id,request_id) WHERE state='pending';
+CREATE INDEX IF NOT EXISTS event_execution_lineage_retry_jobs_expiry_idx ON event_execution_lineage_retry_jobs(retain_until);
+
+CREATE INDEX event_execution_lineage_retry_jobs_listing_idx ON public.event_execution_lineage_retry_jobs USING btree (subscription_id, created_at DESC, request_id DESC);
+
+CREATE TABLE event_execution_lineage_retry_control_receipts (
+ subscription_id uuid NOT NULL,
+ job_request_id uuid NOT NULL,
+ command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),
+ account_id uuid NOT NULL, app_id uuid NOT NULL,
+ action text NOT NULL CHECK(action IN ('pause','resume','cancel')),
+ expected_created_at timestamptz NOT NULL,
+ sequence bigint NOT NULL CHECK(sequence>0),
+ result jsonb NOT NULL CHECK(jsonb_typeof(result)='object'),
+ recorded_at timestamptz NOT NULL,
+ retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
+ PRIMARY KEY(subscription_id,job_request_id,command_id),
+ UNIQUE(subscription_id,job_request_id,sequence),
+ FOREIGN KEY(subscription_id,job_request_id) REFERENCES event_execution_lineage_retry_jobs(subscription_id,request_id) ON DELETE CASCADE
+);
+CREATE INDEX event_execution_lineage_retry_jobs_health_idx
+ ON event_execution_lineage_retry_jobs(subscription_id,retain_until,updated_at,request_id)
+ WHERE state IN ('pending','paused');
+
+ALTER TABLE public.event_subscription_delivery_controls ADD COLUMN max_pending_deliveries integer NOT NULL DEFAULT 0 CHECK (max_pending_deliveries >= 0);
+CREATE OR REPLACE FUNCTION guard_event_delivery_replay() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE slot event_delivery_slots%ROWTYPE; caps event_delivery_capacity%ROWTYPE;
+ consumer_count bigint; app_count bigint; account_count bigint; scope text; consumer_limit integer;
+BEGIN
+ IF NEW.state NOT IN ('pending','dispatching') THEN RETURN NEW; END IF;
+ IF TG_OP = 'UPDATE' AND OLD.state IN ('pending','dispatching') THEN RETURN NEW; END IF;
+ SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.id;
+ IF NOT FOUND AND NEW.replayed_from_invocation_id IS NOT NULL THEN
+  SELECT * INTO slot FROM event_delivery_slots WHERE invocation_id=NEW.replayed_from_invocation_id;
+ END IF;
+ IF slot.invocation_id IS NULL THEN RETURN NEW; END IF;
+ SELECT * INTO STRICT caps FROM event_delivery_capacity WHERE account_id=slot.account_id FOR UPDATE;
+ SELECT count(*), count(*) FILTER (WHERE s.app_id=slot.app_id),
+   count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
+ INTO account_count, app_count, consumer_count
+ FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
+ WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
+ SELECT CASE WHEN c.max_pending_deliveries>0 THEN least(c.max_pending_deliveries,caps.consumer_limit) ELSE caps.consumer_limit END INTO consumer_limit
+ FROM event_subscription_delivery_controls c WHERE c.account_id=slot.account_id AND c.app_id=slot.app_id AND c.subscription_id::text=slot.subscription_id;
+ consumer_limit := coalesce(consumer_limit,caps.consumer_limit);
+ scope := CASE WHEN consumer_count>=consumer_limit THEN 'consumer'
+   WHEN app_count>=caps.app_limit THEN 'app' WHEN account_count>=caps.account_limit THEN 'account' END;
+ IF scope IS NOT NULL THEN
+  RAISE EXCEPTION 'event delivery capacity exhausted: %',scope USING ERRCODE='23514', CONSTRAINT='event_delivery_capacity', DETAIL=scope;
+ END IF;
+ INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
+ RETURN NEW;
+END $$;
+
+CREATE TABLE public.event_subscription_capacity_commands (
+ subscription_id uuid NOT NULL REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE,
+ command_id uuid NOT NULL CHECK(command_id<>'00000000-0000-0000-0000-000000000000'::uuid),
+ account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+ app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+ request jsonb NOT NULL CHECK(jsonb_typeof(request)='object'),
+ receipt jsonb NOT NULL CHECK(jsonb_typeof(receipt)='object'),
+ recorded_at timestamptz NOT NULL,
+ retain_until timestamptz NOT NULL CHECK(retain_until>recorded_at),
+ PRIMARY KEY(subscription_id,command_id)
+);
+CREATE INDEX event_subscription_capacity_commands_expiry ON public.event_subscription_capacity_commands(retain_until,subscription_id,command_id);

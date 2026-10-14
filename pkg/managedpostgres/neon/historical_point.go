@@ -3,6 +3,7 @@ package neon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,7 +38,7 @@ func (sqlHistoricalPointReader) ReadLSN(ctx context.Context, dsn string) (string
 		return "", credentialSQLError(err)
 	}
 	if !recovery || readOnly != "on" || lsn == nil {
-		return "", managedpostgres.ErrUnavailable
+		return "", managedpostgres.Reasonf(managedpostgres.ErrUnavailable, "historical connection is not a read-only replay (recovery=%t read_only=%s)", recovery, readOnly)
 	}
 	if _, err := parseLSN(*lsn); err != nil {
 		return "", err
@@ -96,32 +97,36 @@ func historicalDSN(material managedpostgres.CredentialMaterial, primary endpoint
 
 func (p *Provider) historicalPointLSN(ctx context.Context, source resourceRef, point time.Time) (string, error) {
 	if p.historicalPoints == nil || source.branchID == "" || point.IsZero() || point.After(p.now()) {
-		return "", managedpostgres.ErrUnavailable
+		return "", managedpostgres.Reasonf(managedpostgres.ErrUnavailable, "historical point: no reader or invalid point")
 	}
 	metadata, err := p.readDatabaseMetadata(ctx, source, false)
 	if err != nil {
-		return "", err
+		return "", managedpostgres.Reasonf(err, "historical point: read source metadata")
 	}
 	selected, primary, ready := selectBranch(metadata.branches.Branches, metadata.endpoints.Endpoints, source.branchID)
 	if !ready || selected.ID != source.branchID || selected.ProjectID != source.projectID || selected.PendingState != "" || primary.RegionID != p.regionID {
-		return "", managedpostgres.ErrUnavailable
+		return "", managedpostgres.Reasonf(managedpostgres.ErrUnavailable, "historical point: source branch or primary endpoint not ready")
 	}
 	var response connectionURIResponse
 	err = p.connectionURIForDatabaseEndpoint(ctx, source.projectID, source.branchID, primary.ID, p.databaseName, ownerLogin, false, &response)
 	if err != nil {
-		return "", err
+		return "", managedpostgres.Reasonf(err, "historical point: owner connection URI")
 	}
 	parsed, err := parseConnectionURI(response.URI)
 	if err != nil || parsed.username != ownerLogin || parsed.database != p.databaseName {
-		return "", managedpostgres.ErrUnavailable
+		return "", managedpostgres.Reasonf(managedpostgres.ErrUnavailable, "historical point: unexpected owner connection URI")
 	}
 	material := managedpostgres.CredentialMaterial{Username: parsed.username, Password: parsed.password, Database: parsed.database,
 		Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: parsed.host, Port: parsed.port}}}
 	dsn, err := historicalDSN(material, primary, source, point)
 	if err != nil {
-		return "", err
+		return "", managedpostgres.Reasonf(err, "historical point: build DSN")
 	}
-	return p.historicalPoints.ReadLSN(ctx, dsn)
+	lsn, err := p.historicalPoints.ReadLSN(ctx, dsn)
+	if err != nil {
+		return "", managedpostgres.Reasonf(err, "historical point: read LSN")
+	}
+	return lsn, nil
 }
 
 // A requested timestamp becomes evidence only when an independently routed
@@ -172,7 +177,9 @@ func (p *Provider) observeRestoredBranch(ctx context.Context, projectID, parentI
 		return managedpostgres.ObservedDatabase{}, err
 	}
 	if actualLSN != expectedLSN {
-		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrConflict
+		// Neon maps a timestamp to any LSN in the commit-free interval after
+		// it, so a mismatch is not evidence of a wrong target (ADR-1259).
+		return managedpostgres.ObservedDatabase{}, managedpostgres.Reasonf(managedpostgres.ErrLineageUnproven, "restore branch parent LSN %s does not match the requested point's LSN %s", target.ParentLSN, resolved)
 	}
 	var response createdBranchResponse
 	path := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(target.ID)
@@ -189,9 +196,83 @@ func (p *Provider) observeRestoredBranch(ctx context.Context, projectID, parentI
 	if confirmed.CurrentState != "ready" || confirmed.PendingState != "" {
 		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: (resourceRef{projectID: projectID, branchID: target.ID}).String(),
-		DataResourceID: (resourceRef{projectID: projectID, branchID: target.ID}).String(), Status: managedpostgres.ProviderStatusPending,
-		Spec: request.Spec, RestoreLineage: &managedpostgres.RestoreLineage{SourceResourceID: source.String(), PointInTime: request.PointInTime.UTC()}}, nil
+	evidence, err := restoreEvidence(projectID, confirmed)
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	targetID := (resourceRef{projectID: projectID, branchID: target.ID}).String()
+	return managedpostgres.ObservedDatabase{ProviderResourceID: targetID, DataResourceID: targetID, Status: managedpostgres.ProviderStatusPending,
+		Spec: request.Spec, RestoreLineage: &managedpostgres.RestoreLineage{SourceResourceID: source.String(), PointInTime: request.PointInTime.UTC()},
+		RestoreVerification: &managedpostgres.RestoreVerification{ProviderResourceID: targetID, SourceResourceID: source.String(),
+			PointInTime: request.PointInTime.UTC(), Evidence: evidence}}, nil
+}
+
+// verifyRestoredBranch confirms a recorded verification when the request
+// carries one, and otherwise proves the lineage independently (ADR-677).
+func (p *Provider) verifyRestoredBranch(ctx context.Context, projectID, parentID, name string, target branch, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	if request.Verification != nil {
+		return p.confirmRestoreVerification(ctx, projectID, parentID, name, target.ID, request)
+	}
+	return p.observeRestoredBranch(ctx, projectID, parentID, name, target, request)
+}
+
+// restoreEvidence fingerprints a settled restore branch's immutable metadata
+// (ADR-1259): identifiers only, never credentials. Values are normalized so a
+// formatting change in Neon's response cannot break a recorded verification.
+func restoreEvidence(projectID string, target branch) (string, error) {
+	lsn, lsnErr := parseLSN(target.ParentLSN)
+	created, createdErr := time.Parse(time.RFC3339Nano, target.CreatedAt)
+	if lsnErr != nil || createdErr != nil || !validProviderID.MatchString(target.ID) || !validProviderID.MatchString(target.ParentID) || target.InitSource == "" {
+		return "", managedpostgres.ErrUnavailable
+	}
+	return strings.Join([]string{"neon-branch-v1", projectID, target.ID, target.ParentID, fmt.Sprintf("%X/%X", lsn>>32, uint32(lsn)),
+		created.UTC().Format(time.RFC3339Nano), target.InitSource}, "|"), nil
+}
+
+// confirmRestoreVerification re-reads the exact target and requires it to
+// reproduce the recorded evidence. It reports the recorded lineage without
+// remapping the requested time, which Neon resolves to a drifting LSN.
+func (p *Provider) confirmRestoreVerification(ctx context.Context, projectID, parentID, name, branchID string, request managedpostgres.RestoreRequest) (managedpostgres.ObservedDatabase, error) {
+	source := resourceRef{projectID: projectID, branchID: parentID}
+	targetID := (resourceRef{projectID: projectID, branchID: branchID}).String()
+	if !validProviderID.MatchString(branchID) || branchID == parentID || request.SourceResourceID != source.String() {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrConflict
+	}
+	if err := request.Verification.Validate(targetID, request); err != nil {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.Reasonf(err, "recorded restore verification does not describe this restore")
+	}
+	var response createdBranchResponse
+	path := "/projects/" + url.PathEscape(projectID) + "/branches/" + url.PathEscape(branchID)
+	if err := p.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	confirmed := response.Branch
+	if confirmed.ID != branchID || confirmed.ProjectID != projectID || confirmed.ParentID != parentID || confirmed.Name != name || confirmed.InitSource != "parent-data" {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.Reasonf(managedpostgres.ErrConflict, "restore target no longer matches its recorded verification")
+	}
+	if confirmed.ParentTimestamp != "" {
+		parentPoint, err := time.Parse(time.RFC3339Nano, confirmed.ParentTimestamp)
+		if err != nil || parentPoint.IsZero() {
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+		}
+		if parentPoint.After(request.PointInTime) {
+			return managedpostgres.ObservedDatabase{}, managedpostgres.ErrConflict
+		}
+	}
+	evidence, err := restoreEvidence(projectID, confirmed)
+	if err != nil {
+		return managedpostgres.ObservedDatabase{}, err
+	}
+	if evidence != request.Verification.Evidence {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.Reasonf(managedpostgres.ErrConflict, "restore target metadata no longer matches its recorded verification")
+	}
+	if confirmed.CurrentState != "ready" || confirmed.PendingState != "" {
+		return managedpostgres.ObservedDatabase{}, managedpostgres.ErrUnavailable
+	}
+	verification := *request.Verification
+	return managedpostgres.ObservedDatabase{ProviderResourceID: targetID, DataResourceID: targetID, Status: managedpostgres.ProviderStatusPending,
+		Spec: request.Spec, RestoreLineage: &managedpostgres.RestoreLineage{SourceResourceID: source.String(), PointInTime: request.PointInTime.UTC()},
+		RestoreVerification: &verification}, nil
 }
 
 var _ managedpostgres.RestoreInspector = (*Provider)(nil)
