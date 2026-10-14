@@ -63,6 +63,30 @@ func TestFrozenTierMetal(t *testing.T) {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "frozen")
+	// Neither daemon destroys VMs when it stops, so a failure part-way would
+	// leave the app's VM running. Retire the app first (cleanups run before
+	// the harness stops the daemons).
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		_, _ = doReq(t, h, key, http.MethodDelete, "/v1/apps/frozen", nil)
+		deadline := time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			ins, err := state.NewPgStore(pool).ListInstancesForApp(context.Background(), appID)
+			if err != nil {
+				return
+			}
+			resident := false
+			for _, in := range ins {
+				resident = resident || state.State(in.State).CountsForRAM()
+			}
+			if !resident {
+				return
+			}
+			time.Sleep(time.Second)
+		}
+	})
 	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/frozen/deployments", api.CreateDeploymentRequest{Image: ref})
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
