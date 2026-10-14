@@ -3698,6 +3698,7 @@ from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealti
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_advice_evidence import RouteAdviceEvidence
+from .route_advice_evidence_safe_max_age_seconds import RouteAdviceEvidenceSafeMaxAgeSeconds
 from .route_advice_impact import RouteAdviceImpact
 from .route_advice_response import RouteAdviceResponse
 from .route_advice_setting import RouteAdviceSetting
@@ -3705,6 +3706,12 @@ from .route_advice_suggestion import RouteAdviceSuggestion
 from .route_advice_suggestion_kind import RouteAdviceSuggestionKind
 from .route_assigned_check import RouteAssignedCheck
 from .route_assignment import RouteAssignment
+from .route_awake_response import RouteAwakeResponse
+from .route_awake_route import RouteAwakeRoute
+from .route_awake_route_pattern import RouteAwakeRoutePattern
+from .route_awake_suggestion import RouteAwakeSuggestion
+from .route_awake_suggestion_kind import RouteAwakeSuggestionKind
+from .route_awake_what_if import RouteAwakeWhatIf
 from .route_budget_requirement import RouteBudgetRequirement
 from .route_check_change_summary import RouteCheckChangeSummary
 from .route_check_changes import RouteCheckChanges
@@ -8029,6 +8036,7 @@ __all__ = (
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteAdviceEvidence",
+    "RouteAdviceEvidenceSafeMaxAgeSeconds",
     "RouteAdviceImpact",
     "RouteAdviceResponse",
     "RouteAdviceSetting",
@@ -8036,6 +8044,12 @@ __all__ = (
     "RouteAdviceSuggestionKind",
     "RouteAssignedCheck",
     "RouteAssignment",
+    "RouteAwakeResponse",
+    "RouteAwakeRoute",
+    "RouteAwakeRoutePattern",
+    "RouteAwakeSuggestion",
+    "RouteAwakeSuggestionKind",
+    "RouteAwakeWhatIf",
     "RouteBudgetRequirement",
     "RouteCheckChanges",
     "RouteCheckChangesStatus",

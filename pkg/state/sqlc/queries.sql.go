@@ -27344,7 +27344,8 @@ INSERT INTO request_telemetry (
     guest_duration_ms, guest_runtime, guest_outcome, guest_error_class, consumer_id,
     node_id, region, commit_sha, deployment_tag, deployment_created_at, image_digest,
     platform_tenant_id,
-    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence
+    guest_cpu_time_ms, guest_peak_rss_mb, guest_resource_usage_available, flag_evidence,
+    content_outcome
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -27363,7 +27364,8 @@ INSERT INTO request_telemetry (
     $29::int,
     $30::int,
     $31::bool,
-    COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb)
+    COALESCE(NULLIF($32::text, '')::jsonb, '[]'::jsonb),
+    $33::text
 )
 `
 
@@ -27400,6 +27402,7 @@ type InsertRequestTelemetryParams struct {
 	GuestPeakRssMb              int32
 	GuestResourceUsageAvailable bool
 	FlagEvidenceJson            string
+	ContentOutcome              string
 }
 
 // ---------------------------------------------------------------------------
@@ -27470,6 +27473,7 @@ func (q *Queries) InsertRequestTelemetry(ctx context.Context, db DBTX, arg Inser
 		arg.GuestPeakRssMb,
 		arg.GuestResourceUsageAvailable,
 		arg.FlagEvidenceJson,
+		arg.ContentOutcome,
 	)
 	return err
 }

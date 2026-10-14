@@ -9309,6 +9309,7 @@
       "cold_boot",
       "commit_sha",
       "consumer_id",
+      "content_outcome",
       "count",
       "country",
       "deployment_created_at",

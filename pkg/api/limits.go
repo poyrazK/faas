@@ -9876,6 +9876,49 @@ const (
 	RouteAdviceMaxCriticalRoutes = 3
 )
 
+// RouteAwake bounds the awake-time report (ADR-1187): which routes keep a
+// scale-to-zero app awake. It reads the busiest RouteAwakeMaxRoutes routes
+// (the rest are one "other routes" bucket) over at most the plan's request
+// telemetry retention.
+const (
+	RouteAwakeDefaultSince = 7 * 24 * time.Hour
+	RouteAwakeMaxRoutes    = 10
+	// A route is called periodically when it was called in at least
+	// RouteAwakePeriodicMinMinutes distinct minutes and at least
+	// RouteAwakePeriodicMinShare of the gaps between those minutes are within
+	// one minute of the median gap.
+	RouteAwakePeriodicMinMinutes = 60
+	RouteAwakePeriodicMinShare   = 0.8
+	// A suggestion is made only for a route whose removal would park the app
+	// for at least this share of its attributed awake time.
+	RouteAwakeSuggestMinSavedShare = 0.1
+	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
+	// requests on the route.
+	RouteAwakeCacheMinAnonymousShare = 0.9
+)
+
+// RouteContent bounds learned cacheability (ADR-1188). Each gateway
+// remembers the last anonymous GET body hash for at most
+// RouteContentObserverMaxURLs URLs. Outcomes are bucketed by
+// RouteContentWindows, which are also the max-ages the advisor can propose.
+// A max-age is safe when at least RouteContentMinRepeats responses fell inside
+// it, at least RouteContentMinBandRepeats of them were seen at that spacing
+// (longer than the next shorter window), and at most
+// RouteContentMaxStaleShare of them had changed; the advisor
+// withholds a cache suggestion when more than RouteContentUnsafeStaleShare of
+// the repeats within the shortest window had changed, or when more than
+// RouteContentMaxUncacheableShare of observed responses could not be stored.
+var RouteContentWindows = []time.Duration{time.Minute, 5 * time.Minute, time.Hour}
+
+const (
+	RouteContentObserverMaxURLs     = 50_000
+	RouteContentMinRepeats          = 50
+	RouteContentMinBandRepeats      = 10
+	RouteContentMaxStaleShare       = 0.01
+	RouteContentUnsafeStaleShare    = 0.05
+	RouteContentMaxUncacheableShare = 0.5
+)
+
 // RoutePriority bounds per-app route priorities for the warm-capacity queue
 // (ADR-978): at most RoutePriorityMaxRules rules, cached by each gateway for
 // RoutePriorityCacheTTL and read only when a request has to queue.

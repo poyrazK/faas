@@ -109,6 +109,8 @@ var memDispatched = map[string]bool{
 	"RouteAdviceConsumers":                                    true,
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
+	"RouteAwakeMinutes":                                       true,
+	"RouteAwakeRouteMinutes":                                  true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -882,6 +884,24 @@ func (s *Mem) RouteAdviceThrottleExcess(p0 context.Context, p1 sqlc.RouteAdviceT
 		return o.RouteAdviceThrottleExcess(p0, p1)
 	}
 	return s.MemStore.RouteAdviceThrottleExcess(p0, p1)
+}
+
+func (s *Mem) RouteAwakeMinutes(p0 context.Context, p1 sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeMinutes(context.Context, sqlc.RouteAwakeMinutesParams) ([]sqlc.RouteAwakeMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeRouteMinutes(p0 context.Context, p1 sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeRouteMinutes(context.Context, sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeRouteMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeRouteMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
