@@ -54,7 +54,8 @@ func newMetalNode(t *testing.T, workdir, base, name string, capacity int64, leas
 		t.Fatal(err)
 	}
 	go func() {
-		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered}).Serve(ctx, archiveLn)
+		handoff := &dbarchive.Uploader{Store: archive, Remote: bucket, Prefix: "native"}
+		_ = (&dbarchive.Server{Store: tiered, Backups: tiered, Retention: tiered, Handoff: handoff}).Serve(ctx, archiveLn)
 	}()
 	parent := "dbsched-metal-" + name
 	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {

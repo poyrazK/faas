@@ -687,6 +687,12 @@ an abort only has to discard the copy.
   sweep moves databases off draining nodes one at a time: parked ones, and
   always-on ones, which never park. A running scale-to-zero database moves
   once it parks, so its clients see no extra downtime.
+- Metal (`TestMetalMoveDatabase`, two in-process database nodes sharing a
+  file bucket): a running database with 50,000 rows moved in 4.6 s (park,
+  1 GiB sparse volume copy, archive handoff, wake), its rows intact on the
+  new node and the old node's volume and archive copy gone. A restore to
+  a point after a write on the new node held all 50,001 rows: the archive
+  continues across the move.
 - **Known gaps.** The history meter samples each node's local archive, so
   a moved database's pre-move history, now only in the bucket, stops being
   metered. Moves have no operator RPC yet; only evacuation drives them.
