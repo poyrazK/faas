@@ -238,7 +238,9 @@ func cmdStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
 	if page.WakeP95MS == nil {
-		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (no observations)")
+		// The status query reports a p95 only from 20 platform wakes in 30
+		// minutes, and omits it when Prometheus is unreachable (H10-46).
+		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
 	}
