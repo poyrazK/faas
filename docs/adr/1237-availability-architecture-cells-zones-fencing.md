@@ -368,7 +368,10 @@ Off-region backups cover both:
 
 The primitive is used for:
 
-- **Singletons** in every cell and in the directory.
+- **Singletons** in every cell and in the directory. Their leases are on
+  only in a cell with more than one control node; a one-node cell runs its
+  singletons without a lease, as before, so it has no lease to lose when
+  Postgres blips.
 - **Node leases.** Each compute node holds `node/<name>`.
   - It renews every 10 s with a 30 s TTL, in its own table, not on
     `compute_nodes.last_heartbeat_at`. That row takes the regional
