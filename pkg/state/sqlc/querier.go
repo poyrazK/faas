@@ -1196,7 +1196,7 @@ type Querier interface {
 	GetDeploymentRuntimeUpgradeTarget(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (GetDeploymentRuntimeUpgradeTargetRow, error)
 	GetDevSourceManifest(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (DevSourceManifest, error)
 	GetDevSourcePatchStatus(ctx context.Context, db DBTX, arg GetDevSourcePatchStatusParams) (GetDevSourcePatchStatusRow, error)
-	GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
+	GetDevWatchSetting(ctx context.Context, db DBTX, appID pgtype.UUID) (GetDevWatchSettingRow, error)
 	GetEntityOutboxAcceptanceFingerprint(ctx context.Context, db DBTX, messageID string) (string, error)
 	GetEnvironmentDesiredRevision(ctx context.Context, db DBTX, arg GetEnvironmentDesiredRevisionParams) (EnvironmentDesiredRevision, error)
 	GetEnvironmentGitOpsScope(ctx context.Context, db DBTX, sourceID pgtype.UUID) (GetEnvironmentGitOpsScopeRow, error)
@@ -4110,7 +4110,7 @@ type Querier interface {
 	UpsertDeploymentAlias(ctx context.Context, db DBTX, arg UpsertDeploymentAliasParams) (UpsertDeploymentAliasRow, error)
 	// ADR-740 developer live source patches.
 	UpsertDevSourceManifest(ctx context.Context, db DBTX, arg UpsertDevSourceManifestParams) error
-	// ADR-1170: a developer environment's watch-mode command.
+	// ADR-1170: a developer environment's watch-mode command and public hostname.
 	UpsertDevWatchSetting(ctx context.Context, db DBTX, arg UpsertDevWatchSettingParams) error
 	UpsertEnvironmentQueueDeliveryReceipt(ctx context.Context, db DBTX, arg UpsertEnvironmentQueueDeliveryReceiptParams) (int64, error)
 	UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db DBTX, arg UpsertEnvironmentWorkloadServingRouteParams) error
@@ -4205,6 +4205,32 @@ type Querier interface {
 	WorkflowGenerationCurrent(ctx context.Context, db DBTX, arg WorkflowGenerationCurrentParams) (bool, error)
 	WorkflowGuardOutputs(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowGuardOutputsRow, error)
 	WorkflowGuardStartAllowed(ctx context.Context, db DBTX, arg WorkflowGuardStartAllowedParams) (bool, error)
+	WorkflowInitialAutomaticOutstanding(ctx context.Context, db DBTX, appID pgtype.UUID) ([]byte, error)
+	WorkflowInitialAutomaticPending(ctx context.Context, db DBTX, arg WorkflowInitialAutomaticPendingParams) ([]byte, error)
+	WorkflowInitialAutomaticUnresolved(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Bool, error)
+	WorkflowInitialEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowInitialEvidenceRepairParams) (int64, error)
+	WorkflowInitialEvidenceRepairWake(ctx context.Context, db DBTX, arg WorkflowInitialEvidenceRepairWakeParams) error
+	WorkflowInitialEvidenceResultExists(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
+	WorkflowInitialFailure(ctx context.Context, db DBTX, arg WorkflowInitialFailureParams) (WorkflowInitialFailureRow, error)
+	WorkflowInitialFailures(ctx context.Context, db DBTX, arg WorkflowInitialFailuresParams) ([]WorkflowInitialFailuresRow, error)
+	WorkflowInitialManualCompletionAdvance(ctx context.Context, db DBTX, arg WorkflowInitialManualCompletionAdvanceParams) error
+	WorkflowInitialManualCompletionClaim(ctx context.Context, db DBTX, arg WorkflowInitialManualCompletionClaimParams) ([]byte, error)
+	WorkflowInitialManualCompletionFailure(ctx context.Context, db DBTX, arg WorkflowInitialManualCompletionFailureParams) error
+	WorkflowInitialManualCompletionNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowInitialManualCompletionNextRow, error)
+	WorkflowInitialPolicyChangeFailures(ctx context.Context, db DBTX, arg WorkflowInitialPolicyChangeFailuresParams) ([]WorkflowInitialPolicyChangeFailuresRow, error)
+	WorkflowInitialPollingNotificationSave(ctx context.Context, db DBTX, arg WorkflowInitialPollingNotificationSaveParams) error
+	WorkflowInitialRecoveryPending(ctx context.Context, db DBTX, arg WorkflowInitialRecoveryPendingParams) (bool, error)
+	WorkflowInitialRecoveryPolicyFailures(ctx context.Context, db DBTX, arg WorkflowInitialRecoveryPolicyFailuresParams) ([]pgtype.UUID, error)
+	WorkflowInitialReviewAdmission(ctx context.Context, db DBTX, jobID pgtype.UUID) (WorkflowInitialReviewAdmissionRow, error)
+	WorkflowInitialReviewAuthority(ctx context.Context, db DBTX, jobID pgtype.UUID) (WorkflowInitialReviewAuthorityRow, error)
+	WorkflowInitialReviewBudget(ctx context.Context, db DBTX, arg WorkflowInitialReviewBudgetParams) (WorkflowInitialReviewBudgetRow, error)
+	WorkflowInitialReviewGet(ctx context.Context, db DBTX, arg WorkflowInitialReviewGetParams) ([]byte, error)
+	WorkflowInitialReviewInsert(ctx context.Context, db DBTX, arg WorkflowInitialReviewInsertParams) error
+	WorkflowInitialReviewList(ctx context.Context, db DBTX, arg WorkflowInitialReviewListParams) ([][]byte, error)
+	WorkflowInitialReviewPolicy(ctx context.Context, db DBTX, arg WorkflowInitialReviewPolicyParams) (WorkflowInitialReviewPolicyRow, error)
+	WorkflowInitialReviewPrune(ctx context.Context, db DBTX, arg WorkflowInitialReviewPruneParams) error
+	WorkflowInitialReviewRetainedCount(ctx context.Context, db DBTX, arg WorkflowInitialReviewRetainedCountParams) (int64, error)
+	WorkflowInitialReviewUpdate(ctx context.Context, db DBTX, arg WorkflowInitialReviewUpdateParams) error
 	WorkflowJoinSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowJoinStepsRow, error)
 	WorkflowOutboundAttempt(ctx context.Context, db DBTX, arg WorkflowOutboundAttemptParams) (WorkflowOutboundAttemptRow, error)
 	WorkflowOutboundBinding(ctx context.Context, db DBTX, arg WorkflowOutboundBindingParams) (WorkflowOutboundBindingRow, error)
@@ -4231,7 +4257,9 @@ type Querier interface {
 	WorkflowRecoveryAutomaticPending(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPendingParams) (WorkflowRecoveryAutomaticPendingRow, error)
 	WorkflowRecoveryAutomaticPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyAdvanceParams) error
 	WorkflowRecoveryAutomaticPolicyClaim(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyClaimParams) (WorkflowRecoveryAutomaticPolicyClaimRow, error)
+	WorkflowRecoveryAutomaticPolicyFailure(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPolicyFailureParams) error
 	WorkflowRecoveryAutomaticPolicyNext(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (WorkflowRecoveryAutomaticPolicyNextRow, error)
+	WorkflowRecoveryAutomaticPollingNotificationSave(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticPollingNotificationSaveParams) error
 	WorkflowRecoveryAutomaticQueue(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueParams) ([]byte, error)
 	WorkflowRecoveryAutomaticQueueApp(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticQueueAppParams) (pgtype.UUID, error)
 	WorkflowRecoveryAutomaticResult(ctx context.Context, db DBTX, arg WorkflowRecoveryAutomaticResultParams) error
@@ -4255,6 +4283,11 @@ type Querier interface {
 	WorkflowRecoveryHistoryExpire(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryExpireParams) (int64, error)
 	WorkflowRecoveryHistoryPrune(ctx context.Context, db DBTX, arg WorkflowRecoveryHistoryPruneParams) error
 	WorkflowRecoveryHistorySequence(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	WorkflowRecoveryOverviewApp(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewAppParams) (string, error)
+	WorkflowRecoveryOverviewDelivery(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewDeliveryParams) ([]byte, error)
+	WorkflowRecoveryOverviewLastAlert(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewLastAlertParams) ([]byte, error)
+	WorkflowRecoveryOverviewManual(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewManualParams) ([]byte, error)
+	WorkflowRecoveryOverviewRetry(ctx context.Context, db DBTX, arg WorkflowRecoveryOverviewRetryParams) ([]byte, error)
 	WorkflowRecoveryPolicyAdvance(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyAdvanceParams) error
 	WorkflowRecoveryPolicyBudget(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyBudgetParams) (WorkflowRecoveryPolicyBudgetRow, error)
 	WorkflowRecoveryPolicyChangeJobs(ctx context.Context, db DBTX, arg WorkflowRecoveryPolicyChangeJobsParams) ([]pgtype.UUID, error)
@@ -4285,6 +4318,12 @@ type Querier interface {
 	WorkflowRecoveryReviewNotificationReceivers(ctx context.Context, db DBTX, arg WorkflowRecoveryReviewNotificationReceiversParams) ([]pgtype.UUID, error)
 	WorkflowResumeHasRunningAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) (bool, error)
 	WorkflowResumeSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]WorkflowResumeStepsRow, error)
+	WorkflowRetryEvidenceAction(ctx context.Context, db DBTX, arg WorkflowRetryEvidenceActionParams) (WorkflowRecoveryPolicyExecution, error)
+	WorkflowRetryEvidenceReceipt(ctx context.Context, db DBTX, arg WorkflowRetryEvidenceReceiptParams) (int64, error)
+	WorkflowRetryEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowRetryEvidenceRepairParams) (int64, error)
+	WorkflowRetryParentEvidenceReceipt(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceReceiptParams) (int64, error)
+	WorkflowRetryParentEvidenceRepair(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceRepairParams) (int64, error)
+	WorkflowRetryParentEvidenceResultExists(ctx context.Context, db DBTX, arg WorkflowRetryParentEvidenceResultExistsParams) (bool, error)
 	WorkflowRunRecoveryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryCandidateParams) (WorkflowRunRecoveryCandidateRow, error)
 	WorkflowRunRecoveryRetryCandidate(ctx context.Context, db DBTX, arg WorkflowRunRecoveryRetryCandidateParams) (WorkflowRunRecoveryRetryCandidateRow, error)
 	WriteBindingReleasePolicy(ctx context.Context, db DBTX, arg WriteBindingReleasePolicyParams) ([]byte, error)

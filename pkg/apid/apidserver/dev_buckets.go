@@ -30,7 +30,7 @@ func (s *server) writeDevSession(w http.ResponseWriter, r *http.Request, acct st
 		object.BucketProblem(w, err)
 		return
 	}
-	if err := devloop.SaveWatch(r.Context(), s.store, app.ID, request.Watch); err != nil {
+	if err := devloop.SaveWatch(r.Context(), s.store, app.ID, request.Watch, appHostForDomain(app.Slug, s.domain)); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("store developer watch mode"))
 		return
 	}

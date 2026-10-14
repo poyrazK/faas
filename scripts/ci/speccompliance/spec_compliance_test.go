@@ -357,6 +357,7 @@ var dtoExclude = map[string]bool{
 	// locations (path, query, header); it never appears on the wire alone.
 	"EdgeRuleParamKind": true,
 
+	"WorkflowInitialFailureOptions":  true, // client-only inbox query parameters; documented on the route
 	"WorkflowRecoveryHistoryOptions": true, // client-only history query parameters; documented on the route
 	"WorkflowRecoveryReportOptions":  true, // client-only report query parameters; documented on the route
 	// Workflow list options encode URL query parameters, not JSON request bodies.
@@ -1110,15 +1111,22 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_recovery.go"),
 		filepath.Join(root, "pkg", "api", "event_workflow_recovery.go"),
 		filepath.Join(root, "pkg", "api", "workflow_run_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_recovery.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_review.go"),
+		filepath.Join(root, "pkg", "api", "workflow_initial_evidence.go"),
+		filepath.Join(root, "pkg", "api", "workflow_retry_evidence.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_history.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_change.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_initial_policy_change.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_policy_evaluation.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_health.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_health_alerts.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_history.go"),
 		filepath.Join(root, "pkg", "api", "workflow_recovery_report.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_overview.go"),
+		filepath.Join(root, "pkg", "api", "workflow_recovery_polling_alert.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_list.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_notifications.go"),
 		filepath.Join(root, "pkg", "api", "event_recovery_preflight.go"),

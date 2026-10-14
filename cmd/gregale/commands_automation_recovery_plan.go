@@ -42,6 +42,9 @@ func validateAutomationRecoveryPlan(p automationRecoveryPlan) error {
 		if err != nil || parsed.ID != r.ID || seen[r.ID] {
 			return errors.New("invalid or duplicate plan run")
 		}
+		if r.FailureEvidenceID != "" && (!workflowUUIDPattern.MatchString(r.FailureEvidenceID) || r.ExpectedResumeCount != 0 || p.ParentJobID != "") {
+			return errors.New("invalid initial failure evidence")
+		}
 		if r.ParentPosition < 0 || (p.ParentJobID == "") != (r.ParentPosition == 0) || r.ParentPosition > api.AutomationRecoveryBatchMaxRuns || r.ParentPosition != 0 && positions[r.ParentPosition] || p.ParentJobID != "" && r.ExpectedResumeCount < 1 {
 			return errors.New("invalid retry lineage")
 		}
@@ -149,6 +152,11 @@ func executeAutomationRecoveryPlan(ctx context.Context, c *api.Client, p automat
 	if p.ParentJobID != "" {
 		return report, errors.New("submit retry plans with automations recovery-start")
 	}
+	for _, target := range p.Runs {
+		if target.FailureEvidenceID != "" {
+			return report, errors.New("submit failure-evidence plans with automations recovery-start")
+		}
+	}
 	appID, err := loadAutomationRunScope(ctx, c, p.App, p.Name)
 	if err != nil {
 		return report, fmt.Errorf("resolve plan scope: %w", err)
@@ -204,6 +212,11 @@ func cmdAutomationsRecoveryPlan(args []string) int {
 	}
 	if p.ParentJobID != "" {
 		return printErr("Use durable retry submission", errors.New("submit retry plans with automations recovery-start"))
+	}
+	for _, target := range p.Runs {
+		if target.FailureEvidenceID != "" {
+			return printErr("Use durable recovery submission", errors.New("submit failure-evidence plans with automations recovery-start"))
+		}
 	}
 	client, err := authedClient()
 	if err != nil {

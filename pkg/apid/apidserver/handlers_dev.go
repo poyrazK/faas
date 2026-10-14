@@ -453,7 +453,7 @@ func (s *server) recordDevSync(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("record developer sync history"))
 		return
 	}
-	s.devLoopMetrics.ObserveSync(req)
+	s.devLoopMetrics.ObserveSync(req, devloop.LoadWatch(r.Context(), s.store, app.ID) != nil)
 	writeJSON(w, http.StatusCreated, devSyncHistoryItem(row))
 }
 

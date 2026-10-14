@@ -256,6 +256,8 @@ type MemStore struct {
 	mcpOAuthRetirements                        map[string]mcpRetirementEntry
 	mcpCatalogMonitors                         map[string]api.MCPCatalogMonitorSnapshot
 	mcpCatalogMonitorOwners                    map[string]string
+	initialRecoveryReviews                     map[string]api.WorkflowInitialRecoveryReview
+	initialCompletionNext                      map[string]time.Time
 
 	eventCircuitBreakers      map[string]*eventCircuitRecord
 	eventSubscriptionControls map[string]*memEventSubscriptionControl
@@ -463,7 +465,7 @@ type MemStore struct {
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
-	devWatchCommands     map[string]string
+	devWatch             map[string]DevWatchSetting
 	devSourcePatchSeq    int64
 	domains              map[string]CustomDomain
 	defaultDomains       map[string]string
@@ -568,6 +570,7 @@ type MemStore struct {
 	// query is a single goroutine today.
 	appWebhooks                     map[string]AppWebhook
 	appWebhookDeliveries            map[string]AppWebhookDelivery
+	appWebhookDeliverySources       map[string]string
 	entityOutboxAcceptances         map[string]string
 	appWebhookDeliveryAttempts      map[string][]AppWebhookDeliveryAttempt
 	appWebhookReplayGenerations     map[string]int

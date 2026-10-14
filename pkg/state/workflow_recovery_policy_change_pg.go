@@ -72,6 +72,9 @@ func (s *PgStore) PreviewWorkflowRecoveryPolicyChange(ctx context.Context, accou
 		out.InspectedJobs++
 		addRecoveryPolicyChangeCandidates(&out, job, candidates, &budget)
 	}
+	if err = previewInitialPolicyChangeTx(ctx, q, tx, account, app, &out, &budget, last); err != nil {
+		return out, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return out, fmt.Errorf("finish policy change preview: %w", err)
 	}
