@@ -327,6 +327,11 @@ func run(args []string) (status int) {
 			}
 			return cmdAppsStreamingCap(args[2], args[3:])
 		}
+		// `gregale apps rm <slug>` / `apps delete <slug>` name the delete
+		// path as a subcommand; flags after the slug keep their meaning.
+		if len(args) > 1 && (args[1] == "rm" || args[1] == "delete") {
+			return cmdAppsRm(args[2:])
+		}
 		// `gregale apps -q <slug>` is the delete path.
 		if len(args) > 1 && (strings.SplitN(args[1], "=", 2)[0] == "-q" || strings.SplitN(args[1], "=", 2)[0] == "--quiet" || strings.SplitN(args[1], "=", 2)[0] == "--yes" || strings.SplitN(args[1], "=", 2)[0] == "--dry-run") {
 			// Preserve the quiet flag for cmdAppsRm. Dropping it here
@@ -335,7 +340,7 @@ func run(args []string) (status int) {
 			return cmdAppsRm(args[1:])
 		}
 		if len(args) > 1 {
-			PrintUsage(os.Stderr, "usage: gregale apps [ls|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
+			PrintUsage(os.Stderr, "usage: gregale apps [ls|rm <slug>|restore <slug>|routes <slug>|tcp <slug>|udp <slug>|streaming-cap <slug>|-q|--quiet|--yes <slug>]", "apps")
 			return 1
 		}
 		return cmdApps()
@@ -534,6 +539,10 @@ func run(args []string) (status int) {
 	case "run":
 		// ADR-171: execute untrusted source in a fresh, networkless
 		// disposable microVM and tear it down after the terminal result.
+		// ADR-1161: --image runs one command from an OCI image instead.
+		if runImageRequested(args[1:]) {
+			return cmdRunImage(args[1:])
+		}
 		return cmdRun(args[1:])
 	case "runs":
 		// ADR-171 lifecycle reads/cancellation for disposable runs.

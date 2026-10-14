@@ -909,8 +909,10 @@ func (r *server) CancelPendingWork(p0 http.ResponseWriter, p1 *http.Request, p2 
 func (r *server) CaptureProjectEnvironmentValues(p0 context.Context, p1 state.Account, p2 state.Project, p3 string) ([]state.App, state.ProjectEnvironmentCloneValuesSnapshot, error) {
 	return r.captureProjectEnvironmentValues(p0, p1, p2, p3)
 }
-func (r *server) CheckedRollbackSweep(p0 context.Context) error        { return r.checkedRollbackSweep(p0) }
-func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) { r.configureAIGateway(p0, p1) }
+func (r *server) CheckedRollbackSweep(p0 context.Context) error { return r.checkedRollbackSweep(p0) }
+func (r *server) ConfigureAIGateway(p0 Config, p1 func(string) string) error {
+	return r.configureAIGateway(p0, p1)
+}
 func (r *server) ConfigureDurableEntities(p0 context.Context, p1 func(string) string) error {
 	return r.configureDurableEntities(p0, p1)
 }
@@ -931,6 +933,9 @@ func (r *server) CreateFinancialBudget(p0 http.ResponseWriter, p1 *http.Request,
 }
 func (r *server) CreateFullProjectEnvironmentClone(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createFullProjectEnvironmentClone(p0, p1, p2)
+}
+func (r *server) CreateImageRun(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.createImageRun(p0, p1, p2)
 }
 func (r *server) CreateProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createProjectEnvironment(p0, p1, p2)
@@ -1042,6 +1047,9 @@ func (r *server) IssueProjectEnvironmentPromotionApproval(p0 context.Context, p1
 }
 func (r *server) ListEgressFlows(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.listEgressFlows(p0, p1, p2)
+}
+func (r *server) ListJobs(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.listJobs(p0, p1, p2)
 }
 func (r *server) ListManagedPostgresDatabases(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.listManagedPostgresDatabases(p0, p1, p2)
@@ -1189,6 +1197,9 @@ func (r *server) UpdateAccountBillingInfo(p0 http.ResponseWriter, p1 *http.Reque
 }
 func (r *server) UpdateApp(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.updateApp(p0, p1, p2)
+}
+func (r *server) UpdateJob(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.updateJob(p0, p1, p2)
 }
 func (r *server) UpdateProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.updateProject(p0, p1, p2)

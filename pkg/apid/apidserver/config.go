@@ -50,6 +50,10 @@ type Config struct {
 	FlagsWorkloadIssuer     string `toml:"flags_workload_issuer"`
 	// AIGatewayEnabled opens the AI gateway APIs (ADR-991); off by default.
 	AIGatewayEnabled bool `toml:"ai_gateway_enabled"`
+	// AIGatewayAccounts limits the AI gateway to these account IDs during a
+	// staged preview rollout (ADR-998); empty or "*" admits every entitled
+	// account. FAAS_AI_GATEWAY_ACCOUNTS overrides it.
+	AIGatewayAccounts []string `toml:"ai_gateway_accounts"`
 	// ListenAddr is the loopback bind address for the customer-facing
 	// REST API + dashboard. Defaults to 127.0.0.1:8081 (legacy single-
 	// box default; gatewayd-public reverse-proxies 0.0.0.0:443 in

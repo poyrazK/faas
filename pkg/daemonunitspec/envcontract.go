@@ -103,6 +103,7 @@ const (
 var EnvContract = []EnvVar{
 	{Name: "FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ADMIN_EMAILS", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
+	{Name: "FAAS_AI_GATEWAY_ACCOUNTS", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Note: "optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account"},
 	{Name: "FAAS_AI_GATEWAY_ENABLED", Owners: []string{"apid", "outboundd"}, Source: EnvSourceDefault, Validate: EnvValidationInt, Note: "optional override for ai_gateway_enabled TOML; 1 opens the AI gateway (ADR-991), any other value keeps it closed, unset preserves the TOML setting (default off)"},
 	{Name: "FAAS_ALERT_EVAL_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_APID_ADVISORY_SOCK", Owners: []string{"apid", "vmmd", "shared"}, Source: EnvSourceUnit},
@@ -359,6 +360,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_IMAGED_PRESTAGE_ONLY", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "release rollout one-shot exits after staging every assigned runtime base before node drain"},
 	{Name: "FAAS_IMAGED_ROLE", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_IMAGE_DIGEST", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled"},
+	{Name: "FAAS_IMAGE_RUNS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator gate for POST /v1/image-runs (gregale run --image); enable after the image-run migration and imaged are deployed (ADR-1161)"},
 	{Name: "FAAS_INSTANCE_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_INTERACTIVE_APP_TASKS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "exact opt-in for ADR-1037 interactive app tasks (exec -it, cp, port-forward) on top of FAAS_APP_TASK_API_ENABLED; default off until vmmd, schedd, gateways and guest-init carry the attach path"},
 	{Name: "FAAS_INTERNAL_H2C", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},

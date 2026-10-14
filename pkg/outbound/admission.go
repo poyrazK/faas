@@ -61,8 +61,11 @@ type Integration struct {
 	// AccountID and Name are loaded from the trusted integration row. They
 	// let outboundd attribute its platform-owned dependency span without
 	// trusting caller headers or exposing credentials.
-	AccountID                      string
-	Name                           string
+	AccountID string
+	Name      string
+	// AccountPlan is the owning account's plan; customer AI integrations
+	// need a plan entitled to the AI gateway (ADR-998).
+	AccountPlan                    api.Plan
 	Origin                         *url.URL
 	TokenHash                      [32]byte
 	AppIDs                         map[string]struct{}

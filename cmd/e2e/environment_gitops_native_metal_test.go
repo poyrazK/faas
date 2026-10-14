@@ -52,7 +52,7 @@ func TestEnvironmentGitOpsNativeMetal(t *testing.T) {
 	t.Cleanup(func() { registry.Close() })
 	// Keep the fixture independent of external DNS while exercising the
 	// production fallback for a validated, already-published local base.
-	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", registry.Host()+"/acceptance-base:unreachable")
+	e2etest.PointDeployBaseAtUnreachable(t, registry.Host()+"/acceptance-base:unreachable")
 	storageRoot := filepath.Join(t.TempDir(), "storage")
 	t.Setenv("FAAS_STORAGE_ROOT", storageRoot)
 	stageNativeAcceptanceBase(t, storageRoot)
