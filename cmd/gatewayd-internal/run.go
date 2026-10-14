@@ -3890,6 +3890,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Wake:               newServiceProxyWaker(pgStore, handler.EnsureServiceCapacity),
 			ObserveCall:        handler.ObserveServiceCall,
 			WakeDeployment:     newServiceProxyDeploymentWaker(pgStore, handler.EnsureServiceDeploymentCapacity),
+			EvictEndpoint:      serviceEndpointEvictor(deps.backend),
+			WithdrawEndpoint:   serviceEndpointWithdrawer(deps.backend),
 			ValidateDeployment: newServiceProxyDeploymentValidator(pgStore),
 			ResolveRelease: func(ctx context.Context, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID string) (string, string, error) {
 				releaseID, deploymentID, err := pgStore.ResolveServiceRelease(ctx, callerAppID, callerDeploymentID, targetAppID, requestedReleaseID)

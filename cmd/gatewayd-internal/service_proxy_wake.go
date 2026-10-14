@@ -57,3 +57,29 @@ func newServiceProxyDeploymentWaker(store state.Store, ensure func(context.Conte
 		return ensure(ctx, resolved, deploymentID)
 	}
 }
+
+// serviceEndpointEvictor returns the routing-cache eviction the public edge
+// applies to a stale target, so the service proxy can drop an instance the
+// bridge proved gone instead of re-routing to it until the next replay. A
+// backend without per-instance eviction yields nil, which keeps the
+// proxy-local quarantine only.
+func serviceEndpointEvictor(backend any) func(appID, instanceID string) {
+	if evictor, ok := backend.(interface {
+		EvictInstance(appID, instanceID string)
+	}); ok {
+		return evictor.EvictInstance
+	}
+	return nil
+}
+
+// serviceEndpointWithdrawer returns the routing-cache withdrawal the public
+// edge applies to a frozen target (ADR-1151): the routes go, the instance ID
+// stays routable for its thaw. A backend without it yields nil.
+func serviceEndpointWithdrawer(backend any) func(appID, instanceID string) {
+	if withdrawer, ok := backend.(interface {
+		WithdrawInstance(appID, instanceID string)
+	}); ok {
+		return withdrawer.WithdrawInstance
+	}
+	return nil
+}

@@ -300,7 +300,7 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, target Ser
 		hop.Port = port
 		err = p.cfg.Forward(ctx, conn, hop, target.IdleTimeout)
 		if errors.Is(err, ErrTCPGuestUnreachable) {
-			services.quarantine(target.AppID, endpoint.InstanceID)
+			services.retireStaleEndpoint(target.AppID, endpoint.InstanceID, false)
 			services.invalidateEndpoints(target.AppID)
 			continue
 		}
