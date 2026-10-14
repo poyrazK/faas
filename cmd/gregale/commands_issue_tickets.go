@@ -1,0 +1,101 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
+)
+
+func cmdIssueTickets(args []string) int { return runIssueTickets(args, issuetracker.NewClient(nil)) }
+
+func runIssueTickets(args []string, external issuetracker.Provider) int {
+	usage := "usage: gregale issues tickets create --app SLUG --issue UUID --provider github|linear --target OWNER/REPO|TEAM_UUID --title TEXT --request-id UUID [--description TEXT --token-env NAME --journal-dir PATH --recover-url URL]"
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprintln(os.Stderr, usage)
+		return 0
+	}
+	if len(args) == 0 || args[0] != "create" {
+		fmt.Fprintln(os.Stderr, usage)
+		return 1
+	}
+	fs := newFlagSet("issues tickets create", flag.ContinueOnError)
+	app := fs.String("app", "", "app slug")
+	issue := fs.String("issue", "", "issue UUID")
+	provider := fs.String("provider", "", "github or linear")
+	target := fs.String("target", "", "GitHub OWNER/REPO or Linear team UUID")
+	title := fs.String("title", "", "explicit ticket title")
+	description := fs.String("description", "", "optional ticket description")
+	requestID := fs.String("request-id", "", "stable UUID reused on retries")
+	tokenEnv := fs.String("token-env", "", "credential environment variable (default GREGALE_GITHUB_TOKEN or GREGALE_LINEAR_TOKEN)")
+	journalDir := fs.String("journal-dir", "", "private durable journal directory")
+	recoverURL := fs.String("recover-url", "", "verify an existing ticket after an uncertain create")
+	flags, pos := normalizeDebugFlagArgs(args[1:], map[string]bool{"app": true, "issue": true, "provider": true, "target": true, "title": true, "description": true, "request-id": true, "token-env": true, "journal-dir": true, "recover-url": true})
+	if err := fs.Parse(flags); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 1
+	}
+	if *app == "" || len(pos) > 0 {
+		fmt.Fprintln(os.Stderr, usage)
+		return 1
+	}
+	// Validate operator-controlled inputs before authentication or any network call.
+	input, err := issuetracker.ValidateInputs(issuetracker.Request{RequestID: *requestID, APIBase: apiBase(), AppSlug: *app, IssueID: *issue, Provider: *provider, Target: *target, Title: *title, Description: *description})
+	if err != nil {
+		return printErr("Invalid ticket request", err)
+	}
+	if *tokenEnv == "" {
+		if *provider == "github" {
+			*tokenEnv = "GREGALE_GITHUB_TOKEN"
+		} else {
+			*tokenEnv = "GREGALE_LINEAR_TOKEN"
+		}
+	}
+	if *journalDir == "" {
+		path, e := tokenPath()
+		if e != nil {
+			return printErr("Cannot locate ticket journal", e)
+		}
+		*journalDir = filepath.Join(filepath.Dir(path), "issue-ticket-journal")
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	metadata, err := client.GetApp(ctx, *app)
+	if err != nil {
+		return printErr("Cannot read app", err)
+	}
+	detail, err := client.GetIssue(ctx, *app, input.IssueID, "", "")
+	if err != nil {
+		return printErr("Cannot read issue", err)
+	}
+	if detail.Issue.AppID != metadata.ID {
+		return printErr("Cannot create ticket", fmt.Errorf("issue does not belong to this app"))
+	}
+	input.AppID = metadata.ID
+	if input.Description == "" {
+		input.Description = "Gregale app: " + metadata.Slug + "\nGregale issue: " + input.IssueID
+	}
+	result, err := issuetracker.Run(ctx, *journalDir, input, os.Getenv(*tokenEnv), *recoverURL, external, func(ctx context.Context, ticket issuetracker.Ticket) (api.IssueTrackerLink, error) {
+		return client.PutIssueTrackerLink(ctx, *app, input.IssueID, api.PutIssueTrackerLinkRequest{URL: ticket.URL, Title: input.Title})
+	})
+	if jsonOutput {
+		if e := writeJSON(result); e != nil {
+			return jsonOut(e)
+		}
+	} else if result.Ticket.URL != "" {
+		fmt.Fprintf(osStdout, "%s\t%s\t%s\n", result.State, result.RequestID, result.Ticket.URL)
+	}
+	if err != nil {
+		return printErr("Ticket request incomplete", err)
+	}
+	return 0
+}

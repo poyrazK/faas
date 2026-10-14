@@ -10459,3 +10459,11 @@ const (
 	IssueTrackerLinkURLMaxBytes   = 512
 	IssueTrackerLinkTitleMaxBytes = 256
 )
+
+// Provider ticket creation bounds apply before external dispatch.
+const (
+	IssueTrackerTicketBodyMaxBytes    = 16 << 10
+	IssueTrackerCredentialMaxBytes    = 4 << 10
+	IssueTrackerResponseMaxBytes      = 1 << 20
+	IssueTrackerRequestTimeoutSeconds = 15
+)
