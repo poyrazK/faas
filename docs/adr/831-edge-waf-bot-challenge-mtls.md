@@ -553,6 +553,41 @@ Findings:
    builds outrank tenants, which CLAUDE.md forbids. The lever would need a
    gateway slice of its own.
 
+### Where an in-path check spends its time
+
+Profiled with `BenchmarkInlinePrefilter` and `TestInlineRuleSetCost` on a
+laptop (one current desktop-class core, load about 7). There the same check
+takes 550-680 µs per benign header and URI request; on the test node it took
+about 1 ms.
+
+- **Regex evaluation is 56% of a check.** Coraza runs every CRS regex with
+  capture tracking because almost every rule has the `capture` action, but
+  matching without captures first saves only 10-15% of the regex time.
+  Header and cookie parsing is 11%, variable lookups 8%, transformations 7%.
+  A check makes about 1,800 allocations (106 KB).
+- **By family**, removing it from the in-path set saves: 932 (RCE) 29-36%,
+  942 (SQLi) 24%, 941 (XSS) 19%, 930/931 and 913/921 1-2% each. Coraza's
+  per-request work is the remaining fifth.
+- **Five overlapping unix command-injection rules** (932230, 932235, 932250,
+  932260, 932340) cost 25% of every check. Without them the in-path set
+  misses 19 of the 529 in-scope corpus attacks (3.6%). Without just the
+  three largest (932230, 932250, 932260) it is 10% faster and misses 8.
+- **Coraza has a regex pre-filter, off by default** (`SecRxPreFilter`). It
+  skips a regex when the input lacks literals every match must contain.
+  It cuts in-path checks by 19% (680 to 550 µs), header-only samples by
+  17%, and 8 KiB JSON bodies by 34% (81 to 53 ms). **It is not safe in
+  Coraza v3.8.1:** with it on, rule 942220 no longer matches
+  `2.2250738585072011e-308` (a float-parsing DoS payload). That happens in
+  all three engines, on 1 of the 4,621 corpus tests. The minimal pattern
+  is `2(?:x|.2250)`: the pre-filter demands `22250` across the `.`. It
+  stays off. `engineOptions` can switch it on, the corpus equivalence test
+  compares the engines, and `TestRxPrefilterKnownFalseNegative` fails once
+  the bug is fixed upstream.
+- **The test node inflates every number.** Its 2 vCPUs are one physical
+  core. Two concurrent checks cost 1.7-2.0 ms of CPU each against 1.24-1.31
+  ms alone, which explains why the daemon's check costs about 2 ms. The
+  2 ms gate has never been measured on dedicated cores.
+
 Proposed, for the product owner to decide (only finding 2 is built):
 
 1. `observe` at PL1 can leave preview: it adds no latency, it detects 98%
@@ -561,9 +596,29 @@ Proposed, for the product owner to decide (only finding 2 is built):
    shared 2-vCPU node, with or without the levers, and this node cannot
    give an uncontended number. Run `TestEdgeWAFInlineLoad_E2E` on an idle
    production compute node (n2-standard-4) before deciding.
-3. If p95 is still above 2 ms there, restate the gate as p95 at most 5 ms
-   with at most 1% skipped at the expected per-node rate. A check is still
-   far cheaper than a wake, and the WAF fails open.
-4. On that node, also try a CPUWeight for gatewayd-internal above the
+3. Report the pre-filter false negative to Coraza with the minimal pattern.
+   Once a fixed release passes `TestCRSRegressionCorpusEngineEquivalence`,
+   turn the pre-filter on: 19% off every in-path check, a third off body
+   inspection.
+4. Consider dropping the largest unix command-injection rules from the
+   in-path set: 10% faster for 8 missed corpus attacks (three rules), or
+   25% for 19 (five). Since bodiless requests under warn and block are no
+   longer sampled, those attacks would then go unreported, not just
+   unblocked, for such requests.
+5. Next experiment: memoize regex results across requests by rule and
+   transformed value. User-Agent, cookie and most header values repeat
+   between requests, and regex evaluation is the 56% ceiling. It needs a
+   custom `@rx` operator. Loading CRS with `@rx` renamed would keep the
+   stock engine alongside for the equivalence test. Its gain depends on
+   real traffic's repetition, which production cannot show yet.
+6. `warn` could run its check alongside the proxied request, since it only
+   adds a response header; the check then hides behind the app's own
+   response time. `block` cannot: it must decide before the app sees the
+   request.
+7. If p95 is still above 2 ms on a production node after these, restate
+   the gate as p95 at most 5 ms with at most 1% skipped at the expected
+   per-node rate. A check is still far cheaper than a wake, and the WAF
+   fails open.
+8. On that node, also try a CPUWeight for gatewayd-internal above the
    tenant slice, in a slice of its own so builder VMs keep their place
    below tenants.
