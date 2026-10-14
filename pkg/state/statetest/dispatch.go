@@ -24,6 +24,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
 	"ActiveComputeNodes":                                      true,
@@ -628,6 +629,15 @@ func (s *Mem) ProcessNextWorkflowRecoveryAutomaticPolicy(p0 context.Context, p1 
 		return o.ProcessNextWorkflowRecoveryAutomaticPolicy(p0, p1)
 	}
 	return s.MemStore.ProcessNextWorkflowRecoveryAutomaticPolicy(p0, p1)
+}
+
+func (s *Mem) ProcessNextWorkflowInitialManualCompletion(ctx context.Context, now time.Time) (bool, error) {
+	if o, ok := s.over.(interface {
+		ProcessNextWorkflowInitialManualCompletion(context.Context, time.Time) (bool, error)
+	}); ok {
+		return o.ProcessNextWorkflowInitialManualCompletion(ctx, now)
+	}
+	return s.MemStore.ProcessNextWorkflowInitialManualCompletion(ctx, now)
 }
 
 func (s *Mem) ProcessNextWorkflowRecoveryExecutionAttention(p0 context.Context, p1 time.Time) (bool, error) {
