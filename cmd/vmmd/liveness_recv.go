@@ -544,7 +544,17 @@ func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) str
 			return livenessOutcomeConnErr
 		}
 	}
-	if resp.Status >= 200 && resp.Status < 300 {
+	return classifyLivenessStatus(resp.Status, l.cfg.NotFoundIsAlive)
+}
+
+// classifyLivenessStatus maps a probe's HTTP status to an outcome.
+// notFoundIsAlive accepts 404 for an image whose readiness contract is its
+// TCP listener and which never promised the default path (H10-23).
+func classifyLivenessStatus(status int, notFoundIsAlive bool) string {
+	if status >= 200 && status < 300 {
+		return livenessOutcomeOK
+	}
+	if status == http.StatusNotFound && notFoundIsAlive {
 		return livenessOutcomeOK
 	}
 	// Error-explanations cluster (spec §6.4 amendment 1):
@@ -553,7 +563,7 @@ func (l *livenessProbeLoop) dialAndProbe(ctx context.Context, timeoutMs int) str
 	// bucket so the whycopy catalog can render the right hint
 	// ("expose /healthz without auth") instead of the generic
 	// "the app didn't return 200" line.
-	if resp.Status == http.StatusUnauthorized || resp.Status == http.StatusForbidden {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return livenessOutcomeUnauthorized
 	}
 	return livenessOutcomeNon200

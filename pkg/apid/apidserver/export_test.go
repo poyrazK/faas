@@ -323,7 +323,10 @@ var DataAPITaskKind = dataAPITaskKind
 var DataUpstreamResponseFromState = dataUpstreamResponseFromState
 var DebugCoverageSignal = debugCoverageSignal
 var DebugCoverageTimestamp = debugCoverageTimestamp
+var DebugRegressionCandidateRoutes = debugRegressionCandidateRoutes
 var DebugRegressionObservationToItem = debugRegressionObservationToItem
+var DebugRegressionParams = debugRegressionParams
+var DebugRequestIDCandidates = debugRequestIDCandidates
 var DebugReplayRequestPath = debugReplayRequestPath
 var DebugTelemetryCursorParams = debugTelemetryCursorParams
 var DebugTelemetryExportFilename = debugTelemetryExportFilename
@@ -587,6 +590,7 @@ var SummarizeDevSyncHistory = summarizeDevSyncHistory
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
 var SuspectedDependency = suspectedDependency
+var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
 var SweepUploadSessions = sweepUploadSessions
 var TcpListenerTLSStatusResponse = tcpListenerTLSStatusResponse
@@ -1297,4 +1301,26 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+// AddAuthBindingForTest gives appID an `auth` managed PostgreSQL binding,
+// which marks it as an application Auth app (ADR-1190). The test provider has
+// no auth credential mode, so the binding is reserved directly.
+func AddAuthBindingForTest(t *testing.T, e TestEnv, appID string) {
+	t.Helper()
+	store, _, databaseID := configureSourceRefManagedPostgres(t, sourceRefTestEnv{srv: e.s, store: e.store, acctID: e.acct.ID, appID: appID})
+	now := time.Now().UTC()
+	if _, _, err := store.ReserveBinding(context.Background(), managedpostgres.Binding{
+		ID: "auth-binding-" + appID, AccountID: e.acct.ID, DatabaseID: databaseID, AppID: appID, Scope: api.DefaultEnvScope,
+		EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialAuth, CredentialGeneration: 1,
+		State: managedpostgres.BindingStateProvisioning, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("reserve auth binding: %v", err)
+	}
+}
+
+var ComposeDockerBuildContext = composeDockerBuildContext
+
+func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string, app state.App, composeContext bool) (string, int64, error) {
+	return (&server{}).stageApplyTarball(ctx, scanDir, accountID, projectID, app, composeContext)
 }

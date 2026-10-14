@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -2188,19 +2189,12 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
-	if req.ExpectedServingDeploymentID != nil && *req.ExpectedServingDeploymentID != "" {
-		if !deploymentIDRefPattern.MatchString(*req.ExpectedServingDeploymentID) {
-			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
-			return
-		}
-		parsed, parseErr := uuid.Parse(*req.ExpectedServingDeploymentID)
-		if parseErr != nil {
-			api.WriteProblem(w, api.ErrValidation("expected_serving_deployment_id must be a deployment id"))
-			return
-		}
-		canonical := parsed.String()
-		req.ExpectedServingDeploymentID = &canonical
+	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
+	r = r.WithContext(guardCtx)
 	// Plan tier gate (issue #556). Pro + Scale only. Hobby is
 	// locked: the canary-rollout audience is more expensive
 	// (RAM-billable per-running-second for two deployments) than
@@ -2209,6 +2203,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrPlanTrafficSplitNotAllowed(acct.Plan))
 		return
 	}
+
 	prev := d.TrafficPercent
 	var updated state.Deployment
 	var gateProblem *api.Problem
@@ -2236,7 +2231,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		case errors.Is(err, state.ErrDeploymentNotLive):
 			status := string(d.Status)
-			if current, readErr := s.store.DeploymentByID(r.Context(), id); readErr == nil {
+			if current, readErr := s.store.DeploymentByID(guardCtx, id); readErr == nil {
 				status = string(current.Status)
 			}
 			api.WriteProblem(w, api.ErrDeploymentNotLive(status))
@@ -2247,6 +2242,8 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 			// for target=0 on a sole live row (legitimate Σ=0 —
 			// pinned by TestPg_UpdateDeploymentTraffic_SoleLiveRow).
 			api.WriteProblem(w, api.ErrTrafficPercentSumInvalid(0))
+		case trafficguard.PromotionProblem(err) != nil:
+			api.WriteProblem(w, trafficguard.PromotionProblem(err))
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
@@ -2261,7 +2258,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if s.audit != nil {
-		s.audit.Emit(r.Context(), "deployment.traffic_percent_changed", &acct.ID, map[string]any{
+		s.audit.Emit(guardCtx, "deployment.traffic_percent_changed", &acct.ID, map[string]any{
 			"app":             app.ID,
 			"deployment":      updated.ID,
 			"traffic_percent": req.TrafficPercent,
@@ -2279,13 +2276,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 	// additive. Failure is logged-and-continued — same contract as
 	// the audit emit above.
 	if s.notif != nil {
-		if err := s.notif.Notify(r.Context(), db.NotifyDeploymentChanged,
+		if err := s.notif.Notify(guardCtx, db.NotifyDeploymentChanged,
 			fmt.Sprintf(`{"kind":"traffic","app_id":"%s","deployment_id":"%s","traffic_percent":%d}`,
 				app.ID, updated.ID, req.TrafficPercent)); err != nil {
 			s.log.Warn("apid: notify deployment_changed (traffic) failed", "err", err)
 		}
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponse(r.Context(), updated, app))
+	writeJSON(w, http.StatusOK, s.deploymentResponse(guardCtx, updated, app))
 }
 
 // planMaxFor resolves the per-plan MaxMinInstances cap for the
@@ -2700,6 +2697,9 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if fresh {
 		if _, err := state.InvalidateAppSnapshots(r.Context(), s.store, app.ID); err != nil {
+			// The client sees only "capacity_unavailable"; without the cause a
+			// failed cold scenario run cannot be traced (hunt #10).
+			s.log.ErrorContext(r.Context(), "invalidate preview snapshots", "app", app.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not invalidate preview snapshots"))
 			return
 		}

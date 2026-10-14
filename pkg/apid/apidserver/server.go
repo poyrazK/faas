@@ -20,6 +20,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
+	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
@@ -2139,7 +2141,16 @@ func (s *server) handler() http.Handler {
 	// deployment_detail.html audit block reads (api.ListDeploymentAuditResponse).
 	// IDOR posture identical to getDeployment above — the handler
 	// re-validates the deployment belongs to acct via s.store.AppByDeploymentID.
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
+	mux.HandleFunc("GET /v1/mcp-connection-health", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.ConnectionHealthHandler(s.store))))
+	mux.HandleFunc("GET /v1/mcp-oauth-retirements", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.RetirementHandler(s.store))))
+	mux.HandleFunc("POST /v1/mcp-oauth-retirements/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.RetirementHandler(s.store)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/mcp-catalog-monitor/oauth", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.OAuthHandler(s.store, s.authMw, hostIdentitiesForUnseal)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/mcp-catalog-monitor/observations", s.authLimited(s.requireScope(api.ScopesMetricsWriteSurface...)(mcpcatalog.Handler(s.store, s.authMw))))
 	mux.HandleFunc("GET /v1/deployments/{id}/audit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listDeploymentAudit))))
+	mux.HandleFunc("GET /v1/deployments/{id}/mcp-admissions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpadmission.Handler(s.store, false)))))
+	mux.HandleFunc("GET /v1/mcp/admissions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpadmission.Handler(s.store, true)))))
 	// ADR-122 / issue #975 item #1: per-deployment OpenAPI
 	// document discovery surface. Three routes (GET, PATCH,
 	// DELETE) under /v1/apps/{slug}/deployments/{deployment}/openapi.
@@ -2511,6 +2522,18 @@ func (s *server) handler() http.Handler {
 
 	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryPolicy))))
 	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryPolicyHealth))))
+	mux.HandleFunc("GET /v1/apps/{slug}/initial-recovery-reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.ListWorkflowInitialRecoveryReviews))))
+	mux.HandleFunc("POST /v1/apps/{slug}/workflow-failures/{failureID}/recovery-reviews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.PrepareWorkflowInitialRecoveryReview))))
+	mux.HandleFunc("GET /v1/apps/{slug}/initial-recovery-reviews/{reviewID}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowInitialRecoveryReview))))
+	mux.HandleFunc("POST /v1/apps/{slug}/initial-recovery-reviews/{reviewID}/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.DecideWorkflowInitialRecoveryReview))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.DiagnoseWorkflowRetryParentEvidence))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/parent/repair", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.RepairWorkflowRetryParentEvidence))))
+	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.DiagnoseWorkflowRetryEvidence))))
+	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/reviews/{reviewID}/actions/{actionID}/evidence/repair", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.RepairWorkflowRetryEvidence))))
+	mux.HandleFunc("GET /v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.DiagnoseWorkflowInitialEvidence))))
+	mux.HandleFunc("POST /v1/apps/{slug}/initial-recovery-reviews/{reviewID}/evidence/repair", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.RepairWorkflowInitialEvidence))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-failures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.ListWorkflowInitialFailures))))
+	mux.HandleFunc("GET /v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.PreviewWorkflowInitialRecovery))))
 	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryHistory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/recovery-policy/report", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetWorkflowRecoveryReport))))
 	mux.HandleFunc("POST /v1/apps/{slug}/recovery-policy/change-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.PreviewWorkflowRecoveryPolicyChange))))
@@ -3885,6 +3908,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
+	mux.Handle("GET /dashboard/apps/{slug}/auth", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAuth))))
 	mux.Handle("POST /dashboard/apps/{slug}/data-api/refresh", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.refreshDashboardDataAPI))))
 	mux.Handle("POST /dashboard/apps/{slug}/data-api/{operation}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.runDashboardDataAPI))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api/types/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.downloadDashboardDataAPITypes))))
@@ -4059,6 +4083,10 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/mode", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEdgeRuleMode))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))
+	// ADR-986: protection recipes add one ordinary rule, in log mode by default.
+	// The recipe id is a form field: a path segment would conflict with
+	// /edge-rules/{id}/toggle.
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/recipes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplyEdgeRuleRecipe))))
 	// G7 / issue #1397 — queue dead-letter replay. The handler verifies
 	// the dashboard's named CSRF envelope before delegating to the same
 	// account-scoped store transition as the JSON API endpoint.

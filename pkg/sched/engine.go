@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -633,6 +634,10 @@ type Engine struct {
 
 	mu    sync.Mutex
 	appMu map[string]*sync.Mutex // app_id -> serialisation lock (never GC'd; one-box scale)
+	// frozenTier (ADR-1151, schedd `frozen_tier`) freezes idle eligible
+	// instances in place instead of parking them. Thaw and frozen parks run
+	// either way.
+	frozenTier atomic.Bool
 	// restorePlacementMu serializes only the brief choose-and-reserve window
 	// for snapshot restores. restorePlacementInFlight approximates vmmd's
 	// per-node restore I/O pressure until each CreateFromSnapshot RPC returns.
@@ -811,6 +816,14 @@ type Engine struct {
 	// context.DeadlineExceeded surfaced — in 0.2s, and the spec numbers
 	// themselves are pinned directly by TestBootTimeout_SpecBudgets.
 	bootBudget func(state.State) time.Duration
+
+	// workerBoots counts consecutive failed worker instances per deployment
+	// so worker.singleton backs off instead of re-admitting at once
+	// (worker_boot_backoff.go). The zero value is ready to use.
+	workerBoots workerBootFailures
+	// workerRetryAfter schedules a delayed worker reconcile. nil uses
+	// time.AfterFunc; tests record the delay instead of waiting for it.
+	workerRetryAfter func(time.Duration, func())
 }
 
 // budgetFor returns the vmmd call budget for a row in state s: the
@@ -2863,6 +2876,12 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	// the vmmd resume, ledger promotion, and durable WARM -> RUNNING CAS all
 	// succeed; stale candidates are cleaned up and the normal path then remains
 	// the safe fallback.
+	// ADR-1151: a frozen VM of this deployment thaws in place before a warm
+	// VM or a new instance is used; frozen VMs are otherwise only parked.
+	if thawed, handled, thawErr := e.promoteFrozenInstanceLocked(ctx, app, acct, limits, dep, mode); handled || thawErr != nil {
+		release()
+		return thawed, thawErr
+	}
 	if promoted, handled, promoteErr := e.promoteWarmInstanceLocked(ctx, app, acct, limits, dep, mode); handled || promoteErr != nil {
 		release()
 		return promoted, promoteErr
@@ -6419,6 +6438,11 @@ func (e *Engine) Park(ctx context.Context, instanceID string) error {
 	if err != nil || ins == nil {
 		return err
 	}
+	if state.State(ins.State) == state.StateFrozen {
+		defer e.unlockApp(ins.AppID)
+		e.parkFrozenLocked(ctx, *ins, "park")
+		return nil
+	}
 	if state.State(ins.State) == state.StateWarm {
 		defer e.unlockApp(ins.AppID)
 		if err := e.timedDestroy(ctx, ins.NodeID, instanceID, DestroyTimeout); err != nil {
@@ -6822,11 +6846,17 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
 // in STOPPED rather than PARKED.
 func (e *Engine) Evict(ctx context.Context, instanceID string) error {
-	ins, err := e.lockedRunning(ctx, instanceID)
+	ins, err := e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateFrozen)
 	if err != nil || ins == nil {
 		return err
 	}
 	defer e.unlockApp(ins.AppID)
+	if state.State(ins.State) == state.StateFrozen {
+		// ADR-1151: under memory pressure frozen VMs go first. The
+		// deployment's snapshot stays, so the instance parks, not stops.
+		e.parkFrozenLocked(ctx, *ins, "memory_pressure")
+		return nil
+	}
 
 	// Per-call deadline (commit 1). Evict is RAM-pressure, so a wedged
 	// Destroy cannot pin the reaper — the deadline frees it. Using a
@@ -7149,7 +7179,7 @@ func (e *Engine) lockedRunning(ctx context.Context, instanceID string) (*state.I
 // instances are paused but still resident, so Park must be able to reclaim
 // them without pretending they are serving RUNNING VMs.
 func (e *Engine) lockedParkable(ctx context.Context, instanceID string) (*state.Instance, error) {
-	return e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateWarm)
+	return e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateWarm, state.StateFrozen)
 }
 
 func (e *Engine) lockedInStates(ctx context.Context, instanceID string, allowed ...state.State) (*state.Instance, error) {
@@ -7336,6 +7366,11 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// their RAM accounting or count them toward max_concurrency.
 				kind = KindWarmPool
 			}
+			if state.State(ins.State) == state.StateFrozen {
+				// A frozen VM books its measured memory; until the next
+				// sample the floor stands in for it (ADR-1151).
+				kind = KindFrozen
+			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
 				ProductionEnvironment: policy.production,
@@ -7352,6 +7387,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				CPUBudgetMillicores:        loadCPUBudgetMillicores(ctx, nodeID),
 				AllowCPUOvercommitRecovery: true,
 				Kind:                       kind,
+				FrozenChargeMB:             api.MeasuredChargeFloorMB,
 			}
 			// Preserve resident accounting even if scope recovery fails. Unknown
 			// scope cannot authorize an automatic rollout allowance.
@@ -9570,13 +9606,23 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 // same observable transition contract as transitionWithKind.
 func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
 	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
-	if (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
-		ins.Mode == string(state.InstanceModeService) {
-		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
-	} else if to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker) {
-		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
-	}
+	e.reconcileAfterInstanceTransition(ctx, ins, to)
 	e.appendInstanceTransitionEvent(ctx, ins, from, to, kind, reason)
+}
+
+// reconcileAfterInstanceTransition restores service and worker allocations
+// after a committed edge. A failed worker is replaced with backoff
+// (worker_boot_backoff.go); a running one clears that backoff.
+func (e *Engine) reconcileAfterInstanceTransition(ctx context.Context, ins state.Instance, to state.State) {
+	switch {
+	case (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
+		ins.Mode == string(state.InstanceModeService):
+		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
+	case to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker):
+		e.scheduleWorkerReconcileAfterFailure(ctx, ins.DeploymentID)
+	case to == state.StateRunning && ins.Mode == string(state.InstanceModeWorker):
+		e.workerBoots.reset(ins.DeploymentID)
+	}
 }
 
 func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.Instance, from, to state.State, kind, reason string) {

@@ -1016,7 +1016,7 @@ func runTestLoadWithCaptures(parent context.Context, baseURL, runID string, cons
 	if len(cfg.Streams) > 0 {
 		streamEvidence = runTestLoadStreams(ctx, collector, cfg, started, journey)
 	} else if cfg.Rate > 0 {
-		runTestArrivalLoad(ctx, collector, cfg, started, runJourney)
+		arrivalLoadRunner(ctx, collector, cfg, started, runJourney)
 	} else {
 		runTestConcurrencyLoad(ctx, collector, cfg, started, runJourney)
 	}
@@ -1055,10 +1055,8 @@ func runTestLoadWithCaptures(parent context.Context, baseURL, runID string, cons
 			}
 		}
 	}
-	if executionError == nil {
-		if !testLoadThresholdsPassed(report) {
-			executionError = testLoadThresholdFailure(report)
-		}
+	if !testLoadThresholdsPassed(report) {
+		executionError = errors.Join(executionError, testLoadThresholdFailure(report))
 	}
 	report.Status = "passed"
 	if executionError != nil {

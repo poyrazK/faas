@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
+<title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}</style></head>
+<body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
+<main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Users and organizations</h1>
+<p>Application Auth users of <code>{{.Data.Slug}}</code>, not your Gregale team.</p>
+{{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
+{{if .Data.AuthOrigin}}
+<section id="key-section"><h2>Admin key</h2>
+<form id="key-form"><label for="admin-key">Admin key</label><input id="admin-key" type="password" autocomplete="off" spellcheck="false" required pattern="gaak_[A-Za-z0-9_\-]{43}" size="52"><button type="submit">Open</button></form>
+<p id="key-error" class="danger" role="alert"></p>
+<p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
+<section id="workspace" hidden>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" id="forget">Forget key</button></nav>
+<form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button></form>
+<p id="status" role="status" aria-live="polite"></p>
+<table id="list"><thead></thead><tbody></tbody></table>
+<nav aria-label="Pages"><button type="button" id="prev">Previous</button><span id="position" class="muted"></span><button type="button" id="next">Next</button></nav>
+<section id="detail" hidden aria-live="polite"></section>
+</section>
+<script nonce="{{.Nonce}}">
+(() => {
+  const root = document.getElementById('auth-admin')
+  const origin = root.dataset.origin
+  const storageKey = 'gregale.authAdmin.' + root.dataset.slug
+  const $ = id => document.getElementById(id)
+  const store = {
+    get() { try { return sessionStorage.getItem(storageKey) } catch { return null } },
+    set(value) { try { sessionStorage.setItem(storageKey, value) } catch { /* memory only */ } },
+    clear() { try { sessionStorage.removeItem(storageKey) } catch { /* memory only */ } },
+  }
+  const perPage = 50
+  let key = store.get(), tab = 'users', page = 1, search = ''
+  const messages = {
+    last_owner: 'This user is the last owner of an organization that has other members. Make another member an owner first.',
+    not_found: 'It no longer exists.', invalid_duration: 'Choose a ban duration.',
+  }
+  const el = (tag, text, attrs = {}) => {
+    const node = document.createElement(tag)
+    if (text !== undefined && text !== null) node.textContent = String(text)
+    for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value)
+    return node
+  }
+  const button = (text, onClick, attrs = {}) => { const b = el('button', text, { type: 'button', ...attrs }); b.addEventListener('click', onClick); return b }
+  const when = value => value ? new Date(value).toLocaleString() : '—'
+  const say = text => { $('status').textContent = text }
+
+  function lock(message) {
+    key = null
+    store.clear()
+    $('workspace').hidden = true
+    $('key-section').hidden = false
+    $('key-error').textContent = message || ''
+  }
+
+  async function call(method, path, body) {
+    let response
+    try {
+      response = await fetch(origin + path, {
+        method, mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer',
+        headers: { Authorization: 'Bearer ' + key, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+    } catch {
+      throw new Error('Cannot reach ' + origin + '. The Auth app may be starting or may not allow this dashboard; try again.')
+    }
+    const data = await response.json().catch(() => null)
+    if (response.status === 401) { lock('The admin key was rejected.'); throw new Error('The admin key was rejected.') }
+    // Without any admin key the Auth app has no /admin/v1 at all.
+    if (response.status === 404 && /^\/admin\/v1\/(users|orgs)\?/.test(path)) {
+      lock('This Auth app has no admin key yet, or it has not restarted since one was created.'); throw new Error('No admin key.')
+    }
+    if (!response.ok) {
+      const error = new Error(messages[data?.code] || 'The Auth app answered ' + response.status + (data?.code ? ' (' + data.code + ')' : '') + '.')
+      error.data = data
+      throw error
+    }
+    return data
+  }
+
+  function setTable(headings, rows) {
+    const head = $('list').tHead, body = $('list').tBodies[0]
+    head.replaceChildren(el('tr'))
+    for (const heading of headings) head.rows[0].append(el('th', heading, { scope: 'col' }))
+    body.replaceChildren(...rows)
+  }
+
+  function pager(total) {
+    const last = Math.max(1, Math.ceil((total ?? 0) / perPage))
+    $('position').textContent = 'Page ' + page + ' of ' + last + (total !== null && total !== undefined ? ' · ' + total + ' total' : '')
+    $('prev').disabled = page <= 1
+    $('next').disabled = page >= last
+  }
+
+  async function load() {
+    $('detail').hidden = true
+    say('Loading…')
+    const qs = new URLSearchParams({ page: String(page), per_page: String(perPage), ...(search ? { search } : {}) })
+    try {
+      if (tab === 'users') {
+        const data = await call('GET', '/admin/v1/users?' + qs)
+        setTable(['Email', 'Created', 'Last sign-in', 'Confirmed', 'Status', ''], data.users.map(user => {
+          const row = el('tr')
+          row.append(el('td', user.email || user.phone || user.id), el('td', when(user.created_at)), el('td', when(user.last_sign_in_at)),
+            el('td', user.email_confirmed_at ? 'Yes' : 'No'), el('td', banned(user) ? 'Banned until ' + when(user.banned_until) : 'Active'))
+          const cell = el('td'); cell.append(button('Open', () => showUser(user.id))); row.append(cell)
+          return row
+        }))
+        pager(data.total)
+        say(data.users.length ? '' : 'No users match.')
+      } else {
+        const data = await call('GET', '/admin/v1/orgs?' + qs)
+        setTable(['Slug', 'Name', 'Members', 'Created', ''], data.organizations.map(org => {
+          const row = el('tr')
+          row.append(el('td', org.slug), el('td', org.name), el('td', org.members), el('td', when(org.created_at)))
+          const cell = el('td'); cell.append(button('Open', () => showOrg(org.id))); row.append(cell)
+          return row
+        }))
+        pager(data.total)
+        say(data.organizations.length ? '' : 'No organizations match.')
+      }
+    } catch (error) { say(error.message) }
+  }
+
+  const banned = user => user.banned_until && new Date(user.banned_until) > new Date()
+
+  function facts(pairs) {
+    const list = el('dl')
+    for (const [term, value] of pairs) list.append(el('dt', term), el('dd', value))
+    return list
+  }
+
+  async function showUser(id) {
+    const panel = $('detail')
+    try {
+      const { user, organizations, active_sessions: sessions } = await call('GET', '/admin/v1/users/' + encodeURIComponent(id))
+      const result = el('p', '', { role: 'status' })
+      const act = async (label, method, path, body, done) => {
+        result.textContent = label + '…'
+        try {
+          const text = done(await call(method, path, body))
+          await load()
+          if (method === 'DELETE') { panel.hidden = true; say(text) } else { await showUser(id); $('detail').querySelector('[role=status]').textContent = text }
+        } catch (error) { result.textContent = error.message }
+      }
+      const duration = el('select', null, { 'aria-label': 'Ban duration' })
+      for (const [value, label] of [['1h', '1 hour'], ['24h', '1 day'], ['168h', '7 days'], ['720h', '30 days'], ['876000h', 'Indefinitely']]) duration.append(el('option', label, { value }))
+      const confirmDelete = button('Confirm: delete ' + (user.email || user.id), () => act('Deleting', 'DELETE', '/admin/v1/users/' + encodeURIComponent(id), undefined,
+        data => 'Deleted.' + (data.organizations_deleted ? ' Removed ' + data.organizations_deleted + ' organization(s) that had no other members.' : '')), { class: 'danger', hidden: '' })
+      const actions = el('nav', null, { 'aria-label': 'User actions' })
+      actions.append(
+        button('Sign out everywhere', () => act('Signing out', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/sign-out', {}, data => 'Ended ' + data.sessions_ended + ' session(s).')),
+        duration,
+        button('Ban', () => act('Banning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: duration.value }, () => 'Banned and signed out.')),
+        ...(banned(user) ? [button('Unban', () => act('Unbanning', 'POST', '/admin/v1/users/' + encodeURIComponent(id) + '/ban', { duration: 'none' }, () => 'Unbanned.'))] : []),
+        button('Delete user', () => { confirmDelete.hidden = false; confirmDelete.focus() }, { class: 'danger' }),
+        confirmDelete,
+      )
+      const memberships = el('table')
+      memberships.append(el('tr'))
+      for (const heading of ['Organization', 'Name', 'Role']) memberships.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const org of organizations) {
+        const row = memberships.insertRow()
+        const link = button(org.slug, () => showOrg(org.id))
+        const cell = el('td'); cell.append(link)
+        row.append(cell, el('td', org.name), el('td', org.role))
+      }
+      panel.replaceChildren(
+        el('h2', user.email || user.phone || user.id),
+        facts([['User ID', user.id], ['Sign-in methods', user.providers.join(', ') || '—'], ['Created', when(user.created_at)], ['Last sign-in', when(user.last_sign_in_at)],
+          ['Email confirmed', when(user.email_confirmed_at)], ['Banned until', banned(user) ? when(user.banned_until) : '—'], ['Active sessions', sessions]]),
+        actions, result,
+        el('h3', 'Organizations'), organizations.length ? memberships : el('p', 'Not a member of any organization.', { class: 'muted' }),
+        button('Close', () => { panel.hidden = true }),
+      )
+      panel.hidden = false
+      panel.scrollIntoView({ block: 'nearest' })
+    } catch (error) { say(error.message) }
+  }
+
+  async function showOrg(id) {
+    const panel = $('detail')
+    try {
+      const { organization: org, members, invitations } = await call('GET', '/admin/v1/orgs/' + encodeURIComponent(id))
+      const memberTable = el('table')
+      memberTable.append(el('tr'))
+      for (const heading of ['Member', 'Role', 'Joined']) memberTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const member of members) {
+        const row = memberTable.insertRow()
+        const cell = el('td'); cell.append(button(member.email || member.user_id, () => showUser(member.user_id)))
+        row.append(cell, el('td', member.role), el('td', when(member.created_at)))
+      }
+      const inviteTable = el('table')
+      inviteTable.append(el('tr'))
+      for (const heading of ['Invited email', 'Role', 'Expires']) inviteTable.rows[0].append(el('th', heading, { scope: 'col' }))
+      for (const invitation of invitations) inviteTable.insertRow().append(el('td', invitation.email), el('td', invitation.role), el('td', when(invitation.expires_at)))
+      panel.replaceChildren(
+        el('h2', org.name), facts([['Slug', org.slug], ['Organization ID', org.id], ['Created', when(org.created_at)]]),
+        el('h3', 'Members (' + members.length + ')'), memberTable,
+        el('h3', 'Pending invitations'), invitations.length ? inviteTable : el('p', 'None.', { class: 'muted' }),
+        button('Close', () => { panel.hidden = true }),
+      )
+      panel.hidden = false
+      panel.scrollIntoView({ block: 'nearest' })
+    } catch (error) { say(error.message) }
+  }
+
+  function open() {
+    $('key-section').hidden = true
+    $('workspace').hidden = false
+    load()
+  }
+
+  $('key-form').addEventListener('submit', event => {
+    event.preventDefault()
+    key = $('admin-key').value.trim()
+    $('admin-key').value = ''
+    store.set(key)
+    open()
+  })
+  $('forget').addEventListener('click', () => lock(''))
+  for (const tabButton of document.querySelectorAll('[data-tab]')) {
+    tabButton.addEventListener('click', () => {
+      tab = tabButton.dataset.tab
+      page = 1
+      for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
+      $('query').placeholder = tab === 'users' ? 'Email or name' : 'Slug or name'
+      load()
+    })
+  }
+  $('search').addEventListener('submit', event => { event.preventDefault(); search = $('query').value.trim(); page = 1; load() })
+  $('prev').addEventListener('click', () => { page = Math.max(1, page - 1); load() })
+  $('next').addEventListener('click', () => { page += 1; load() })
+  $('query').placeholder = 'Email or name'
+  if (key) open()
+})()
+</script>
+{{end}}</main></body></html>

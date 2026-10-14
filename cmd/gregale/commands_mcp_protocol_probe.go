@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,15 +15,16 @@ import (
 )
 
 type mcpRoleProtocolReport struct {
-	Name              string `json:"name"`
-	ProtocolVersion   string `json:"protocol_version"`
-	Qualified         bool   `json:"qualified"`
-	CatalogSHA256     string `json:"catalog_sha256,omitempty"`
-	Tools             int    `json:"tools"`
-	Resources         int    `json:"resources"`
-	ResourceTemplates int    `json:"resource_templates"`
-	Prompts           int    `json:"prompts"`
-	Error             string `json:"error,omitempty"`
+	Name              string             `json:"name"`
+	ProtocolVersion   string             `json:"protocol_version"`
+	Qualified         bool               `json:"qualified"`
+	CatalogSHA256     string             `json:"catalog_sha256,omitempty"`
+	Tools             int                `json:"tools"`
+	Resources         int                `json:"resources"`
+	ResourceTemplates int                `json:"resource_templates"`
+	Prompts           int                `json:"prompts"`
+	Error             string             `json:"error,omitempty"`
+	Authorization     []mcphosting.Check `json:"authorization,omitempty"`
 }
 
 type mcpReplicaProtocolReport struct {
@@ -67,7 +66,7 @@ func (t *mcpPublicProtocolRoundTripper) RoundTrip(request *http.Request) (*http.
 	if err != nil {
 		return nil, err
 	}
-	if err := validateMCPProtocolResponseHeaders(response.Header, t.version); err != nil && t.protocolErr == nil {
+	if err := validateMCPProtocolResponseHeaders(response.Header, t.version); response.StatusCode >= 200 && response.StatusCode < 300 && err != nil && t.protocolErr == nil {
 		t.protocolErr = err
 	}
 	return response, nil
@@ -129,7 +128,7 @@ func (t *mcpInstanceProtocolRoundTripper) RoundTrip(request *http.Request) (*htt
 	protocolHeaders := make(http.Header)
 	protocolHeaders.Set("MCP-Protocol-Version", result.ProtocolVersion)
 	protocolHeaders.Set("Mcp-Session-Id", result.SessionID)
-	if err := validateMCPProtocolResponseHeaders(protocolHeaders, t.protocolVersion); err != nil && t.protocolErr == nil {
+	if err := validateMCPProtocolResponseHeaders(protocolHeaders, t.protocolVersion); result.HTTPStatus >= 200 && result.HTTPStatus < 300 && err != nil && t.protocolErr == nil {
 		t.protocolErr = fmt.Errorf("MCP %s response from instance %s: %w", method, t.instanceID, err)
 	}
 	header := make(http.Header)
@@ -190,43 +189,28 @@ func qualifyMCPProtocolInstance(ctx context.Context, client *api.Client, slug, d
 
 func qualifyMCPProtocolClient(ctx context.Context, probe *mcphosting.Client, role mcpReleaseRole, version, name string) mcpRoleProtocolReport {
 	report := mcpRoleProtocolReport{Name: name, ProtocolVersion: version}
-	if err := probe.InitializeStateless(ctx); err != nil {
-		report.Error = fmt.Sprintf("initialize: %v", err)
-		return report
-	}
-	catalog, discovery, err := probe.DiscoverCatalog(ctx)
-	if err != nil {
-		report.Error = fmt.Sprintf("catalog discovery: %v", err)
-		return report
-	}
-	if len(discovery.RejectedTools) != 0 {
-		report.Error = "catalog discovery returned invalid tool definitions"
-		return report
-	}
-	contract, err := mcphosting.NewCatalogContract(version, catalog)
-	if err != nil {
-		report.Error = fmt.Sprintf("catalog validation: %v", err)
-		return report
-	}
-	encoded, err := mcphosting.MarshalContract(contract)
-	if err != nil {
-		report.Error = fmt.Sprintf("encode catalog contract: %v", err)
-		return report
-	}
-	digest := sha256.Sum256(encoded)
-	report.CatalogSHA256 = hex.EncodeToString(digest[:])
-	report.Tools = len(catalog.Tools)
-	report.Resources = len(catalog.Resources)
-	report.ResourceTemplates = len(catalog.ResourceTemplates)
-	report.Prompts = len(catalog.Prompts)
+	var baseline *mcphosting.Contract
 	if role.contract.Version == 2 {
-		diff, diffErr := mcphosting.CompareContractsWithOptions(role.contract, contract, mcphosting.ContractDiffOptions{StrictCatalog: true})
-		if diffErr != nil {
-			report.Error = fmt.Sprintf("baseline comparison: %v", diffErr)
-			return report
+		baseline = &role.contract
+	}
+	validation := mcphosting.ValidateCompatibility(ctx, probe, baseline)
+	if !validation.OK {
+		for _, check := range validation.Checks {
+			if check.Status == "failed" {
+				report.Error = check.Name + ": " + check.Detail
+				break
+			}
 		}
-		if !diff.Compatible {
-			report.Error = "catalog differs from the role baseline and needs review"
+		return report
+	}
+	report.CatalogSHA256 = validation.CatalogSHA256
+	report.Tools, report.Resources = validation.Tools, validation.Resources
+	report.ResourceTemplates, report.Prompts = validation.ResourceTemplates, validation.Prompts
+	if role.Authorization != nil {
+		catalog := validation.Catalog
+		report.Authorization = probe.CheckAuthorization(ctx, role.Authorization.AuthorizationExpectations, catalog, role.Authorization.insufficientToken)
+		if !mcpAuthorizationChecksPassed(report.Authorization) {
+			report.Error = "role authorization rejection or catalog visibility expectations failed"
 			return report
 		}
 	}

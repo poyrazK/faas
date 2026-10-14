@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -293,10 +294,27 @@ func publishSource(ctx context.Context, be storage.StorageBackend, buildID, path
 		return fmt.Errorf("open source archive: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if err := be.Put(ctx, "sources/"+buildID+".tar.gz", f); err != nil {
+	var size int64
+	if info, statErr := f.Stat(); statErr == nil {
+		size = info.Size()
+	}
+	// The upload gets its own bound instead of whatever the request budget
+	// has left after the archive scans: on production-us a 243 MiB source,
+	// inside the Scale plan's 250 MB cap, failed every retry with "context
+	// deadline exceeded" in this Put (hunt #10, H10-26).
+	putCtx, cancel := context.WithTimeout(reqbudget.WithoutBudget(context.WithoutCancel(ctx)), sourcePublishTimeout(size))
+	defer cancel()
+	if err := be.Put(putCtx, "sources/"+buildID+".tar.gz", f); err != nil {
 		return fmt.Errorf("publish source archive: %w", err)
 	}
 	return nil
+}
+
+// sourcePublishTimeout allows a 30 s floor plus 8 MiB/s of transfer, so a
+// 250 MB archive has about a minute.
+func sourcePublishTimeout(bytes int64) time.Duration {
+	const floor, bytesPerSecond = 30 * time.Second, 8 << 20
+	return floor + time.Duration(bytes/bytesPerSecond)*time.Second
 }
 
 // PublishReviewedSource stages a checksum-verified source under its reserved
