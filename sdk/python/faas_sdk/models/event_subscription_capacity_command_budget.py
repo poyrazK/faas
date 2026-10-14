@@ -25,9 +25,9 @@ class EventSubscriptionCapacityCommandBudget:
     """
 
     app_id: UUID
-    """Owned application identifier."""
+    """Owned application identifier. Context: Event Subscription Capacity Command Budget."""
     subscription_id: UUID
-    """Owned subscription or retained control identifier."""
+    """Owned subscription or retained control identifier. Context: Event Subscription Capacity Command Budget."""
     observed_at: datetime.datetime
     """Logical observation time used for receipt expiry."""
     complete: bool

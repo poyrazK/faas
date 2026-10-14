@@ -20,6 +20,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobControlFilters")
 
 @_attrs_define
 class EventExecutionLineageRetryJobControlFilters:
+    """Exact action and original actor filters applied before control-receipt pagination."""
+
     action: EventExecutionLineageRetryJobControlFiltersAction | Unset = UNSET
     actor_id: str | Unset = UNSET
     """Exact actor UUID in hyphenated form or store for an internal caller. Empty means no filter."""

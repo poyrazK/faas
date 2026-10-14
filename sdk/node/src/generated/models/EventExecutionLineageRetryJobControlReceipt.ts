@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Immutable original successful control outcome with command identity, progress, and trusted actor attribution.
+ */
 export type EventExecutionLineageRetryJobControlReceipt = {
   /**
    * Server-resolved original command actor; absent on legacy receipts.

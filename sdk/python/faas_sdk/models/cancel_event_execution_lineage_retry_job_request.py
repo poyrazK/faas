@@ -14,6 +14,8 @@ T = TypeVar("T", bound="CancelEventExecutionLineageRetryJobRequest")
 
 @_attrs_define
 class CancelEventExecutionLineageRetryJobRequest:
+    """Original job creation guard and optional command identity for cancelling bulk lineage retries."""
+
     expected_created_at: datetime.datetime
     """Exact original created_at from the reviewed retained job; fences a replacement after expiry."""
     command_id: UUID | Unset = UNSET

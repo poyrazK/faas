@@ -17,6 +17,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobs")
 
 @_attrs_define
 class EventExecutionLineageRetryJobs:
+    """Scoped live page of retained bulk lineage retry job summaries."""
+
     jobs: list[EventExecutionLineageRetryJobSummary]
     attention: EventExecutionLineageRetryJobAttentionPage | Unset = UNSET
     """Current matching-page observations; no total count or frozen membership is promised."""

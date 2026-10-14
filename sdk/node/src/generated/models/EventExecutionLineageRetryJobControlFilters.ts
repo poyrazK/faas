@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Exact action and original actor filters applied before control-receipt pagination.
+ */
 export type EventExecutionLineageRetryJobControlFilters = {
   action?: '' | 'pause' | 'resume' | 'cancel';
   /**

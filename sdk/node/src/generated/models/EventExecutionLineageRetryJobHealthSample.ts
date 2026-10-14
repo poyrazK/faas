@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Bounded active-job diagnostic with inactivity, expiry, progress evidence, and original creation guards.
+ */
 export type EventExecutionLineageRetryJobHealthSample = {
   request_id: string;
   status: 'pending' | 'paused';

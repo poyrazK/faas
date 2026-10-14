@@ -125,13 +125,15 @@ def sync_detailed(
     describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
     selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
     already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
-    until finished, cancelled or expired.
+    until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage
+    retry job.
 
     Args:
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageRetryJobRequest):
+        body (ControlEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional idempotency UUID for a pause or resume command.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,13 +178,15 @@ def sync(
     describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
     selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
     already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
-    until finished, cancelled or expired.
+    until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage
+    retry job.
 
     Args:
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageRetryJobRequest):
+        body (ControlEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional idempotency UUID for a pause or resume command.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -222,13 +226,15 @@ async def asyncio_detailed(
     describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
     selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
     already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
-    until finished, cancelled or expired.
+    until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage
+    retry job.
 
     Args:
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageRetryJobRequest):
+        body (ControlEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional idempotency UUID for a pause or resume command.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -271,13 +277,15 @@ async def asyncio(
     describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves
     selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation
     already holding the lock may commit before pause. Paused jobs still block diagnostic case scans
-    until finished, cancelled or expired.
+    until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage
+    retry job.
 
     Args:
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageRetryJobRequest):
+        body (ControlEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional idempotency UUID for a pause or resume command.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

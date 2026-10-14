@@ -18,6 +18,8 @@ T = TypeVar("T", bound="EventExecutionLineageCaseBackfill")
 
 @_attrs_define
 class EventExecutionLineageCaseBackfill:
+    """Retained diagnostic scan status, durable cursor, and repair counters for one subscription."""
+
     subscription_id: UUID
     app_id: UUID
     status: EventExecutionLineageCaseBackfillStatus

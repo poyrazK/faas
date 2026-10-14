@@ -13,10 +13,13 @@ T = TypeVar("T", bound="RetryEventExecutionLineageCaseRequest")
 
 @_attrs_define
 class RetryEventExecutionLineageCaseRequest:
+    """Idempotent reevaluation identity and reviewed revision guard for a single lineage case."""
+
     request_id: UUID
     expected_revision: int
     expected_diagnostic_id: UUID | Unset = UNSET
-    """Required when the reviewed case has diagnostic_id; omit for legacy cases."""
+    """Required when the reviewed case has diagnostic_id; omit for legacy cases. Context: Retry Event Execution
+    Lineage Case Request."""
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)

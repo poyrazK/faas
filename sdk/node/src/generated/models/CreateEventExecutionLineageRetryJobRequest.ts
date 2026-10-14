@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventExecutionLineageRetrySelection } from './EventExecutionLineageRetrySelection.js';
+/**
+ * Fixed bounded selection and submission UUID for a durable bulk lineage retry job.
+ */
 export type CreateEventExecutionLineageRetryJobRequest = {
   request_id: string;
   /**

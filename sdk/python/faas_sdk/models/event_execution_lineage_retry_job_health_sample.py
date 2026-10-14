@@ -18,6 +18,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobHealthSample")
 
 @_attrs_define
 class EventExecutionLineageRetryJobHealthSample:
+    """Bounded active-job diagnostic with inactivity, expiry, progress evidence, and original creation guards."""
+
     request_id: UUID
     status: EventExecutionLineageRetryJobHealthSampleStatus
     processed: int

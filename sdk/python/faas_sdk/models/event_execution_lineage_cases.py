@@ -16,6 +16,8 @@ T = TypeVar("T", bound="EventExecutionLineageCases")
 
 @_attrs_define
 class EventExecutionLineageCases:
+    """Scoped page of retained execution-lineage diagnostics with a continuation boundary."""
+
     cases: list[EventExecutionLineageCase]
     next_after: int | Unset = UNSET
 

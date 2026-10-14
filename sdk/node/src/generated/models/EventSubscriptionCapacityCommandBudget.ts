@@ -7,11 +7,11 @@
  */
 export type EventSubscriptionCapacityCommandBudget = {
   /**
-   * Owned application identifier.
+   * Owned application identifier. Context: Event Subscription Capacity Command Budget.
    */
   app_id: string;
   /**
-   * Owned subscription or retained control identifier.
+   * Owned subscription or retained control identifier. Context: Event Subscription Capacity Command Budget.
    */
   subscription_id: string;
   /**

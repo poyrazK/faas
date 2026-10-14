@@ -133,7 +133,8 @@ def sync_detailed(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (CancelEventExecutionLineageRetryJobRequest):
+        body (CancelEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional command identity for cancelling bulk lineage retries.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -186,7 +187,8 @@ def sync(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (CancelEventExecutionLineageRetryJobRequest):
+        body (CancelEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional command identity for cancelling bulk lineage retries.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -234,7 +236,8 @@ async def asyncio_detailed(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (CancelEventExecutionLineageRetryJobRequest):
+        body (CancelEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional command identity for cancelling bulk lineage retries.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -285,7 +288,8 @@ async def asyncio(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (CancelEventExecutionLineageRetryJobRequest):
+        body (CancelEventExecutionLineageRetryJobRequest): Original job creation guard and
+            optional command identity for cancelling bulk lineage retries.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

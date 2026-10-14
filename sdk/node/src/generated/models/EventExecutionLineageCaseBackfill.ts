@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Retained diagnostic scan status, durable cursor, and repair counters for one subscription.
+ */
 export type EventExecutionLineageCaseBackfill = {
   request_id?: string;
   previous_request_id?: string;

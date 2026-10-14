@@ -18,6 +18,8 @@ T = TypeVar("T", bound="EventExecutionReconciliation")
 
 @_attrs_define
 class EventExecutionReconciliation:
+    """Subscription execution-coverage status and durable progress of forward reconciliation and legacy repair."""
+
     repair_scanned: int
     """Cumulative retained receipt candidates examined by this request."""
     repair_repaired: int

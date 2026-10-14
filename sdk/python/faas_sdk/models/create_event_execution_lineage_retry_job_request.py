@@ -15,6 +15,8 @@ T = TypeVar("T", bound="CreateEventExecutionLineageRetryJobRequest")
 
 @_attrs_define
 class CreateEventExecutionLineageRetryJobRequest:
+    """Fixed bounded selection and submission UUID for a durable bulk lineage retry job."""
+
     request_id: UUID
     cases: list[EventExecutionLineageRetrySelection]
     """Unique outbox identities; server normalizes ascending order for idempotency."""

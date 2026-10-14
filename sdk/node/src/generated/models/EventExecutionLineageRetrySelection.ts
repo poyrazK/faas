@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One reviewed lineage case with its revision and optional diagnostic incarnation guard.
+ */
 export type EventExecutionLineageRetrySelection = {
   /**
    * Required when the reviewed case has diagnostic_id; omit for legacy cases.

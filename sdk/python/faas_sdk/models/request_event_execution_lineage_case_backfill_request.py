@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RequestEventExecutionLineageCaseBackfillRequest")
 
 @_attrs_define
 class RequestEventExecutionLineageCaseBackfillRequest:
+    """Idempotent request identity and previous-scan guard for a bounded diagnostic backfill."""
+
     request_id: UUID
     expected_previous_request_id: UUID | Unset = UNSET
     """Omit for the first request; otherwise use the latest completed, cancelled or expired request UUID. Repeated

@@ -124,7 +124,8 @@ def sync_detailed(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageCaseBackfillRequest):
+        body (ControlEventExecutionLineageCaseBackfillRequest): Original scan creation guard for
+            pausing, resuming, or cancelling a retained diagnostic backfill.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,7 +172,8 @@ def sync(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageCaseBackfillRequest):
+        body (ControlEventExecutionLineageCaseBackfillRequest): Original scan creation guard for
+            pausing, resuming, or cancelling a retained diagnostic backfill.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,7 +215,8 @@ async def asyncio_detailed(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageCaseBackfillRequest):
+        body (ControlEventExecutionLineageCaseBackfillRequest): Original scan creation guard for
+            pausing, resuming, or cancelling a retained diagnostic backfill.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -258,7 +261,8 @@ async def asyncio(
         slug (str):
         subscription_id (UUID):
         request_id (UUID):
-        body (ControlEventExecutionLineageCaseBackfillRequest):
+        body (ControlEventExecutionLineageCaseBackfillRequest): Original scan creation guard for
+            pausing, resuming, or cancelling a retained diagnostic backfill.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

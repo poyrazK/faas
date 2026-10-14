@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ControlEventExecutionLineageCaseBackfillRequest")
 
 @_attrs_define
 class ControlEventExecutionLineageCaseBackfillRequest:
+    """Original scan creation guard for pausing, resuming, or cancelling a retained diagnostic backfill."""
+
     expected_created_at: datetime.datetime
     """Exact original created_at of the reviewed retained scan."""
 

@@ -1558,7 +1558,7 @@ export class EventsService {
   /**
    * Resume a retained lineage diagnostic scan.
    * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Resumes a paused scan from its saved cursor and fixed retained range. Repeating resume on a pending or waiting scan leaves metadata unchanged. Completed, cancelled and expired scans return 409. Active bulk retry jobs still govern whether the scheduler can scan. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
-   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress. Context: Resume a retained lineage diagnostic scan.
    * @throws ApiError
    */
   public static resumeEventExecutionLineageCaseBackfill({
@@ -1568,15 +1568,15 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Resume a retained lineage diagnostic scan.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Resume a retained lineage diagnostic scan.
      */
     subscriptionId: string,
     /**
-     * Reviewed original nonzero diagnostic scan UUID.
+     * Reviewed original nonzero diagnostic scan UUID. Context: Resume a retained lineage diagnostic scan.
      */
     requestId: string,
     requestBody: ControlEventExecutionLineageCaseBackfillRequest,
@@ -1592,20 +1592,20 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier or missing original creation timestamp.`,
+        400: `Invalid identifier or missing original creation timestamp. Context: Resume a retained lineage diagnostic scan.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
-        413: `Request exceeds the 65536-byte body limit.`,
-        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Resume a retained lineage diagnostic scan.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Resume a retained lineage diagnostic scan.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan.`,
       },
     });
   }
   /**
    * Cancel a retained lineage diagnostic scan.
    * Requires deploy/write scope and MFA. Scan UUID and original created_at fence the incarnation. Cancels unprocessed diagnostic work while keeping existing case records, cursor and counters. Repeating cancel on a cancelled, completed or expired scan returns its current terminal state unchanged. A cancelled scan cannot be resumed. Controls serialize under the same coverage lock as scheduler batches; an already-held batch may commit before the control. Range, counters, existing diagnostics, normal repair progress and original 30-day deadline stay unchanged. Paused scans expire on their original deadline and cannot be replaced until cancelled or expired. These are desired-state controls, not an immutable command ledger; conflicting controls follow server lock order. Read status before retrying after an intervening opposite control.
-   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress.
+   * @returns EventExecutionLineageCaseBackfill Current guarded scan state and preserved progress. Context: Cancel a retained lineage diagnostic scan.
    * @throws ApiError
    */
   public static cancelEventExecutionLineageCaseBackfill({
@@ -1615,15 +1615,15 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Cancel a retained lineage diagnostic scan.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Cancel a retained lineage diagnostic scan.
      */
     subscriptionId: string,
     /**
-     * Reviewed original nonzero diagnostic scan UUID.
+     * Reviewed original nonzero diagnostic scan UUID. Context: Cancel a retained lineage diagnostic scan.
      */
     requestId: string,
     requestBody: ControlEventExecutionLineageCaseBackfillRequest,
@@ -1639,13 +1639,13 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier or missing original creation timestamp.`,
+        400: `Invalid identifier or missing original creation timestamp. Context: Cancel a retained lineage diagnostic scan.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
-        413: `Request exceeds the 65536-byte body limit.`,
-        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+        409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Cancel a retained lineage diagnostic scan.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Cancel a retained lineage diagnostic scan.`,
+        504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan.`,
       },
     });
   }
@@ -1660,11 +1660,11 @@ export class EventsService {
     subscriptionId,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Inspect the latest bounded lineage diagnostic scan.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Inspect the latest bounded lineage diagnostic scan.
      */
     subscriptionId: string,
   }): CancelablePromise<EventExecutionLineageCaseBackfill> {
@@ -1697,11 +1697,11 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Backfill missing lineage cases from retained admission evidence.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Backfill missing lineage cases from retained admission evidence.
      */
     subscriptionId: string,
     requestBody: RequestEventExecutionLineageCaseBackfillRequest,
@@ -1716,12 +1716,12 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier or scan guard.`,
+        400: `Invalid identifier or scan guard. Context: Backfill missing lineage cases from retained admission evidence.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed.`,
-        504: `Request timed out; repeat the same request UUID and previous-request guard.`,
+        409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed. Context: Backfill missing lineage cases from retained admission evidence.`,
+        504: `Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence.`,
       },
     });
   }
@@ -1739,11 +1739,11 @@ export class EventsService {
     limit = 50,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Preview unresolved or conflicting retained lineage cases.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Preview unresolved or conflicting retained lineage cases.
      */
     subscriptionId: string,
     /**
@@ -1795,7 +1795,13 @@ export class EventsService {
     limit = 50,
     attention,
   }: {
+    /**
+     * Application slug selecting the owner of this lineage operation. List retained bulk lineage retry job summaries.
+     */
     slug: string,
+    /**
+     * Subscription UUID whose retained lineage records are inspected. List retained bulk lineage retry job summaries.
+     */
     subscriptionId: string,
     /**
      * Omit for all retained states.
@@ -1805,6 +1811,9 @@ export class EventsService {
      * Continuation cursor returned by next_after; pass unchanged with the same status filter.
      */
     after?: string,
+    /**
+     * Maximum number of retained records in this response; zero selects the default. List retained bulk lineage retry job summaries.
+     */
     limit?: number,
     /**
      * Optional warning filter; applies only to active pending/paused jobs. Empty means ordinary retained listing.
@@ -1845,11 +1854,11 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Submit a fixed reviewed lineage retry selection.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Submit a fixed reviewed lineage retry selection.
      */
     subscriptionId: string,
     requestBody: CreateEventExecutionLineageRetryJobRequest,
@@ -1864,12 +1873,12 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier, selection or pagination.`,
+        400: `Invalid identifier, selection or pagination. Context: Submit a fixed reviewed lineage retry selection.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Case guard changed or retained request identity reused with another selection.`,
-        504: `Operation timed out; repeat submission with the same request identity and selection.`,
+        409: `Case guard changed or retained request identity reused with another selection. Context: Submit a fixed reviewed lineage retry selection.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection.`,
       },
     });
   }
@@ -1890,14 +1899,29 @@ export class EventsService {
     actorId,
     credentialType,
   }: {
+    /**
+     * Application slug selecting the owner of this lineage operation. List retained immutable bulk retry control receipts.
+     */
     slug: string,
+    /**
+     * Subscription UUID whose retained lineage records are inspected. List retained immutable bulk retry control receipts.
+     */
     subscriptionId: string,
+    /**
+     * Original bulk retry submission UUID whose command receipts are listed. List retained immutable bulk retry control receipts.
+     */
     requestId: string,
     /**
      * Original nonzero creation timestamp from the reviewed job.
      */
     expectedCreatedAt: string,
+    /**
+     * Opaque continuation boundary returned by the preceding control-history page. List retained immutable bulk retry control receipts.
+     */
     after?: number,
+    /**
+     * Maximum number of retained records in this response; zero selects the default. List retained immutable bulk retry control receipts.
+     */
     limit?: number,
     /**
      * Exact action filter; empty means all actions.
@@ -1951,11 +1975,11 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Pause unprocessed cases in a retained bulk lineage retry job.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Pause unprocessed cases in a retained bulk lineage retry job.
      */
     subscriptionId: string,
     /**
@@ -1975,12 +1999,12 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier or missing original creation timestamp.`,
+        400: `Invalid identifier or missing original creation timestamp. Context: Pause unprocessed cases in a retained bulk lineage retry job.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).`,
-        413: `Request exceeds the 65536-byte body limit.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Pause unprocessed cases in a retained bulk lineage retry job.`,
         429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.`,
         504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
       },
@@ -1988,8 +2012,8 @@ export class EventsService {
   }
   /**
    * Resume unprocessed cases in a paused bulk lineage retry job.
-   * Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired.
-   * @returns EventExecutionLineageRetryJob Current job; control_receipt contains the immutable original outcome when command_id was supplied.
+   * Requires deploy/write scope and MFA. The original creation timestamp fences the job. Optional command_id enables an immutable successful-control receipt scoped to this job incarnation. The job lock commits state and receipt together. Repeating the same command UUID and original inputs returns current job state with its original control_receipt and never reapplies the action, including after another action or terminal completion. Reusing a command UUID with another action returns 409. At most 128 retained receipts per job; new UUIDs beyond that limit return 429 without changing the job. New UUIDs for completed/cancelled jobs return 409; repeated successful commands still work while the job is retained. Receipt result_status and progress describe its recorded outcome; outer job fields describe current state. Without command_id, legacy desired-state behavior remains. Pause preserves selection, results, cursor and expiry; resume continues at the next unprocessed item. An evaluation already holding the lock may commit before pause. Paused jobs still block diagnostic case scans until finished, cancelled or expired. Context: Resume unprocessed cases in a paused bulk lineage retry job.
+   * @returns EventExecutionLineageRetryJob Current job; control_receipt contains the immutable original outcome when command_id was supplied. Context: Resume unprocessed cases in a paused bulk lineage retry job.
    * @throws ApiError
    */
   public static resumeEventExecutionLineageRetryJob({
@@ -1999,15 +2023,15 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Resume unprocessed cases in a paused bulk lineage retry job.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Resume unprocessed cases in a paused bulk lineage retry job.
      */
     subscriptionId: string,
     /**
-     * Original nonzero submission UUID.
+     * Original nonzero submission UUID. Context: Resume unprocessed cases in a paused bulk lineage retry job.
      */
     requestId: string,
     requestBody: ControlEventExecutionLineageRetryJobRequest,
@@ -2023,14 +2047,14 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier or missing original creation timestamp.`,
+        400: `Invalid identifier or missing original creation timestamp. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).`,
-        413: `Request exceeds the 65536-byte body limit.`,
-        429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.`,
-        504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
+        409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed). Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
       },
     });
   }
@@ -2047,15 +2071,15 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Cancel unprocessed cases in a retained bulk lineage retry job.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Cancel unprocessed cases in a retained bulk lineage retry job.
      */
     subscriptionId: string,
     /**
-     * Original nonzero submission UUID.
+     * Original nonzero submission UUID. Context: Cancel unprocessed cases in a retained bulk lineage retry job.
      */
     requestId: string,
     requestBody: CancelEventExecutionLineageRetryJobRequest,
@@ -2076,7 +2100,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Original creation timestamp does not match (event_lineage_retry_job_changed) or command UUID reused for another action (event_lineage_retry_control_command_changed).`,
-        413: `Request exceeds the 65536-byte body limit.`,
+        413: `Request exceeds the 65536-byte body limit. Context: Cancel unprocessed cases in a retained bulk lineage retry job.`,
         429: `New command UUID exceeds the shared 128-receipt cap; stable code event_lineage_retry_control_limit.`,
         504: `Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.`,
       },
@@ -2094,15 +2118,15 @@ export class EventsService {
     requestId,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Inspect retained bulk lineage retry progress and per-case results.
      */
     slug: string,
     /**
-     * Event subscription identifier.
+     * Event subscription identifier. Context: Inspect retained bulk lineage retry progress and per-case results.
      */
     subscriptionId: string,
     /**
-     * Original nonzero submission UUID.
+     * Original nonzero submission UUID. Context: Inspect retained bulk lineage retry progress and per-case results.
      */
     requestId: string,
   }): CancelablePromise<EventExecutionLineageRetryJob> {
@@ -2115,12 +2139,12 @@ export class EventsService {
         'requestID': requestId,
       },
       errors: {
-        400: `Invalid identifier, selection or pagination.`,
+        400: `Invalid identifier, selection or pagination. Context: Inspect retained bulk lineage retry progress and per-case results.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Case guard changed or retained request identity reused with another selection.`,
-        504: `Operation timed out; repeat submission with the same request identity and selection.`,
+        409: `Case guard changed or retained request identity reused with another selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
+        504: `Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
       },
     });
   }
@@ -2137,7 +2161,7 @@ export class EventsService {
     limit = 50,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: List retained lineage repair cases.
      */
     slug: string,
     /**
@@ -2177,7 +2201,7 @@ export class EventsService {
   /**
    * Recheck one reviewed lineage case with an idempotent guard.
    * Requires deploy/write scope. Request UUID, expected revision and any diagnostic identity fence each evaluation; duplicate requests return the original result for 30 days. Reuses authoritative evidence checks and does not reset scan progress or established coverage. Known receipt acceptance and root incarnation remain guarded. No event payloads or handler errors are returned.
-   * @returns EventExecutionLineageCase Retained cases or the saved guarded retry result.
+   * @returns EventExecutionLineageCase Retained cases or the saved guarded retry result. Context: Recheck one reviewed lineage case with an idempotent guard.
    * @throws ApiError
    */
   public static retryEventExecutionLineageCase({
@@ -2187,11 +2211,11 @@ export class EventsService {
     requestBody,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Recheck one reviewed lineage case with an idempotent guard.
      */
     slug: string,
     /**
-     * Application event subscription identifier.
+     * Application event subscription identifier. Context: Recheck one reviewed lineage case with an idempotent guard.
      */
     subscriptionId: string,
     /**
@@ -2211,12 +2235,12 @@ export class EventsService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid identifier, pagination or retry guard.`,
+        400: `Invalid identifier, pagination or retry guard. Context: Recheck one reviewed lineage case with an idempotent guard.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `Case revision or request identity changed.`,
-        504: `Lineage operation timed out; repeat the same guarded request.`,
+        409: `Case revision or request identity changed. Context: Recheck one reviewed lineage case with an idempotent guard.`,
+        504: `Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard.`,
       },
     });
   }
@@ -2231,11 +2255,11 @@ export class EventsService {
     subscriptionId,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Inspect durable execution coverage reconciliation.
      */
     slug: string,
     /**
-     * Application event subscription identifier.
+     * Application event subscription identifier. Context: Inspect durable execution coverage reconciliation.
      */
     subscriptionId: string,
   }): CancelablePromise<EventExecutionReconciliation> {
@@ -2258,7 +2282,7 @@ export class EventsService {
   /**
    * Request a forward-only execution coverage boundary.
    * Requires `apps:deploy` or `admin`; requests are idempotent per subscription. Bounded durable scans repair unambiguous lineage from retained captured recipients, deterministic delivery identity and matching root content. Historical unknown outcomes are not reconstructed. Retained app executions without authoritative ledger lineage block completion, including unrelated app invocations. The scheduler establishes a new collection boundary after blockers clear. Recorded losses and unknown outcomes remain applicable.
-   * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests.
+   * @returns EventExecutionReconciliation Current reconciliation status, including completed or already qualified requests. Context: Request a forward-only execution coverage boundary.
    * @throws ApiError
    */
   public static requestEventExecutionReconciliation({
@@ -2266,11 +2290,11 @@ export class EventsService {
     subscriptionId,
   }: {
     /**
-     * Application slug.
+     * Application slug. Context: Request a forward-only execution coverage boundary.
      */
     slug: string,
     /**
-     * Application event subscription identifier.
+     * Application event subscription identifier. Context: Request a forward-only execution coverage boundary.
      */
     subscriptionId: string,
   }): CancelablePromise<EventExecutionReconciliation> {
@@ -2282,11 +2306,11 @@ export class EventsService {
         'subscriptionID': subscriptionId,
       },
       errors: {
-        400: `Invalid subscription identifier.`,
+        400: `Invalid subscription identifier. Context: Request a forward-only execution coverage boundary.`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        504: `Subscription reconciliation request timed out.`,
+        504: `Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary.`,
       },
     });
   }
@@ -2955,11 +2979,11 @@ export class EventsService {
     commandId,
   }: {
     /**
-     * Owned application slug.
+     * Owned application slug. Context: Read retained original capacity-command evidence.
      */
     slug: string,
     /**
-     * Owned active subscription or retained delivery control identifier.
+     * Owned active subscription or retained delivery control identifier. Context: Read retained original capacity-command evidence.
      */
     subscriptionId: string,
     /**

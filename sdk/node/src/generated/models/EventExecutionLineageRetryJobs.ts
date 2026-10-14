@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { EventExecutionLineageRetryJobAttentionPage } from './EventExecutionLineageRetryJobAttentionPage.js';
 import type { EventExecutionLineageRetryJobSummary } from './EventExecutionLineageRetryJobSummary.js';
+/**
+ * Scoped live page of retained bulk lineage retry job summaries.
+ */
 export type EventExecutionLineageRetryJobs = {
   attention?: EventExecutionLineageRetryJobAttentionPage;
   jobs: Array<EventExecutionLineageRetryJobSummary>;

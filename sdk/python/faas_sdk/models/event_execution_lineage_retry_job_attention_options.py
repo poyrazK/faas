@@ -16,6 +16,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobAttentionOptions")
 
 @_attrs_define
 class EventExecutionLineageRetryJobAttentionOptions:
+    """Warning filter selecting retained retry jobs with inactivity or retention pressure."""
+
     attention: EventExecutionLineageRetryJobAttentionOptionsAttention | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

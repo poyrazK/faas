@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Subscription execution-coverage status and durable progress of forward reconciliation and legacy repair.
+ */
 export type EventExecutionReconciliation = {
   /**
    * Cumulative retained receipt candidates examined by this request.

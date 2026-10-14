@@ -113,7 +113,8 @@ def sync_detailed(
         slug (str):
         subscription_id (UUID):
         outbox_id (int):
-        body (RetryEventExecutionLineageCaseRequest):
+        body (RetryEventExecutionLineageCaseRequest): Idempotent reevaluation identity and
+            reviewed revision guard for a single lineage case.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,7 +157,8 @@ def sync(
         slug (str):
         subscription_id (UUID):
         outbox_id (int):
-        body (RetryEventExecutionLineageCaseRequest):
+        body (RetryEventExecutionLineageCaseRequest): Idempotent reevaluation identity and
+            reviewed revision guard for a single lineage case.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +196,8 @@ async def asyncio_detailed(
         slug (str):
         subscription_id (UUID):
         outbox_id (int):
-        body (RetryEventExecutionLineageCaseRequest):
+        body (RetryEventExecutionLineageCaseRequest): Idempotent reevaluation identity and
+            reviewed revision guard for a single lineage case.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -235,7 +238,8 @@ async def asyncio(
         slug (str):
         subscription_id (UUID):
         outbox_id (int):
-        body (RetryEventExecutionLineageCaseRequest):
+        body (RetryEventExecutionLineageCaseRequest): Idempotent reevaluation identity and
+            reviewed revision guard for a single lineage case.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

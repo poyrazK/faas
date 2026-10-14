@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Idempotent request identity and previous-scan guard for a bounded diagnostic backfill.
+ */
 export type RequestEventExecutionLineageCaseBackfillRequest = {
   request_id: string;
   /**

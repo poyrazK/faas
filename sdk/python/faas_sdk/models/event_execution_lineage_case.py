@@ -18,6 +18,8 @@ T = TypeVar("T", bound="EventExecutionLineageCase")
 
 @_attrs_define
 class EventExecutionLineageCase:
+    """Retained reason-coded lineage diagnostic with revision and incarnation guards for reevaluation."""
+
     subscription_id: UUID
     app_id: UUID
     outbox_id: int

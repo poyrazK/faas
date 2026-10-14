@@ -22,6 +22,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobSummary")
 
 @_attrs_define
 class EventExecutionLineageRetryJobSummary:
+    """Retained bulk retry job identity, creation guards, lifecycle status, and progress summary."""
+
     request_id: UUID
     subscription_id: UUID
     app_id: UUID
@@ -35,6 +37,7 @@ class EventExecutionLineageRetryJobSummary:
     last_progress_at: datetime.datetime | Unset = UNSET
     """Last known committed evaluation or skip; absent for unevaluated or legacy jobs."""
     attention: EventExecutionLineageRetryJobHealthSample | Unset = UNSET
+    """Bounded active-job diagnostic with inactivity, expiry, progress evidence, and original creation guards."""
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)

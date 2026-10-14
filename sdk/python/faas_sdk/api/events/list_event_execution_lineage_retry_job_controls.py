@@ -160,7 +160,8 @@ def sync_detailed(
         request_id (UUID):
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
-        limit (int | Unset): Zero selects the default page size. Default: 50.
+        limit (int | Unset): Zero selects the default page size. Context: List retained immutable
+            bulk retry control receipts. Default: 50.
         action (ListEventExecutionLineageRetryJobControlsAction | Unset):
         actor_id (str | Unset):
         credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
@@ -227,7 +228,8 @@ def sync(
         request_id (UUID):
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
-        limit (int | Unset): Zero selects the default page size. Default: 50.
+        limit (int | Unset): Zero selects the default page size. Context: List retained immutable
+            bulk retry control receipts. Default: 50.
         action (ListEventExecutionLineageRetryJobControlsAction | Unset):
         actor_id (str | Unset):
         credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
@@ -289,7 +291,8 @@ async def asyncio_detailed(
         request_id (UUID):
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
-        limit (int | Unset): Zero selects the default page size. Default: 50.
+        limit (int | Unset): Zero selects the default page size. Context: List retained immutable
+            bulk retry control receipts. Default: 50.
         action (ListEventExecutionLineageRetryJobControlsAction | Unset):
         actor_id (str | Unset):
         credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):
@@ -354,7 +357,8 @@ async def asyncio(
         request_id (UUID):
         expected_created_at (datetime.datetime):
         after (int | Unset):  Default: 0.
-        limit (int | Unset): Zero selects the default page size. Default: 50.
+        limit (int | Unset): Zero selects the default page size. Context: List retained immutable
+            bulk retry control receipts. Default: 50.
         action (ListEventExecutionLineageRetryJobControlsAction | Unset):
         actor_id (str | Unset):
         credential_type (ListEventExecutionLineageRetryJobControlsCredentialType | Unset):

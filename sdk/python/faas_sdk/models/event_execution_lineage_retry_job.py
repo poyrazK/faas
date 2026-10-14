@@ -23,6 +23,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJob")
 
 @_attrs_define
 class EventExecutionLineageRetryJob:
+    """Durable bulk lineage retry status, original selection, per-case results, and optional command receipt."""
+
     request_id: UUID
     subscription_id: UUID
     app_id: UUID
@@ -37,6 +39,8 @@ class EventExecutionLineageRetryJob:
     """Last committed evaluation or skip recorded by upgraded workers. Absent before the first evaluation or for
     older snapshots; controls do not change it."""
     control_receipt: EventExecutionLineageRetryJobControlReceipt | Unset = UNSET
+    """Immutable original successful control outcome with command identity, progress, and trusted actor
+    attribution."""
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)

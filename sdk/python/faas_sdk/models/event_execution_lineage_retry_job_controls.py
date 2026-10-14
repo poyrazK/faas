@@ -16,6 +16,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobControls")
 
 @_attrs_define
 class EventExecutionLineageRetryJobControls:
+    """Observed scoped page of retained bulk-job control receipts and its continuation cursor."""
+
     controls: list[EventExecutionLineageRetryJobControlReceipt]
     next_after: int | Unset = UNSET
 

@@ -14,6 +14,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetrySelection")
 
 @_attrs_define
 class EventExecutionLineageRetrySelection:
+    """One reviewed lineage case with its revision and optional diagnostic incarnation guard."""
+
     outbox_id: int
     expected_revision: int
     accepted_at: datetime.datetime

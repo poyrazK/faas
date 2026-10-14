@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { EventExecutionLineageRetryJobHealthSample } from './EventExecutionLineageRetryJobHealthSample.js';
+/**
+ * Retained bulk retry job identity, creation guards, lifecycle status, and progress summary.
+ */
 export type EventExecutionLineageRetryJobSummary = {
   /**
    * Last known committed evaluation or skip; absent for unevaluated or legacy jobs.

@@ -10826,6 +10826,7 @@ const EventSubscriptionCapacityCommandLowSustainDefault = 30 * time.Second
 const EventSubscriptionCapacityCommandRecoverySustainDefault = 30 * time.Second
 const EventSubscriptionCapacityCommandRetention = 30 * 24 * time.Hour
 const EventSubscriptionCapacityCommandPruneBatch = 500
+
 // Checklist watches are durable within a readiness subscription; polling rotates a bounded sample.
 const OperationWorkflowPlaybookEvidenceWatchesPerSubscriptionMax = 20
 const OperationWorkflowPlaybookEvidenceWatchesPerPassMax = 5

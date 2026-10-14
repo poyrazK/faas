@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { EventExecutionLineageRetryJobControlReceipt } from './EventExecutionLineageRetryJobControlReceipt.js';
 import type { EventExecutionLineageRetryJobItem } from './EventExecutionLineageRetryJobItem.js';
+/**
+ * Durable bulk lineage retry status, original selection, per-case results, and optional command receipt.
+ */
 export type EventExecutionLineageRetryJob = {
   /**
    * Last committed evaluation or skip recorded by upgraded workers. Absent before the first evaluation or for older snapshots; controls do not change it.

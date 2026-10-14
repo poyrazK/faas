@@ -14,8 +14,11 @@ T = TypeVar("T", bound="ControlEventExecutionLineageRetryJobRequest")
 
 @_attrs_define
 class ControlEventExecutionLineageRetryJobRequest:
+    """Original job creation guard and optional idempotency UUID for a pause or resume command."""
+
     expected_created_at: datetime.datetime
-    """Original nonzero creation timestamp from the reviewed job."""
+    """Original nonzero creation timestamp from the reviewed job. Context: Control Event Execution Lineage Retry
+    Job Request."""
     command_id: UUID | Unset = UNSET
     """Optional nonzero command UUID; reuse it with the original action and creation guard after a lost response."""
 

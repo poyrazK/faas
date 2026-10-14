@@ -30,6 +30,8 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobControlReceipt")
 
 @_attrs_define
 class EventExecutionLineageRetryJobControlReceipt:
+    """Immutable original successful control outcome with command identity, progress, and trusted actor attribution."""
+
     command_id: UUID
     sequence: int
     job_request_id: UUID

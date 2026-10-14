@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Retained reason-coded lineage diagnostic with revision and incarnation guards for reevaluation.
+ */
 export type EventExecutionLineageCase = {
   /**
    * Unique incarnation of a diagnostically created case; required in its retry guards.

@@ -21,10 +21,14 @@ T = TypeVar("T", bound="EventExecutionLineageRetryJobItem")
 
 @_attrs_define
 class EventExecutionLineageRetryJobItem:
+    """Retained evaluation status and guarded retry result for one selected case in a bulk job."""
+
     selection: EventExecutionLineageRetrySelection
+    """One reviewed lineage case with its revision and optional diagnostic incarnation guard."""
     status: EventExecutionLineageRetryJobItemStatus
     reason: str | Unset = UNSET
     result: EventExecutionLineageCase | Unset = UNSET
+    """Retained reason-coded lineage diagnostic with revision and incarnation guards for reevaluation."""
 
     def to_dict(self) -> dict[str, Any]:
         selection = self.selection.to_dict()
