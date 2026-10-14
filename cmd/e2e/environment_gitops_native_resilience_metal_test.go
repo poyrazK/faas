@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -404,7 +405,7 @@ func (j *nativeGitOpsJourney) startTraffic(t *testing.T) func() {
 					closeErr := response.Body.Close()
 					if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK ||
 						(!strings.Contains(string(body), helloBody) && !strings.Contains(string(body), gitOpsNextBody)) {
-						err = fmt.Errorf("healthy traffic failed: status=%d body=%q read=%v close=%v", response.StatusCode, body, readErr, closeErr)
+						err = errors.Join(fmt.Errorf("healthy traffic failed: status=%d body=%q", response.StatusCode, body), readErr, closeErr)
 					}
 				}
 				if err != nil {
